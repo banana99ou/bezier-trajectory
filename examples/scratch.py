@@ -67,12 +67,13 @@ class BezierCurve:
         segments.append(BezierCurve(remainder))
         return segments
 
+exclusion_zone = 6
 
 # ---- Control points & subdivision ----
-control_points = np.array([[-5, 0, 0],
-                           [-2, 4, 0],
-                           [ 2,-4, 0],
-                           [ 5, 2, 0]], dtype=float)
+control_points = np.array([[-10, -3, 0],
+                           [-7, 6, 0],
+                           [ 9,-6, 0],
+                           [ 10, 3, 0]], dtype=float)
 curve = BezierCurve(control_points)
 segs = curve.Split_to_N_Seg(10)
 
@@ -101,6 +102,12 @@ for idx, seg_curve in enumerate(segs):
 lc = Line3DCollection(seg_lines, colors=seg_cols, linewidths=1.5)
 ax.add_collection3d(lc)
 
+for idx, seg_curve in enumerate(segs):
+    xs = seg_curve.control_points[:, 0]
+    ys = seg_curve.control_points[:, 1]
+    zs = np.zeros(len(seg_curve.control_points)) if seg_curve.control_points.shape[1] == 2 else seg_curve.control_points[:, 2]
+    ax.plot(xs, ys, zs, f'{colors[idx % len(colors)]}o--')
+
 # Optional: wireframe sphere (Earth surrogate) at origin
 def add_wire_sphere(ax, radius=3.0, center=(0.0, 0.0, 0.0), color='gray', alpha=0.3, resolution=40):
     cx, cy, cz = center
@@ -112,7 +119,7 @@ def add_wire_sphere(ax, radius=3.0, center=(0.0, 0.0, 0.0), color='gray', alpha=
     z = cz + radius * np.cos(vv)
     ax.plot_wireframe(x, y, z, rstride=3, cstride=3, color=color, alpha=alpha)
 
-add_wire_sphere(ax, radius=3.0, color='gray', alpha=0.3)
+add_wire_sphere(ax, radius=exclusion_zone, color='gray', alpha=0.3)
 
 # Equal aspect & labels
 def set_axes_equal_around(ax, center=(0,0,0), radius=1.0, pad=0.05):
