@@ -261,18 +261,18 @@ if __name__ == "__main__":
     exclusion_zone = 6.0  # sphere radius r_e
 
     # ① Initialize quadratic Bézier in 3D (degree 2) connecting arbitrary start/goal
-    P0 = np.array([-10.0, -3.0,  0.0])
-    P2 = np.array([ 10.0,  3.0,  0.0])
+    P0 = np.array([ 10.0, -10.0,  0.0])
+    P2 = np.array([ -10.0,  10.0,  0.0])
     # Choose a middle control point INSIDE the sphere to start with (violates constraint)
-    P1 = np.array([  0.0,  0.0,  0.0])
+    P1 = np.array([  0.0,  0.0,  1.0])
     P_init = np.vstack([P0, P1, P2])  # (3,3) degree=2
 
     # ② Optimize for different subdivision counts to show feasibility emerges
-    split_list = [1, 2, 4, 8, 16, 32, 64]
+    split_list = [2, 4, 8, 16, 32, 64]
     results = []
 
     for n_seg in split_list:
-        P_opt, info = optimize_bezier_outside_sphere(P_init, n_seg=n_seg, r_e=exclusion_zone, max_iter=100, tol=1e-8, lam_smooth=0, verbose=True)
+        P_opt, info = optimize_bezier_outside_sphere(P_init, n_seg=n_seg, r_e=exclusion_zone, max_iter=100, tol=1e-8, lam_smooth=1e-6, verbose=False)
         results.append((n_seg, P_opt, info))
         print(f"n_seg={n_seg:>2d} | iter={info['iter']:>2d} | min_radius={info['min_radius']:.3f} | feasible={info['feasible']}")
 
