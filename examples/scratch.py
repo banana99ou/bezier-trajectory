@@ -268,29 +268,101 @@ if __name__ == "__main__":
     P_init = np.vstack([P0, P1, P2])  # (3,3) degree=2
 
     # ② Optimize for different subdivision counts to show feasibility emerges
-    split_list = [1, 2, 4, 8, 16]
+    split_list = [1, 2, 4, 8, 16, 32, 64]
     results = []
 
     for n_seg in split_list:
-        P_opt, info = optimize_bezier_outside_sphere(
-            P_init, n_seg=n_seg, r_e=exclusion_zone,
-            max_iter=30, tol=1e-8, lam_smooth=1e-3, verbose=False
-        )
+        P_opt, info = optimize_bezier_outside_sphere(P_init, n_seg=n_seg, r_e=exclusion_zone, max_iter=100, tol=1e-8, lam_smooth=0, verbose=True)
         results.append((n_seg, P_opt, info))
         print(f"n_seg={n_seg:>2d} | iter={info['iter']:>2d} | min_radius={info['min_radius']:.3f} | feasible={info['feasible']}")
 
-    # ③ Visualization & comparison
-    cols = 2
-    rows = int(np.ceil(len(results) / cols))
-    fig = plt.figure(figsize=(6*cols, 5*rows))
-    for idx, (n_seg, P_opt, info) in enumerate(results, start=1):
-        ax = fig.add_subplot(rows, cols, idx, projection='3d')
-        add_wire_sphere(ax, radius=exclusion_zone, color='gray', alpha=0.25)
-        plot_segments(ax, P_opt, n_seg)
-        set_axes_equal_around(ax, center=(0,0,0), radius=exclusion_zone*1.4)
-        ax.set_title(f"Segments = {n_seg}\nmin |p|={info['min_radius']:.2f}, feasible={info['feasible']}")
-        ax.set_xlabel('X'); ax.set_ylabel('Y'); ax.set_zlabel('Z')
-    plt.tight_layout()
-    plt.show()
+    # ─────────────────────────────────────────────────────────────────────────────
+# Pretty paper figure: 3 columns + isometric (orthographic) view
+# ─────────────────────────────────────────────────────────────────────────────
+def set_isometric(ax, elev=35.264, azim=45.0, ortho=True):
+    ax.view_init(elev=elev, azim=azim)
+    try:
+        if ortho:
+            ax.set_proj_type('ortho')  # mpl ≥3.2
+    except Exception:
+        pass
 
-# https://github.com/banana99ou/bezier-trajectory.git
+def beautify_3d_axes(ax, ticks=False):
+    """Clean, paper-friendly 3D axes. Safe across Matplotlib versions."""
+    # turn off grid
+    ax.grid(False)
+
+    # Pane face/edge colors (newer mpl: axis.pane; older: set_pane_color)
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        # Face
+        try:
+            axis.pane.set_facecolor((1, 1, 1, 1))
+        except Exception:
+            try:
+                axis.set_pane_color((1, 1, 1, 1))
+            except Exception:
+                pass
+        # Edge
+        try:
+            axis.pane.set_edgecolor("0.85")
+        except Exception:
+            # No simple fallback on very old versions; safe to ignore.
+            pass
+
+    # Optional ticks
+    if not ticks:
+        ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
+    else:
+        ax.tick_params(axis='both', which='major', labelsize=8, pad=2)
+
+    # Hide box spines if available (not always on 3D)
+    try:
+        for sp in ax.spines.values():
+            sp.set_visible(False)
+    except Exception:
+        pass
+
+# ③ Visualization & comparison (3-column isometric, tight layout)
+COLS = 3
+rows = int(np.ceil(len(results) / COLS))
+
+# ~2.2–2.4 in per panel: journal-friendly
+COL_W = 2.3
+ROW_H = 2.3
+fig, axes = plt.subplots(
+    rows, COLS, subplot_kw={'projection': '3d'},
+    figsize=(COLS * COL_W, rows * ROW_H)
+)
+
+# Disable any auto layout engines that trigger 3D tightbbox calls
+for _setter in ("set_layout_engine", "set_constrained_layout"):
+    try:
+        getattr(fig, _setter)(False if _setter == "set_constrained_layout" else None)
+    except Exception:
+        pass
+
+# Manual compact spacing (safe with 3D)
+fig.subplots_adjust(left=0.02, right=0.98, top=0.96, bottom=0.04, wspace=0.02, hspace=0.02)
+
+axes = np.atleast_1d(axes).ravel()
+
+for i, (n_seg, P_opt, info) in enumerate(results):
+    ax = axes[i]
+    add_wire_sphere(ax, radius=exclusion_zone, color='0.7', alpha=0.22, resolution=28)
+    plot_segments(ax, P_opt, n_seg)
+    set_axes_equal_around(ax, center=(0,0,0), radius=exclusion_zone*1.25, pad=0.02)
+    set_isometric(ax, elev=35.264, azim=45.0, ortho=True)
+    beautify_3d_axes(ax, ticks=False)
+    ax.set_title(f"{n_seg} segs  |  min |p|={info['min_radius']:.2f}", fontsize=8, pad=2)
+    ax.set_xlabel('X', labelpad=1, fontsize=7)
+    ax.set_ylabel('Y', labelpad=1, fontsize=7)
+    ax.set_zlabel('Z', labelpad=1, fontsize=7)
+
+# Hide any unused panels
+for j in range(i + 1, len(axes)):
+    axes[j].set_visible(False)
+
+# Save a crisp figure for the paper (no layout engine = stable)
+# plt.savefig("bezier_segments_isometric.png", dpi=400, bbox_inches="tight", pad_inches=0.02)
+
+plt.show()
