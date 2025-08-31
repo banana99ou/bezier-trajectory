@@ -36,7 +36,6 @@ class BezierCurve:
 # ─────────────────────────────────────────────────────────────────────────────
 def de_casteljau_split_1d(N, tau, basis_index):
     """Split the 1D control vector e_j at tau → return (left, right) coeffs."""
-    # Start from scalar control points that are one-hot at basis_index
     w = np.zeros(N+1, dtype=float); w[basis_index] = 1.0
     left = [w[0]]
     right = [w[-1]]
@@ -63,7 +62,7 @@ def segment_matrices_equal_params(N, n_seg):
     """
     Return list of Ai matrices, one per segment, so that
     segment i control points Qi = Ai @ P (P is (N+1, dim)).
-    Uses standard repeated split at tau = 1/k (k = n_seg, n_seg-1, ..., 2).
+    Uses repeated split at tau = 1/k (k = n_seg, n_seg-1, ..., 2).
     """
     if n_seg < 1:
         raise ValueError("n_seg must be >= 1")
@@ -81,7 +80,6 @@ def segment_matrices_equal_params(N, n_seg):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Half-space linearization: n_i^T (A_i @ P)_k >= r_e
-# Iterative LP/QP on original control points with endpoints fixed
 # ─────────────────────────────────────────────────────────────────────────────
 def build_linear_constraint_matrix(A_list, n_list, dim, r_e):
     """
@@ -89,16 +87,12 @@ def build_linear_constraint_matrix(A_list, n_list, dim, r_e):
     x = vec(P) with shape ((N+1)*dim,), row-major by control point.
     """
     Np1 = A_list[0].shape[1]
-    rows = []
-    lbs  = []
+    rows, lbs = [], []
     for Ai, n in zip(A_list, n_list):
-        # For each control point of this segment
         for k in range(Np1):
             row = np.zeros(Np1 * dim)
-            # Contribution from every original control point j
             for j in range(Np1):
                 coeff = Ai[k, j]  # scalar
-                # Insert coeff * n into x-block for P_j
                 start = j * dim
                 row[start:start+dim] += coeff * n
             rows.append(row)
@@ -123,12 +117,8 @@ def optimize_bezier_outside_sphere(P_init, n_seg=8, r_e=6.0,
                                    max_iter=20, tol=1e-6, lam_smooth=0.0, 
                                    verbose=False, keep_last_normal=True):
     """
-    Fixed-point iteration:
-      1) from current P, compute segment centroids and normals
-      2) solve QP (SLSQP) with linear constraints n_i^T (A_i P)_k >= r_e
-      3) repeat until convergence
-    Endpoints P0, PN are fixed.
-    Returns optimized control points and diagnostic dict.
+    Fixed-point iteration with SLSQP inner solve.
+    Endpoints P0, PN are fixed. Returns (optimized control points, info).
     """
     P = P_init.copy()
     Np1, dim = P.shape
@@ -140,19 +130,15 @@ def optimize_bezier_outside_sphere(P_init, n_seg=8, r_e=6.0,
 
     # Bounds: fix endpoints to start/goal; interior free
     lb = x0.copy(); ub = x0.copy()
-    # unlock all first
     lb[:] = -np.inf; ub[:] =  np.inf
-    # lock P0 and PN
-    lb[:dim] = ub[:dim] = x0[:dim]
-    lb[-dim:] = ub[-dim:] = x0[-dim:]
+    lb[:dim] = ub[:dim] = x0[:dim]       # lock P0
+    lb[-dim:] = ub[-dim:] = x0[-dim:]    # lock PN
     bounds = Bounds(lb, ub)
 
-    # Cache normals across iterations if needed
     normals_prev = None
     info = {"iter": 0, "feasible": False, "min_radius": None}
 
     def obj(x):
-        # 0.5||x - x0||^2 + 0.5 x^T H x  (H comes from curvature)
         dx = x - x0
         return 0.5 * dx @ dx + 0.5 * (x @ (Hs @ x))
 
@@ -160,18 +146,16 @@ def optimize_bezier_outside_sphere(P_init, n_seg=8, r_e=6.0,
         return (x - x0) + (Hs @ x)
 
     for it in range(1, max_iter+1):
-        # Build normals from current P
         P_now = P
         normals = []
         eps = 1e-12
         for Ai in A_list:
-            Qi = Ai @ P_now  # (N+1, dim), control points of this segment
-            ci = Qi.mean(axis=0)  # centroid   (see FMCL note) 
+            Qi = Ai @ P_now
+            ci = Qi.mean(axis=0)
             n = ci / (np.linalg.norm(ci) + eps) if np.linalg.norm(ci) > 1e-9 else None
             if n is None and normals_prev is not None and keep_last_normal:
                 n = normals_prev[len(normals)]
             if n is None:
-                # fall back to outward normal from start->goal plane
                 v = P_now[-1] - P_now[0]
                 n = v / (np.linalg.norm(v) + eps)
             normals.append(n)
@@ -188,7 +172,7 @@ def optimize_bezier_outside_sphere(P_init, n_seg=8, r_e=6.0,
         P = P_new
         normals_prev = normals
         if verbose:
-            print(f"[iter {it}] delta={delta:.3e}, success={res.success}, status={res.status}")
+            print(f"[iter {it}] Δ={delta:.3e}  success={res.success}  status={res.status}")
 
         if delta < tol:
             break
@@ -205,7 +189,7 @@ def optimize_bezier_outside_sphere(P_init, n_seg=8, r_e=6.0,
 # ─────────────────────────────────────────────────────────────────────────────
 # Utility: plotting & checking
 # ─────────────────────────────────────────────────────────────────────────────
-def add_wire_sphere(ax, radius=3.0, center=(0.0, 0.0, 0.0), color='gray', alpha=0.3, resolution=40):
+def add_wire_sphere(ax, radius=3.0, center=(0.0, 0.0, 0.0), color='gray', alpha=0.25, resolution=40):
     cx, cy, cz = center
     u = np.linspace(0, 2*np.pi, resolution)
     v = np.linspace(0, np.pi, resolution)
@@ -230,55 +214,6 @@ def set_axes_equal_around(ax, center=(0,0,0), radius=1.0, pad=0.05):
     ax.set_zlim(cz - half, cz + half)
     ax.set_box_aspect((1, 1, 1))
 
-def plot_segments(ax, P_opt, n_seg, color_cycle=('r','g','b','c','m','y','k')):
-    curve = BezierCurve(P_opt)
-    N = curve.degree
-    A_list = segment_matrices_equal_params(N, n_seg)
-
-    # draw control polygon of the whole curve
-    ax.plot(P_opt[:,0], P_opt[:,1], P_opt[:,2], 'ko--', lw=1.5, label=f'control (N={N})')
-
-    # draw segments with distinct colors
-    ts = np.linspace(0, 1, 200)
-    lines = []
-    cols  = []
-    for i, Ai in enumerate(A_list):
-        Qi = Ai @ P_opt
-        seg = BezierCurve(Qi)
-        Pseg = np.array([seg.point(t) for t in ts])
-        lines.append(np.column_stack((Pseg[:,0], Pseg[:,1], Pseg[:,2])))
-        cols.append(color_cycle[i % len(color_cycle)])
-        # also plot segment control polygons
-        ax.plot(Qi[:,0], Qi[:,1], Qi[:,2], f'{cols[-1]}o--', alpha=0.6)
-    lc = Line3DCollection(lines, colors=cols, linewidths=2.0)
-    ax.add_collection3d(lc)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Demo / experiment per your PI’s checklist
-# ─────────────────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    np.random.seed(0)
-    exclusion_zone = 6.0  # sphere radius r_e
-
-    # ① Initialize quadratic Bézier in 3D (degree 2) connecting arbitrary start/goal
-    P0 = np.array([ 10.0, -10.0,  0.0])
-    P2 = np.array([ -10.0,  10.0,  0.0])
-    # Choose a middle control point INSIDE the sphere to start with (violates constraint)
-    P1 = np.array([  0.0,  0.0,  1.0])
-    P_init = np.vstack([P0, P1, P2])  # (3,3) degree=2
-
-    # ② Optimize for different subdivision counts to show feasibility emerges
-    split_list = [2, 4, 8, 16, 32, 64]
-    results = []
-
-    for n_seg in split_list:
-        P_opt, info = optimize_bezier_outside_sphere(P_init, n_seg=n_seg, r_e=exclusion_zone, max_iter=100, tol=1e-8, lam_smooth=1e-6, verbose=False)
-        results.append((n_seg, P_opt, info))
-        print(f"n_seg={n_seg:>2d} | iter={info['iter']:>2d} | min_radius={info['min_radius']:.3f} | feasible={info['feasible']}")
-
-    # ─────────────────────────────────────────────────────────────────────────────
-# Pretty paper figure: 3 columns + isometric (orthographic) view
-# ─────────────────────────────────────────────────────────────────────────────
 def set_isometric(ax, elev=35.264, azim=45.0, ortho=True):
     ax.view_init(elev=elev, azim=azim)
     try:
@@ -287,82 +222,108 @@ def set_isometric(ax, elev=35.264, azim=45.0, ortho=True):
     except Exception:
         pass
 
-def beautify_3d_axes(ax, ticks=False):
-    """Clean, paper-friendly 3D axes. Safe across Matplotlib versions."""
-    # turn off grid
-    ax.grid(False)
-
-    # Pane face/edge colors (newer mpl: axis.pane; older: set_pane_color)
+def beautify_3d_axes(ax, show_ticks=True, show_grid=True):
+    """Paper-friendly 3D axes with ticks + optional grid."""
+    ax.grid(show_grid)
+    if show_ticks:
+        ax.tick_params(axis='both', which='major', labelsize=8, pad=2)
+    else:
+        ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
+    # pane styling
     for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
-        # Face
         try:
             axis.pane.set_facecolor((1, 1, 1, 1))
-        except Exception:
-            try:
-                axis.set_pane_color((1, 1, 1, 1))
-            except Exception:
-                pass
-        # Edge
-        try:
             axis.pane.set_edgecolor("0.85")
         except Exception:
-            # No simple fallback on very old versions; safe to ignore.
             pass
 
-    # Optional ticks
-    if not ticks:
-        ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
-    else:
-        ax.tick_params(axis='both', which='major', labelsize=8, pad=2)
+def plot_segments_gradient(ax, P_opt, n_seg, cmap_name='viridis', show_seg_ctrl_if=8, lw=2.0):
+    """Plot whole-curve control polygon + each segment with a smooth color gradient."""
+    curve = BezierCurve(P_opt)
+    N = curve.degree
+    A_list = segment_matrices_equal_params(N, n_seg)
 
-    # Hide box spines if available (not always on 3D)
-    try:
-        for sp in ax.spines.values():
-            sp.set_visible(False)
-    except Exception:
-        pass
+    # Whole-curve control polygon (black)
+    ax.plot(P_opt[:,0], P_opt[:,1], P_opt[:,2], 'k.-', lw=1.2, ms=4)
 
-# ③ Visualization & comparison (3-column isometric, tight layout)
-COLS = 3
-rows = int(np.ceil(len(results) / COLS))
+    # Prepare colors
+    cmap = plt.get_cmap(cmap_name)
+    colors = [cmap(0.0)] if len(A_list) == 1 else [cmap(i/(len(A_list)-1)) for i in range(len(A_list))]
 
-# ~2.2–2.4 in per panel: journal-friendly
-COL_W = 2.3
-ROW_H = 2.3
-fig, axes = plt.subplots(
-    rows, COLS, subplot_kw={'projection': '3d'},
-    figsize=(COLS * COL_W, rows * ROW_H)
-)
+    # Draw segments
+    ts = np.linspace(0, 1, 180)
+    lines, cols = [], []
+    for i, Ai in enumerate(A_list):
+        Qi = Ai @ P_opt
+        seg = BezierCurve(Qi)
+        Pseg = np.array([seg.point(t) for t in ts])
+        lines.append(np.column_stack((Pseg[:,0], Pseg[:,1], Pseg[:,2])))
+        cols.append(colors[i])
 
-# Disable any auto layout engines that trigger 3D tightbbox calls
-for _setter in ("set_layout_engine", "set_constrained_layout"):
-    try:
-        getattr(fig, _setter)(False if _setter == "set_constrained_layout" else None)
-    except Exception:
-        pass
+        # Only show segment control polygons when n_seg is small
+        if n_seg <= show_seg_ctrl_if:
+            ax.plot(Qi[:,0], Qi[:,1], Qi[:,2], '-', color=colors[i], alpha=0.55, lw=1.0, marker='o', ms=3)
 
-# Manual compact spacing (safe with 3D)
-fig.subplots_adjust(left=0.02, right=0.98, top=0.96, bottom=0.04, wspace=0.02, hspace=0.02)
+    lc = Line3DCollection(lines, colors=cols, linewidths=lw, alpha=0.95)
+    ax.add_collection3d(lc)
 
-axes = np.atleast_1d(axes).ravel()
+def plot_initial_guess(ax, P_init, linestyle=':', color='0.5', lw=1.6):
+    """Grey dotted initial curve overlay."""
+    init_curve = BezierCurve(P_init)
+    _, Ppts = init_curve.sample(300)
+    ax.plot(Ppts[:,0], Ppts[:,1], Ppts[:,2], linestyle=linestyle, color=color, lw=lw)
 
-for i, (n_seg, P_opt, info) in enumerate(results):
-    ax = axes[i]
-    add_wire_sphere(ax, radius=exclusion_zone, color='0.7', alpha=0.22, resolution=28)
-    plot_segments(ax, P_opt, n_seg)
-    set_axes_equal_around(ax, center=(0,0,0), radius=exclusion_zone*1.25, pad=0.02)
-    set_isometric(ax, elev=35.264, azim=45.0, ortho=True)
-    beautify_3d_axes(ax, ticks=False)
-    ax.set_title(f"{n_seg} segs  |  min |p|={info['min_radius']:.2f}", fontsize=8, pad=2)
-    ax.set_xlabel('X', labelpad=1, fontsize=7)
-    ax.set_ylabel('Y', labelpad=1, fontsize=7)
-    ax.set_zlabel('Z', labelpad=1, fontsize=7)
+# ─────────────────────────────────────────────────────────────────────────────
+# Demo / experiment (4 panels, ticks + grid, initial overlay on top-left)
+# ─────────────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    np.random.seed(0)
+    r_e = 6.0  # sphere radius
 
-# Hide any unused panels
-for j in range(i + 1, len(axes)):
-    axes[j].set_visible(False)
+    # Quadratic Bézier in 3D (degree 2) connecting arbitrary start/goal
+    P0 = np.array([ 4.0, -7.0,  0.0])
+    P2 = np.array([ -5.0,  7.0,  3.0])
+    # Middle CP slightly away from origin (your fix)
+    P1 = np.array([  -1.0,   -1.0,  2.0])  # tweak as needed
+    P_init = np.vstack([P0, P1, P2])  # (3,3) degree=2
 
-# Save a crisp figure for the paper (no layout engine = stable)
-# plt.savefig("bezier_segments_isometric.png", dpi=400, bbox_inches="tight", pad_inches=0.02)
+    # Choose exactly 4 cases for the figure (top-left is 2 segs)
+    split_list = [2, 4, 8, 16, 32, 64]
+    results = []
+    for n_seg in split_list:
+        P_opt, info = optimize_bezier_outside_sphere(
+            P_init, n_seg=n_seg, r_e=r_e, max_iter=120, tol=1e-8,
+            lam_smooth=1e-6, verbose=False
+        )
+        results.append((n_seg, P_opt, info))
+        print(f"n_seg={n_seg:>2d} | iter={info['iter']:>3d} | min_radius={info['min_radius']:.3f} | feasible={info['feasible']}")
 
-plt.show()
+    # Figure: 2×2 panels with ticks + grid; top-left overlays initial guess
+    fig, axes = plt.subplots(2, 3, subplot_kw={'projection': '3d'}, figsize=(7.0, 6.4))
+    axes = axes.ravel()
+
+    for i, (n_seg, P_opt, info) in enumerate(results):
+        ax = axes[i]
+        add_wire_sphere(ax, radius=r_e, color='#f38d0e', alpha=0.22, resolution=28)
+        plot_segments_gradient(ax, P_opt, n_seg, cmap_name='viridis', show_seg_ctrl_if=8, lw=2.1)
+
+        # Overlay initial guess ONLY on top-left (i==0) with 2 segs
+        if i == 0 and n_seg == 2:
+            plot_initial_guess(ax, P_init, linestyle=':', color='0.5', lw=1.8)
+
+        set_axes_equal_around(ax, center=(0,0,0), radius=r_e*1.25, pad=0.04)
+        set_isometric(ax, elev=35.264, azim=45.0, ortho=True)
+        beautify_3d_axes(ax, show_ticks=True, show_grid=True)
+
+        ax.set_title(f"{n_seg} segs   |   min |p| = {info['min_radius']:.2f}", fontsize=9, pad=3)
+        ax.set_xlabel('X', labelpad=4, fontsize=9)
+        ax.set_ylabel('Y', labelpad=4, fontsize=9)
+        ax.set_zlabel('Z', labelpad=4, fontsize=9)
+
+    # Tight-ish layout for papers
+    fig.subplots_adjust(left=0.03, right=0.98, top=0.94, bottom=0.04, wspace=0.02, hspace=0.02)
+
+    # Save if you want camera-ready output
+    # plt.savefig("bezier_outside_sphere_2x2.png", dpi=450, bbox_inches="tight", pad_inches=0.02)
+
+    plt.show()
