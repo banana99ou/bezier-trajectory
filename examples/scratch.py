@@ -1,391 +1,296 @@
-#!/usr/bin/env python3
-"""
-Quadratic 3D Bézier orbital transfer with Earth keep-out, using:
-- Adaptive detection of violating subintervals (triangle–sphere test)
-- Linear half-space constraints per violating interval (centroid outward normal)
-- Single global QP over original control points (fixed end points)
-- Fixed-point iterations until feasible / converged
-- Visualization and split-count comparison
-
-Author: (you)
-"""
-
 import numpy as np
-import cvxpy as cp
+from scipy.special import comb
+from scipy.optimize import minimize, LinearConstraint, Bounds
 import matplotlib.pyplot as plt
-from typing import List, Tuple
+from mpl_toolkits.mplot3d.art3d import Line3DCollection
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Bézier (Quadratic) utilities
+# Bézier curve core
 # ─────────────────────────────────────────────────────────────────────────────
-
-class BezierQuad3D:
-    """Quadratic 3D Bézier with control points P0,P1,P2 (shape (3,3))."""
-
+class BezierCurve:
     def __init__(self, control_points: np.ndarray):
-        P = np.asarray(control_points, dtype=float)
-        if P.shape != (3, 3):
-            raise ValueError("Quadratic Bézier requires control_points shape (3,3) for 3D.")
-        self.P = P  # rows: P0,P1,P2; cols: x,y,z
+        """control_points: shape (N+1, dim). Degree = N."""
+        P = np.array(control_points, dtype=float)
+        if P.ndim != 2:
+            raise ValueError("control_points must be (N+1, dim)")
+        self.control_points = P
+        self.degree = P.shape[0] - 1
+        self.dimension = P.shape[1]
 
-    def eval(self, t: float) -> np.ndarray:
-        """Evaluate B(t) for t in [0,1]."""
-        P0, P1, P2 = self.P
-        u = 1.0 - t
-        return (u*u) * P0 + 2*u*t * P1 + (t*t) * P2
+    def point(self, tau: float) -> np.ndarray:
+        """Evaluate Bézier point p(tau)."""
+        N, d = self.degree, self.dimension
+        out = np.zeros(d, dtype=float)
+        for i in range(N + 1):
+            b = comb(N, i) * (tau ** i) * ((1 - tau) ** (N - i))
+            out += b * self.control_points[i]
+        return out
 
-    def split(self, tau: float) -> Tuple["BezierQuad3D", "BezierQuad3D"]:
-        """De Casteljau split at tau ∈ [0,1]. Return left and right segments."""
-        P0, P1, P2 = self.P
-        P01 = (1-tau)*P0 + tau*P1
-        P12 = (1-tau)*P1 + tau*P2
-        P0112 = (1-tau)*P01 + tau*P12
-        left = np.vstack([P0, P01, P0112])
-        right = np.vstack([P0112, P12, P2])
-        return BezierQuad3D(left), BezierQuad3D(right)
-
-    def split_N(self, N: int) -> List["BezierQuad3D"]:
-        """Split into N equal-parameter segments."""
-        if N <= 0:
-            raise ValueError("N must be a positive integer")
-        segs = []
-        a = 0.0
-        for k in range(N):
-            b = (k+1)/N
-            segs.append(self.subcurve(a, b))
-            a = b
-        return segs
-
-    def subcurve(self, a: float, b: float) -> "BezierQuad3D":
-        """Return sub-curve restricted to t ∈ [a,b]."""
-        if not (0.0 <= a < b <= 1.0):
-            raise ValueError("Require 0 <= a < b <= 1")
-        # Split at a, take right; then split that at s=(b-a)/(1-a), take left
-        R = self.split(a)[1]
-        s = (b - a) / (1.0 - a)
-        L_of_R, _ = R.split(s)
-        return L_of_R
-
-    def subcurve_weights(self, a: float, b: float) -> np.ndarray:
-        """
-        Return W (3x3) such that: sub_control_points(a,b) = W @ P, where P is (3x3) with rows P0,P1,P2.
-        Each row of W gives the convex weights over [P0,P1,P2] for that subcurve control point.
-        """
-        # Use identity basis trick to extract weights
-        I = np.eye(3)
-        basis_curve = BezierQuad3D(I)  # treat "points" as 3D basis vectors
-        sub_basis = basis_curve.subcurve(a, b).P  # shape (3,3), rows are weights over original P rows
-        # sub_basis[j] is the weight vector (w0,w1,w2) for sub-control-point j
-        return sub_basis  # (3,3)
-
-    def second_derivative_vector(self) -> np.ndarray:
-        """
-        B''(t) is constant for quadratic:
-        B''(t) = 2*(P2 - 2P1 + P0)
-        """
-        P0, P1, P2 = self.P
-        return 2.0*(P2 - 2.0*P1 + P0)
-
-    def centroid(self) -> np.ndarray:
-        return self.P.mean(axis=0)
-
+    def sample(self, num=200):
+        ts = np.linspace(0.0, 1.0, num)
+        P = np.array([self.point(t) for t in ts])
+        return ts, P
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Geometry: triangle–sphere intersection (for quadratic Bézier control triangle)
+# De Casteljau split as matrices  (linear maps on original control points)
 # ─────────────────────────────────────────────────────────────────────────────
+def de_casteljau_split_1d(N, tau, basis_index):
+    """Split the 1D control vector e_j at tau → return (left, right) coeffs."""
+    # Start from scalar control points that are one-hot at basis_index
+    w = np.zeros(N+1, dtype=float); w[basis_index] = 1.0
+    left = [w[0]]
+    right = [w[-1]]
+    W = w.copy()
+    for _ in range(1, N+1):
+        W = (1 - tau) * W[:-1] + tau * W[1:]
+        left.append(W[0])
+        right.append(W[-1])
+    L = np.array(left)      # (N+1,)
+    R = np.array(right[::-1])
+    return L, R
 
-def _closest_point_on_segment(p, a, b):
-    ab = b - a
-    t = np.dot(p - a, ab) / (np.dot(ab, ab) + 1e-15)
-    t = np.clip(t, 0.0, 1.0)
-    return a + t * ab
+def de_casteljau_split_matrices(N, tau):
+    """Return (S_left, S_right) s.t. L = S_left @ P, R = S_right @ P."""
+    S_left  = np.zeros((N+1, N+1), dtype=float)
+    S_right = np.zeros((N+1, N+1), dtype=float)
+    for j in range(N+1):
+        L, R = de_casteljau_split_1d(N, tau, j)
+        S_left[:,  j] = L
+        S_right[:, j] = R
+    return S_left, S_right
 
-def closest_point_on_triangle(p, a, b, c):
+def segment_matrices_equal_params(N, n_seg):
     """
-    Return closest point on triangle Δ(a,b,c) to point p. Robust barycentric clamp.
+    Return list of Ai matrices, one per segment, so that
+    segment i control points Qi = Ai @ P (P is (N+1, dim)).
+    Uses standard repeated split at tau = 1/k (k = n_seg, n_seg-1, ..., 2).
     """
-    ab, ac, ap = b - a, c - a, p - a
-    d1, d2 = np.dot(ab, ap), np.dot(ac, ap)
-    if d1 <= 0 and d2 <= 0:
-        return a
-
-    bp = p - b
-    d3, d4 = np.dot(ab, bp), np.dot(ac, bp)
-    if d3 >= 0 and d4 <= d3:
-        return b
-
-    vc = d1*d4 - d3*d2
-    if vc <= 0 and d1 >= 0 and d3 <= 0:
-        v = d1 / (d1 - d3 + 1e-15)
-        return a + v * ab
-
-    cp = p - c
-    d5, d6 = np.dot(ab, cp), np.dot(ac, cp)
-    if d6 >= 0 and d5 <= d6:
-        return c
-
-    vb = d5*d2 - d1*d6
-    if vb <= 0 and d2 >= 0 and d6 <= 0:
-        w = d2 / (d2 - d6 + 1e-15)
-        return a + w * ac
-
-    va = d3*d6 - d5*d4
-    if va <= 0 and (d4 - d3) >= 0 and (d5 - d6) >= 0:
-        w = (d4 - d3) / ((d4 - d3) + (d5 - d6) + 1e-15)
-        return b + w * (c - b)
-
-    # Inside face region
-    denom = 1.0 / (np.dot(ab, ab)*np.dot(ac, ac) - np.dot(ab, ac)**2 + 1e-15)
-    v = (np.dot(ac, ac)*np.dot(ab, ap) - np.dot(ab, ac)*np.dot(ac, ap)) * denom
-    w = (np.dot(ab, ab)*np.dot(ac, ap) - np.dot(ab, ac)*np.dot(ab, ap)) * denom
-    return a + v*ab + w*ac
-
-def triangle_sphere_margin(tri: np.ndarray, center: np.ndarray, R: float) -> float:
-    """
-    Positive margin => triangle safely outside sphere by that distance.
-    Negative margin => intersects/inside by |margin|.
-    tri: (3,3) triangle vertices
-    """
-    q = closest_point_on_triangle(center, tri[0], tri[1], tri[2])
-    return np.linalg.norm(q - center) - R
-
+    if n_seg < 1:
+        raise ValueError("n_seg must be >= 1")
+    if n_seg == 1:
+        return [np.eye(N+1)]
+    mats = []
+    remainder = np.eye(N+1)
+    for k in range(n_seg, 1, -1):
+        tau = 1.0 / k
+        S_L, S_R = de_casteljau_split_matrices(N, tau)
+        mats.append(S_L @ remainder)
+        remainder = S_R @ remainder
+    mats.append(remainder)  # last segment
+    return mats  # list of (N+1,N+1)
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Detect violating intervals by adaptive subdivision
+# Half-space linearization: n_i^T (A_i @ P)_k >= r_e
+# Iterative LP/QP on original control points with endpoints fixed
 # ─────────────────────────────────────────────────────────────────────────────
-
-def find_violating_intervals(curve: BezierQuad3D,
-                             center: np.ndarray,
-                             R: float,
-                             max_depth: int = 12,
-                             tol_len: float = 1e-3) -> List[Tuple[float, float]]:
+def build_linear_constraint_matrix(A_list, n_list, dim, r_e):
     """
-    Return list of parameter intervals [ta,tb] whose control triangle may
-    intersect the sphere. Conservative (may over-mark small near-tangent cases).
+    Build LinearConstraint(lb<=A@x<=ub) for all segments and their control points.
+    x = vec(P) with shape ((N+1)*dim,), row-major by control point.
     """
-    out: List[Tuple[float, float]] = []
-    stack = [(0.0, 1.0, curve, 0)]
-    while stack:
-        ta, tb, seg, depth = stack.pop()
-        tri = seg.P
-        margin = triangle_sphere_margin(tri, center, R)
-        if margin > 0.0:
-            # definitely outside: safe
-            continue
+    Np1 = A_list[0].shape[1]
+    rows = []
+    lbs  = []
+    for Ai, n in zip(A_list, n_list):
+        # For each control point of this segment
+        for k in range(Np1):
+            row = np.zeros(Np1 * dim)
+            # Contribution from every original control point j
+            for j in range(Np1):
+                coeff = Ai[k, j]  # scalar
+                # Insert coeff * n into x-block for P_j
+                start = j * dim
+                row[start:start+dim] += coeff * n
+            rows.append(row)
+            lbs.append(r_e)
+    A = np.vstack(rows)
+    lb = np.array(lbs)
+    ub = np.full_like(lb, np.inf, dtype=float)
+    return LinearConstraint(A, lb, ub)
 
-        # If all three ctrl pts are well inside, definitely violating
-        dists = np.linalg.norm(tri - center, axis=1)
-        if np.all(dists < R - 1e-6):
-            out.append((ta, tb))
-            continue
+def curvature_H(Np1, dim, lam=0.0):
+    """Return H = 2*lam*(I_dim ⊗ D^T D) for second-difference smoothing."""
+    if lam <= 0: 
+        return np.zeros((Np1*dim, Np1*dim))
+    D = np.zeros((Np1-2, Np1))
+    for r in range(Np1-2):
+        D[r, r:r+3] = [1, -2, 1]
+    DtD = D.T @ D
+    H = np.kron(np.eye(dim), 2*lam*DtD)
+    return H
 
-        if depth >= max_depth or (tb - ta) < tol_len:
-            # uncertain or thin: mark as violating to be safe
-            out.append((ta, tb))
-            continue
-
-        L, Rseg = seg.split(0.5)
-        tm = 0.5*(ta + tb)
-        stack.append((tm, tb, Rseg, depth+1))
-        stack.append((ta, tm, L,    depth+1))
-
-    # Merge adjacent intervals
-    out.sort()
-    merged: List[Tuple[float, float]] = []
-    for a, b in out:
-        if not merged or a > merged[-1][1] + 1e-9:
-            merged.append([a, b])
-        else:
-            merged[-1][1] = max(merged[-1][1], b)
-    return [(a, b) for a, b in merged]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Build and solve the single global QP (one curve), fixed-point iterations
-# ─────────────────────────────────────────────────────────────────────────────
-
-def global_repair_QP(P_init: np.ndarray,
-                     center: np.ndarray,
-                     R: float,
-                     max_iters: int = 10,
-                     lambda_reg: float = 1.0,
-                     lambda_acc: float = 1e-2,
-                     eps_stop: float = 1e-5,
-                     max_depth: int = 12) -> Tuple[np.ndarray, List[dict]]:
+def optimize_bezier_outside_sphere(P_init, n_seg=8, r_e=6.0, 
+                                   max_iter=20, tol=1e-6, lam_smooth=0.0, 
+                                   verbose=False, keep_last_normal=True):
     """
-    Solve one-curve global optimization with half-space constraints from violating intervals.
-    Endpoints (P0,P2) are fixed to initial endpoints.
-    Minimize: lambda_reg * ||P - P_prev||^2 + lambda_acc * ||P0 - 2P1 + P2||^2
-    subject to: n_i^T (W_ij @ P) >= R, for each violating interval i and sub-ctrl j=0,1,2.
-    Returns (P_opt, history)
+    Fixed-point iteration:
+      1) from current P, compute segment centroids and normals
+      2) solve QP (SLSQP) with linear constraints n_i^T (A_i P)_k >= r_e
+      3) repeat until convergence
+    Endpoints P0, PN are fixed.
+    Returns optimized control points and diagnostic dict.
     """
-    P_prev = P_init.copy()
-    history = []
+    P = P_init.copy()
+    Np1, dim = P.shape
+    N = Np1 - 1
+    A_list = segment_matrices_equal_params(N, n_seg)
 
-    for k in range(max_iters):
-        curve_prev = BezierQuad3D(P_prev)
-        viol = find_violating_intervals(curve_prev, center, R, max_depth=max_depth)
+    Hs = curvature_H(Np1, dim, lam=lam_smooth)
+    x0 = P.reshape(-1)
 
-        # Compute normals (constants at iteration k) and weights
+    # Bounds: fix endpoints to start/goal; interior free
+    lb = x0.copy(); ub = x0.copy()
+    # unlock all first
+    lb[:] = -np.inf; ub[:] =  np.inf
+    # lock P0 and PN
+    lb[:dim] = ub[:dim] = x0[:dim]
+    lb[-dim:] = ub[-dim:] = x0[-dim:]
+    bounds = Bounds(lb, ub)
+
+    # Cache normals across iterations if needed
+    normals_prev = None
+    info = {"iter": 0, "feasible": False, "min_radius": None}
+
+    def obj(x):
+        # 0.5||x - x0||^2 + 0.5 x^T H x  (H comes from curvature)
+        dx = x - x0
+        return 0.5 * dx @ dx + 0.5 * (x @ (Hs @ x))
+
+    def grad(x):
+        return (x - x0) + (Hs @ x)
+
+    for it in range(1, max_iter+1):
+        # Build normals from current P
+        P_now = P
         normals = []
-        weights = []  # list of (W_i: 3x3) per interval
-        for (a, b) in viol:
-            sub = curve_prev.subcurve(a, b)
-            c_i = sub.centroid()
-            n_hat = c_i - center
-            n_norm = np.linalg.norm(n_hat)
-            if n_norm < 1e-12:
-                # degenerate: pick some outward based on midpoint on curve
-                mid = sub.eval(0.5)
-                n_hat = mid - center
-                n_norm = np.linalg.norm(n_hat) + 1e-12
-            n_hat /= n_norm
-            normals.append(n_hat)
-            weights.append(curve_prev.subcurve_weights(a, b))  # 3x3
+        eps = 1e-12
+        for Ai in A_list:
+            Qi = Ai @ P_now  # (N+1, dim), control points of this segment
+            ci = Qi.mean(axis=0)  # centroid   (see FMCL note) 
+            n = ci / (np.linalg.norm(ci) + eps) if np.linalg.norm(ci) > 1e-9 else None
+            if n is None and normals_prev is not None and keep_last_normal:
+                n = normals_prev[len(normals)]
+            if n is None:
+                # fall back to outward normal from start->goal plane
+                v = P_now[-1] - P_now[0]
+                n = v / (np.linalg.norm(v) + eps)
+            normals.append(n)
 
-        # Decision variable: P (3x3)
-        P = cp.Variable((3, 3))
+        lin_con = build_linear_constraint_matrix(A_list, normals, dim, r_e)
 
-        # Equality constraints: lock endpoints
-        cons = [
-            P[0, :] == P_init[0, :],  # start fixed
-            P[2, :] == P_init[2, :]   # goal fixed
-        ]
+        res = minimize(obj, P_now.reshape(-1), method="SLSQP",
+                       jac=grad, constraints=[lin_con], bounds=bounds,
+                       options=dict(maxiter=200, ftol=1e-12, disp=False))
+        x_new = res.x
+        P_new = x_new.reshape(Np1, dim)
 
-        # Half-space constraints for all violating intervals
-        for n_hat, W in zip(normals, weights):
-            # For each sub-control point j (0..2): n^T (W_j @ P) >= R
-            for j in range(3):
-                wj = W[j, :]  # shape (3,)
-                p_sub_j = wj @ P          # (3,) affine in P
-                cons.append(n_hat @ p_sub_j >= R)
+        delta = np.linalg.norm(P_new - P)
+        P = P_new
+        normals_prev = normals
+        if verbose:
+            print(f"[iter {it}] delta={delta:.3e}, success={res.success}, status={res.status}")
 
-        # Objective: minimal change + curvature (acceleration proxy)
-        acc_vec = P[0, :] - 2.0*P[1, :] + P[2, :]
-        obj = (lambda_reg * cp.sum_squares(P - P_prev)
-               + lambda_acc * cp.sum_squares(acc_vec))
+        if delta < tol:
+            break
 
-        prob = cp.Problem(cp.Minimize(obj), cons)
-        prob.solve(solver=cp.OSQP, eps_abs=1e-7, eps_rel=1e-7, verbose=False)
-
-        if P.value is None:
-            raise RuntimeError("QP infeasible or solver failed. Try loosening constraints or increasing max_depth.")
-
-        P_new = P.value
-        # Record
-        history.append({
-            "iter": k,
-            "num_intervals": len(viol),
-            "obj": prob.value,
-        })
-
-        # Stopping conditions
-        delta = np.linalg.norm(P_new - P_prev)
-        if len(viol) == 0 or delta < eps_stop:
-            return P_new, history
-
-        P_prev = P_new
-
-    return P_prev, history
-
+    # Final feasibility check by dense sampling
+    curve = BezierCurve(P)
+    ts = np.linspace(0, 1, 1000)
+    pts = np.array([curve.point(t) for t in ts])
+    radii = np.linalg.norm(pts, axis=1)
+    min_r = float(np.min(radii))
+    info.update({"iter": it, "feasible": bool(min_r >= r_e - 1e-6), "min_radius": min_r})
+    return P, info
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Visualization helpers
+# Utility: plotting & checking
 # ─────────────────────────────────────────────────────────────────────────────
-
-def plot_sphere(ax, R: float, center=(0,0,0), color='gray', alpha=0.25, res=40):
+def add_wire_sphere(ax, radius=3.0, center=(0.0, 0.0, 0.0), color='gray', alpha=0.3, resolution=40):
     cx, cy, cz = center
-    u = np.linspace(0, 2*np.pi, res)
-    v = np.linspace(0, np.pi, res)
+    u = np.linspace(0, 2*np.pi, resolution)
+    v = np.linspace(0, np.pi, resolution)
     uu, vv = np.meshgrid(u, v)
-    x = cx + R*np.cos(uu)*np.sin(vv)
-    y = cy + R*np.sin(uu)*np.sin(vv)
-    z = cz + R*np.cos(vv)
+    x = cx + radius * np.cos(uu) * np.sin(vv)
+    y = cy + radius * np.sin(uu) * np.sin(vv)
+    z = cz + radius * np.cos(vv)
     ax.plot_wireframe(x, y, z, rstride=3, cstride=3, color=color, alpha=alpha)
 
-def plot_curve(ax, curve: BezierQuad3D, label=None, color='C0', lw=2.0, n=200):
-    ts = np.linspace(0, 1, n)
-    P = np.array([curve.eval(t) for t in ts])
-    ax.plot(P[:,0], P[:,1], P[:,2], color=color, lw=lw, label=label)
+def set_axes_equal_around(ax, center=(0,0,0), radius=1.0, pad=0.05):
+    cx, cy, cz = center
+    x0, x1 = ax.get_xlim3d()
+    y0, y1 = ax.get_ylim3d()
+    z0, z1 = ax.get_zlim3d()
+    x0 = min(x0, cx - radius); x1 = max(x1, cx + radius)
+    y0 = min(y0, cy - radius); y1 = max(y1, cy + radius)
+    z0 = min(z0, cz - radius); z1 = max(z1, cz + radius)
+    max_range = max(x1 - x0, y1 - y0, z1 - z0)
+    half = 0.5 * max_range * (1 + pad)
+    ax.set_xlim(cx - half, cx + half)
+    ax.set_ylim(cy - half, cy + half)
+    ax.set_zlim(cz - half, cz + half)
+    ax.set_box_aspect((1, 1, 1))
 
-def plot_ctrl_polygon(ax, curve: BezierQuad3D, color='k', ls='--', marker='o'):
-    P = curve.P
-    ax.plot(P[:,0], P[:,1], P[:,2], ls=ls, marker=marker, color=color, alpha=0.8)
+def plot_segments(ax, P_opt, n_seg, color_cycle=('r','g','b','c','m','y','k')):
+    curve = BezierCurve(P_opt)
+    N = curve.degree
+    A_list = segment_matrices_equal_params(N, n_seg)
 
+    # draw control polygon of the whole curve
+    ax.plot(P_opt[:,0], P_opt[:,1], P_opt[:,2], 'ko--', lw=1.5, label=f'control (N={N})')
+
+    # draw segments with distinct colors
+    ts = np.linspace(0, 1, 200)
+    lines = []
+    cols  = []
+    for i, Ai in enumerate(A_list):
+        Qi = Ai @ P_opt
+        seg = BezierCurve(Qi)
+        Pseg = np.array([seg.point(t) for t in ts])
+        lines.append(np.column_stack((Pseg[:,0], Pseg[:,1], Pseg[:,2])))
+        cols.append(color_cycle[i % len(color_cycle)])
+        # also plot segment control polygons
+        ax.plot(Qi[:,0], Qi[:,1], Qi[:,2], f'{cols[-1]}o--', alpha=0.6)
+    lc = Line3DCollection(lines, colors=cols, linewidths=2.0)
+    ax.add_collection3d(lc)
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Demo / Paper Figure Generator
+# Demo / experiment per your PI’s checklist
 # ─────────────────────────────────────────────────────────────────────────────
-
-def demo():
+if __name__ == "__main__":
     np.random.seed(0)
-    # Earth at origin
-    center = np.array([0.0, 0.0, 0.0])
-    R = 6.0  # exclusion radius (scaled units)
+    exclusion_zone = 6.0  # sphere radius r_e
 
-    # Start / goal (outside Earth)
-    P0 = np.array([-12.0, -10.0,  2.0])
-    P2 = np.array([ 12.0,  10.0, -1.0])
+    # ① Initialize quadratic Bézier in 3D (degree 2) connecting arbitrary start/goal
+    P0 = np.array([-10.0, -3.0,  0.0])
+    P2 = np.array([ 10.0,  3.0,  0.0])
+    # Choose a middle control point INSIDE the sphere to start with (violates constraint)
+    P1 = np.array([  0.0,  0.0,  0.0])
+    P_init = np.vstack([P0, P1, P2])  # (3,3) degree=2
 
-    # Pick a middle control to deliberately dip into Earth
-    P1 = np.array([  0.0,  0.0, -8.0])  # this causes a deep incursion
-    P_init = np.vstack([P0, P1, P2])
+    # ② Optimize for different subdivision counts to show feasibility emerges
+    split_list = [1, 2, 4, 8, 16]
+    results = []
 
-    curve0 = BezierQuad3D(P_init)
+    for n_seg in split_list:
+        P_opt, info = optimize_bezier_outside_sphere(
+            P_init, n_seg=n_seg, r_e=exclusion_zone,
+            max_iter=30, tol=1e-8, lam_smooth=1e-3, verbose=False
+        )
+        results.append((n_seg, P_opt, info))
+        print(f"n_seg={n_seg:>2d} | iter={info['iter']:>2d} | min_radius={info['min_radius']:.3f} | feasible={info['feasible']}")
 
-    # Run global fixed-point QP repair
-    P_opt, hist = global_repair_QP(P_init, center, R,
-                                   max_iters=15,
-                                   lambda_reg=1.0,
-                                   lambda_acc=5e-2,
-                                   eps_stop=1e-6,
-                                   max_depth=12)
-    curve_opt = BezierQuad3D(P_opt)
-
-    # Figure 1: before vs after
-    fig = plt.figure(figsize=(9, 7))
-    ax = fig.add_subplot(111, projection='3d')
-    plot_sphere(ax, R, center, color='gray', alpha=0.3)
-    plot_curve(ax, curve0, label='Initial curve', color='C3', lw=2.0)
-    plot_ctrl_polygon(ax, curve0, color='C3', ls='--')
-    plot_curve(ax, curve_opt, label='Optimized (single curve)', color='C0', lw=2.5)
-    plot_ctrl_polygon(ax, curve_opt, color='C0', ls='--')
-    ax.set_title("Earth keep-out: single-curve global optimization")
-    ax.legend()
-    ax.set_box_aspect([1,1,1])
-    plt.tight_layout()
-
-    # Figure 2: show that increasing subdivision constraint density helps
-    split_list = [2, 4, 8, 16]
-    colors = ['C1','C2','C4','C6']
-    fig2 = plt.figure(figsize=(10, 8))
-    ax2 = fig2.add_subplot(111, projection='3d')
-    plot_sphere(ax2, R, center, color='gray', alpha=0.3)
-    plot_curve(ax2, curve0, label='Initial', color='0.5', lw=1.5)
-    plot_ctrl_polygon(ax2, curve0, color='0.5', ls='--')
-
-    # For comparison, we "force" constraint generation by limiting max_depth
-    for sp, col in zip(split_list, colors):
-        P_prev = P_init.copy()
-        P_tmp, _ = global_repair_QP(P_prev, center, R,
-                                    max_iters=15,
-                                    lambda_reg=1.0,
-                                    lambda_acc=5e-2,
-                                    eps_stop=1e-6,
-                                    max_depth=int(np.log2(sp))+1)  # rough tie to split density
-        c = BezierQuad3D(P_tmp)
-        plot_curve(ax2, c, label=f'Optimized (constraints~{sp})', color=col, lw=2.0)
-
-    ax2.set_title("More violating subsegments ⇒ more linear walls ⇒ easier feasibility")
-    ax2.legend()
-    ax2.set_box_aspect([1,1,1])
+    # ③ Visualization & comparison
+    cols = 2
+    rows = int(np.ceil(len(results) / cols))
+    fig = plt.figure(figsize=(6*cols, 5*rows))
+    for idx, (n_seg, P_opt, info) in enumerate(results, start=1):
+        ax = fig.add_subplot(rows, cols, idx, projection='3d')
+        add_wire_sphere(ax, radius=exclusion_zone, color='gray', alpha=0.25)
+        plot_segments(ax, P_opt, n_seg)
+        set_axes_equal_around(ax, center=(0,0,0), radius=exclusion_zone*1.4)
+        ax.set_title(f"Segments = {n_seg}\nmin |p|={info['min_radius']:.2f}, feasible={info['feasible']}")
+        ax.set_xlabel('X'); ax.set_ylabel('Y'); ax.set_zlabel('Z')
     plt.tight_layout()
     plt.show()
 
-    # Print iteration log
-    for rec in hist:
-        print(f"Iter {rec['iter']:2d} | violating intervals: {rec['num_intervals']:2d} | obj={rec['obj']:.4e}")
-
-
-if __name__ == "__main__":
-    demo()
+# https://github.com/banana99ou/bezier-trajectory.git
