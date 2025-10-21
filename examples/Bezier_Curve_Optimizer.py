@@ -585,7 +585,7 @@ if __name__ == "__main__":
         set_isometric(ax, elev=35.264, azim=45.0, ortho=True)
         beautify_3d_axes(ax, show_ticks=True, show_grid=True)
 
-        ax.set_title(f"{n_seg} segs   |   min |p| = {info['min_radius']:.2f}", fontsize=9, pad=3)
+        ax.set_title(f"{n_seg} segs   |   min |p| = {info['min_radius']:.2f}", fontsize=9, pad=3)
         ax.set_xlabel('X', labelpad=4, fontsize=9)
         ax.set_ylabel('Y', labelpad=4, fontsize=9)
         ax.set_zlabel('Z', labelpad=4, fontsize=9)
