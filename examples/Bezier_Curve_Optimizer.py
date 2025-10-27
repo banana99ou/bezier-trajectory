@@ -4,14 +4,14 @@ Bézier Trajectory Optimization with Sphere Avoidance
 This module implements optimization of Bézier curves to avoid obstacles (spheres)
 using segment-based linearization and iterative optimization. The main approach
 splits a Bézier curve into segments and applies half-space constraints to ensure
-the curve stays outside a given sphere.
+the curve stays outside a given sphere while minimizing acceleration.
 
 Key components:
 - BezierCurve: Core Bézier curve evaluation
 - De Casteljau splitting: Matrix-based curve subdivision
 - Linear constraint building: Half-space constraint formulation
-- Optimization: SLSQP-based iterative optimization
-- Visualization: 3D plotting utilities
+- Optimization: QP-based acceleration minimization (equation 8b from paper)
+- Visualization: 3D plotting utilities with acceleration display
 """
 
 import numpy as np
@@ -19,6 +19,7 @@ from scipy.special import comb
 from scipy.optimize import minimize, LinearConstraint, Bounds
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
+import warnings
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Bézier curve core
@@ -236,32 +237,87 @@ def build_linear_constraint_matrix(A_list, n_list, dim, r_e):
     ub = np.full_like(lb, np.inf, dtype=float)  # Upper bounds (unconstrained)
     return LinearConstraint(A, lb, ub)
 
-def curvature_H(Np1, dim, lam=0.0):
+def acceleration_H(Np1, dim, T=1.0, lam=1.0):
     """
-    Compute curvature regularization matrix for smoothing.
+    Compute acceleration minimization matrix for Bézier curves.
     
-    Returns the Hessian matrix H = 2*lam*(I_dim ⊗ D^T D) where D is the
-    second-difference operator. This penalizes high curvature in the control
-    polygon, encouraging smoother curves.
+    Implements equation (8b) from the paper: J = (4/T³) |Δ²P|²
+    For quadratic Bézier curves: B''(τ) = 2(P₂ - 2P₁ + P₀) = constant
+    
+    This minimizes the integral of squared acceleration: ∫ ||B''(τ)||² dτ
     
     Args:
-        Np1: Number of control points (N+1)
+        Np1: Number of control points (N+1) 
         dim: Spatial dimension
-        lam: Regularization parameter (0 = no smoothing)
+        T: Time duration (default: 1.0)
+        lam: Regularization parameter (default: 1.0)
         
     Returns:
-        np.ndarray: (Np1*dim, Np1*dim) regularization matrix
+        np.ndarray: (Np1*dim, Np1*dim) acceleration penalty matrix
     """
-    if lam <= 0: 
+    if lam <= 0:
         return np.zeros((Np1*dim, Np1*dim))  # No regularization
     
-    # Second-difference operator D: approximates second derivative
-    D = np.zeros((Np1-2, Np1))
-    for r in range(Np1-2):
-        D[r, r:r+3] = [1, -2, 1]  # [P_{i-1} - 2*P_i + P_{i+1}]
+    H = np.zeros((Np1*dim, Np1*dim))
     
-    DtD = D.T @ D  # D^T D: penalty for second differences
-    H = np.kron(np.eye(dim), 2*lam*DtD)  # Kronecker product for all dimensions
+    if Np1 == 3:  # Quadratic Bézier (degree 2)
+        # For quadratic: B''(τ) = 2(P₂ - 2P₁ + P₀)
+        # Acceleration vector: [1, -2, 1] for [P₀, P₁, P₂]
+        accel_vec = np.array([1, -2, 1])
+        
+        for d in range(dim):
+            start_idx = d * Np1
+            H[start_idx:start_idx+Np1, start_idx:start_idx+Np1] = np.outer(accel_vec, accel_vec)
+        
+        # Scale by (4/T³) from equation (8b)
+        H = (4.0 * lam / T**3) * H
+        
+    else:  # General degree N
+        # For general N, we need to compute the integral ∫ ||B''(τ)||² dτ
+        # This requires computing the second derivative of Bernstein polynomials
+        # and integrating their squared norms
+        
+        # Build the second derivative matrix for Bernstein basis
+        # B''_i(τ) = N(N-1) * [B_{i-2,N-2}(τ) - 2*B_{i-1,N-2}(τ) + B_{i,N-2}(τ)]
+        N = Np1 - 1
+        
+        if N < 2:
+            return np.zeros((Np1*dim, Np1*dim))  # No acceleration for linear curves
+        
+        # Second derivative coefficients
+        D2 = np.zeros((Np1, Np1))
+        for i in range(Np1):
+            if i >= 2:
+                D2[i, i-2] = N * (N-1)  # B_{i-2,N-2}
+            if i >= 1 and i <= N:
+                D2[i, i-1] = -2 * N * (N-1)  # -2*B_{i-1,N-2}
+            if i <= N-2:
+                D2[i, i] = N * (N-1)  # B_{i,N-2}
+        
+        # Integrate squared second derivatives
+        # ∫₀¹ ||B''(τ)||² dτ = ∫₀¹ (B''(τ))ᵀ(B''(τ)) dτ
+        # This gives us the Gram matrix of second derivatives
+        
+        # For Bernstein polynomials, the integral can be computed analytically
+        # ∫₀¹ B_{i,N}(τ) B_{j,N}(τ) dτ = C(N,i) C(N,j) / C(2N+1, i+j)
+        
+        gram_matrix = np.zeros((Np1, Np1))
+        for i in range(Np1):
+            for j in range(Np1):
+                if i + j <= 2*N:
+                    gram_matrix[i, j] = comb(N, i) * comb(N, j) / comb(2*N+1, i+j)
+        
+        # The acceleration penalty matrix is D2^T * Gram * D2
+        H_accel = D2.T @ gram_matrix @ D2
+        
+        # Apply to all dimensions
+        for d in range(dim):
+            start_idx = d * Np1
+            H[start_idx:start_idx+Np1, start_idx:start_idx+Np1] = H_accel
+        
+        # Scale by regularization parameter
+        H = lam * H
+    
     return H
 
 def optimize_bezier_outside_sphere(P_init, n_seg=8, r_e=6.0, max_iter=20, tol=1e-6, lam_smooth=0.0, verbose=False, keep_last_normal=True):
@@ -271,9 +327,11 @@ def optimize_bezier_outside_sphere(P_init, n_seg=8, r_e=6.0, max_iter=20, tol=1e
     Uses a fixed-point iteration approach where each iteration:
     1. Computes normal vectors for each segment
     2. Builds linear constraints for sphere avoidance
-    3. Solves optimization problem with SLSQP
+    3. Solves QP problem minimizing acceleration (equation 8b from paper)
     
     The endpoints P0 and PN are kept fixed during optimization.
+    Minimizes: J = 0.5 * ||x - x₀||² + 0.5 * x^T H x
+    where H implements acceleration minimization: ∫ ||B''(τ)||² dτ
     
     Args:
         P_init: Initial control points of shape (N+1, dim)
@@ -281,7 +339,7 @@ def optimize_bezier_outside_sphere(P_init, n_seg=8, r_e=6.0, max_iter=20, tol=1e
         r_e: Sphere radius to avoid
         max_iter: Maximum number of iterations
         tol: Convergence tolerance for parameter changes
-        lam_smooth: Curvature regularization parameter
+        lam_smooth: Acceleration regularization parameter (equation 8b)
         verbose: Whether to print iteration progress
         keep_last_normal: Whether to reuse previous normals when undefined
         
@@ -290,14 +348,15 @@ def optimize_bezier_outside_sphere(P_init, n_seg=8, r_e=6.0, max_iter=20, tol=1e
                - iter: Number of iterations performed
                - feasible: Whether final solution satisfies constraints
                - min_radius: Minimum distance from curve to origin
+               - acceleration: Maximum acceleration magnitude of optimized curve
     """
     P = P_init.copy()
     Np1, dim = P.shape
     N = Np1 - 1
     A_list = segment_matrices_equal_params(N, n_seg)
 
-    # Set up regularization matrix for curvature smoothing
-    Hs = curvature_H(Np1, dim, lam=lam_smooth)
+    # Set up acceleration minimization matrix (equation 8b from paper)
+    Hs = acceleration_H(Np1, dim, T=1.0, lam=lam_smooth)
     x0 = P.reshape(-1)  # Flatten control points for optimization
 
     # Set up bounds: fix endpoints, allow interior points to move
@@ -311,14 +370,11 @@ def optimize_bezier_outside_sphere(P_init, n_seg=8, r_e=6.0, max_iter=20, tol=1e
     normals_prev = None  # Store previous normals for fallback
     info = {"iter": 0, "feasible": False, "min_radius": None}
 
-    def obj(x):
-        """Objective function: minimize deviation from initial + curvature penalty."""
-        dx = x - x0  # Deviation from initial control points
-        return 0.5 * dx @ dx + 0.5 * (x @ (Hs @ x))  # L2 penalty + curvature
-
-    def grad(x):
-        """Gradient of the objective function."""
-        return (x - x0) + (Hs @ x)  # Gradient of L2 + curvature terms
+    # Construct QP matrices for the cost function J = 0.5 * ||x - x0||² + 0.5 * x^T H x
+    # Rewritten as: J = 0.5 * x^T (I + H) x - x0^T x + constant
+    # In standard QP form: minimize 0.5 * x^T Q x + c^T x
+    Q = np.eye(Np1 * dim) + Hs  # Hessian matrix Q = I + H
+    c = -x0  # Linear term c = -x0
 
     for it in range(1, max_iter+1):
         P_now = P
@@ -348,10 +404,22 @@ def optimize_bezier_outside_sphere(P_init, n_seg=8, r_e=6.0, max_iter=20, tol=1e
         # Build linear constraints for current normals
         lin_con = build_linear_constraint_matrix(A_list, normals, dim, r_e)
 
-        # Solve optimization problem with SLSQP
-        res = minimize(obj, P_now.reshape(-1), method="SLSQP",
-                       jac=grad, constraints=[lin_con], bounds=bounds,
-                       options=dict(maxiter=200, ftol=1e-12, disp=False))
+        # Solve optimization problem using trust-constr (QP solver)
+        def objective(x):
+            return 0.5 * x @ (Q @ x) + c @ x
+        
+        def gradient(x):
+            return Q @ x + c
+        
+        def hessian(x):
+            return Q
+        
+        # Suppress warnings about singular Jacobian (expected due to redundant constraints)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Singular Jacobian matrix")
+            res = minimize(objective, P_now.reshape(-1), method="trust-constr",
+                           jac=gradient, hess=hessian, constraints=[lin_con], bounds=bounds,
+                           options=dict(maxiter=200, gtol=1e-12, disp=False))
         x_new = res.x
         P_new = x_new.reshape(Np1, dim)
 
@@ -373,8 +441,29 @@ def optimize_bezier_outside_sphere(P_init, n_seg=8, r_e=6.0, max_iter=20, tol=1e
     radii = np.linalg.norm(pts, axis=1)  # Distance from origin for each point
     min_r = float(np.min(radii))
     
+    # Compute acceleration for the optimized curve
+    if curve.degree == 2:  # Quadratic Bézier
+        # B''(τ) = 2(P₂ - 2P₁ + P₀) = constant
+        accel_vec = 2 * (P[2] - 2*P[1] + P[0])
+        acceleration = float(np.linalg.norm(accel_vec))
+    else:  # General degree
+        # Compute acceleration at parameter τ
+        # For Bézier curve B(τ), acceleration is B''(τ)
+        # We'll compute the maximum acceleration magnitude
+        accel_samples = []
+        for t in np.linspace(0, 1, 100):
+            # Compute second derivative at parameter t
+            # B''(t) = Σ(i=0 to N-2) P_i * N(N-1) * C(N-2,i) * t^i * (1-t)^(N-2-i)
+            N = curve.degree
+            accel = np.zeros(curve.dimension)
+            for i in range(N-1):
+                coeff = N * (N-1) * comb(N-2, i) * (t**i) * ((1-t)**(N-2-i))
+                accel += coeff * (P[i+2] - 2*P[i+1] + P[i])
+            accel_samples.append(np.linalg.norm(accel))
+        acceleration = float(np.max(accel_samples))
+    
     # Update info with final results
-    info.update({"iter": it, "feasible": bool(min_r >= r_e - 1e-6), "min_radius": min_r})
+    info.update({"iter": it, "feasible": bool(min_r >= r_e - 1e-6), "min_radius": min_r, "acceleration": acceleration})
     return P, info
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -560,10 +649,10 @@ if __name__ == "__main__":
     for n_seg in split_list:
         P_opt, info = optimize_bezier_outside_sphere(
             P_init, n_seg=n_seg, r_e=r_e, max_iter=120, tol=1e-8,
-            lam_smooth=1e-6, verbose=False
+            lam_smooth=1e-3, verbose=False  # Acceleration regularization (equation 8b)
         )
         results.append((n_seg, P_opt, info))
-        print(f"n_seg={n_seg:>2d} | iter={info['iter']:>3d} | min_radius={info['min_radius']:.3f} | feasible={info['feasible']}")
+        print(f"n_seg={n_seg:>2d} | iter={info['iter']:>3d} | acceleration={info['acceleration']:.3f} | feasible={info['feasible']}")
 
     # Create 2×3 subplot layout for visualization
     fig, axes = plt.subplots(2, 3, subplot_kw={'projection': '3d'}, figsize=(7.0, 6.4))
@@ -583,7 +672,7 @@ if __name__ == "__main__":
         set_isometric(ax, elev=35.264, azim=45.0, ortho=True)
         beautify_3d_axes(ax, show_ticks=True, show_grid=True)
 
-        ax.set_title(f"{n_seg} segs   |   min |p| = {info['min_radius']:.2f}", fontsize=9, pad=3)
+        ax.set_title(f"{n_seg} segs   |   Acceleration = {info['acceleration']:.2f}", fontsize=9, pad=3)
         ax.set_xlabel('X', labelpad=4, fontsize=9)
         ax.set_ylabel('Y', labelpad=4, fontsize=9)
         ax.set_zlabel('Z', labelpad=4, fontsize=9)
