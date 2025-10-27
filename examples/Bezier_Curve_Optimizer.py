@@ -264,9 +264,7 @@ def curvature_H(Np1, dim, lam=0.0):
     H = np.kron(np.eye(dim), 2*lam*DtD)  # Kronecker product for all dimensions
     return H
 
-def optimize_bezier_outside_sphere(P_init, n_seg=8, r_e=6.0, 
-                                   max_iter=20, tol=1e-6, lam_smooth=0.0, 
-                                   verbose=False, keep_last_normal=True):
+def optimize_bezier_outside_sphere(P_init, n_seg=8, r_e=6.0, max_iter=20, tol=1e-6, lam_smooth=0.0, verbose=False, keep_last_normal=True):
     """
     Optimize Bézier curve to avoid sphere obstacle using iterative optimization.
     
@@ -303,7 +301,7 @@ def optimize_bezier_outside_sphere(P_init, n_seg=8, r_e=6.0,
     x0 = P.reshape(-1)  # Flatten control points for optimization
 
     # Set up bounds: fix endpoints, allow interior points to move
-    lb = x0.copy(); ub = x0.copy()
+    lb = x0.copy(); ub = x0.copy()    # lb for lower bounds, ub for upper bounds
     lb[:] = -np.inf; ub[:] =  np.inf  # Default: unconstrained
     lb[:dim] = ub[:dim] = x0[:dim]       # Lock first control point P0
     lb[-dim:] = ub[-dim:] = x0[-dim:]    # Lock last control point PN
