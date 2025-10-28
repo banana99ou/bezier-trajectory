@@ -58,6 +58,22 @@ python examples/basic_usage.py      # 기본 연산 예제
 python examples/integration_demo.py # 적분 연산 데모
 ```
 
+## Version History
+
+### v1.0-chorok (October 2025)
+**Stable version used for 초록 (abstract) figure generation**
+
+- **Commit**: `a877a33` (a877a33355c1404a99daaad8af1af617c11c1a5d)
+- **File**: `examples/Bezier_Curve_Optimizer.py` (600 lines)
+- **Purpose**: Generated figures for conference abstract submission
+- **Date**: October 26-27, 2025
+- **Key features**:
+  - Bézier curve optimization with sphere avoidance
+  - Segment-based linearization
+  - Half-space constraint formulation
+  - SLSQP-based iterative optimization
+  - 3D visualization utilities
+
 ## 수학적 배경
 
 - **베른슈타인 기저 함수**: 베지어 곡선의 수학적 기반
