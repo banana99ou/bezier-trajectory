@@ -54,7 +54,7 @@ geometric acc of bezier - gravitational acc on each point on bezier  # represent
 use SciPy trust-constr
 
 # output
-current path figures for 6 diff seg count
+current path figures for 6 diff seg count [2, 4, 8, 16, 32, 64]
 current performance figures.
-copy of performance figures but calc time versus order of curve.
+copy of performance figures but calc time versus order of curve [quadratic, cubic, 4th]
 current figures of pos, vel, acc for each seg counts.
