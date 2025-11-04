@@ -600,7 +600,6 @@ def optimize_orbital_docking(
     pts = np.array([curve.point(t) for t in ts_check])
     radii = np.linalg.norm(pts, axis=1)
     min_radius = float(np.min(radii))
-
     _, accel = _compute_cost_only(P.reshape(-1), Np1, dim, n_samples=sample_count)
     
     info.update({
