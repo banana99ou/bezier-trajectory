@@ -1,675 +1,767 @@
-"""
-Orbital Docking Trajectory Optimization with Gravity-Aware Acceleration Minimization
+#!/usr/bin/env python
+# coding: utf-8
 
-This module implements optimization of Bézier curves for orbital docking scenarios
-using segment-based linearization and iterative optimization. The optimization
-minimizes total acceleration (geometric + gravitational) as a surrogate for fuel
-consumption in Guidance, Navigation, and Control (GNC) applications.
+# In[46]:
 
-Key components:
-- BezierCurve: Core Bézier curve evaluation
-- De Casteljau splitting: Matrix-based curve subdivision
-- Linear constraint building: Half-space constraint formulation
-- Gravity-aware optimization: Minimizes ∫ ||a_geometric + a_gravitational||² dτ
-- Visualization: 3D plotting utilities with orbital context
-"""
 
+# Imports and Constants
 import numpy as np
 from scipy.special import comb
 from scipy.optimize import minimize, LinearConstraint, Bounds
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d.art3d import Line3DCollection
+from mpl_toolkits.mplot3d import Axes3D
+import matplotlib.font_manager as fm
+from pathlib import Path
 import warnings
+import hashlib
+import pickle
+import os
+warnings.filterwarnings('ignore')
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Orbital parameters for realistic scaling
-# ─────────────────────────────────────────────────────────────────────────────
-EARTH_RADIUS = 6.371  # Earth radius in scaled units (1000 km)
-ISS_ALTITUDE = 0.408  # ISS altitude in scaled units (408 km)
-ORBITAL_RADIUS = EARTH_RADIUS + ISS_ALTITUDE
-SCALE_FACTOR = 1e6  # 1 unit = 1000 km (for realistic distances)
+# Orbital parameters (from Project_Spec.md)
+ISS_ALTITUDE_KM = 423  # ISS orbit altitude in km AMSL
+CHASER_ALTITUDE_KM = 300  # Chaser altitude in km AMSL
+KOZ_ALTITUDE_KM = 100  # Keep Out Zone altitude in km AMSL
+
+EARTH_RADIUS_KM = 6371.0  # Earth radius in km
+KOZ_RADIUS = EARTH_RADIUS_KM + KOZ_ALTITUDE_KM  # KOZ radius from Earth center
+ISS_RADIUS = EARTH_RADIUS_KM + ISS_ALTITUDE_KM
+CHASER_RADIUS = EARTH_RADIUS_KM + CHASER_ALTITUDE_KM
 
 # Gravitational parameters
-EARTH_MU = 3.986004418e14  # Earth's gravitational parameter (m³/s²)
-EARTH_MU_SCALED = EARTH_MU / (SCALE_FACTOR**3)  # Scaled for our units (1000 km)
+EARTH_MU = 3.986004418e14  # m³/s²
+
+# Scaling: use km as base unit
+SCALE_FACTOR = 1e3  # 1 unit = 1 km
+EARTH_MU_SCALED = EARTH_MU / (SCALE_FACTOR**3)  # Scaled for km
+
+
+# In[46a]:
+
+
+def configure_custom_font(font_filename="NanumSquareR.otf"):
+    """
+    Configure Matplotlib to use a custom font if available.
+    Uses fallback font for math symbols to fix negative sign rendering.
+    """
+    font_path = Path(__file__).resolve().parent / font_filename
+    if not font_path.is_file():
+        return
+
+    try:
+        fm.fontManager.addfont(str(font_path))
+        font_name = fm.FontProperties(fname=str(font_path)).get_name()
+        
+        # Use font with fallback to DejaVu Sans for better symbol rendering
+        # This ensures minus signs and other symbols render correctly
+        plt.rcParams["font.family"] = [font_name, "DejaVu Sans", "sans-serif"]
+        
+        # Use DejaVu Sans for math symbols to fix negative sign rendering
+        plt.rcParams["mathtext.fontset"] = "dejavusans"
+        plt.rcParams["mathtext.default"] = "regular"
+        
+        # Enable Unicode minus sign for better rendering in tick labels
+        # This makes matplotlib use U+2212 (proper minus) instead of U+002D (hyphen-minus)
+        plt.rcParams["axes.unicode_minus"] = True
+        
+        # The format_number() helper function ensures all manually formatted numbers
+        # also use the proper Unicode minus sign (U+2212)
+    except Exception:
+        # Silently ignore font configuration errors to avoid breaking plots
+        pass
+
+def format_number(value, format_spec='.1f'):
+    """
+    Format a number with proper Unicode minus sign for better rendering.
+    
+    Args:
+        value: Numeric value to format
+        format_spec: Format specification (e.g., '.1f', '.2f')
+    
+    Returns:
+        str: Formatted string with proper minus sign
+    """
+    if isinstance(value, (int, float)):
+        if value < 0:
+            # Use Unicode minus sign (U+2212) instead of hyphen-minus (U+002D)
+            return '−' + format(abs(value), format_spec)
+        else:
+            return format(value, format_spec)
+    return str(value)
+
+
+configure_custom_font()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Bézier curve core
+# Caching utilities for optimization results
 # ─────────────────────────────────────────────────────────────────────────────
+CACHE_DIR = Path(__file__).parent / "cache"
+CACHE_VERSION = "1.0"  # Increment to invalidate old caches
+
+def get_cache_key(P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1):
+    """
+    Generate a deterministic cache key from optimization parameters.
+    
+    Args:
+        P_init: Initial control points
+        n_seg: Number of segments
+        r_e: KOZ radius
+        max_iter: Maximum iterations
+        tol: Convergence tolerance
+        sample_count: Number of samples for cost evaluation
+        v0, v1: Velocity boundary conditions
+        a0, a1: Acceleration boundary conditions
+    
+    Returns:
+        str: Cache key (hex digest)
+    """
+    # Create a deterministic hash from all parameters
+    hash_input = {
+        'P_init': P_init.tobytes() if isinstance(P_init, np.ndarray) else str(P_init),
+        'n_seg': n_seg,
+        'r_e': float(r_e),
+        'max_iter': max_iter,
+        'tol': float(tol),
+        'sample_count': sample_count,
+        'v0': v0.tobytes() if v0 is not None and isinstance(v0, np.ndarray) else str(v0),
+        'v1': v1.tobytes() if v1 is not None and isinstance(v1, np.ndarray) else str(v1),
+        'a0': a0.tobytes() if a0 is not None and isinstance(a0, np.ndarray) else str(a0),
+        'a1': a1.tobytes() if a1 is not None and isinstance(a1, np.ndarray) else str(a1),
+        'version': CACHE_VERSION
+    }
+    
+    # Convert to string and hash
+    hash_str = str(sorted(hash_input.items()))
+    return hashlib.md5(hash_str.encode()).hexdigest()
+
+def get_cache_path(cache_key, n_seg):
+    """
+    Get the cache file path for a given cache key and segment count.
+    
+    Args:
+        cache_key: Cache key (hex digest)
+        n_seg: Number of segments
+    
+    Returns:
+        Path: Path to cache file
+    """
+    CACHE_DIR.mkdir(exist_ok=True)
+    return CACHE_DIR / f"opt_{cache_key[:8]}_nseg{n_seg}.pkl"
+
+def load_from_cache(cache_path):
+    """
+    Load optimization result from cache.
+    
+    Args:
+        cache_path: Path to cache file
+    
+    Returns:
+        tuple: (P_opt, info) if cache exists and is valid, None otherwise
+    """
+    if not cache_path.exists():
+        return None
+    
+    try:
+        with open(cache_path, 'rb') as f:
+            data = pickle.load(f)
+        
+        # Validate cache structure
+        if isinstance(data, dict) and 'P_opt' in data and 'info' in data:
+            return data['P_opt'], data['info']
+        else:
+            # Old format compatibility
+            return data
+    except Exception as e:
+        # If cache is corrupted, delete it
+        try:
+            cache_path.unlink()
+        except:
+            pass
+        return None
+
+def save_to_cache(cache_path, P_opt, info):
+    """
+    Save optimization result to cache.
+    
+    Args:
+        cache_path: Path to cache file
+        P_opt: Optimized control points
+        info: Info dictionary
+    """
+    try:
+        data = {
+            'P_opt': P_opt,
+            'info': info,
+            'version': CACHE_VERSION
+        }
+        with open(cache_path, 'wb') as f:
+            pickle.dump(data, f)
+    except Exception as e:
+        # Silently fail if cache write fails
+        pass
+
+def clear_cache(cache_key=None):
+    """
+    Clear cache files. If cache_key is provided, only clear that specific cache.
+    
+    Args:
+        cache_key: Optional cache key to clear specific cache, or None to clear all
+    """
+    if not CACHE_DIR.exists():
+        return
+    
+    if cache_key is None:
+        # Clear all cache files
+        for cache_file in CACHE_DIR.glob("*.pkl"):
+            try:
+                cache_file.unlink()
+            except:
+                pass
+    else:
+        # Clear specific cache files
+        for cache_file in CACHE_DIR.glob(f"opt_{cache_key[:8]}*.pkl"):
+            try:
+                cache_file.unlink()
+            except:
+                pass
+
+
+# In[47]:
+
+
+def get_D_matrix(N):
+    """
+    Compute derivative matrix D for Bézier curve of degree N.
+
+    From Project_Spec.md:
+    [D]_i,j = N × { -1 if j=i, 1 if j=i+1, 0 otherwise }
+
+    Args:
+        N: Degree of Bézier curve
+
+    Returns:
+        D: (N, N+1) matrix
+    """
+    D = np.zeros((N, N+1))
+    for i in range(N):
+        D[i, i] = -N
+        D[i, i+1] = N
+    return D
+
+def get_E_matrix(N):
+    """
+    Compute elevation matrix E for Bézier curve of degree N.
+    Elevates degree from N to N+1.
+
+    From Project_Spec.md equation:
+    E_{N→N+1} with specific structure
+
+    Args:
+        N: Original degree
+
+    Returns:
+        E: (N+2, N+1) matrix
+    """
+    E = np.zeros((N+2, N+1))
+
+    # First row: i=1, j=1 → 1
+    E[0, 0] = 1.0
+
+    # Last row: i=N+2, j=N+1 → 1
+    E[N+1, N] = 1.0
+
+    # Middle rows: 2 ≤ i ≤ N+1 (1-indexed) → rows 1 to N (0-indexed)
+    for row_idx in range(1, N+1):  # 0-indexed row: 1 to N
+        i_1idx = row_idx + 1  # Convert to 1-indexed for formula
+        # j = i-1 (1-indexed) → col = row_idx - 1 (0-indexed)
+        E[row_idx, row_idx - 1] = (N + 2 - i_1idx) / (N + 1)
+        # j = i (1-indexed) → col = row_idx (0-indexed)
+        E[row_idx, row_idx] = (i_1idx - 1) / (N + 1)
+
+    return E
+
+
+# In[48]:
+
+
 class BezierCurve:
     """
-    A Bézier curve defined by control points.
-    
-    A Bézier curve of degree N is defined by N+1 control points P_0, P_1, ..., P_N.
-    The curve is evaluated using the Bernstein polynomial basis:
-    
-    B(t) = Σ(i=0 to N) C(N,i) * t^i * (1-t)^(N-i) * P_i
-    
-    Attributes:
-        control_points (np.ndarray): Control points of shape (N+1, dim)
-        degree (int): Degree of the Bézier curve (N)
-        dimension (int): Spatial dimension of the curve
+    Bézier curve implementation using D/E matrices for derivatives.
     """
-    
-    def __init__(self, control_points: np.ndarray):
-        """
-        Initialize a Bézier curve with given control points.
-        
-        Args:
-            control_points: Array of shape (N+1, dim) where N is the degree
-                          and dim is the spatial dimension
-        
-        Raises:
-            ValueError: If control_points is not 2D array
-        """
+
+    def __init__(self, control_points):
         P = np.array(control_points, dtype=float)
-        if P.ndim != 2:
+        if P.ndim != 2: # cus np.array makes control_points a 2D matrix
             raise ValueError("control_points must be (N+1, dim)")
         self.control_points = P
-        self.degree = P.shape[0] - 1
-        self.dimension = P.shape[1]
+        self.degree = P.shape[0] - 1 # = N
+        self.dimension = P.shape[1] # P.shape = (N+1, dim)
 
-    def point(self, tau: float) -> np.ndarray:
-        """
-        Evaluate the Bézier curve at parameter tau.
-        
-        Uses the Bernstein polynomial basis to compute the curve point:
-        B(tau) = Σ(i=0 to N) C(N,i) * tau^i * (1-tau)^(N-i) * P_i
-        
-        Args:
-            tau: Parameter value in [0, 1]
-            
-        Returns:
-            Point on the curve as array of shape (dim,)
-        """
+        # Precompute D and E matrices
+        self.D = get_D_matrix(self.degree)
+        if self.degree > 0:
+            self.E = get_E_matrix(self.degree - 1)  # E elevates from N-1 to N
+
+    def point(self, tau):
+        """Evaluate curve at parameter tau using Bernstein basis."""
         N, d = self.degree, self.dimension
-        out = np.zeros(d, dtype=float)
-        # Evaluate using Bernstein basis polynomials
+        out = np.zeros(d)
         for i in range(N + 1):
             b = comb(N, i) * (tau ** i) * ((1 - tau) ** (N - i))
             out += b * self.control_points[i]
         return out
 
-    def sample(self, num=200):
+    def velocity_control_points(self):
         """
-        Sample the Bézier curve at evenly spaced parameter values.
-        
-        Args:
-            num: Number of sample points (default: 200)
-            
-        Returns:
-            tuple: (parameter_values, curve_points) where
-                   - parameter_values: Array of tau values in [0, 1]
-                   - curve_points: Array of shape (num, dim) with curve points
+        Compute velocity control points using V = EDP.
+        Returns control points for velocity curve (degree N, N+1 control points).
         """
-        ts = np.linspace(0.0, 1.0, num)
-        P = np.array([self.point(t) for t in ts])
-        return ts, P
+        if self.degree == 0:
+            return np.zeros((1, self.dimension))
 
-    def velocity(self, tau: float) -> np.ndarray:
-        """
-        Evaluate the first derivative (velocity) of the Bézier curve at parameter tau.
-        
-        For a Bézier curve B(t) = Σ(i=0 to N) C(N,i) * t^i * (1-t)^(N-i) * P_i,
-        the velocity is: B'(t) = N * Σ(i=0 to N-1) C(N-1,i) * t^i * (1-t)^(N-1-i) * (P_{i+1} - P_i)
-        
-        Args:
-            tau: Parameter value in [0, 1]
-            
-        Returns:
-            Velocity vector as array of shape (dim,)
-        """
-        N, d = self.degree, self.dimension
-        if N == 0:
-            return np.zeros(d, dtype=float)  # Constant curve has zero velocity
-        
-        out = np.zeros(d, dtype=float)
-        # Evaluate using Bernstein basis polynomials for derivative
-        for i in range(N):  # N terms for derivative
-            b = comb(N-1, i) * (tau ** i) * ((1 - tau) ** (N-1 - i))
-            out += b * (self.control_points[i+1] - self.control_points[i])
-        
-        return N * out  # Scale by degree N
+        # V = E @ D @ P
+        # P is (N+1, dim), D is (N, N+1), E is (N+1, N)
+        # Result: (N+1, dim)
+        V_ctrl = self.E @ self.D @ self.control_points
+        return V_ctrl
 
-    def speed(self, tau: float) -> float:
+    def acceleration_control_points(self):
         """
-        Evaluate the speed (magnitude of velocity) of the Bézier curve at parameter tau.
-        
-        Args:
-            tau: Parameter value in [0, 1]
-            
-        Returns:
-            Speed as a scalar value
+        Compute acceleration control points using A = EDEDP.
+        Returns control points for acceleration curve.
         """
-        vel = self.velocity(tau)
-        return float(np.linalg.norm(vel))
+        # Acceleration control points using EDEDP as instructed.
+        if self.degree < 2:
+            return np.zeros(((self.degree+1), self.dimension))
+        # Use EDEDP directly per the analytic/formal instructions.
+        A_ctrl = self.E @ self.D @ self.E @ self.D @ self.control_points
+        # (Resulting shape: (N+1, d);
+        return A_ctrl
 
-    def sample_speed(self, num=200):
-        """
-        Sample the speed of the Bézier curve at evenly spaced parameter values.
-        
-        Args:
-            num: Number of sample points (default: 200)
-            
-        Returns:
-            tuple: (parameter_values, speed_values) where
-                   - parameter_values: Array of tau values in [0, 1]
-                   - speed_values: Array of speed values
-        """
-        ts = np.linspace(0.0, 1.0, num)
-        speeds = np.array([self.speed(t) for t in ts])
-        return ts, speeds
+    def velocity(self, tau):
+        """Evaluate velocity at parameter tau."""
+        if self.degree == 0:
+            return np.zeros(self.dimension)
+        V_ctrl = self.velocity_control_points()
+        # Velocity curve has degree N (same as original)
+        N = self.degree
+        out = np.zeros(self.dimension)
+        for i in range(N + 1):
+            b = comb(N, i) * (tau ** i) * ((1 - tau) ** (N - i))
+            out += b * V_ctrl[i]
+        return out
 
-    def geometric_acceleration(self, tau: float) -> np.ndarray:
-        """
-        Evaluate the geometric acceleration (second derivative) of the Bézier curve at parameter tau.
-        
-        For a Bézier curve B(t) = Σ(i=0 to N) C(N,i) * t^i * (1-t)^(N-i) * P_i,
-        the geometric acceleration is: B''(t) = N(N-1) * Σ(i=0 to N-2) C(N-2,i) * t^i * (1-t)^(N-2-i) * (P_{i+2} - 2P_{i+1} + P_i)
-        
-        Args:
-            tau: Parameter value in [0, 1]
-            
-        Returns:
-            Geometric acceleration vector as array of shape (dim,)
-        """
-        N, d = self.degree, self.dimension
-        if N < 2:
-            return np.zeros(d, dtype=float)  # Linear or constant curves have zero acceleration
-        
-        out = np.zeros(d, dtype=float)
-        # Evaluate using Bernstein basis polynomials for second derivative
-        for i in range(N-1):  # N-1 terms for second derivative
-            b = comb(N-2, i) * (tau ** i) * ((1 - tau) ** (N-2 - i))
-            out += b * (self.control_points[i+2] - 2*self.control_points[i+1] + self.control_points[i])
-        
-        return N * (N-1) * out  # Scale by N(N-1)
+    def acceleration(self, tau):
+        """Evaluate acceleration at parameter tau."""
+        if self.degree < 2:
+            return np.zeros(((self.degree+1), self.dimension))
+        A_ctrl = self.acceleration_control_points()
+        # Acceleration curve has degree N due to the E matrix
+        N_accel = self.degree
+        out = np.zeros(self.dimension)
+        for i in range(N_accel + 1):
+            b = comb(N_accel, i) * (tau ** i) * ((1 - tau) ** (N_accel - i))
+            out += b * A_ctrl[i]
+        return out
 
-    def total_acceleration_magnitude(self, tau: float) -> float:
-        """
-        Evaluate the total acceleration magnitude (geometric + gravitational) at parameter tau.
-        
-        This matches the acceleration calculation used in the cost function:
-        total_accel = ||geometric_accel|| + gravitational_accel_magnitude
-        
-        Args:
-            tau: Parameter value in [0, 1]
-            
-        Returns:
-            Total acceleration magnitude as a scalar value
-        """
-        # Get geometric acceleration
-        geom_accel_vec = self.geometric_acceleration(tau)
-        geom_accel_mag = float(np.linalg.norm(geom_accel_vec))
-        
-        # Get gravitational acceleration at this point
-        curve_point = self.point(tau)
-        radius = np.linalg.norm(curve_point)
-        grav_accel_mag = EARTH_MU_SCALED / radius**2
-        
-        # Total acceleration magnitude (same as cost function)
-        return geom_accel_mag + grav_accel_mag
 
-    def sample_acceleration(self, num=200):
-        """
-        Sample the total acceleration magnitude (geometric + gravitational) of the Bézier curve at evenly spaced parameter values.
-        
-        Args:
-            num: Number of sample points (default: 200)
-            
-        Returns:
-            tuple: (parameter_values, acceleration_values) where
-                   - parameter_values: Array of tau values in [0, 1]
-                   - acceleration_values: Array of total acceleration magnitude values
-        """
-        ts = np.linspace(0.0, 1.0, num)
-        accelerations = np.array([self.total_acceleration_magnitude(t) for t in ts])
-        return ts, accelerations
+# In[49]:
 
-# ─────────────────────────────────────────────────────────────────────────────
-# De Casteljau subdivision as matrix operations
-# These functions implement curve subdivision using linear transformations
-# on the original control points, enabling efficient segment-based optimization
-# ─────────────────────────────────────────────────────────────────────────────
+
 def de_casteljau_split_1d(N, tau, basis_index):
     """
     Compute De Casteljau subdivision coefficients for a single basis vector.
-    
-    Given the j-th basis vector e_j and split parameter tau, computes the
-    coefficients that express e_j in terms of the left and right sub-curves
-    after subdivision at tau.
-    
-    Args:
-        N: Degree of the Bézier curve
-        tau: Split parameter in [0, 1]
-        basis_index: Index j of the basis vector e_j
-        
-    Returns:
-        tuple: (left_coeffs, right_coeffs) where each is an array of length N+1
-               representing the coefficients for the left and right sub-curves
     """
-    # Start with j-th basis vector: w[j] = 1, others = 0
-    w = np.zeros(N+1, dtype=float); 
-    w[basis_index] = 1.0 # w for weights of basis vector; make N+1 sized array and set j-th element to 1
-    left = [w[0]]   # First coefficient for left sub-curve
-    right = [w[-1]] # First coefficient for right sub-curve
+    w = np.zeros(N+1)
+    w[basis_index] = 1.0
+    left = [w[0]]
+    right = [w[-1]]
     W = w.copy()
-    
-    # Apply De Casteljau algorithm: linear interpolation at each level
+
     for _ in range(1, N+1):
         W = (1 - tau) * W[:-1] + tau * W[1:]
-        left.append(W[0])   # Leftmost coefficient at this level
-        right.append(W[-1]) # Rightmost coefficient at this level
-    
-    L = np.array(left)      # (N+1,) coefficients for left sub-curve
-    R = np.array(right[::-1]) # (N+1,) coefficients for right sub-curve (reversed)
+        left.append(W[0])
+        right.append(W[-1])
+
+    L = np.array(left)
+    R = np.array(right[::-1])
     return L, R
 
 def de_casteljau_split_matrices(N, tau):
-    """
-    Compute subdivision matrices for De Casteljau splitting.
-    
-    Returns matrices S_left and S_right such that:
-    - Left sub-curve control points: L = S_left @ P
-    - Right sub-curve control points: R = S_right @ P
-    
-    where P is the original control point vector.
-    
-    Args:
-        N: Degree of the Bézier curve
-        tau: Split parameter in [0, 1]
-        
-    Returns:
-        tuple: (S_left, S_right) where each is a (N+1, N+1) matrix
-    """
-    S_left  = np.zeros((N+1, N+1), dtype=float)
-    S_right = np.zeros((N+1, N+1), dtype=float)
-    
-    # Build matrices column by column using basis vector coefficients
+    """Compute subdivision matrices S_left and S_right."""
+    S_left = np.zeros((N+1, N+1))
+    S_right = np.zeros((N+1, N+1))
+
     for j in range(N+1):
         L, R = de_casteljau_split_1d(N, tau, j)
-        S_left[:,  j] = L  # j-th column of S_left
-        S_right[:, j] = R  # j-th column of S_right
+        S_left[:, j] = L
+        S_right[:, j] = R
     return S_left, S_right
 
 def segment_matrices_equal_params(N, n_seg):
     """
-    Generate subdivision matrices for equal-parameter segment splitting.
-    
-    Splits a Bézier curve into n_seg segments using equal parameter intervals.
-    Each segment i has control points Qi = Ai @ P where P are the original
-    control points and Ai is the transformation matrix for segment i.
-    
-    The splitting uses repeated subdivision at tau = 1/k for k = n_seg, n_seg-1, ..., 2.
-    
-    Args:
-        N: Degree of the Bézier curve
-        n_seg: Number of segments to create
-        
-    Returns:
-        list: List of (N+1, N+1) matrices Ai, one per segment
-              
-    Raises:
-        ValueError: If n_seg < 1
+    Generate segment matrices for equal-parameter splitting.
+    Returns list of (N+1, N+1) matrices, one per segment.
     """
     if n_seg < 1:
         raise ValueError("n_seg must be >= 1")
     if n_seg == 1:
-        return [np.eye(N+1)]  # No subdivision needed
-    
-    mats = []
-    remainder = np.eye(N+1)  # Start with identity (no transformation)
-    
-    # Iteratively split the remaining portion
-    for k in range(n_seg, 1, -1):
-        tau = 1.0 / k  # Split parameter for this iteration
-        S_L, S_R = de_casteljau_split_matrices(N, tau)
-        mats.append(S_L @ remainder)  # Left portion becomes a segment
-        remainder = S_R @ remainder   # Right portion continues
-    mats.append(remainder)  # Final remainder is the last segment
-    return mats  # list of (N+1,N+1) matrices
+        return [np.eye(N+1)]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Half-space constraint formulation for sphere avoidance
-# Implements linear constraints of the form: n_i^T (A_i @ P)_k >= r_e
-# where n_i is the normal vector, A_i is the segment matrix, and r_e is the radius
-# ─────────────────────────────────────────────────────────────────────────────
-def build_linear_constraint_matrix(A_list, n_list, dim, r_e):
+    mats = []
+    remainder = np.eye(N+1)
+
+    for k in range(n_seg, 1, -1):
+        tau = 1.0 / k
+        S_L, S_R = de_casteljau_split_matrices(N, tau)
+        mats.append(S_L @ remainder)
+        remainder = S_R @ remainder
+    mats.append(remainder)
+    return mats
+
+
+# In[50]:
+
+
+def build_koz_constraints(A_list, P, r_e, dim=3, c_KOZ=None):
     """
-    Build linear constraints for sphere avoidance across all segments.
-    
-    Creates constraints of the form n_i^T (A_i @ P)_k >= r_e for each segment i
-    and control point k, ensuring the curve stays outside the sphere of radius r_e.
-    
+    Build KOZ (Keep Out Zone) linear constraints for all segments.
+
+    For each segment j:
+    1. Compute CG (centroid) of control points: Qi = Ai @ P
+    2. Generate unit vector nj from KOZ center (c_KOZ) to CG
+    3. Create half-space constraint: nj^T @ Qi >= r_e
+
     Args:
         A_list: List of segment transformation matrices
-        n_list: List of normal vectors for each segment
-        dim: Spatial dimension of the control points
-        r_e: Sphere radius (constraint threshold)
-        
+        P: Control points (N+1, dim)
+        r_e: KOZ radius
+        dim: Spatial dimension
+        c_KOZ: KOZ center, shape (dim,) or None (if None, uses origin and warns)
+
     Returns:
-        LinearConstraint: Constraint object for scipy.optimize
+        LinearConstraint object
     """
-    Np1 = A_list[0].shape[1]  # Number of control points (N+1)
+    Np1 = A_list[0].shape[1]
     rows, lbs = [], []
-    
-    # Build constraint for each segment and each control point
-    for Ai, n in zip(A_list, n_list):
-        for k in range(Np1):  # For each control point in segment i
-            row = np.zeros(Np1 * dim)  # Flattened control point vector
-            for j in range(Np1):  # For each original control point
-                coeff = Ai[k, j]  # Transformation coefficient
-                start = j * dim   # Starting index in flattened vector
-                row[start:start+dim] += coeff * n  # Add contribution to constraint
-            rows.append(row)
-            lbs.append(r_e)  # Lower bound: distance >= r_e
-    
-    A = np.vstack(rows)  # Constraint matrix
-    lb = np.array(lbs)   # Lower bounds
-    ub = np.full_like(lb, np.inf, dtype=float)  # Upper bounds (unconstrained)
-    return LinearConstraint(A, lb, ub)
 
-def acceleration_H(Np1, dim, T=1.0, lam=1.0):
-    """
-    Compute acceleration minimization matrix for Bézier curves.
-    
-    Implements equation (8b) from the paper: J = (4/T³) |Δ²P|²
-    For quadratic Bézier curves: B''(τ) = 2(P₂ - 2P₁ + P₀) = constant
-    
-    This minimizes the integral of squared acceleration: ∫ ||B''(τ)||² dτ
-    
-    Args:
-        Np1: Number of control points (N+1) 
-        dim: Spatial dimension
-        T: Time duration (default: 1.0)
-        lam: Regularization parameter (default: 1.0)
-        
-    Returns:
-        np.ndarray: (Np1*dim, Np1*dim) acceleration penalty matrix
-    """
-    if lam <= 0:
-        return np.zeros((Np1*dim, Np1*dim))  # No regularization
-    
-    H = np.zeros((Np1*dim, Np1*dim))
-    
-    if Np1 == 3:  # Quadratic Bézier (degree 2)
-        # For quadratic: B''(τ) = 2(P₂ - 2P₁ + P₀)
-        # Acceleration vector: [1, -2, 1] for [P₀, P₁, P₂]
-        accel_vec = np.array([1, -2, 1])
-        
-        for d in range(dim):
-            start_idx = d * Np1
-            H[start_idx:start_idx+Np1, start_idx:start_idx+Np1] = np.outer(accel_vec, accel_vec)
-        
-        # Scale by (4/T³) from equation (8b)
-        H = (4.0 * lam / T**3) * H
-        
-    else:  # General degree N
-        # For general N, we need to compute the integral ∫ ||B''(τ)||² dτ
-        # This requires computing the second derivative of Bernstein polynomials
-        # and integrating their squared norms
-        
-        # Build the second derivative matrix for Bernstein basis
-        # B''_i(τ) = N(N-1) * [B_{i-2,N-2}(τ) - 2*B_{i-1,N-2}(τ) + B_{i,N-2}(τ)]
-        N = Np1 - 1
-        
-        if N < 2:
-            return np.zeros((Np1*dim, Np1*dim))  # No acceleration for linear curves
-        
-        # Second derivative coefficients
-        D2 = np.zeros((Np1, Np1))
-        for i in range(Np1):
-            if i >= 2:
-                D2[i, i-2] = N * (N-1)  # B_{i-2,N-2}
-            if i >= 1 and i <= N:
-                D2[i, i-1] = -2 * N * (N-1)  # -2*B_{i-1,N-2}
-            if i <= N-2:
-                D2[i, i] = N * (N-1)  # B_{i,N-2}
-        
-        # Integrate squared second derivatives
-        # ∫₀¹ ||B''(τ)||² dτ = ∫₀¹ (B''(τ))ᵀ(B''(τ)) dτ
-        # This gives us the Gram matrix of second derivatives
-        
-        # For Bernstein polynomials, the integral can be computed analytically
-        # ∫₀¹ B_{i,N}(τ) B_{j,N}(τ) dτ = C(N,i) C(N,j) / C(2N+1, i+j)
-        
-        gram_matrix = np.zeros((Np1, Np1))
-        for i in range(Np1):
+    if c_KOZ is None:
+        import warnings
+        warnings.warn("c_KOZ (KOZ center) not specified; defaulting to origin.")
+        c_KOZ = np.zeros(dim)
+
+    for Ai in A_list:
+        Qi = Ai @ P  # Control points of segment i
+        ci = Qi.mean(axis=0)  # Centroid (CG)
+
+        # Unit vector from KOZ center to CG
+        Nj = ci - c_KOZ
+        Nj_norm = np.linalg.norm(Nj)
+        if Nj_norm < 1e-12:
+            # If CG coincides with KOZ center, skip this segment (degenerate case)
+            continue
+
+        nj = Nj / Nj_norm  # Unit normal vector
+
+        # Create constraint for each control point in segment
+        for k in range(Np1):
+            row = np.zeros(Np1 * dim)
             for j in range(Np1):
-                if i + j <= 2*N:
-                    gram_matrix[i, j] = comb(N, i) * comb(N, j) / comb(2*N+1, i+j)
-        
-        # The acceleration penalty matrix is D2^T * Gram * D2
-        H_accel = D2.T @ gram_matrix @ D2
-        
-        # Apply to all dimensions
-        for d in range(dim):
-            start_idx = d * Np1
-            H[start_idx:start_idx+Np1, start_idx:start_idx+Np1] = H_accel
-        
-        # Scale by regularization parameter
-        H = lam * H
-    
-    return H
+                coeff = Ai[k, j]
+                start = j * dim
+                row[start:start+dim] += coeff * nj
+            rows.append(row)
+            lbs.append(r_e)
 
-def gravity_aware_acceleration_H(Np1, dim, T=1.0, lam=1.0, lam_grav=1e-3):
+    if len(rows) == 0:
+        # No constraints generated
+        A_const = np.zeros((1, Np1 * dim))
+        lb_const = np.array([-np.inf])
+        ub_const = np.array([np.inf])
+    else:
+        A_const = np.vstack(rows)
+        lb_const = np.array(lbs)
+        ub_const = np.full_like(lb_const, np.inf)
+
+    return LinearConstraint(A_const, lb_const, ub_const)
+
+def build_boundary_constraints(P_init, v0=None, v1=None, a0=None, a1=None, dim=3):
     """
-    Compute acceleration minimization matrix with gravity consideration.
-    
-    Implements: J = ∫ ||a_total(τ)||² dτ
-    Where: a_total(τ) = a_geometric(τ) + a_gravitational(τ)
-    
-    For simplicity, we approximate gravitational acceleration as constant
-    at orbital altitude, making this a tractable optimization problem.
-    
+    Build boundary condition equality constraints.
+
     Args:
-        Np1: Number of control points (N+1) 
+        P_init: Initial control points (N+1, dim)
+        v0: Initial velocity (optional, shape (dim,))
+        v1: Final velocity (optional, shape (dim,))
+        a0: Initial acceleration (optional, shape (dim,))
+        a1: Final acceleration (optional, shape (dim,))
         dim: Spatial dimension
-        T: Time duration (default: 1.0)
-        lam: Regularization parameter for geometric acceleration (default: 1.0)
-        lam_grav: Regularization parameter for gravitational effects (default: 1e-3)
-        
-    Returns:
-        np.ndarray: (Np1*dim, Np1*dim) gravity-aware acceleration penalty matrix
-    """
-    if lam <= 0:
-        return np.zeros((Np1*dim, Np1*dim))
-    
-    # Get the base geometric acceleration matrix
-    H_geom = acceleration_H(Np1, dim, T, lam)
-    
-    # Add simplified gravitational contribution
-    # Approximate gravitational acceleration as constant at orbital radius
-    orbital_radius = ORBITAL_RADIUS
-    grav_accel_magnitude = EARTH_MU_SCALED / orbital_radius**2
-    
-    # Create a simple gravity penalty matrix
-    # This penalizes deviations from the "gravity-compensated" trajectory
-    H_grav = np.zeros((Np1*dim, Np1*dim))
-    
-    # Add small penalty for each control point to account for gravity
-    for d in range(dim):
-        start_idx = d * Np1
-        # Simple diagonal penalty - higher for points further from origin
-        for i in range(Np1):
-            H_grav[start_idx + i, start_idx + i] = -lam_grav * grav_accel_magnitude
-    
-    return H_geom + H_grav
 
-def optimize_orbital_docking(P_init, n_seg=8, r_e=50.0, max_iter=20, tol=1e-6, lam_smooth=1e-6, lam_grav=1e-3, verbose=False, keep_last_normal=True):
-    """
-    Optimize Bézier curve for orbital docking with gravity-aware acceleration minimization.
-    
-    Uses a fixed-point iteration approach where each iteration:
-    1. Computes normal vectors for each segment
-    2. Builds linear constraints for safety zone avoidance
-    3. Solves QP problem minimizing total acceleration (geometric + gravitational)
-    
-    The endpoints P0 and PN are kept fixed during optimization.
-    Minimizes: J = 0.5 * ||x - x₀||² + 0.5 * x^T H x
-    where H implements gravity-aware acceleration minimization: ∫ ||a_total(τ)||² dτ
-    This serves as a surrogate for fuel consumption optimization in GNC applications.
-    
-    Args:
-        P_init: Initial control points of shape (N+1, dim)
-        n_seg: Number of segments for constraint evaluation
-        r_e: Safety zone radius to avoid (in scaled units)
-        max_iter: Maximum number of iterations
-        tol: Convergence tolerance for parameter changes
-        lam_smooth: Acceleration regularization parameter (equation 8b)
-        lam_grav: Gravitational effects regularization parameter
-        verbose: Whether to print iteration progress
-        keep_last_normal: Whether to reuse previous normals when undefined
-        
     Returns:
-        tuple: (optimized_control_points, info_dict) where info contains:
-               - iter: Number of iterations performed
-               - feasible: Whether final solution satisfies constraints
-               - min_radius: Minimum distance from curve to origin
-               - acceleration: Maximum total acceleration magnitude (geometric + gravitational)
+        list of LinearConstraint objects
     """
+    Np1 = P_init.shape[0]
+    N = Np1 - 1
+
+    constraints = []
+
+    # Position constraints: p(0) = P0, p(1) = PN
+    # These are handled via bounds, not equality constraints
+    # (we'll set bounds separately)
+
+    # Velocity constraints
+    if v0 is not None:
+        # v(0) = N(P1 - P0)
+        # N*P1 - N*P0 = v0
+        row = np.zeros(Np1 * dim)
+        row[0:dim] = -N  # -N * P0
+        row[dim:2*dim] = N  # N * P1
+        constraints.append(LinearConstraint(row.reshape(1, -1), v0, v0))
+
+    if v1 is not None:
+        # v(1) = N(PN - PN-1)
+        # N*PN - N*PN-1 = v1
+        row = np.zeros(Np1 * dim)
+        row[-2*dim:-dim] = -N  # -N * P_{N-1}
+        row[-dim:] = N  # N * PN
+        constraints.append(LinearConstraint(row.reshape(1, -1), v1, v1))
+
+    # Acceleration constraints
+    if a0 is not None and N >= 2:
+        # a(0) = N(N-1)(P2 - 2P1 + P0)
+        row = np.zeros(Np1 * dim)
+        row[0:dim] = N*(N-1)  # N(N-1) * P0
+        row[dim:2*dim] = -2*N*(N-1)  # -2N(N-1) * P1
+        row[2*dim:3*dim] = N*(N-1)  # N(N-1) * P2
+        constraints.append(LinearConstraint(row.reshape(1, -1), a0, a0))
+
+    if a1 is not None and N >= 2:
+        # a(1) = N(N-1)(PN - 2PN-1 + PN-2)
+        row = np.zeros(Np1 * dim)
+        row[-3*dim:-2*dim] = N*(N-1)  # N(N-1) * P_{N-2}
+        row[-2*dim:-dim] = -2*N*(N-1)  # -2N(N-1) * P_{N-1}
+        row[-dim:] = N*(N-1)  # N(N-1) * PN
+        constraints.append(LinearConstraint(row.reshape(1, -1), a1, a1))
+
+    return constraints
+
+
+# In[51]:
+
+
+def _compute_cost_only(P_flat, Np1, dim, n_samples=50):
+    """Helper function to compute cost only (no recursion)."""
+    P = P_flat.reshape(Np1, dim)
+    curve = BezierCurve(P)
+    ts = np.linspace(0, 1, n_samples)
+
+    cost = 0.0
+    accel = 0.0
+    dtau = 1.0 / (n_samples - 1)
+
+    for tau in ts:
+        # Geometric acceleration at each point on the curve
+        a_geom = curve.acceleration(tau)
+
+        # Gravitational acceleration at each point on the curve
+        pos = curve.point(tau)
+        r = np.linalg.norm(pos)
+
+        # Direction toward origin (negative of position unit vector)
+        if r > 1e-6:
+            a_grav = -EARTH_MU_SCALED / r**2 * (pos / r)
+        else:
+            a_grav = np.zeros_like(pos)
+
+        # Cost: ||a_geom - a_grav||²
+        diff = a_geom - a_grav
+        norm_diff = np.linalg.norm(diff)
+        cost += norm_diff**2 * dtau
+        accel += norm_diff * dtau
+
+    return cost, accel
+
+def cost_function_gradient_hessian(P_flat, Np1, dim, n_samples=50, compute_grad=True):
+    """
+    Compute cost function, gradient, and Hessian approximation.
+    Returns: (cost, gradient, hessian)
+
+    Args:
+        compute_grad: If False, only compute cost (for efficiency when gradient not needed)
+    """
+    cost, _ = _compute_cost_only(P_flat, Np1, dim, n_samples)
+
+    if not compute_grad:
+        return cost, None, None
+
+    # Compute gradient using finite differences
+    eps = 1e-6
+    grad = np.zeros(Np1 * dim)
+    for i in range(Np1 * dim):
+        P_pert = P_flat.copy()
+        P_pert[i] += eps
+        cost_pert, _ = _compute_cost_only(P_pert, Np1, dim, n_samples)
+        grad[i] = (cost_pert - cost) / eps
+
+    # Simple diagonal Hessian approximation (regularization)
+    hess = np.eye(Np1 * dim) * 1e-6
+
+    return cost, grad, hess
+
+
+# In[52]:
+
+
+def optimize_orbital_docking(
+    P_init, 
+    n_seg=8, 
+    r_e=KOZ_RADIUS, 
+    max_iter=20,
+    tol=1e-6,
+    v0=None,
+    v1=None,
+    a0=None,
+    a1=None,
+    sample_count=100,
+    verbose=True,
+    use_cache=True
+):
+    """
+    Optimize Bézier curve for orbital docking.
+
+    Args:
+        P_init: Initial control points (N+1, dim)
+        n_seg: Number of segments for KOZ linearization
+        r_e: KOZ radius
+        max_iter: Max optimization iterations
+        tol: Convergence tolerance
+        v0, v1: Velocity boundary conditions
+        a0, a1: Acceleration boundary conditions
+        sample_count: Number of samples for cost evaluation
+        verbose: Print progress
+        use_cache: Whether to use cache (default: True)
+
+    Returns:
+        (P_opt, info_dict)
+    """
+    # Check cache first
+    if use_cache:
+        cache_key = get_cache_key(P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1)
+        cache_path = get_cache_path(cache_key, n_seg)
+        cached_result = load_from_cache(cache_path)
+        
+        if cached_result is not None:
+            P_opt, info = cached_result
+            if verbose:
+                print(f"[Cache hit] Loaded result for n_seg={n_seg}")
+            return P_opt, info
+        elif verbose:
+            print(f"[Cache miss] Running optimization for n_seg={n_seg}...")
+    
     P = P_init.copy()
     Np1, dim = P.shape
     N = Np1 - 1
+
+    # Get segment matrices
     A_list = segment_matrices_equal_params(N, n_seg)
 
-    # Set up gravity-aware acceleration minimization matrix
-    Hs = gravity_aware_acceleration_H(Np1, dim, T=1.0, lam=lam_smooth, lam_grav=lam_grav)
-    x0 = P.reshape(-1)  # Flatten control points for optimization
-
-    # Set up bounds: fix endpoints, allow interior points to move
-    lb = x0.copy(); ub = x0.copy()    # lb for lower bounds, ub for upper bounds
-    lb[:] = -np.inf; ub[:] =  np.inf  # Default: unconstrained
-    lb[:dim] = ub[:dim] = x0[:dim]       # Lock first control point P0
-    lb[-dim:] = ub[-dim:] = x0[-dim:]    # Lock last control point PN
+    # Set up bounds: fix endpoints for position constraints
+    x0 = P.reshape(-1)
+    lb = np.full_like(x0, -np.inf)
+    ub = np.full_like(x0, np.inf)
+    lb[:dim] = ub[:dim] = x0[:dim]  # Lock P0
+    lb[-dim:] = ub[-dim:] = x0[-dim:]  # Lock PN
     bounds = Bounds(lb, ub)
 
-    # Initialize iteration state
-    normals_prev = None  # Store previous normals for fallback
-    info = {"iter": 0, "feasible": False, "min_radius": None}
+    # Build boundary constraints
+    boundary_constraints = build_boundary_constraints(P, v0, v1, a0, a1, dim)
 
-    # Construct QP matrices for the cost function J = 0.5 * ||x - x0||² + 0.5 * x^T H x
-    # Rewritten as: J = 0.5 * x^T (I + H) x - x0^T x + constant
-    # In standard QP form: minimize 0.5 * x^T Q x + c^T x
-    Q = np.eye(Np1 * dim) + Hs  # Hessian matrix Q = I + H
-    c = -x0  # Linear term c = -x0
+    # Store results
+    info = {"iterations": 0, "feasible": False, "cost": np.inf}
 
-    for it in range(1, max_iter+1):
-        P_now = P
-        normals = []
-        eps = 1e-12  # Small value to avoid division by zero
-        
-        # Compute normal vectors for each segment
-        for Ai in A_list:
-            Qi = Ai @ P_now  # Control points of segment i
-            ci = Qi.mean(axis=0)  # Centroid of segment i
-            
-            # Normalize centroid to get outward normal (if not too close to origin)
-            if np.linalg.norm(ci) > 1e-9:
-                n = ci / (np.linalg.norm(ci) + eps)
-            else:
-                n = None  # Undefined normal (too close to origin)
-            
-            # Fallback strategies for undefined normals
-            if n is None and normals_prev is not None and keep_last_normal:
-                n = normals_prev[len(normals)]  # Reuse previous normal
-            if n is None:
-                # Use direction from start to end as fallback
-                v = P_now[-1] - P_now[0]
-                n = v / (np.linalg.norm(v) + eps)
-            normals.append(n)
+    # Iterative optimization: update KOZ constraints based on current solution
+    for it in range(1, max_iter + 1):
+        # Build KOZ constraints based on current control points
+        koz_constraint = build_koz_constraints(A_list, P, r_e, dim)
 
-        # Build linear constraints for current normals
-        lin_con = build_linear_constraint_matrix(A_list, normals, dim, r_e)
+        # Combine all constraints
+        all_constraints = [koz_constraint] + boundary_constraints
 
-        # Solve optimization problem using trust-constr (QP solver)
+        # Objective function
         def objective(x):
-            return 0.5 * x @ (Q @ x) + c @ x
-        
-        def gradient(x):
-            return Q @ x + c
-        
-        def hessian(x):
-            return Q
-        
-        # Suppress warnings about singular Jacobian (expected due to redundant constraints)
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message="Singular Jacobian matrix")
-            res = minimize(objective, P_now.reshape(-1), method="trust-constr",
-                           jac=gradient, hess=hessian, constraints=[lin_con], bounds=bounds,
-                           options=dict(maxiter=200, gtol=1e-12, disp=False))
-        x_new = res.x
-        P_new = x_new.reshape(Np1, dim)
+            cost, _ = _compute_cost_only(x, Np1, dim, n_samples=sample_count)
+            return cost
 
-        # Check convergence
+        # Gradient - compute gradient separately
+        def gradient(x):
+            _, grad, _ = cost_function_gradient_hessian(x, Np1, dim, compute_grad=True, n_samples=sample_count)
+            return grad
+
+        # Solve
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore")
+            res = minimize(
+                objective,
+                P.reshape(-1),
+                method='trust-constr',
+                jac=gradient,
+                constraints=all_constraints,
+                bounds=bounds,
+                options={'maxiter': 50, 'gtol': 1e-8, 'disp': False}
+            )
+
+        P_new = res.x.reshape(Np1, dim)
         delta = np.linalg.norm(P_new - P)
         P = P_new
-        normals_prev = normals  # Store for next iteration
-        
+
         if verbose:
-            print(f"[iter {it}] Δ={delta:.3e}  success={res.success}  status={res.status}")
+            print(f"Iter {it}: cost={res.fun:.6e}, delta={delta:.6e}")
 
         if delta < tol:
-            break  # Converged
+            break
 
-    # Final feasibility check by dense sampling of the curve
+    # Final feasibility check
     curve = BezierCurve(P)
-    ts = np.linspace(0, 1, 1000)  # Dense parameter sampling
-    pts = np.array([curve.point(t) for t in ts])
-    radii = np.linalg.norm(pts, axis=1)  # Distance from origin for each point
-    min_r = float(np.min(radii))
-    
-    # Compute total acceleration (geometric + gravitational) for the optimized curve
-    if curve.degree == 2:  # Quadratic Bézier
-        # Geometric acceleration: B''(τ) = 2(P₂ - 2P₁ + P₀) = constant
-        geom_accel_vec = 2 * (P[2] - 2*P[1] + P[0])
-        geom_accel = float(np.linalg.norm(geom_accel_vec))
-        
-        # Gravitational acceleration (simplified - using average radius)
-        avg_radius = float(np.mean(radii))
-        grav_accel = EARTH_MU_SCALED / avg_radius**2
-        
-        # Total acceleration magnitude
-        acceleration = geom_accel + grav_accel
-        
-    else:  # General degree
-        # Compute maximum total acceleration over the curve
-        total_accel_samples = []
-        ts = np.linspace(0, 1, 100)
-        for t in ts:
-            # Geometric acceleration
-            N = curve.degree
-            geom_accel = np.zeros(curve.dimension)
-            for i in range(N-1):
-                coeff = N * (N-1) * comb(N-2, i) * (t**i) * ((1-t)**(N-2-i))
-                geom_accel += coeff * (P[i+2] - 2*P[i+1] + P[i])
-            
-            # Gravitational acceleration at this point
-            curve_point = curve.point(t)
-            radius = np.linalg.norm(curve_point)
-            grav_accel_mag = EARTH_MU_SCALED / radius**2
-            
-            # Total acceleration magnitude
-            total_accel_samples.append(np.linalg.norm(geom_accel) + grav_accel_mag)
-        
-        # Use trapezoidal integration over τ to accumulate acceleration, then scale by duration T
-        acceleration = float(np.trapezoid(total_accel_samples, ts))
-    
-    # Update info with final results
-    info.update({"iter": it, "feasible": bool(min_r >= r_e - 1e-6), "min_radius": min_r, "acceleration": acceleration})
+    ts_check = np.linspace(0, 1, 1000)
+    pts = np.array([curve.point(t) for t in ts_check])
+    radii = np.linalg.norm(pts, axis=1)
+    min_radius = float(np.min(radii))
+
+    _, accel = _compute_cost_only(P.reshape(-1), Np1, dim, n_samples=sample_count)
+
+    info.update({
+        "iterations": it,
+        "feasible": min_radius >= r_e - 1e-6,
+        "min_radius": min_radius,
+        "cost": res.fun,
+        "accel": accel
+    })
+
+    # Save to cache
+    if use_cache:
+        cache_key = get_cache_key(P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1)
+        cache_path = get_cache_path(cache_key, n_seg)
+        save_to_cache(cache_path, P, info)
+        if verbose:
+            print(f"[Cache saved] Result saved for n_seg={n_seg}")
+
     return P, info
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Visualization utilities for orbital docking scenarios
-# ─────────────────────────────────────────────────────────────────────────────
+
+# In[53]:
+
+
+# Professional visualization helpers
+from mpl_toolkits.mplot3d.art3d import Line3DCollection
+
 def add_wire_sphere(ax, radius=3.0, center=(0.0, 0.0, 0.0), color='gray', alpha=0.25, resolution=40):
     """
     Add a wireframe sphere to a 3D plot.
-    
+
     Args:
         ax: 3D matplotlib axes
-        radius: Sphere radius
-        center: Sphere center coordinates
+        radius: Sphere radius (in km)
+        center: Sphere center coordinates (in km)
         color: Sphere color
         alpha: Transparency (0-1)
         resolution: Number of grid points for sphere generation
@@ -679,21 +771,21 @@ def add_wire_sphere(ax, radius=3.0, center=(0.0, 0.0, 0.0), color='gray', alpha=
     u = np.linspace(0, 2*np.pi, resolution)  # Azimuthal angle
     v = np.linspace(0, np.pi, resolution)    # Polar angle
     uu, vv = np.meshgrid(u, v)
-    
+
     # Convert to Cartesian coordinates
     x = cx + radius * np.cos(uu) * np.sin(vv)
     y = cy + radius * np.sin(uu) * np.sin(vv)
     z = cz + radius * np.cos(vv)
-    
+
     ax.plot_wireframe(x, y, z, rstride=3, cstride=3, color=color, alpha=alpha)
 
-def add_earth_sphere(ax, radius=EARTH_RADIUS, center=(0.0, 0.0, 0.0), color='blue', alpha=0.3):
+def add_earth_sphere(ax, radius=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0), color='blue', alpha=0.3):
     """
     Add Earth as a wireframe sphere for orbital context.
-    
+
     Args:
         ax: 3D matplotlib axes
-        radius: Earth radius in scaled units
+        radius: Earth radius in km
         center: Earth center coordinates
         color: Earth color
         alpha: Transparency
@@ -703,25 +795,25 @@ def add_earth_sphere(ax, radius=EARTH_RADIUS, center=(0.0, 0.0, 0.0), color='blu
 def set_axes_equal_around(ax, center=(0,0,0), radius=1.0, pad=0.05):
     """
     Set 3D axes to equal aspect ratio around a specified center and radius.
-    
+
     Args:
         ax: 3D matplotlib axes
-        center: Center point for the view
-        radius: Radius around center to include
+        center: Center point for the view (in km)
+        radius: Radius around center to include (in km)
         pad: Additional padding factor
     """
     cx, cy, cz = center
-    
+
     # Get current axis limits
     x0, x1 = ax.get_xlim3d()
     y0, y1 = ax.get_ylim3d()
     z0, z1 = ax.get_zlim3d()
-    
+
     # Expand limits to include the specified sphere
     x0 = min(x0, cx - radius); x1 = max(x1, cx + radius)
     y0 = min(y0, cy - radius); y1 = max(y1, cy + radius)
     z0 = min(z0, cz - radius); z1 = max(z1, cz + radius)
-    
+
     # Set equal aspect ratio
     max_range = max(x1 - x0, y1 - y0, z1 - z0)
     half = 0.5 * max_range * (1 + pad)
@@ -733,7 +825,7 @@ def set_axes_equal_around(ax, center=(0,0,0), radius=1.0, pad=0.05):
 def set_isometric(ax, elev=35.264, azim=45.0, ortho=True):
     """
     Set isometric view for 3D plot.
-    
+
     Args:
         ax: 3D matplotlib axes
         elev: Elevation angle in degrees
@@ -750,7 +842,7 @@ def set_isometric(ax, elev=35.264, azim=45.0, ortho=True):
 def beautify_3d_axes(ax, show_ticks=True, show_grid=True):
     """
     Apply paper-friendly styling to 3D axes.
-    
+
     Args:
         ax: 3D matplotlib axes
         show_ticks: Whether to show axis ticks and labels
@@ -761,7 +853,7 @@ def beautify_3d_axes(ax, show_ticks=True, show_grid=True):
         ax.tick_params(axis='both', which='major', labelsize=8, pad=2)
     else:
         ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
-    
+
     # Style the axis panes (background planes)
     for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
         try:
@@ -773,7 +865,7 @@ def beautify_3d_axes(ax, show_ticks=True, show_grid=True):
 def plot_segments_gradient(ax, P_opt, n_seg, cmap_name='viridis', show_seg_ctrl_if=8, lw=2.0):
     """
     Plot Bézier curve with color-coded segments and control polygon.
-    
+
     Args:
         ax: 3D matplotlib axes
         P_opt: Optimized control points
@@ -790,8 +882,8 @@ def plot_segments_gradient(ax, P_opt, n_seg, cmap_name='viridis', show_seg_ctrl_
     ax.plot(P_opt[:,0], P_opt[:,1], P_opt[:,2], 'k.-', lw=1.2, ms=4)
 
     # Generate colors for segments using colormap
-    cmap = plt.get_cmap(cmap_name)
-    colors = [cmap(0.0)] if len(A_list) == 1 else [cmap(i/(len(A_list)-1)) for i in range(len(A_list))]
+    base_colors = ['#E74C3C', '#3498DB', '#F39C12'] # (red, blue, orange)
+    colors = [base_colors[i % 3] for i in range(len(A_list))]
 
     # Draw each segment with its color
     ts = np.linspace(0, 1, 180)  # Parameter values for smooth curves
@@ -813,120 +905,193 @@ def plot_segments_gradient(ax, P_opt, n_seg, cmap_name='viridis', show_seg_ctrl_
     lc = Line3DCollection(lines, colors=cols, linewidths=lw, alpha=0.95)
     ax.add_collection3d(lc)
 
-def plot_initial_guess(ax, P_init, linestyle=':', color='0.5', lw=1.6):
+def optimize_all_segment_counts(P_init, r_e=KOZ_RADIUS, segment_counts=[2, 4, 8, 16, 32, 64], 
+                                max_iter=120, tol=1e-8, verbose=True, use_cache=True):
     """
-    Plot the initial curve as a reference overlay.
-    
+    Run optimization for multiple segment counts and return results.
+    Uses caching to speed up repeated runs.
+
     Args:
-        ax: 3D matplotlib axes
-        P_init: Initial control points
-        linestyle: Line style for the overlay
-        color: Color for the overlay
-        lw: Line width
-    """
-    init_curve = BezierCurve(P_init)
-    _, Ppts = init_curve.sample(300)  # Dense sampling for smooth curve
-    ax.plot(Ppts[:,0], Ppts[:,1], Ppts[:,2], linestyle=linestyle, color=color, lw=lw)
+        P_init: Initial control points (N+1, dim)
+        r_e: KOZ radius
+        segment_counts: List of segment counts to test
+        max_iter: Maximum iterations per optimization
+        tol: Convergence tolerance
+        verbose: Print progress
+        use_cache: Whether to use cache (default: True)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Orbital docking demonstration
-# ─────────────────────────────────────────────────────────────────────────────
-def create_orbital_docking_scenario():
-    """
-    Create a realistic orbital docking scenario for conference presentation.
-    
     Returns:
-        tuple: (P_init, r_e, results) - initial points, safety radius, optimization results
+        List of tuples: [(n_seg, P_opt, info), ...] where info includes acceleration
     """
-    print("Generating orbital docking scenario for conference...")
-    
-    # Realistic orbital docking control points (scaled units: 1 unit = 1000 km)
-    # Cubic Bezier curve: degree 3 with 4 control points
-    P0 = np.array([ 40.0, -70.0,  0.0])  # Start point (chaser spacecraft)
-    P2 = np.array([-50.0,  70.0,  30.0])  # End point (target spacecraft)
-    P1 = np.array([ -10.0,  -10.0, 20.0])  # Middle control point (maneuver point)
-    P_init = np.vstack([P0, P1, P2])
-
-    # P0 = np.array([ 40.0, -70.0,  0.0])  # Start point (chaser spacecraft)
-    # P3 = np.array([-50.0,  70.0,  30.0])  # End point (target spacecraft)
-    # P1 = np.array([ -10.0,  -10.0, 20.0])  # First control point
-    # P2 = np.array([ -30.0,  30.0,  25.0])  # Second control point
-    # P_init = np.vstack([P0, P1, P2, P3])
-    
-    # Safety zone radius (50,000 km - realistic for orbital docking)
-    r_e = 50.0
-    
-    # Test different numbers of segments
-    split_list = [2, 4, 8, 16, 32, 64]
     results = []
-    
-    print("Optimizing orbital docking trajectories with different segment counts...")
-    for n_seg in split_list:
-        P_opt, info = optimize_orbital_docking(
-            P_init, n_seg=n_seg, r_e=r_e, max_iter=120, tol=1e-8,
-            lam_smooth=1e-6, lam_grav=1, verbose=False
-        )
-        results.append((n_seg, P_opt, info))
-        print(f"n_seg={n_seg:>2d} | iter={info['iter']:>3d} | acceleration={info['acceleration']:.3f} | feasible={info['feasible']}")
-    
-    return P_init, r_e, results
+    cache_hits = 0
+    cache_misses = 0
 
-def create_trajectory_figure(P_init, r_e, results):
+    print(f"Optimizing trajectories for segment counts: {segment_counts}")
+    if use_cache:
+        print("Cache: ENABLED")
+    else:
+        print("Cache: DISABLED")
+    print("=" * 60)
+
+    for n_seg in segment_counts:
+        if verbose:
+            print(f"\nProcessing n_seg={n_seg}...")
+
+        # Check if cached before running
+        was_cached = False
+        if use_cache:
+            cache_key = get_cache_key(P_init, n_seg, r_e, max_iter, tol, 100, None, None, None, None)
+            cache_path = get_cache_path(cache_key, n_seg)
+            if cache_path.exists():
+                was_cached = True
+                cache_hits += 1
+            else:
+                cache_misses += 1
+
+        # Run optimization (will use cache internally if enabled)
+        P_opt, info = optimize_orbital_docking(
+            P_init, 
+            n_seg=n_seg, 
+            r_e=r_e, 
+            max_iter=max_iter, 
+            tol=tol,
+            sample_count=100,
+            verbose=False,
+            use_cache=use_cache
+        )
+
+        results.append((n_seg, P_opt, info))
+
+        if verbose:
+            cache_status = "[CACHED]" if was_cached else "[COMPUTED]"
+            print(f"  ✓ n_seg={n_seg:>2d} {cache_status} | iter={info['iterations']:>3d} | "
+                  f"acceleration={info['accel']:.3f} | feasible={info['feasible']}")
+
+    print("\n" + "=" * 60)
+    print("All optimizations complete!")
+    if use_cache and verbose:
+        print(f"Cache statistics: {cache_hits} hits, {cache_misses} misses")
+
+    return results
+
+def create_trajectory_comparison_figure(P_init, r_e, results):
     """
-    Create Window 1: 2×3 layout showing trajectories with different segment counts.
+    Create 2×3 layout showing trajectories with different segment counts.
+    Uses same aesthetics as Orbital_Docking_Optimizer.py.
+    All 6 panels share the same zoom level - zooming one zooms all.
+
+    Args:
+        P_init: Initial control points
+        r_e: KOZ radius
+        results: List of (n_seg, P_opt, info) tuples
+
+    Returns:
+        matplotlib Figure object
     """
-    fig1 = plt.figure(figsize=(16, 12), constrained_layout=True)  # Use constrained layout to avoid overlaps
-    
+    fig = plt.figure(figsize=(16, 12), constrained_layout=True)
+
     # Create 2×3 subplot layout
     axes = []
     for i in range(6):
-        ax = fig1.add_subplot(2, 3, i+1, projection='3d')
+        ax = fig.add_subplot(2, 3, i+1, projection='3d')
         axes.append(ax)
-    
+
     # Plot trajectories for different segment counts
     segment_counts = [2, 4, 8, 16, 32, 64]
-    
+
+    # Calculate shared view radius (more zoomed in)
+    # Find the maximum extent across all trajectories
+    all_points = [P_init]
+    for _, P_opt, _ in results:
+        all_points.append(P_opt)
+    all_points_array = np.vstack(all_points)
+    max_extent = np.linalg.norm(all_points_array, axis=1).max()
+    # More zoomed in: use smaller radius multiplier
+    view_radius = max(max_extent * 0.6, EARTH_RADIUS_KM * 0.8)
+
     for i, (n_seg, P_opt, info) in enumerate(results):
         ax = axes[i]
-        
-        # Add Earth (large blue sphere)
-        add_earth_sphere(ax, radius=EARTH_RADIUS, color='blue', alpha=0.3)
-        
-        # Add safety zone (smaller red sphere)
+
+        # Add Earth (smaller blue sphere, more transparent)
+        add_earth_sphere(ax, radius=EARTH_RADIUS_KM * 0.7, color='blue', alpha=1)
+
+        # Add safety zone (KOZ - smaller red sphere)
         add_wire_sphere(ax, radius=r_e, color='red', alpha=0.2, resolution=15)
-        
-        # Plot optimized trajectory (thicker lines)
+
+        # Plot optimized trajectory (thicker lines with color-coded segments)
         plot_segments_gradient(ax, P_opt, n_seg, cmap_name='viridis', lw=3.0)
-        
+
         # Add start and end markers (larger markers)
-        ax.scatter(P_init[0,0], P_init[0,1], P_init[0,2], color='green', s=120, label='Chaser')
-        ax.scatter(P_init[-1,0], P_init[-1,1], P_init[-1,2], color='orange', s=120, label='Target')
+        ax.scatter(P_init[0,0], P_init[0,1], P_init[0,2], 
+                  color='green', s=120, label='Chaser', zorder=10)
+        ax.scatter(P_init[-1,0], P_init[-1,1], P_init[-1,2], 
+                  color='orange', s=120, label='Target', zorder=10)
         ax.legend(fontsize=8)
-        
-        # Professional styling (reduced radius for more zoom)
-        set_axes_equal_around(ax, center=(0,0,0), radius=20, pad=0.1)
+
+        # Professional styling with shared zoom level
+        set_axes_equal_around(ax, center=(0,0,0), radius=view_radius, pad=0.05)
         set_isometric(ax, elev=20, azim=45)
         beautify_3d_axes(ax, show_ticks=True, show_grid=True)
+
+        # Title with acceleration (convert to m/s² from km/s²)
+        accel_ms2 = info['accel'] * 1e3  # Convert km/s² to m/s²
+        accel_str = format_number(accel_ms2, '.1f')
+        ax.set_title(f'{n_seg} Segments\nAccel: {accel_str} m/s²', fontsize=10, pad=10)
+
+    # Link all axes to share zoom - when one zooms, all zoom together
+    # Use a flag to prevent infinite recursion
+    _syncing = False
+    
+    def sync_limits(ax_source):
+        """Sync limits from source axis to all other axes."""
+        nonlocal _syncing
+        if _syncing:
+            return
         
-        # Title with acceleration
-        ax.set_title(f'{n_seg} Segments\nAccel: {info["acceleration"]:.1f} m/s²', fontsize=10, pad=10)
+        _syncing = True
+        try:
+            xlim = ax_source.get_xlim3d()
+            ylim = ax_source.get_ylim3d()
+            zlim = ax_source.get_zlim3d()
+            
+            # Update all other axes
+            for ax_target in axes:
+                if ax_target is not ax_source:
+                    # Temporarily disconnect callbacks to avoid recursion
+                    ax_target.set_xlim3d(xlim, emit=False)
+                    ax_target.set_ylim3d(ylim, emit=False)
+                    ax_target.set_zlim3d(zlim, emit=False)
+        finally:
+            _syncing = False
     
-    # Adjust layout
-    # Let constrained_layout handle spacing to prevent overlaps
-    
-    return fig1
+    # Connect the callback to each axis for all three dimensions
+    for ax in axes:
+        # Use lambda with default argument to capture ax correctly
+        ax.callbacks.connect('xlim_changed', lambda event, ax=ax: sync_limits(ax))
+        ax.callbacks.connect('ylim_changed', lambda event, ax=ax: sync_limits(ax))
+        ax.callbacks.connect('zlim_changed', lambda event, ax=ax: sync_limits(ax))
+
+    return fig
 
 def create_performance_figure(results):
     """
-    Create Window 2: Acceleration performance graph.
+    Create performance figure showing acceleration vs segment count.
+
+    Args:
+        results: List of (n_seg, P_opt, info) tuples
+
+    Returns:
+        matplotlib Figure object
     """
-    fig2 = plt.figure(figsize=(10, 6), constrained_layout=True)
-    ax = fig2.add_subplot(111)
-    
+    fig = plt.figure(figsize=(10, 6), constrained_layout=True)
+    ax = fig.add_subplot(111)
+
     # Extract data
-    segment_counts = [2, 4, 8, 16, 32, 64]
-    accelerations = [info['acceleration'] for _, _, info in results]
-    
+    segment_counts = [n_seg for n_seg, _, _ in results]
+    # accelerations = [info['accel'] * 1e-3 for _, _, info in results]  # Convert km/s² to m/s²
+    accelerations = [info['accel'] for _, _, info in results]
+
     # Create acceleration performance graph
     ax.plot(segment_counts, accelerations, 'bo-', linewidth=3, markersize=10)
     ax.set_xlabel('Number of Segments', fontsize=14)
@@ -935,160 +1100,434 @@ def create_performance_figure(results):
     ax.grid(True, alpha=0.3)
     ax.set_xscale('log', base=2)  # Log scale for segment counts
 
-    
     # Add data point labels
     for i, (seg, accel) in enumerate(zip(segment_counts, accelerations)):
-        ax.annotate(f'{accel:.1f}', (seg, accel), 
-                   textcoords="offset points", xytext=(0,10), ha='center',
+        accel_str = format_number(accel, '.1f')
+        ax.annotate(accel_str, (seg, accel), textcoords="offset points", xytext=(0,10), ha='center',
                    fontsize=10, bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8))
-    
-    # Adjust layout
-    # Let constrained_layout manage spacing automatically
-    
-    return fig2
+
+    return fig
 
 def create_acceleration_figure(results, segcount=64):
     """
-    Create Window 3: 3x1 layout showing xyz position, xyz speed, and acceleration profiles.
+    Create 3x1 layout showing xyz position, xyz velocity, and acceleration profiles.
+    Adapted for notebook's BezierCurve class.
+
+    Args:
+        results: List of (n_seg, P_opt, info) tuples
+        segcount: Segment count to plot (default: 64)
+
+    Returns:
+        matplotlib Figure object
     """
-    fig3 = plt.figure(figsize=(12, 10), constrained_layout=True)
-    fig3.suptitle(f'Acceleration Profiles for {segcount} Segments', fontsize=16)
-    
+    fig = plt.figure(figsize=(12, 10), constrained_layout=True)
+    fig.suptitle(f'Position, Velocity, and Acceleration Profiles for {segcount} Segments', fontsize=16)
+
     # Create 3x1 subplot layout
-    ax1 = fig3.add_subplot(3, 1, 1)  # Position plot
-    ax2 = fig3.add_subplot(3, 1, 2)  # Speed plot
-    ax3 = fig3.add_subplot(3, 1, 3)  # Acceleration plot
-    
-    # Use the best optimized curve (64 segments, or the last one if available)
+    ax1 = fig.add_subplot(3, 1, 1)  # Position plot
+    ax2 = fig.add_subplot(3, 1, 2)  # Velocity plot
+    ax3 = fig.add_subplot(3, 1, 3)  # Acceleration plot
+
+    # Find the result for the specified segment count
     P_opt, info = None, None
     for seg_count, P_opt_iter, info_iter in results:
         if seg_count == segcount:
             P_opt, info = P_opt_iter, info_iter
             break
-    
-    # Fallback to last result if 64 segments not found
+
+    # Fallback to last result if specified segment count not found
     if P_opt is None and len(results) > 0:
         P_opt, info = results[-1][1], results[-1][2]
-    
+
     if P_opt is None:
-        return fig3
-    
+        return fig
+
     # Create Bezier curve
     curve = BezierCurve(P_opt)
     ts = np.linspace(0.0, 1.0, 300)
-    
+
     # Sample positions, velocities, and accelerations
     positions = np.array([curve.point(t) for t in ts])
     velocities = np.array([curve.velocity(t) for t in ts])
-    
+    print(f'positions: {positions}')
+    print(f'velocities: {velocities}')
+
     # Calculate magnitudes
     position_magnitudes = np.linalg.norm(positions, axis=1)
     velocity_magnitudes = np.linalg.norm(velocities, axis=1)
-    
+
     # Calculate acceleration components
-    geom_accelerations = np.array([np.linalg.norm(curve.geometric_acceleration(t)) for t in ts])
-    grav_accelerations = np.array([EARTH_MU_SCALED / np.linalg.norm(curve.point(t))**2 for t in ts])
+    # Geometric acceleration from curve
+    geom_accelerations_vec = np.array([curve.acceleration(t) for t in ts])
+    geom_accelerations = np.linalg.norm(geom_accelerations_vec, axis=1)
+
+    # Gravitational acceleration at each point
+    grav_accelerations = []
+    for t in ts:
+        pos = curve.point(t)
+        r = np.linalg.norm(pos)
+        if r > 1e-6:
+            grav_accel_mag = EARTH_MU_SCALED / r**2
+        else:
+            grav_accel_mag = 0.0
+        grav_accelerations.append(grav_accel_mag)
+    grav_accelerations = np.array(grav_accelerations)
+
+    # Total acceleration magnitude (geometric + gravitational)
     total_accelerations = geom_accelerations + grav_accelerations
-    
+
     # Plot 1: XYZ Position with total magnitude
     ax1.plot(ts, positions[:, 0], 'r-', linewidth=2.0, label='X', alpha=0.7)
     ax1.plot(ts, positions[:, 1], 'g-', linewidth=2.0, label='Y', alpha=0.7)
     ax1.plot(ts, positions[:, 2], 'b-', linewidth=2.0, label='Z', alpha=0.7)
     ax1.plot(ts, position_magnitudes, color='black', linewidth=2.5, label='||Position|| (Total)', linestyle='--')
     ax1.set_xlabel('Parameter τ', fontsize=12)
-    ax1.set_ylabel('Position (scaled units)', fontsize=12)
+    ax1.set_ylabel('Position (km)', fontsize=12)
     ax1.set_title('Position Components (XYZ) and Total Magnitude', fontsize=14, pad=15)
     ax1.grid(True, alpha=0.3)
     ax1.legend(fontsize=11)
-    
-    # Plot 2: XYZ Speed (velocity components) with total magnitude
+
+    # Plot 2: XYZ Velocity with total magnitude
     ax2.plot(ts, velocities[:, 0], 'r-', linewidth=2.0, label='Vx', alpha=0.7)
     ax2.plot(ts, velocities[:, 1], 'g-', linewidth=2.0, label='Vy', alpha=0.7)
     ax2.plot(ts, velocities[:, 2], 'b-', linewidth=2.0, label='Vz', alpha=0.7)
     ax2.plot(ts, velocity_magnitudes, color='black', linewidth=2.5, label='||Velocity|| (Total)', linestyle='--')
     ax2.set_xlabel('Parameter τ', fontsize=12)
-    ax2.set_ylabel('Speed (scaled units)', fontsize=12)
+    ax2.set_ylabel('Velocity (km/s)', fontsize=12)
     ax2.set_title('Velocity Components (XYZ) and Total Magnitude', fontsize=14, pad=15)
     ax2.grid(True, alpha=0.3)
     ax2.legend(fontsize=11)
-    
+
     # Plot 3: Acceleration components and total
-    # ax3.plot(ts, geom_accelerations, 'orange', linewidth=2.0, label='Geometric Acceleration', alpha=0.7)
-    # ax3.plot(ts, grav_accelerations, 'cyan', linewidth=2.0, label='Gravitational Acceleration', alpha=0.7)
-    ax3.plot(ts, total_accelerations, 'purple', linewidth=2.5, label='Total Acceleration', linestyle='-')
+    ax3.plot(ts, geom_accelerations * 1e3, 'orange', linewidth=2.0, label='Geometric Acceleration', alpha=0.7)
+    ax3.plot(ts, grav_accelerations * 1e3, 'cyan', linewidth=2.0, label='Gravitational Acceleration', alpha=0.7)
+    ax3.plot(ts, total_accelerations * 1e3, 'purple', linewidth=2.5, label='Total Acceleration', linestyle='-')
     ax3.set_xlabel('Parameter τ', fontsize=12)
     ax3.set_ylabel('Acceleration (m/s²)', fontsize=12)
-    ax3.set_title(f'Total Acceleration (Accumulated: {info["acceleration"]:.1f})', 
+    accel_total_str = format_number(info["accel"]*1e3, '.1f')
+    ax3.set_title(f'Acceleration Components (Accumulated: {accel_total_str} m/s²)', 
                  fontsize=14, pad=15)
     ax3.grid(True, alpha=0.3)
     ax3.legend(fontsize=11)
-    ax3.set_ylim(0, max(total_accelerations) * 1.1)
-    
+    ax3.set_ylim(0, max(total_accelerations) * 1e3 * 1.1)
+
     # Add acceleration statistics
-    max_accel = np.max(total_accelerations)
-    avg_accel = np.mean(total_accelerations)
-    ax3.text(0.02, 0.98, f'Max: {max_accel:.1f}\nAvg: {avg_accel:.1f}', 
+    max_accel = np.max(total_accelerations) * 1e3
+    avg_accel = np.mean(total_accelerations) * 1e3
+    max_str = format_number(max_accel, '.1f')
+    avg_str = format_number(avg_accel, '.1f')
+    ax3.text(0.02, 0.98, f'Max: {max_str} m/s²\nAvg: {avg_str} m/s²', 
             transform=ax3.transAxes, fontsize=10, verticalalignment='top',
             bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
-    
-    # Adjust layout
-    # Let constrained_layout manage spacing automatically
-    
-    return fig3
 
-def create_conference_figures():
-    """
-    Generate three separate windows: trajectories, performance graph, and trajectory analysis (position, speed, acceleration).
-    """
-    # Run orbital docking scenario
-    P_init, r_e, results = create_orbital_docking_scenario()
-    
-    # Create Window 1: Trajectory layouts
-    fig1 = create_trajectory_figure(P_init, r_e, results)
-    
-    # Create Window 2: Performance graph
-    fig2 = create_performance_figure(results)
-    
-    # Create Window 3: Acceleration profiles
-    fig3 = create_acceleration_figure(results, segcount=2)
-    fig4 = create_acceleration_figure(results, segcount=4)
-    fig5 = create_acceleration_figure(results, segcount=8)
-    fig3 = create_acceleration_figure(results, segcount=16)
-    fig4 = create_acceleration_figure(results, segcount=32)
-    fig5 = create_acceleration_figure(results, segcount=64)
-    
-    # Save all figures
-    fig1.savefig("orbital_trajectories.png", dpi=300, bbox_inches="tight", facecolor='white')
-    fig2.savefig("acceleration_performance.png", dpi=300, bbox_inches="tight", facecolor='white')
-    fig3.savefig("acceleration_profiles.png", dpi=300, bbox_inches="tight", facecolor='white')
-    
-    # Calculate performance metrics
-    accelerations = [info['acceleration'] for _, _, info in results]
-    improvement = ((accelerations[0] - accelerations[-1]) / accelerations[0]) * 100
-    
-    print(f"\nFigures saved:")
-    print(f"- orbital_trajectories.png (2×3 trajectory layout)")
-    print(f"- acceleration_performance.png (performance graph)")
-    print(f"- acceleration_profiles.png (3×1 layout: position, speed, acceleration)")
-    print(f"\nPerformance improvement: {improvement:.1f}% acceleration reduction")
-    print(f"Best acceleration: {min(accelerations):.1f} m/s²")
-    
-    return fig1, fig2, fig3, fig4, fig5
+    return fig
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Main execution
-# ─────────────────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
+def generate_initial_control_points(degree, P_start, P_end):
     """
-    Orbital docking trajectory optimization demonstration.
-    
-    Creates three separate windows:
-    - Window 1: 2×3 layout showing trajectories with different segment counts
-    - Window 2: Acceleration performance graph showing improvement with more segments
-    - Window 3: 3×1 layout showing position (XYZ), speed (XYZ), and acceleration profiles
+    Generate initial control points for a Bézier curve of given degree.
+    Points are evenly spaced along the straight line from P_start to P_end.
+
+    Args:
+        degree: Degree of Bézier curve (N = 2, 3, 4, ...)
+        P_start: Start point (chaser position)
+        P_end: End point (ISS position)
+
+    Returns:
+        np.ndarray: Control points of shape (N+1, dim)
     """
-    # Generate three separate windows
-    fig1, fig2, fig3, fig4, fig5 = create_conference_figures()
-    
-    # Show all windows
-    plt.show()
+    N = degree
+    num_points = N + 1
+
+    # Generate evenly spaced parameter values along the line
+    # For N=2: [0, 0.5, 1.0] → 3 points
+    # For N=3: [0, 1/3, 2/3, 1.0] → 4 points
+    # For N=4: [0, 1/4, 1/2, 3/4, 1.0] → 5 points
+    if N == 1:
+        t_values = np.array([0.0, 1.0])
+    else:
+        t_values = np.linspace(0.0, 1.0, num_points)
+
+    # Interpolate control points along the straight line
+    control_points = []
+    for t in t_values:
+        P_t = P_start + t * (P_end - P_start)
+        control_points.append(P_t)
+
+    return np.vstack(control_points)
+
+def create_time_vs_order_figure(calculation_times, optimization_results):
+    """
+    Create figure showing calculation time vs curve order.
+
+    Args:
+        calculation_times: Dict mapping curve order N to time in seconds
+        optimization_results: Dict mapping curve order N to (P_opt, info) tuple
+
+    Returns:
+        matplotlib Figure object
+    """
+    fig = plt.figure(figsize=(10, 6), constrained_layout=True)
+    ax = fig.add_subplot(111)
+
+    # Extract data
+    orders = sorted(calculation_times.keys())
+    times = [calculation_times[N] for N in orders]
+
+    # Create bar plot
+    bars = ax.bar(orders, times, color=['#3498DB', '#E74C3C', '#F39C12'], alpha=0.7, edgecolor='black', linewidth=1.5)
+
+    # Add value labels on bars
+    for i, (order, time_val) in enumerate(zip(orders, times)):
+        time_str = format_number(time_val, '.2f')
+        ax.text(order, time_val, f'{time_str}s', 
+               ha='center', va='bottom', fontsize=12, fontweight='bold')
+
+    ax.set_xlabel('Curve Order (N)', fontsize=14)
+    ax.set_ylabel('Calculation Time (seconds)', fontsize=14)
+    ax.set_title('Optimization Time vs Bézier Curve Order', fontsize=16, pad=20)
+    ax.grid(True, alpha=0.3, axis='y')
+    ax.set_xticks(orders)
+    ax.set_xticklabels([f'Quadratic (N={N})' if N == 2 else 
+                        f'Cubic (N={N})' if N == 3 else 
+                        f'4th Degree (N={N})' for N in orders])
+
+    # Add acceleration info as text
+    accel_info = []
+    for N in orders:
+        _, info = optimization_results[N]
+        accel_ms2 = info['accel'] * 1e3  # Convert to m/s²
+        accel_str = format_number(accel_ms2, '.1f')
+        accel_info.append(f'N={N}: {accel_str} m/s²')
+
+    info_text = '\n'.join(accel_info)
+    ax.text(0.98, 0.02, f'Acceleration:\n{info_text}', 
+           transform=ax.transAxes, fontsize=10, 
+           verticalalignment='bottom', horizontalalignment='right',
+           bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.8))
+
+    return fig
+
+
+# # Secnario setup
+# Chaser satelite @ \
+# Target satelite @ ISS altitude \
+# with 90 degree sepration
+
+# In[54]:
+
+
+# Define endpoints for all curve orders
+# Positions in km, scaled appropriately
+
+# Start: chaser position (at 300km altitude)
+theta_start = -np.pi / 4  # 45 degrees
+P_start = np.array([
+    CHASER_RADIUS * np.cos(theta_start),
+    CHASER_RADIUS * np.sin(theta_start),
+    0.0
+])
+
+# End: ISS position (at 423km altitude)  
+theta_end = np.pi / 4  # -45 degrees
+P_end = np.array([
+    ISS_RADIUS * np.cos(theta_end),
+    ISS_RADIUS * np.sin(theta_end),
+    0.0
+])
+
+print(f"Endpoints (km):")
+print(f"  Start (chaser): {P_start}")
+print(f"  End (ISS):      {P_end}")
+print(f"\nKOZ radius: {KOZ_RADIUS:.1f} km")
+
+# Generate initial control points for different curve orders
+# N=2: Quadratic (3 control points)
+# N=3: Cubic (4 control points)
+# N=4: 4th degree (5 control points)
+
+P_init_N2 = generate_initial_control_points(2, P_start, P_end)
+P_init_N3 = generate_initial_control_points(3, P_start, P_end)
+P_init_N4 = generate_initial_control_points(4, P_start, P_end)
+
+print("\n" + "=" * 60)
+print("Initial control points for each curve order:")
+print("=" * 60)
+
+print(f"\nN=2 (Quadratic, {P_init_N2.shape[0]} control points):")
+for i, P in enumerate(P_init_N2):
+    print(f"  P{i}: {P}")
+
+print(f"\nN=3 (Cubic, {P_init_N3.shape[0]} control points):")
+for i, P in enumerate(P_init_N3):
+    print(f"  P{i}: {P}")
+
+print(f"\nN=4 (4th Degree, {P_init_N4.shape[0]} control points):")
+for i, P in enumerate(P_init_N4):
+    print(f"  P{i}: {P}")
+
+
+# In[55]:
+
+
+# OPTIMIZATION for N=2 (Quadratic curve)
+# Measure calculation time for performance analysis
+import time
+
+print("\n⚠️  Starting optimization for N=2 (Quadratic curve)...")
+print("    This may take a while depending on max_iter and convergence\n")
+
+# Run optimization for all segment counts with N=2
+segment_counts = [2, 4, 8, 16, 32, 64]
+
+# Start timing
+start_time_N2 = time.time()
+
+# Run optimizations for all segment counts
+results_N2 = optimize_all_segment_counts(
+    P_init_N2, 
+    r_e=KOZ_RADIUS,
+    segment_counts=segment_counts,
+    max_iter=60,
+    tol=1e-3,
+    verbose=True
+)
+
+# Calculate total time
+elapsed_time_N2 = time.time() - start_time_N2
+
+print(f"\n⏱️  Total optimization time for N=2: {elapsed_time_N2:.2f} seconds")
+
+
+# In[56]:
+
+
+# OPTIMIZATION for N=3 (Cubic curve)
+# Measure calculation time for performance analysis
+
+print("\n⚠️  Starting optimization for N=3 (Cubic curve)...")
+print("    This may take a while depending on max_iter and convergence\n")
+
+# Run optimization for all segment counts with N=3
+segment_counts = [2, 4, 8, 16, 32, 64]
+
+# Start timing
+start_time_N3 = time.time()
+
+# Run optimizations for all segment counts
+results_N3 = optimize_all_segment_counts(
+    P_init_N3, 
+    r_e=KOZ_RADIUS,
+    segment_counts=segment_counts,
+    max_iter=60,
+    tol=1e-3,
+    verbose=True
+)
+
+# Calculate total time
+elapsed_time_N3 = time.time() - start_time_N3
+
+print(f"\n⏱️  Total optimization time for N=3: {elapsed_time_N3:.2f} seconds")
+
+
+# In[57]:
+
+
+# OPTIMIZATION for N=4 (4th degree curve)
+# Measure calculation time for performance analysis
+
+print("\n⚠️  Starting optimization for N=4 (4th degree curve)...")
+print("    This may take a while depending on max_iter and convergence\n")
+
+# Run optimization for all segment counts with N=4
+segment_counts = [2, 4, 8, 16, 32, 64]
+
+# Start timing
+start_time_N4 = time.time()
+
+# Run optimizations for all segment counts
+results_N4 = optimize_all_segment_counts(
+    P_init_N4, 
+    r_e=KOZ_RADIUS,
+    segment_counts=segment_counts,
+    max_iter=60,
+    tol=1e-3,
+    verbose=True
+)
+
+# Calculate total time
+elapsed_time_N4 = time.time() - start_time_N4
+
+print(f"\n⏱️  Total optimization time for N=4: {elapsed_time_N4:.2f} seconds")
+
+
+# In[58]:
+
+
+# VISUALIZATION: N=2 (Quadratic) Results
+print("\n📊 Creating visualizations for N=2 (Quadratic curve)...")
+print("=" * 60)
+
+# Create and display the 2×3 comparison figure for N=2
+fig_comparison_N2 = create_trajectory_comparison_figure(P_init_N2, KOZ_RADIUS, results_N2)
+
+# Create and display the performance figure for N=2
+fig_performance_N2 = create_performance_figure(results_N2)
+
+# Create acceleration figures for each segment count (N=2)
+print("\nCreating acceleration profiles for N=2...")
+accel_figures_N2 = {}
+for seg_count in [2, 4, 8, 16, 32, 64]:
+    fig = create_acceleration_figure(results_N2, segcount=seg_count)
+    accel_figures_N2[seg_count] = fig
+    print(f"✓ Created profiles for {seg_count} segments")
+
+plt.show()
+
+print("\n✅ N=2 (Quadratic) visualizations complete!")
+
+# CALCULATION TIME VS CURVE ORDER ANALYSIS
+print("\n" + "=" * 60)
+print("📈 Creating calculation time vs curve order figure...")
+print("=" * 60)
+
+# Prepare data for time vs order figure
+calculation_times = {
+    2: elapsed_time_N2,
+    3: elapsed_time_N3,
+    4: elapsed_time_N4
+}
+
+# For optimization results, we'll use the best result (typically 64 segments)
+# Extract the best result for each curve order
+optimization_results = {}
+for N in [2, 3, 4]:
+    if N == 2:
+        results = results_N2
+    elif N == 3:
+        results = results_N3
+    else:  # N == 4
+        results = results_N4
+
+    # Find the result with 64 segments (or use the last one)
+    P_opt, info = None, None
+    for seg_count, P_opt_iter, info_iter in results:
+        if seg_count == 64:
+            P_opt, info = P_opt_iter, info_iter
+            break
+
+    # Fallback to last result
+    if P_opt is None and len(results) > 0:
+        P_opt, info = results[-1][1], results[-1][2]
+
+    optimization_results[N] = (P_opt, info)
+
+# Create and display the time vs order figure
+fig_time_order = create_time_vs_order_figure(calculation_times, optimization_results)
+plt.show()
+
+print("\n✅ Calculation time vs curve order figure complete!")
+print(f"\nSummary:")
+print(f"  N=2 (Quadratic): {elapsed_time_N2:.2f} seconds")
+print(f"  N=3 (Cubic):      {elapsed_time_N3:.2f} seconds")
+print(f"  N=4 (4th Degree): {elapsed_time_N4:.2f} seconds")
+
