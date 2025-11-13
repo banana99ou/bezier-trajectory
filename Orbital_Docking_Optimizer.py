@@ -16,6 +16,7 @@ import warnings
 import hashlib
 import pickle
 import os
+import time
 warnings.filterwarnings('ignore')
 
 # Orbital parameters (from Project_Spec.md)
@@ -35,8 +36,7 @@ EARTH_MU = 3.986004418e14  # m³/s²
 SCALE_FACTOR = 1e3  # 1 unit = 1 km
 EARTH_MU_SCALED = EARTH_MU / (SCALE_FACTOR**3)  # Scaled for km
 
-
-# In[46a]:
+USE_CACHE = True
 
 
 def configure_custom_font(font_filename="NanumSquareR.otf"):
@@ -95,6 +95,8 @@ configure_custom_font()
 # ─────────────────────────────────────────────────────────────────────────────
 # Caching utilities for optimization results
 # ─────────────────────────────────────────────────────────────────────────────
+FIGURE_DIR = Path(__file__).parent / "figure"
+FIGURE_DIR.mkdir(exist_ok=True)
 CACHE_DIR = Path(__file__).parent / "cache"
 CACHE_VERSION = "1.0"  # Increment to invalidate old caches
 
@@ -579,7 +581,7 @@ def _compute_cost_only(P_flat, Np1, dim, n_samples=50):
         cost += norm_diff**2 * dtau
         accel += norm_diff * dtau
 
-    return cost, accel
+    return cost, accel, a_geom, a_grav
 
 def cost_function_gradient_hessian(P_flat, Np1, dim, n_samples=50, compute_grad=True):
     """
@@ -589,7 +591,7 @@ def cost_function_gradient_hessian(P_flat, Np1, dim, n_samples=50, compute_grad=
     Args:
         compute_grad: If False, only compute cost (for efficiency when gradient not needed)
     """
-    cost, _ = _compute_cost_only(P_flat, Np1, dim, n_samples)
+    cost, _, _, _ = _compute_cost_only(P_flat, Np1, dim, n_samples)
 
     if not compute_grad:
         return cost, None, None
@@ -600,7 +602,7 @@ def cost_function_gradient_hessian(P_flat, Np1, dim, n_samples=50, compute_grad=
     for i in range(Np1 * dim):
         P_pert = P_flat.copy()
         P_pert[i] += eps
-        cost_pert, _ = _compute_cost_only(P_pert, Np1, dim, n_samples)
+        cost_pert, _, _, _ = _compute_cost_only(P_pert, Np1, dim, n_samples)
         grad[i] = (cost_pert - cost) / eps
 
     # Simple diagonal Hessian approximation (regularization)
@@ -644,6 +646,7 @@ def optimize_orbital_docking(
     Returns:
         (P_opt, info_dict)
     """
+    t0 = time.time()
     # Check cache first
     if use_cache:
         cache_key = get_cache_key(P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1)
@@ -689,7 +692,7 @@ def optimize_orbital_docking(
 
         # Objective function
         def objective(x):
-            cost, _ = _compute_cost_only(x, Np1, dim, n_samples=sample_count)
+            cost, _, _, _ = _compute_cost_only(x, Np1, dim, n_samples=sample_count)
             return cost
 
         # Gradient - compute gradient separately
@@ -727,14 +730,15 @@ def optimize_orbital_docking(
     radii = np.linalg.norm(pts, axis=1)
     min_radius = float(np.min(radii))
 
-    _, accel = _compute_cost_only(P.reshape(-1), Np1, dim, n_samples=sample_count)
+    _, accel, _, _ = _compute_cost_only(P.reshape(-1), Np1, dim, n_samples=sample_count)
 
     info.update({
         "iterations": it,
         "feasible": min_radius >= r_e - 1e-6,
         "min_radius": min_radius,
         "cost": res.fun,
-        "accel": accel
+        "accel": accel,
+        "elapsed_time": time.time() - t0
     })
 
     # Save to cache
@@ -1031,13 +1035,18 @@ def create_trajectory_comparison_figure(P_init, r_e, results):
 
         # Professional styling with shared zoom level
         set_axes_equal_around(ax, center=(0,0,0), radius=view_radius, pad=0.05)
-        set_isometric(ax, elev=20, azim=45)
+        set_isometric(ax, elev=90, azim=0)
+        # set_isometric(ax, elev=20, azim=45)
         beautify_3d_axes(ax, show_ticks=True, show_grid=True)
 
-        # Title with acceleration (convert to m/s² from km/s²)
-        accel_ms2 = info['accel'] * 1e3  # Convert km/s² to m/s²
+        # Title with acceleration and feasibility
+        accel_ms2 = info.get('accel', 0.0) / 1e3
         accel_str = format_number(accel_ms2, '.1f')
-        ax.set_title(f'{n_seg} Segments\nAccel: {accel_str} m/s²', fontsize=10, pad=10)
+        feasible = bool(info.get('feasible', False))
+        status = 'Feasible' if feasible else 'Infeasible'
+        title_color = 'black' if feasible else 'red'
+        ax.set_title(f'{n_seg} Segments — {status}\nAccel: {accel_str} m/s²',
+                     fontsize=10, pad=10, color=title_color)
 
     # Link all axes to share zoom - when one zooms, all zoom together
     # Use a flag to prevent infinite recursion
@@ -1074,6 +1083,64 @@ def create_trajectory_comparison_figure(P_init, r_e, results):
 
     return fig
 
+def compute_profile_ylims(results, segcounts):
+    """
+    Compute shared y-limits for position, velocity, and acceleration panels
+    across the specified segment counts.
+    Returns: (pos_ylim, vel_ylim, acc_ylim)
+    """
+    pos_min, pos_max = np.inf, -np.inf
+    vel_min, vel_max = np.inf, -np.inf
+    acc_max = 0.0  # acceleration lower bound enforced as 0
+    ts = np.linspace(0.0, 1.0, 300)
+
+    seg_set = set(segcounts)
+    for seg_count, P_opt, info in results:
+        if seg_count not in seg_set:
+            continue
+        if P_opt is None:
+            continue
+
+        curve = BezierCurve(P_opt)
+        positions = np.array([curve.point(t) for t in ts])
+        velocities = np.array([curve.velocity(t) for t in ts]) * 1e-3
+        geom_accel_vec = np.array([curve.acceleration(t) for t in ts]) * 1e-6
+        # Gravitational acceleration vectors (consistent with cost function: negative toward origin)
+        grav_accel_vec = []
+        for t in ts:
+            pos = curve.point(t)
+            r = np.linalg.norm(pos)
+            if r > 1e-6:
+                a_grav = -EARTH_MU_SCALED / r**2 * (pos / r) * 1e3
+            else:
+                a_grav = np.zeros_like(pos)
+            grav_accel_vec.append(a_grav)
+        grav_accel_vec = np.array(grav_accel_vec)
+        # Total acceleration magnitude used by cost (difference of vectors)
+        diff_accel_mag_kms2 = np.linalg.norm(geom_accel_vec - grav_accel_vec, axis=1)
+
+        # Update mins/maxes
+        pos_min = min(pos_min, positions.min())
+        pos_max = max(pos_max, positions.max())
+        vel_min = min(vel_min, velocities.min())
+        vel_max = max(vel_max, velocities.max())
+        acc_max = max(acc_max, diff_accel_mag_kms2.max())
+
+    # Add small padding
+    def pad_limits(lo, hi, pad_ratio=0.05):
+        if not np.isfinite(lo) or not np.isfinite(hi):
+            return None
+        if hi == lo:
+            delta = 1.0 if hi == 0 else abs(hi) * pad_ratio
+            return (lo - delta, hi + delta)
+        delta = (hi - lo) * pad_ratio
+        return (lo - delta, hi + delta)
+
+    pos_ylim = pad_limits(pos_min, pos_max*1.3)
+    vel_ylim = pad_limits(vel_min, vel_max*1.3)
+    acc_ylim = (0.0, acc_max * 1.8 if acc_max > 0 else 1.0)
+    return pos_ylim, vel_ylim, acc_ylim
+
 def create_performance_figure(results):
     """
     Create performance figure showing acceleration vs segment count.
@@ -1089,8 +1156,8 @@ def create_performance_figure(results):
 
     # Extract data
     segment_counts = [n_seg for n_seg, _, _ in results]
-    # accelerations = [info['accel'] * 1e-3 for _, _, info in results]  # Convert km/s² to m/s²
-    accelerations = [info['accel'] for _, _, info in results]
+    accelerations = [info['accel'] * 1e-3 for _, _, info in results]  # Convert km/s² to m/s²
+    # accelerations = [info['accel'] for _, _, info in results]
 
     # Create acceleration performance graph
     ax.plot(segment_counts, accelerations, 'bo-', linewidth=3, markersize=10)
@@ -1102,13 +1169,13 @@ def create_performance_figure(results):
 
     # Add data point labels
     for i, (seg, accel) in enumerate(zip(segment_counts, accelerations)):
-        accel_str = format_number(accel, '.1f')
+        accel_str = format_number(accel, '.3f')
         ax.annotate(accel_str, (seg, accel), textcoords="offset points", xytext=(0,10), ha='center',
                    fontsize=10, bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8))
 
     return fig
 
-def create_acceleration_figure(results, segcount=64):
+def create_acceleration_figure(results, segcount=64, pos_ylim=None, vel_ylim=None, acc_ylim=None):
     """
     Create 3x1 layout showing xyz position, xyz velocity, and acceleration profiles.
     Adapted for notebook's BezierCurve class.
@@ -1148,33 +1215,32 @@ def create_acceleration_figure(results, segcount=64):
 
     # Sample positions, velocities, and accelerations
     positions = np.array([curve.point(t) for t in ts])
-    velocities = np.array([curve.velocity(t) for t in ts])
-    print(f'positions: {positions}')
-    print(f'velocities: {velocities}')
+    velocities = np.array([curve.velocity(t) for t in ts]) * 1e-3
+    # print(f'positions: {positions}')
+    # print(f'velocities: {velocities}')
 
     # Calculate magnitudes
     position_magnitudes = np.linalg.norm(positions, axis=1)
     velocity_magnitudes = np.linalg.norm(velocities, axis=1)
 
-    # Calculate acceleration components
-    # Geometric acceleration from curve
-    geom_accelerations_vec = np.array([curve.acceleration(t) for t in ts])
-    geom_accelerations = np.linalg.norm(geom_accelerations_vec, axis=1)
-
-    # Gravitational acceleration at each point
-    grav_accelerations = []
+    # Calculate acceleration components (consistent with cost function)
+    # Geometric acceleration vectors from curve
+    geom_accelerations_vec = np.array([curve.acceleration(t) for t in ts]) * 1e-3
+    geom_accel_mag = np.linalg.norm(geom_accelerations_vec, axis=1) 
+    # Gravitational acceleration vectors (negative toward origin)
+    grav_accelerations_vec = []
     for t in ts:
         pos = curve.point(t)
         r = np.linalg.norm(pos)
         if r > 1e-6:
-            grav_accel_mag = EARTH_MU_SCALED / r**2
+            a_grav = -EARTH_MU_SCALED / r**2 * (pos / r) * 1e3
         else:
-            grav_accel_mag = 0.0
-        grav_accelerations.append(grav_accel_mag)
-    grav_accelerations = np.array(grav_accelerations)
-
-    # Total acceleration magnitude (geometric + gravitational)
-    total_accelerations = geom_accelerations + grav_accelerations
+            a_grav = np.zeros_like(pos)
+        grav_accelerations_vec.append(a_grav)
+    grav_accelerations_vec = np.array(grav_accelerations_vec)
+    grav_accel_mag = np.linalg.norm(grav_accelerations_vec, axis=1)
+    # Total acceleration magnitude used by the cost: ||a_geom - a_grav||
+    total_accel_mag_kms2 = np.linalg.norm(geom_accelerations_vec - grav_accelerations_vec, axis=1)
 
     # Plot 1: XYZ Position with total magnitude
     ax1.plot(ts, positions[:, 0], 'r-', linewidth=2.0, label='X', alpha=0.7)
@@ -1186,6 +1252,8 @@ def create_acceleration_figure(results, segcount=64):
     ax1.set_title('Position Components (XYZ) and Total Magnitude', fontsize=14, pad=15)
     ax1.grid(True, alpha=0.3)
     ax1.legend(fontsize=11)
+    if pos_ylim is not None:
+        ax1.set_ylim(pos_ylim)
 
     # Plot 2: XYZ Velocity with total magnitude
     ax2.plot(ts, velocities[:, 0], 'r-', linewidth=2.0, label='Vx', alpha=0.7)
@@ -1197,23 +1265,30 @@ def create_acceleration_figure(results, segcount=64):
     ax2.set_title('Velocity Components (XYZ) and Total Magnitude', fontsize=14, pad=15)
     ax2.grid(True, alpha=0.3)
     ax2.legend(fontsize=11)
+    if vel_ylim is not None:
+        ax2.set_ylim(vel_ylim)
 
     # Plot 3: Acceleration components and total
-    ax3.plot(ts, geom_accelerations * 1e3, 'orange', linewidth=2.0, label='Geometric Acceleration', alpha=0.7)
-    ax3.plot(ts, grav_accelerations * 1e3, 'cyan', linewidth=2.0, label='Gravitational Acceleration', alpha=0.7)
-    ax3.plot(ts, total_accelerations * 1e3, 'purple', linewidth=2.5, label='Total Acceleration', linestyle='-')
+    ax3.plot(ts, geom_accel_mag, 'orange', linewidth=2.0, label='Geometric Acceleration', alpha=0.7)
+    ax3.plot(ts, grav_accel_mag, 'cyan', linewidth=2.0, label='Gravitational Acceleration', alpha=0.7)
+    ax3.plot(ts, total_accel_mag_kms2, 'purple', linewidth=2.5, label='Total Acceleration', linestyle='-')
     ax3.set_xlabel('Parameter τ', fontsize=12)
     ax3.set_ylabel('Acceleration (m/s²)', fontsize=12)
-    accel_total_str = format_number(info["accel"]*1e3, '.1f')
+    accel_total_str = format_number(info["accel"]/1e3, '.1f')
     ax3.set_title(f'Acceleration Components (Accumulated: {accel_total_str} m/s²)', 
                  fontsize=14, pad=15)
     ax3.grid(True, alpha=0.3)
     ax3.legend(fontsize=11)
-    ax3.set_ylim(0, max(total_accelerations) * 1e3 * 1.1)
+    # Always start acceleration panel from 0; allow shared ylim if provided
+    # if acc_ylim is not None:
+    ax3.set_ylim(acc_ylim)
+    # ax3.set_ylim(max(0.0, acc_ylim[0]), acc_ylim[1])
+    # else:
+    #     ax3.set_ylim(0, max(total_accel_mag_kms2) * 1.1)
 
     # Add acceleration statistics
-    max_accel = np.max(total_accelerations) * 1e3
-    avg_accel = np.mean(total_accelerations) * 1e3
+    max_accel = np.max(total_accel_mag_kms2)
+    avg_accel = np.mean(total_accel_mag_kms2)
     max_str = format_number(max_accel, '.1f')
     avg_str = format_number(avg_accel, '.1f')
     ax3.text(0.02, 0.98, f'Max: {max_str} m/s²\nAvg: {avg_str} m/s²', 
@@ -1271,7 +1346,13 @@ def create_time_vs_order_figure(calculation_times, optimization_results):
 
     # Extract data
     orders = sorted(calculation_times.keys())
-    times = [calculation_times[N] for N in orders]
+    times = []
+    for N in orders:
+        t = calculation_times.get(N, 0.0)
+        if (t is None or t == 0.0) and N in optimization_results:
+            _, info = optimization_results[N]
+            t = float(info.get('elapsed_time', 0.0)) if info is not None else 0.0
+        times.append(t)
 
     # Create bar plot
     bars = ax.bar(orders, times, color=['#3498DB', '#E74C3C', '#F39C12'], alpha=0.7, edgecolor='black', linewidth=1.5)
@@ -1295,15 +1376,11 @@ def create_time_vs_order_figure(calculation_times, optimization_results):
     accel_info = []
     for N in orders:
         _, info = optimization_results[N]
-        accel_ms2 = info['accel'] * 1e3  # Convert to m/s²
+        accel_ms2 = info['accel'] / 1e3  # Convert to m/s²
         accel_str = format_number(accel_ms2, '.1f')
         accel_info.append(f'N={N}: {accel_str} m/s²')
 
     info_text = '\n'.join(accel_info)
-    ax.text(0.98, 0.02, f'Acceleration:\n{info_text}', 
-           transform=ax.transAxes, fontsize=10, 
-           verticalalignment='bottom', horizontalalignment='right',
-           bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.8))
 
     return fig
 
@@ -1387,9 +1464,10 @@ results_N2 = optimize_all_segment_counts(
     P_init_N2, 
     r_e=KOZ_RADIUS,
     segment_counts=segment_counts,
-    max_iter=60,
+    max_iter=120,
     tol=1e-3,
-    verbose=True
+    verbose=True,
+    use_cache=USE_CACHE
 )
 
 # Calculate total time
@@ -1397,8 +1475,6 @@ elapsed_time_N2 = time.time() - start_time_N2
 
 print(f"\n⏱️  Total optimization time for N=2: {elapsed_time_N2:.2f} seconds")
 
-
-# In[56]:
 
 
 # OPTIMIZATION for N=3 (Cubic curve)
@@ -1418,9 +1494,10 @@ results_N3 = optimize_all_segment_counts(
     P_init_N3, 
     r_e=KOZ_RADIUS,
     segment_counts=segment_counts,
-    max_iter=60,
+    max_iter=120,
     tol=1e-3,
-    verbose=True
+    verbose=True,
+    use_cache=USE_CACHE
 )
 
 # Calculate total time
@@ -1428,8 +1505,6 @@ elapsed_time_N3 = time.time() - start_time_N3
 
 print(f"\n⏱️  Total optimization time for N=3: {elapsed_time_N3:.2f} seconds")
 
-
-# In[57]:
 
 
 # OPTIMIZATION for N=4 (4th degree curve)
@@ -1449,9 +1524,10 @@ results_N4 = optimize_all_segment_counts(
     P_init_N4, 
     r_e=KOZ_RADIUS,
     segment_counts=segment_counts,
-    max_iter=60,
+    max_iter=120,
     tol=1e-3,
-    verbose=True
+    verbose=True,
+    use_cache=USE_CACHE
 )
 
 # Calculate total time
@@ -1460,7 +1536,6 @@ elapsed_time_N4 = time.time() - start_time_N4
 print(f"\n⏱️  Total optimization time for N=4: {elapsed_time_N4:.2f} seconds")
 
 
-# In[58]:
 
 
 # VISUALIZATION: N=2 (Quadratic) Results
@@ -1469,21 +1544,40 @@ print("=" * 60)
 
 # Create and display the 2×3 comparison figure for N=2
 fig_comparison_N2 = create_trajectory_comparison_figure(P_init_N2, KOZ_RADIUS, results_N2)
+fig_comparison_N2.savefig(FIGURE_DIR / "comparison_N2.png", dpi=300)
 
 # Create and display the performance figure for N=2
 fig_performance_N2 = create_performance_figure(results_N2)
+fig_performance_N2.savefig(FIGURE_DIR / "performance_N2.png", dpi=300)
 
 # Create acceleration figures for each segment count (N=2)
 print("\nCreating acceleration profiles for N=2...")
 accel_figures_N2 = {}
+# Compute shared y-limits across all segment counts for N=2
+_segcounts = [2, 4, 8, 16, 32, 64]
+pos_ylim, vel_ylim, acc_ylim = compute_profile_ylims(results_N2, _segcounts)
 for seg_count in [2, 4, 8, 16, 32, 64]:
-    fig = create_acceleration_figure(results_N2, segcount=seg_count)
+    fig = create_acceleration_figure(results_N2, segcount=seg_count, pos_ylim=pos_ylim, vel_ylim=vel_ylim, acc_ylim=acc_ylim)
     accel_figures_N2[seg_count] = fig
+    fig.savefig(FIGURE_DIR / f"accel_profiles_N2_seg{seg_count}.png", dpi=300)
     print(f"✓ Created profiles for {seg_count} segments")
 
-plt.show()
 
 print("\n✅ N=2 (Quadratic) visualizations complete!")
+
+# Create and save path comparison figures for N=3 and N=4
+fig_comparison_N3 = create_trajectory_comparison_figure(P_init_N3, KOZ_RADIUS, results_N3)
+fig_comparison_N3.savefig(FIGURE_DIR / "comparison_N3.png", dpi=300)
+
+fig_comparison_N4 = create_trajectory_comparison_figure(P_init_N4, KOZ_RADIUS, results_N4)
+fig_comparison_N4.savefig(FIGURE_DIR / "comparison_N4.png", dpi=300)
+
+# Create and save performance figures for N=3 and N=4
+fig_performance_N3 = create_performance_figure(results_N3)
+fig_performance_N3.savefig(FIGURE_DIR / "performance_N3.png", dpi=300)
+
+fig_performance_N4 = create_performance_figure(results_N4)
+fig_performance_N4.savefig(FIGURE_DIR / "performance_N4.png", dpi=300)
 
 # CALCULATION TIME VS CURVE ORDER ANALYSIS
 print("\n" + "=" * 60)
@@ -1523,6 +1617,7 @@ for N in [2, 3, 4]:
 
 # Create and display the time vs order figure
 fig_time_order = create_time_vs_order_figure(calculation_times, optimization_results)
+fig_time_order.savefig(FIGURE_DIR / "time_vs_order.png", dpi=300)
 plt.show()
 
 print("\n✅ Calculation time vs curve order figure complete!")
