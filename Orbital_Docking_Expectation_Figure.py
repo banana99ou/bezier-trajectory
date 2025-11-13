@@ -16,12 +16,16 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Orbital parameters for realistic scaling
+# Orbital parameters (matching Orbital_Docking_Optimizer.py)
 # ─────────────────────────────────────────────────────────────────────────────
-EARTH_RADIUS = 6.371  # Earth radius in scaled units (1000 km)
-ISS_ALTITUDE = 0.408  # ISS altitude in scaled units (408 km)
-ORBITAL_RADIUS = EARTH_RADIUS + ISS_ALTITUDE
-SCALE_FACTOR = 1e6  # 1 unit = 1000 km (for realistic distances)
+EARTH_RADIUS_KM = 6371.0  # Earth radius in km
+ISS_ALTITUDE_KM = 423  # ISS orbit altitude in km AMSL
+CHASER_ALTITUDE_KM = 300  # Chaser altitude in km AMSL
+KOZ_ALTITUDE_KM = 100  # Keep Out Zone altitude in km AMSL
+
+KOZ_RADIUS_KM = EARTH_RADIUS_KM + KOZ_ALTITUDE_KM  # KOZ radius from Earth center
+ISS_RADIUS_KM = EARTH_RADIUS_KM + ISS_ALTITUDE_KM
+CHASER_RADIUS_KM = EARTH_RADIUS_KM + CHASER_ALTITUDE_KM
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Visualization utilities
@@ -51,13 +55,13 @@ def add_wire_sphere(ax, radius=3.0, center=(0.0, 0.0, 0.0), color='gray', alpha=
     
     ax.plot_wireframe(x, y, z, rstride=3, cstride=3, color=color, alpha=alpha)
 
-def add_earth_sphere(ax, radius=EARTH_RADIUS, center=(0.0, 0.0, 0.0), color='blue', alpha=0.3):
+def add_earth_sphere(ax, radius=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0), color='blue', alpha=0.3):
     """
     Add Earth as a wireframe sphere for orbital context.
     
     Args:
         ax: 3D matplotlib axes
-        radius: Earth radius in scaled units
+        radius: Earth radius in km
         center: Earth center coordinates
         color: Earth color
         alpha: Transparency
@@ -137,16 +141,33 @@ def beautify_3d_axes(ax, show_ticks=True, show_grid=True):
 def create_orbital_docking_scenario():
     """
     Create the orbital docking scenario setup.
+    Uses the same coordinate system as Orbital_Docking_Optimizer.py:
+    - 2D plane (z=0) with Earth's center at origin
+    - Polar coordinates: positions defined by radius and angle theta
+    - Start: Chaser at 300km altitude, theta = -π/4 (45° below x-axis)
+    - End: ISS at 423km altitude, theta = π/4 (45° above x-axis)
     
     Returns:
-        tuple: (chaser_pos, target_pos, r_e) - positions and safety radius
+        tuple: (chaser_pos, target_pos, r_e) - positions in km and KOZ radius in km
     """
-    # Realistic orbital docking positions (scaled units: 1 unit = 1000 km)
-    chaser_pos = np.array([40.0, -70.0, 0.0])   # Chaser spacecraft
-    target_pos = np.array([-50.0, 70.0, 30.0])   # Target spacecraft
+    # Start: chaser position (at 300km altitude)
+    theta_start = -np.pi / 4  # 45 degrees
+    chaser_pos = np.array([
+        CHASER_RADIUS_KM * np.cos(theta_start),
+        CHASER_RADIUS_KM * np.sin(theta_start),
+        0.0
+    ])
     
-    # Safety zone radius (50,000 km - realistic for orbital docking)
-    r_e = 50.0
+    # End: ISS position (at 423km altitude)
+    theta_end = np.pi / 4  # 45 degrees
+    target_pos = np.array([
+        ISS_RADIUS_KM * np.cos(theta_end),
+        ISS_RADIUS_KM * np.sin(theta_end),
+        0.0
+    ])
+    
+    # KOZ radius (100km altitude)
+    r_e = KOZ_RADIUS_KM
     
     return chaser_pos, target_pos, r_e
 
@@ -164,7 +185,7 @@ def create_expectation_figure():
     ax1 = fig.add_subplot(1, 2, 1, projection='3d')
     
     # Add Earth (large blue sphere)
-    add_earth_sphere(ax1, radius=EARTH_RADIUS, color='blue', alpha=0.3)
+    add_earth_sphere(ax1, radius=EARTH_RADIUS_KM, color='blue', alpha=0.3)
     
     # Add Keep-Out Zone (KOZ) - smaller red sphere
     add_wire_sphere(ax1, radius=r_e, color='red', alpha=0.2, resolution=15)
@@ -191,8 +212,9 @@ def create_expectation_figure():
              fontsize=10, ha='center', va='bottom',
              bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
     
-    # Set up overall view
-    set_axes_equal_around(ax1, center=(0,0,0), radius=100, pad=0.1)
+    # Set up overall view (adjust radius to show all elements)
+    max_radius = max(np.linalg.norm(chaser_pos), np.linalg.norm(target_pos), KOZ_RADIUS_KM)
+    set_axes_equal_around(ax1, center=(0,0,0), radius=max_radius, pad=0.1)
     set_isometric(ax1, elev=20, azim=45)
     beautify_3d_axes(ax1, show_ticks=True, show_grid=True)
     # ax1.set_title('Overall View: Orbital Docking Scenario', fontsize=14, pad=20)
@@ -223,7 +245,7 @@ def create_expectation_figure():
     
     # Add KOZ label with altitude
     ax2.text(40, 0, 
-             f'KOZ\nAltitude: {r_e*1000:.0f} km', 
+             f'KOZ\nAltitude: {KOZ_ALTITUDE_KM:.0f} km', 
              fontsize=12, ha='left', va='center',
              bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
     
@@ -241,7 +263,7 @@ def create_expectation_figure():
     ax2.scatter(target_2d_x, target_2d_y, s=200, color='orange', 
                marker='o', label='Target Satellite')
     
-    # Add coordinate labels for satellites (matching plot 1's coordinates)
+    # Add coordinate labels for satellites (showing actual coordinates from new coordinate system)
     ax2.text(chaser_2d_x, chaser_2d_y + 10, 
              f'Chaser\n({chaser_pos[0]:.0f}, {chaser_pos[1]:.0f}, {chaser_pos[2]:.0f})', 
              fontsize=10, ha='center', va='bottom',
@@ -274,12 +296,12 @@ def main():
     
     print("Figure saved as: orbital_docking_expectation.png")
     print("This figure shows the initial setup of the orbital docking scenario:")
-    print("- Chaser satellite (green triangle)")
-    print("- Target satellite (orange square)")  
+    print(f"- Chaser satellite (green) at {CHASER_ALTITUDE_KM} km altitude")
+    print(f"- Target satellite (ISS, orange) at {ISS_ALTITUDE_KM} km altitude")  
     print("- Earth (blue sphere)")
-    print("- Keep-Out Zone/KOZ (red wireframe sphere)")
-    print("- Left plot: Overall view")
-    print("- Right plot: Perpendicular view to chaser-target-Earth plane")
+    print(f"- Keep-Out Zone/KOZ (red wireframe sphere) at {KOZ_ALTITUDE_KM} km altitude")
+    print("- Left plot: Overall 3D view")
+    print("- Right plot: 2D view in the orbital plane (z=0)")
     
     # Show the figure
     plt.show()

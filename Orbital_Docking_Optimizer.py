@@ -1,10 +1,5 @@
 #!/usr/bin/env python
 # coding: utf-8
-
-# In[46]:
-
-
-# Imports and Constants
 import numpy as np
 from scipy.special import comb
 from scipy.optimize import minimize, LinearConstraint, Bounds
