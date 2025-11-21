@@ -87,8 +87,8 @@ ISS_RADIUS = constants.ISS_RADIUS
 CHASER_RADIUS = constants.CHASER_RADIUS
 
 # Figure directory
-FIGURE_DIR = Path(__file__).parent / "figure"
-FIGURE_DIR.mkdir(exist_ok=True)
+FIGURE_DIR = Path(__file__).parent / "figure" / "figures"
+FIGURE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Display cache configuration
 print("=" * 60)
