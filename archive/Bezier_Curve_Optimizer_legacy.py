@@ -12,6 +12,14 @@ Key components:
 - Linear constraint building: Half-space constraint formulation
 - Optimization: SLSQP-based iterative optimization
 - Visualization: 3D plotting utilities
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ARCHIVE VERSION - Figure Generation (초록)                                   │
+│                                                                             │
+│ This file is preserved for reproducibility of figures in 초록.               │
+│ - Uses less optimal algorithm compared to final implementation              │
+│ - Cost function differs from final code                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
 """
 
 import numpy as np
