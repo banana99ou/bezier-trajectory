@@ -1,5 +1,48 @@
-#!/usr/bin/env python
-# coding: utf-8
+"""
+Orbital Docking Optimizer using Bézier Curves
+
+This module implements an optimization framework for designing orbital docking trajectories
+using Bézier curves. The optimizer finds trajectories that minimize the difference between
+geometric acceleration and gravitational acceleration while satisfying Keep Out Zone (KOZ)
+constraints.
+
+Key Features:
+    - Bézier curve trajectory representation with configurable degree (N=2, 3, 4)
+    - Iterative optimization with KOZ constraint linearization using segment subdivision
+    - Support for velocity and acceleration boundary conditions
+    - Caching system for optimization results to speed up repeated runs (enabled by default)
+    - Comprehensive visualization tools for trajectory analysis
+    - Performance analysis across different segment counts and curve orders
+    - Command-line interface for cache control
+
+Usage:
+    Run the script with default settings (cache enabled):
+        python Orbital_Docking_Optimizer.py
+    
+    Disable caching:
+        python Orbital_Docking_Optimizer.py --no-cache
+    
+    Show help:
+        python Orbital_Docking_Optimizer.py --help
+
+Scenario:
+    - Chaser satellite at 300 km altitude
+    - Target satellite (ISS) at 423 km altitude
+    - Keep Out Zone (KOZ) at 100 km altitude
+    - 90-degree angular separation between chaser and target
+
+Optimization:
+    The cost function minimizes the L² norm of the difference between geometric
+    acceleration (from Bézier curve) and gravitational acceleration (from two-body dynamics).
+    KOZ constraints are enforced through iterative linearization using De Casteljau subdivision.
+
+Visualization:
+    - 3D trajectory plots with Earth and KOZ spheres
+    - Position, velocity, and acceleration profiles
+    - Performance comparison across segment counts
+    - Calculation time analysis for different curve orders
+"""
+
 import numpy as np
 from scipy.special import comb
 from scipy.optimize import minimize, LinearConstraint, Bounds
@@ -12,6 +55,7 @@ import hashlib
 import pickle
 import os
 import time
+import argparse
 warnings.filterwarnings('ignore')
 
 # Orbital parameters (from Project_Spec.md)
@@ -31,7 +75,19 @@ EARTH_MU = 3.986004418e14  # m³/s²
 SCALE_FACTOR = 1e3  # 1 unit = 1 km
 EARTH_MU_SCALED = EARTH_MU / (SCALE_FACTOR**3)  # Scaled for km
 
-USE_CACHE = True
+# Parse command-line arguments
+parser = argparse.ArgumentParser(
+    description='Orbital Docking Optimizer using Bézier Curves',
+    formatter_class=argparse.RawDescriptionHelpFormatter
+)
+parser.add_argument(
+    '--no-cache',
+    action='store_true',
+    help='Disable caching of optimization results (cache is enabled by default)'
+)
+args = parser.parse_args()
+
+USE_CACHE = not args.no_cache
 
 
 def configure_custom_font(font_filename="NanumSquareR.otf"):
@@ -1387,6 +1443,11 @@ def create_time_vs_order_figure(calculation_times, optimization_results):
 
 # In[54]:
 
+# Display cache configuration
+print("=" * 60)
+print(f"Cache: {'ENABLED' if USE_CACHE else 'DISABLED'}")
+print("=" * 60)
+print()
 
 # Define endpoints for all curve orders
 # Positions in km, scaled appropriately
