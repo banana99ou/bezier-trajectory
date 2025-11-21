@@ -146,8 +146,8 @@ configure_custom_font()
 # ─────────────────────────────────────────────────────────────────────────────
 # Caching utilities for optimization results
 # ─────────────────────────────────────────────────────────────────────────────
-FIGURE_DIR = Path(__file__).parent / "figure"
-FIGURE_DIR.mkdir(exist_ok=True)
+FIGURE_DIR = Path(__file__).parent / "figure" / "figures"
+FIGURE_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR = Path(__file__).parent / "cache"
 CACHE_VERSION = "1.0"  # Increment to invalidate old caches
 
