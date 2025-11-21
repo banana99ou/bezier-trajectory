@@ -1,4 +1,7 @@
-# Three figures: Straight path (fig1), Straight path with segmentation (fig2), Bézier curve (fig3)
+"""
+Figure generator used to illustrate how nonlinear constraints are converted 
+to linear supporting halfspace constraints.
+"""
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
