@@ -3,4 +3,4 @@
 __pycache__
 *.code-workspace
 .git_corrupt_*
-cache/
+ref/*
