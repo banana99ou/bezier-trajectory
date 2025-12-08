@@ -75,6 +75,8 @@ EARTH_MU = 3.986004418e14  # m³/s²
 SCALE_FACTOR = 1e3  # 1 unit = 1 km
 EARTH_MU_SCALED = EARTH_MU / (SCALE_FACTOR**3)  # Scaled for km
 
+MAX_ITER = 1000
+
 # Parse command-line arguments
 parser = argparse.ArgumentParser(
     description='Orbital Docking Optimizer using Bézier Curves',
@@ -84,6 +86,16 @@ parser.add_argument(
     '--no-cache',
     action='store_true',
     help='Disable caching of optimization results (cache is enabled by default)'
+)
+parser.add_argument(
+    '-v', '--verbose',
+    action='store_true',
+    help='Print verbose output'
+)
+parser.add_argument(
+    '-d', '--debug',
+    action='store_true',
+    help='Print debug output'
 )
 args = parser.parse_args()
 
@@ -333,6 +345,15 @@ def get_E_matrix(N):
 
     return E
 
+def get_G_matrix(N):
+    """
+    Compute Gram matrix for Bézier curve of degree N.
+    """
+    G = np.zeros((N+1, N+1), dtype=float)
+    for i in range(N+1):
+        for j in range(N+1):
+            G[i, j] = (comb(N, i) * comb(N, j) / comb(2 * N, i + j) / (2 * N + 1))
+    return G
 
 # In[48]:
 
@@ -354,6 +375,13 @@ class BezierCurve:
         self.D = get_D_matrix(self.degree)
         if self.degree > 0:
             self.E = get_E_matrix(self.degree - 1)  # E elevates from N-1 to N
+        self.G = get_G_matrix(self.degree)
+        # Compute G_tilde = (E D E D)^T @ G @ (E D E D)
+        if self.degree >= 2:
+            EDED = self.E @ self.D @ self.E @ self.D  # Shape: (N+1, N+1)
+            self.G_tilde = EDED.T @ self.G @ EDED
+        else:
+            self.G_tilde = None
 
     def point(self, tau):
         """Evaluate curve at parameter tau using Bernstein basis."""
@@ -565,36 +593,45 @@ def build_boundary_constraints(P_init, v0=None, v1=None, a0=None, a1=None, dim=3
     # Velocity constraints
     if v0 is not None:
         # v(0) = N(P1 - P0)
-        # N*P1 - N*P0 = v0
-        row = np.zeros(Np1 * dim)
-        row[0:dim] = -N  # -N * P0
-        row[dim:2*dim] = N  # N * P1
-        constraints.append(LinearConstraint(row.reshape(1, -1), v0, v0))
+        # For each dimension d: N*P1[d] - N*P0[d] = v0[d]
+        # Create constraint matrix with dim rows (one per dimension)
+        A_v0 = np.zeros((dim, Np1 * dim))
+        for d in range(dim):
+            # Constraint for dimension d: N*P1[d] - N*P0[d] = v0[d]
+            A_v0[d, d] = -N  # Coefficient for P0[d]
+            A_v0[d, dim + d] = N  # Coefficient for P1[d]
+        constraints.append(LinearConstraint(A_v0, v0, v0))
 
     if v1 is not None:
         # v(1) = N(PN - PN-1)
-        # N*PN - N*PN-1 = v1
-        row = np.zeros(Np1 * dim)
-        row[-2*dim:-dim] = -N  # -N * P_{N-1}
-        row[-dim:] = N  # N * PN
-        constraints.append(LinearConstraint(row.reshape(1, -1), v1, v1))
+        # For each dimension d: N*PN[d] - N*P_{N-1}[d] = v1[d]
+        A_v1 = np.zeros((dim, Np1 * dim))
+        for d in range(dim):
+            # Constraint for dimension d: N*PN[d] - N*P_{N-1}[d] = v1[d]
+            A_v1[d, (Np1 - 2) * dim + d] = -N  # Coefficient for P_{N-1}[d]
+            A_v1[d, (Np1 - 1) * dim + d] = N  # Coefficient for PN[d]
+        constraints.append(LinearConstraint(A_v1, v1, v1))
 
     # Acceleration constraints
     if a0 is not None and N >= 2:
         # a(0) = N(N-1)(P2 - 2P1 + P0)
-        row = np.zeros(Np1 * dim)
-        row[0:dim] = N*(N-1)  # N(N-1) * P0
-        row[dim:2*dim] = -2*N*(N-1)  # -2N(N-1) * P1
-        row[2*dim:3*dim] = N*(N-1)  # N(N-1) * P2
-        constraints.append(LinearConstraint(row.reshape(1, -1), a0, a0))
+        # For each dimension d: N(N-1)*(P2[d] - 2*P1[d] + P0[d]) = a0[d]
+        A_a0 = np.zeros((dim, Np1 * dim))
+        for d in range(dim):
+            A_a0[d, d] = N*(N-1)  # Coefficient for P0[d]
+            A_a0[d, dim + d] = -2*N*(N-1)  # Coefficient for P1[d]
+            A_a0[d, 2*dim + d] = N*(N-1)  # Coefficient for P2[d]
+        constraints.append(LinearConstraint(A_a0, a0, a0))
 
     if a1 is not None and N >= 2:
         # a(1) = N(N-1)(PN - 2PN-1 + PN-2)
-        row = np.zeros(Np1 * dim)
-        row[-3*dim:-2*dim] = N*(N-1)  # N(N-1) * P_{N-2}
-        row[-2*dim:-dim] = -2*N*(N-1)  # -2N(N-1) * P_{N-1}
-        row[-dim:] = N*(N-1)  # N(N-1) * PN
-        constraints.append(LinearConstraint(row.reshape(1, -1), a1, a1))
+        # For each dimension d: N(N-1)*(PN[d] - 2*P_{N-1}[d] + P_{N-2}[d]) = a1[d]
+        A_a1 = np.zeros((dim, Np1 * dim))
+        for d in range(dim):
+            A_a1[d, (Np1 - 3) * dim + d] = N*(N-1)  # Coefficient for P_{N-2}[d]
+            A_a1[d, (Np1 - 2) * dim + d] = -2*N*(N-1)  # Coefficient for P_{N-1}[d]
+            A_a1[d, (Np1 - 1) * dim + d] = N*(N-1)  # Coefficient for PN[d]
+        constraints.append(LinearConstraint(A_a1, a1, a1))
 
     return constraints
 
@@ -612,29 +649,34 @@ def _compute_cost_only(P_flat, Np1, dim, n_samples=50):
     accel = 0.0
     dtau = 1.0 / (n_samples - 1)
 
-    for tau in ts:
-        # Geometric acceleration at each point on the curve
-        a_geom = curve.acceleration(tau)
+    # Geometric acceleration at each point on the curve
+    # Compute cost using P^T * self.G_tilde * P (quadratic form)
+    GP = curve.G_tilde @ P          # (Np1, dim)
+    a_geom = float(np.sum(P * GP))    # scalar = tr(P^T G P)
 
-        # Gravitational acceleration at each point on the curve
-        pos = curve.point(tau)
-        r = np.linalg.norm(pos)
+    # for tau in ts:
+    #     # Gravitational acceleration at each point on the curve
+    #     pos = curve.point(tau)
+    #     r = np.linalg.norm(pos)
 
-        # Direction toward origin (negative of position unit vector)
-        if r > 1e-6:
-            a_grav = -EARTH_MU_SCALED / r**2 * (pos / r)
-        else:
-            a_grav = np.zeros_like(pos)
+    #     # Direction toward origin (negative of position unit vector)
+    #     if r > 1e-6:
+    #         a_grav = -EARTH_MU_SCALED / r**2 * (pos / r)
+    #     else:
+    #         a_grav = np.zeros_like(pos)
 
-        # Cost: ||a_geom - a_grav||²
-        diff = a_geom - a_grav
-        norm_diff = np.linalg.norm(diff)
-        cost += norm_diff**2 * dtau
-        accel += norm_diff * dtau
+    #     # Cost: ||a_geom - a_grav||²
+    #     diff = a_geom - a_grav
+    #     norm_diff = np.linalg.norm(diff)
+    #     cost += norm_diff**2 * dtau
+    #     accel += norm_diff * dtau
+    cost = a_geom
+    accel = a_geom
+    a_grav = None
 
     return cost, accel, a_geom, a_grav
 
-def cost_function_gradient_hessian(P_flat, Np1, dim, n_samples=50, compute_grad=True):
+def cost_function_gradient_hessian(P_flat, Np1, dim, n_samples=50):
     """
     Compute cost function, gradient, and Hessian approximation.
     Returns: (cost, gradient, hessian)
@@ -642,22 +684,21 @@ def cost_function_gradient_hessian(P_flat, Np1, dim, n_samples=50, compute_grad=
     Args:
         compute_grad: If False, only compute cost (for efficiency when gradient not needed)
     """
-    cost, _, _, _ = _compute_cost_only(P_flat, Np1, dim, n_samples)
+    cost = None
 
-    if not compute_grad:
-        return cost, None, None
 
     # Compute gradient using finite differences
-    eps = 1e-6
-    grad = np.zeros(Np1 * dim)
-    for i in range(Np1 * dim):
-        P_pert = P_flat.copy()
-        P_pert[i] += eps
-        cost_pert, _, _, _ = _compute_cost_only(P_pert, Np1, dim, n_samples)
-        grad[i] = (cost_pert - cost) / eps
+    P = P_flat.reshape(Np1, dim)
+    curve = BezierCurve(P)
+    GP = curve.G_tilde @ P 
 
-    # Simple diagonal Hessian approximation (regularization)
-    hess = np.eye(Np1 * dim) * 1e-6
+    # Gradient wrt P: dJ/dP = 2 G P
+    grad_P = 2.0 * GP
+    grad = grad_P.reshape(-1)  # flatten to (Np1*dim,)
+
+    # Hessian wrt vec(P): 2 * kron(I_dim, G_tilde)
+    # Shape: ((Np1*dim), (Np1*dim))
+    hess = 2.0 * np.kron(np.eye(dim), curve.G_tilde)
 
     return cost, grad, hess
 
@@ -677,6 +718,7 @@ def optimize_orbital_docking(
     a1=None,
     sample_count=100,
     verbose=True,
+    debug=False,
     use_cache=True
 ):
     """
@@ -717,26 +759,35 @@ def optimize_orbital_docking(
     N = Np1 - 1
 
     # Get segment matrices
+    t_seg_start = time.time()
     A_list = segment_matrices_equal_params(N, n_seg)
+    t_seg_end = time.time()
 
     # Set up bounds: fix endpoints for position constraints
+    t_bounds_start = time.time()
     x0 = P.reshape(-1)
     lb = np.full_like(x0, -np.inf)
     ub = np.full_like(x0, np.inf)
     lb[:dim] = ub[:dim] = x0[:dim]  # Lock P0
     lb[-dim:] = ub[-dim:] = x0[-dim:]  # Lock PN
     bounds = Bounds(lb, ub)
+    t_bounds_end = time.time()
 
     # Build boundary constraints
+    t_bc_start = time.time()
     boundary_constraints = build_boundary_constraints(P, v0, v1, a0, a1, dim)
+    t_bc_end = time.time()
 
     # Store results
     info = {"iterations": 0, "feasible": False, "cost": np.inf}
 
     # Iterative optimization: update KOZ constraints based on current solution
     for it in range(1, max_iter + 1):
+        t_iter_start = time.time()
         # Build KOZ constraints based on current control points
+        t_koz_start = time.time()
         koz_constraint = build_koz_constraints(A_list, P, r_e, dim)
+        t_koz_end = time.time()
 
         # Combine all constraints
         all_constraints = [koz_constraint] + boundary_constraints
@@ -748,10 +799,11 @@ def optimize_orbital_docking(
 
         # Gradient - compute gradient separately
         def gradient(x):
-            _, grad, _ = cost_function_gradient_hessian(x, Np1, dim, compute_grad=True, n_samples=sample_count)
+            _, grad, _ = cost_function_gradient_hessian(x, Np1, dim, n_samples=sample_count)
             return grad
 
         # Solve
+        t_opt_start = time.time()
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore")
             res = minimize(
@@ -763,13 +815,22 @@ def optimize_orbital_docking(
                 bounds=bounds,
                 options={'maxiter': 50, 'gtol': 1e-8, 'disp': False}
             )
+        t_opt_end = time.time()
 
         P_new = res.x.reshape(Np1, dim)
         delta = np.linalg.norm(P_new - P)
         P = P_new
 
-        if verbose:
+        t_iter_end = time.time()
+
+        if debug:
             print(f"Iter {it}: cost={res.fun:.6e}, delta={delta:.6e}")
+            print(f"Time taken for iteration {it}: {t_iter_end - t_iter_start:.2f} seconds")
+            print(f"Time taken for koz constraints: {t_koz_end - t_koz_start:.2f} seconds")
+            print(f"Time taken for boundary constraints: {t_bc_end - t_bc_start:.2f} seconds")
+            print(f"Time taken for segment matrices: {t_seg_end - t_seg_start:.2f} seconds")
+            print(f"Time taken for bounds: {t_bounds_end - t_bounds_start:.2f} seconds")
+            print(f"Time taken for optimization: {t_opt_end - t_opt_start:.2f} seconds")
 
         if delta < tol:
             break
@@ -791,6 +852,7 @@ def optimize_orbital_docking(
         "accel": accel,
         "elapsed_time": time.time() - t0
     })
+    print("Optimization info:", info)
 
     # Save to cache
     if use_cache:
@@ -961,7 +1023,8 @@ def plot_segments_gradient(ax, P_opt, n_seg, cmap_name='viridis', show_seg_ctrl_
     ax.add_collection3d(lc)
 
 def optimize_all_segment_counts(P_init, r_e=KOZ_RADIUS, segment_counts=[2, 4, 8, 16, 32, 64], 
-                                max_iter=120, tol=1e-8, verbose=True, use_cache=True):
+                                max_iter=120, tol=1e-8, verbose=True, debug=False, use_cache=True,
+                                v0=None, v1=None, a0=None, a1=None):
     """
     Run optimization for multiple segment counts and return results.
     Uses caching to speed up repeated runs.
@@ -974,6 +1037,8 @@ def optimize_all_segment_counts(P_init, r_e=KOZ_RADIUS, segment_counts=[2, 4, 8,
         tol: Convergence tolerance
         verbose: Print progress
         use_cache: Whether to use cache (default: True)
+        v0, v1: Velocity boundary conditions (optional, shape (dim,))
+        a0, a1: Acceleration boundary conditions (optional, shape (dim,))
 
     Returns:
         List of tuples: [(n_seg, P_opt, info), ...] where info includes acceleration
@@ -992,11 +1057,12 @@ def optimize_all_segment_counts(P_init, r_e=KOZ_RADIUS, segment_counts=[2, 4, 8,
     for n_seg in segment_counts:
         if verbose:
             print(f"\nProcessing n_seg={n_seg}...")
+        start_time = time.time()
 
         # Check if cached before running
         was_cached = False
         if use_cache:
-            cache_key = get_cache_key(P_init, n_seg, r_e, max_iter, tol, 100, None, None, None, None)
+            cache_key = get_cache_key(P_init, n_seg, r_e, max_iter, tol, 100, v0, v1, a0, a1)
             cache_path = get_cache_path(cache_key, n_seg)
             if cache_path.exists():
                 was_cached = True
@@ -1011,8 +1077,12 @@ def optimize_all_segment_counts(P_init, r_e=KOZ_RADIUS, segment_counts=[2, 4, 8,
             r_e=r_e, 
             max_iter=max_iter, 
             tol=tol,
+            # v0=v0,
+            # v1=v1,
+            # a0=a0,
+            # a1=a1,
             sample_count=100,
-            verbose=False,
+            verbose=True,
             use_cache=use_cache
         )
 
@@ -1022,6 +1092,8 @@ def optimize_all_segment_counts(P_init, r_e=KOZ_RADIUS, segment_counts=[2, 4, 8,
             cache_status = "[CACHED]" if was_cached else "[COMPUTED]"
             print(f"  ✓ n_seg={n_seg:>2d} {cache_status} | iter={info['iterations']:>3d} | "
                   f"acceleration={info['accel']:.3f} | feasible={info['feasible']}")
+        elapsed_time = time.time() - start_time
+        print(f"Time taken for n_seg={n_seg}: {elapsed_time:.2f} seconds")
 
     print("\n" + "=" * 60)
     print("All optimizations complete!")
@@ -1473,6 +1545,33 @@ print(f"  Start (chaser): {P_start}")
 print(f"  End (ISS):      {P_end}")
 print(f"\nKOZ radius: {KOZ_RADIUS:.1f} km")
 
+# Calculate orbital velocities for boundary conditions
+# For circular orbits: v = sqrt(μ/r), direction is tangential (perpendicular to radius)
+v0_magnitude = np.sqrt(EARTH_MU_SCALED / CHASER_RADIUS)  # km/s
+v1_magnitude = np.sqrt(EARTH_MU_SCALED / ISS_RADIUS)     # km/s
+
+# Velocity direction: tangential to orbit (perpendicular to position vector)
+# For counterclockwise motion in xy-plane:
+#   If position is at angle θ, velocity is at angle θ + π/2
+#   v = v_mag * [-sin(θ), cos(θ), 0]
+v0 = v0_magnitude * np.array([
+    -np.sin(theta_start),  # = sin(π/4) = √2/2
+    np.cos(theta_start),   # = cos(π/4) = √2/2
+    0.0
+])
+
+v1 = v1_magnitude * np.array([
+    -np.sin(theta_end),    # = -sin(π/4) = -√2/2
+    np.cos(theta_end),     # = cos(π/4) = √2/2
+    0.0
+])
+
+print(f"\nBoundary velocities (km/s):")
+print(f"  v0 (initial): {v0}")
+print(f"  v1 (final):   {v1}")
+print(f"  |v0| = {v0_magnitude:.3f} km/s")
+print(f"  |v1| = {v1_magnitude:.3f} km/s")
+
 # Generate initial control points for different curve orders
 # N=2: Quadratic (3 control points)
 # N=3: Cubic (4 control points)
@@ -1520,10 +1619,13 @@ results_N2 = optimize_all_segment_counts(
     P_init_N2, 
     r_e=KOZ_RADIUS,
     segment_counts=segment_counts,
-    max_iter=120,
+    max_iter=MAX_ITER,
     tol=1e-3,
-    verbose=True,
-    use_cache=USE_CACHE
+    verbose=args.verbose,
+    debug=args.debug,
+    use_cache=USE_CACHE,
+    v0=v0,
+    v1=v1
 )
 
 # Calculate total time
@@ -1533,63 +1635,69 @@ print(f"\n⏱️  Total optimization time for N=2: {elapsed_time_N2:.2f} seconds
 
 
 
-# OPTIMIZATION for N=3 (Cubic curve)
-# Measure calculation time for performance analysis
+# # OPTIMIZATION for N=3 (Cubic curve)
+# # Measure calculation time for performance analysis
 
-print("\n⚠️  Starting optimization for N=3 (Cubic curve)...")
-print("    This may take a while depending on max_iter and convergence\n")
+# print("\n⚠️  Starting optimization for N=3 (Cubic curve)...")
+# print("    This may take a while depending on max_iter and convergence\n")
 
-# Run optimization for all segment counts with N=3
-segment_counts = [2, 4, 8, 16, 32, 64]
+# # Run optimization for all segment counts with N=3
+# segment_counts = [2, 4, 8, 16, 32, 64]
 
-# Start timing
-start_time_N3 = time.time()
+# # Start timing
+# start_time_N3 = time.time()
 
-# Run optimizations for all segment counts
-results_N3 = optimize_all_segment_counts(
-    P_init_N3, 
-    r_e=KOZ_RADIUS,
-    segment_counts=segment_counts,
-    max_iter=120,
-    tol=1e-3,
-    verbose=True,
-    use_cache=USE_CACHE
-)
+# # Run optimizations for all segment counts
+# results_N3 = optimize_all_segment_counts(
+#     P_init_N3, 
+#     r_e=KOZ_RADIUS,
+#     segment_counts=segment_counts,
+#     max_iter=MAX_ITER,
+#     tol=1e-3,
+#     verbose=args.verbose,
+#     debug=args.debug,
+#     use_cache=USE_CACHE,
+#     v0=v0,
+#     v1=v1
+# )
 
-# Calculate total time
-elapsed_time_N3 = time.time() - start_time_N3
+# # Calculate total time
+# elapsed_time_N3 = time.time() - start_time_N3
 
-print(f"\n⏱️  Total optimization time for N=3: {elapsed_time_N3:.2f} seconds")
+# print(f"\n⏱️  Total optimization time for N=3: {elapsed_time_N3:.2f} seconds")
 
 
 
-# OPTIMIZATION for N=4 (4th degree curve)
-# Measure calculation time for performance analysis
+# # OPTIMIZATION for N=4 (4th degree curve)
+# # Measure calculation time for performance analysis
 
-print("\n⚠️  Starting optimization for N=4 (4th degree curve)...")
-print("    This may take a while depending on max_iter and convergence\n")
+# print("\n⚠️  Starting optimization for N=4 (4th degree curve)...")
+# print("    This may take a while depending on max_iter and convergence\n")
 
-# Run optimization for all segment counts with N=4
-segment_counts = [2, 4, 8, 16, 32, 64]
+# # Run optimization for all segment counts with N=4
+# segment_counts = [2, 4, 8, 16, 32, 64]
 
-# Start timing
-start_time_N4 = time.time()
+# # Start timing
+# start_time_N4 = time.time()
 
-# Run optimizations for all segment counts
-results_N4 = optimize_all_segment_counts(
-    P_init_N4, 
-    r_e=KOZ_RADIUS,
-    segment_counts=segment_counts,
-    max_iter=120,
-    tol=1e-3,
-    verbose=True,
-    use_cache=USE_CACHE
-)
+# # Run optimizations for all segment counts
+# results_N4 = optimize_all_segment_counts(
+#     P_init_N4, 
+#     r_e=KOZ_RADIUS,
+#     segment_counts=segment_counts,
+#     max_iter=MAX_ITER,
+#     tol=1e-3,
+#     verbose=args.verbose,
+#     debug=args.debug,
+#     use_cache=USE_CACHE,
+#     v0=v0,
+#     v1=v1
+# )
 
-# Calculate total time
-elapsed_time_N4 = time.time() - start_time_N4
+# # Calculate total time
+# elapsed_time_N4 = time.time() - start_time_N4
 
-print(f"\n⏱️  Total optimization time for N=4: {elapsed_time_N4:.2f} seconds")
+# print(f"\n⏱️  Total optimization time for N=4: {elapsed_time_N4:.2f} seconds")
 
 
 
@@ -1621,19 +1729,19 @@ for seg_count in [2, 4, 8, 16, 32, 64]:
 
 print("\n✅ N=2 (Quadratic) visualizations complete!")
 
-# Create and save path comparison figures for N=3 and N=4
-fig_comparison_N3 = create_trajectory_comparison_figure(P_init_N3, KOZ_RADIUS, results_N3)
-fig_comparison_N3.savefig(FIGURE_DIR / "comparison_N3.png", dpi=300)
+# # Create and save path comparison figures for N=3 and N=4
+# fig_comparison_N3 = create_trajectory_comparison_figure(P_init_N3, KOZ_RADIUS, results_N3)
+# fig_comparison_N3.savefig(FIGURE_DIR / "comparison_N3.png", dpi=300)
 
-fig_comparison_N4 = create_trajectory_comparison_figure(P_init_N4, KOZ_RADIUS, results_N4)
-fig_comparison_N4.savefig(FIGURE_DIR / "comparison_N4.png", dpi=300)
+# fig_comparison_N4 = create_trajectory_comparison_figure(P_init_N4, KOZ_RADIUS, results_N4)
+# fig_comparison_N4.savefig(FIGURE_DIR / "comparison_N4.png", dpi=300)
 
-# Create and save performance figures for N=3 and N=4
-fig_performance_N3 = create_performance_figure(results_N3)
-fig_performance_N3.savefig(FIGURE_DIR / "performance_N3.png", dpi=300)
+# # Create and save performance figures for N=3 and N=4
+# fig_performance_N3 = create_performance_figure(results_N3)
+# fig_performance_N3.savefig(FIGURE_DIR / "performance_N3.png", dpi=300)
 
-fig_performance_N4 = create_performance_figure(results_N4)
-fig_performance_N4.savefig(FIGURE_DIR / "performance_N4.png", dpi=300)
+# fig_performance_N4 = create_performance_figure(results_N4)
+# fig_performance_N4.savefig(FIGURE_DIR / "performance_N4.png", dpi=300)
 
 # CALCULATION TIME VS CURVE ORDER ANALYSIS
 print("\n" + "=" * 60)
@@ -1643,8 +1751,8 @@ print("=" * 60)
 # Prepare data for time vs order figure
 calculation_times = {
     2: elapsed_time_N2,
-    3: elapsed_time_N3,
-    4: elapsed_time_N4
+    # 3: elapsed_time_N3,
+    # 4: elapsed_time_N4
 }
 
 # For optimization results, we'll use the best result (typically 64 segments)
@@ -1653,10 +1761,10 @@ optimization_results = {}
 for N in [2, 3, 4]:
     if N == 2:
         results = results_N2
-    elif N == 3:
-        results = results_N3
-    else:  # N == 4
-        results = results_N4
+    # elif N == 3:
+    #     results = results_N3
+    # else:  # N == 4
+    #     results = results_N4
 
     # Find the result with 64 segments (or use the last one)
     P_opt, info = None, None
@@ -1679,6 +1787,5 @@ plt.show()
 print("\n✅ Calculation time vs curve order figure complete!")
 print(f"\nSummary:")
 print(f"  N=2 (Quadratic): {elapsed_time_N2:.2f} seconds")
-print(f"  N=3 (Cubic):      {elapsed_time_N3:.2f} seconds")
-print(f"  N=4 (4th Degree): {elapsed_time_N4:.2f} seconds")
-
+# print(f"  N=3 (Cubic):      {elapsed_time_N3:.2f} seconds")
+# print(f"  N=4 (4th Degree): {elapsed_time_N4:.2f} seconds")
