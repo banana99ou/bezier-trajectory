@@ -1,81 +1,103 @@
-# 베지어 곡선 계산 라이브러리
+## Bézier Trajectory – Orbital Docking Optimizer
 
-베지어 곡선의 수치 계산을 위한 Python 라이브러리입니다.
+An orbital docking trajectory optimizer based on Bézier curves. The code finds fuel‑efficient paths for a chaser satellite to rendezvous with the ISS while respecting a spherical Keep‑Out Zone (KOZ), and generates all figures used in the paper and slides.
 
-## 설치
+## Requirements
 
-```bash
-pip install numpy scipy plotly
-```
-
-## 기본 사용법
-
-```python
-import numpy as np
-from bezier import BezierCurve
-
-# 베지어 곡선 생성
-control_points = np.array([[0, 0], [1, 2], [2, 0]])
-curve = BezierCurve(control_points)
-
-# 곡선 평가
-t = np.linspace(0, 1, 100)
-points = curve.evaluate(t)
-
-# 미분 계산
-derivatives = curve.derivative(t, order=1)
-
-# 적분 계산
-integrated = curve.integrate()
-```
-
-## 주요 기능
-
-### 곡선 연산
-- **평가**: `curve.evaluate(t)` - 매개변수 t에서 곡선 좌표
-- **미분**: `curve.derivative(t, order=n)` - n차 미분 계산
-- **적분**: `curve.integrate()` - 아핀 적분 연산
-
-### 곡선 변환
-- **차수 승격**: `curve.elevate_degree()` - 곡선 차수 증가
-- **제어점 접근**: `curve.get_control_points()` - 제어점 행렬 반환
-
-### 행렬 연산
-```python
-from bezier_matrix_utils import get_affine_integral_matrix, get_differentiation_matrix
-
-# 적분 행렬 계산
-integral_matrix = get_affine_integral_matrix(degree=3)
-
-# 미분 행렬 계산  
-diff_matrix = get_differentiation_matrix(degree=3)
-```
-
-## 예제 실행
+- **Python**: 3.7 or newer  
+- **Dependencies**: install via `requirements.txt`:
 
 ```bash
-python examples/basic_usage.py      # 기본 연산 예제
-python examples/integration_demo.py # 적분 연산 데모
+pip install -r requirements.txt
 ```
 
-## Version History
+Run all commands from the project root directory (`bezier-trajectory`).
 
-### v1.0-chorok (October 2025)
-**Stable version used for 초록 (abstract) figure generation**
+## One‑click: generate all figures
 
-- **Commit**: `a877a33` (a877a33355c1404a99daaad8af1af617c11c1a5d)
-- **File**: `examples/Bezier_Curve_Optimizer.py` (600 lines)
-- **Purpose**: Generated figures for conference abstract submission
-- **Date**: October 26-27, 2025
-- **Key features**:
-  - Bézier curve optimization with sphere avoidance
-  - Segment-based linearization
-  - Half-space constraint formulation
-  - SLSQP-based iterative optimization
-  - 3D visualization utilities
+- **Script**: `generate_all_figures.py`  
+- **What it does**: sequentially calls the existing scripts to regenerate the main figures.
 
-## 수학적 배경
+```bash
+python generate_all_figures.py
+```
 
-- **베른슈타인 기저 함수**: 베지어 곡선의 수학적 기반
-- **아핀 적분**: 적분 상수 항을 제거하는 적분 연산
-- **차수 승격**: 곡선 형태 보존하며 제어점 개수 증가
+This will:
+- **Run** `Orbital_Docking_Optimizer.py` to:
+  - Optimize docking trajectories for different segment counts and curve orders
+  - Save main figures under `figure/figures/`, including:
+    - `comparison_N2.png`, `comparison_N3.png`, `comparison_N4.png`
+    - `performance_N2.png`, `performance_N3.png`, `performance_N4.png`
+    - `accel_profiles_N2_seg{2,4,8,16,32,64}.png`
+    - `time_vs_order.png`
+- **Run** `figure/scnario_figure.py` to create the orbital docking scenario / expectation figure:
+  - `orbital_docking_expectation.png`
+- **Run** `figure/constraint_linearization_figures.py` to show KOZ / constraint‑linearization demo figures (3D + 2D).
+- **Run** `archive/Bezier_Curve_Optimizer_legacy.py` to reproduce the legacy sphere‑avoidance optimization figure (used in the initial paper).
+
+> Note: some of the illustration scripts are primarily interactive and call `plt.show()`. To save additional static images, uncomment or add `plt.savefig(...)` lines inside those modules if needed.
+
+## Main scripts and what they do
+
+- **`Orbital_Docking_Optimizer.py`**  
+  - Full orbital docking optimizer using Bézier curves (N=2,3,4).  
+  - Minimizes the difference between geometric and gravitational acceleration with KOZ constraints.  
+  - Saves the main optimization, performance, and profile figures into `figure/figures/`.  
+  - Usage:
+    - **Default (cache enabled)**:
+      ```bash
+      python Orbital_Docking_Optimizer.py
+      ```
+    - **Force recomputation (no cache)**:
+      ```bash
+      python Orbital_Docking_Optimizer.py --no-cache
+      ```
+
+- **`figure/scnario_figure.py`**  
+  - Generates an “expectation” figure showing Earth, KOZ, chaser, and ISS positions (3D + 2D layout).  
+  - Saves `orbital_docking_expectation.png` (in the current working directory).  
+  - Usage:
+    ```bash
+    python figure/scnario_figure.py
+    ```
+
+- **`figure/constraint_linearization_figures.py`**  
+  - Visualizes how nonlinear KOZ constraints are turned into supporting half‑spaces using Bézier segment subdivision.  
+  - Provides:
+    - 3D illustrations of a curve and sphere with segment‑wise constraint planes  
+    - 2D KOZ linearization plots showing violating segments and corrected segments  
+  - When run as a script, it currently focuses on the 2D KOZ linearization figure and shows it interactively.  
+  - Usage:
+    ```bash
+    python figure/constraint_linearization_figures.py
+    ```
+
+- **`archive/Bezier_Curve_Optimizer_legacy.py`**  
+  - Legacy implementation used to generate figures for the initial paper (sphere‑avoidance with a single Bézier curve).  
+  - Shows a 2×3 grid of optimized curves with different segment counts.  
+  - Contains a commented `plt.savefig("bezier_outside_sphere_2x3.png", ...)` line you can uncomment to save the legacy figure.  
+  - Usage:
+    ```bash
+    python archive/Bezier_Curve_Optimizer_legacy.py
+    ```
+
+- **`archive/basic_usage.py`, `archive/bezier.py`, `archive/bezier_matrix_utils.py`, `archive/integration_demo.py`**  
+  - Earlier, more didactic utilities and demos for Bézier curves and integration.  
+  - Kept for reference; not required for the main orbital docking results.
+
+- **`generate_all_figures.py`**  
+  - Thin “orchestrator” that runs all major scripts in sequence for one‑click reproduction of figures.  
+  - Recommended entry point for reproducing all results.
+
+## Directories
+
+- **`figure/figures/`**  
+  - Output directory for all generated figures (PNG/PDF) from the main optimizer and some helper scripts.
+
+- **`cache/`**  
+  - Stores pickled optimization results used by `Orbital_Docking_Optimizer.py` for faster repeated runs.
+
+- **`archive/`**  
+  - Legacy code and figure generators corresponding to the initial paper versions.  
+
+
