@@ -11,40 +11,28 @@ from .bezier import BezierCurve
 from .de_casteljau import segment_matrices_equal_params
 from .constraints import build_koz_constraints, build_boundary_constraints
 from .cache import get_cache_key, get_cache_path, load_from_cache, save_to_cache
-from .constants import EARTH_MU_SCALED
 
 
 def _compute_cost_only(P_flat, Np1, dim, n_samples=50):
-    """Helper function to compute cost only (no recursion)."""
+    """
+    Helper function to compute cost only (no recursion).
+
+    Matches the monolithic optimizer behavior on `revert-3750d57`:
+    - Cost uses the quadratic form based on G_tilde (no gravity term)
+    - Returns cost=accel=a_geom for backward-compatible plotting/reporting
+    """
     P = P_flat.reshape(Np1, dim)
     curve = BezierCurve(P)
-    ts = np.linspace(0, 1, n_samples)
 
-    cost = 0.0
-    accel = 0.0
-    dtau = 1.0 / (n_samples - 1)
+    if curve.G_tilde is None:
+        return 0.0, 0.0, 0.0, None
 
-    for tau in ts:
-        # Geometric acceleration at each point on the curve
-        a_geom = curve.acceleration(tau)
-
-        # Gravitational acceleration at each point on the curve
-        pos = curve.point(tau)
-        r = np.linalg.norm(pos)
-
-        # Direction toward origin (negative of position unit vector)
-        if r > 1e-6:
-            a_grav = -EARTH_MU_SCALED / r**2 * (pos / r)
-        else:
-            a_grav = np.zeros_like(pos)
-
-        # Cost: ||a_geom - a_grav||²
-        diff = a_geom - a_grav
-        norm_diff = np.linalg.norm(diff)
-        cost += norm_diff**2 * dtau
-        accel += norm_diff * dtau
-
-    return cost, accel, a_geom, a_grav
+    # Quadratic form: tr(P^T G_tilde P) = sum(P * (G_tilde @ P))
+    GP = curve.G_tilde @ P
+    a_geom = float(np.sum(P * GP))
+    cost = a_geom
+    accel = a_geom
+    return cost, accel, a_geom, None
 
 
 def cost_function_gradient_hessian(P_flat, Np1, dim, n_samples=50, compute_grad=True):
@@ -55,23 +43,24 @@ def cost_function_gradient_hessian(P_flat, Np1, dim, n_samples=50, compute_grad=
     Args:
         compute_grad: If False, only compute cost (for efficiency when gradient not needed)
     """
-    cost, _, _, _ = _compute_cost_only(P_flat, Np1, dim, n_samples)
+    # Analytic gradient/Hessian for the quadratic form:
+    #   J(P) = tr(P^T G_tilde P)
+    #   dJ/dP = 2 G_tilde P
+    #   H(vec(P)) = 2 kron(I_dim, G_tilde)
+    P = P_flat.reshape(Np1, dim)
+    curve = BezierCurve(P)
 
-    if not compute_grad:
-        return cost, None, None
+    if curve.G_tilde is None:
+        cost = 0.0
+        grad = np.zeros(Np1 * dim)
+        hess = np.zeros((Np1 * dim, Np1 * dim))
+        return cost, grad, hess
 
-    # Compute gradient using finite differences
-    eps = 1e-6
-    grad = np.zeros(Np1 * dim)
-    for i in range(Np1 * dim):
-        P_pert = P_flat.copy()
-        P_pert[i] += eps
-        cost_pert, _, _, _ = _compute_cost_only(P_pert, Np1, dim, n_samples)
-        grad[i] = (cost_pert - cost) / eps
-
-    # Simple diagonal Hessian approximation (regularization)
-    hess = np.eye(Np1 * dim) * 1e-6
-
+    GP = curve.G_tilde @ P
+    cost = float(np.sum(P * GP))
+    grad_P = 2.0 * GP
+    grad = grad_P.reshape(-1)
+    hess = 2.0 * np.kron(np.eye(dim), curve.G_tilde)
     return cost, grad, hess
 
 
@@ -87,6 +76,7 @@ def optimize_orbital_docking(
     a1=None,
     sample_count=100,
     verbose=True,
+    debug=False,
     use_cache=True
 ):
     """
@@ -131,26 +121,35 @@ def optimize_orbital_docking(
     N = Np1 - 1
 
     # Get segment matrices
+    t_seg_start = time.time()
     A_list = segment_matrices_equal_params(N, n_seg)
+    t_seg_end = time.time()
 
     # Set up bounds: fix endpoints for position constraints
+    t_bounds_start = time.time()
     x0 = P.reshape(-1)
     lb = np.full_like(x0, -np.inf)
     ub = np.full_like(x0, np.inf)
     lb[:dim] = ub[:dim] = x0[:dim]  # Lock P0
     lb[-dim:] = ub[-dim:] = x0[-dim:]  # Lock PN
     bounds = Bounds(lb, ub)
+    t_bounds_end = time.time()
 
     # Build boundary constraints
+    t_bc_start = time.time()
     boundary_constraints = build_boundary_constraints(P, v0, v1, a0, a1, dim)
+    t_bc_end = time.time()
 
     # Store results
     info = {"iterations": 0, "feasible": False, "cost": np.inf}
 
     # Iterative optimization: update KOZ constraints based on current solution
     for it in range(1, max_iter + 1):
+        t_iter_start = time.time()
         # Build KOZ constraints based on current control points
+        t_koz_start = time.time()
         koz_constraint = build_koz_constraints(A_list, P, r_e, dim)
+        t_koz_end = time.time()
 
         # Combine all constraints
         all_constraints = [koz_constraint] + boundary_constraints
@@ -166,6 +165,7 @@ def optimize_orbital_docking(
             return grad
 
         # Solve
+        t_opt_start = time.time()
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore")
             res = minimize(
@@ -177,13 +177,21 @@ def optimize_orbital_docking(
                 bounds=bounds,
                 options={'maxiter': 50, 'gtol': 1e-8, 'disp': False}
             )
+        t_opt_end = time.time()
 
         P_new = res.x.reshape(Np1, dim)
         delta = np.linalg.norm(P_new - P)
         P = P_new
 
-        if verbose:
+        t_iter_end = time.time()
+        if debug:
             print(f"Iter {it}: cost={res.fun:.6e}, delta={delta:.6e}")
+            print(f"Time taken for iteration {it}: {t_iter_end - t_iter_start:.2f} seconds")
+            print(f"Time taken for koz constraints: {t_koz_end - t_koz_start:.2f} seconds")
+            print(f"Time taken for boundary constraints: {t_bc_end - t_bc_start:.2f} seconds")
+            print(f"Time taken for segment matrices: {t_seg_end - t_seg_start:.2f} seconds")
+            print(f"Time taken for bounds: {t_bounds_end - t_bounds_start:.2f} seconds")
+            print(f"Time taken for optimization: {t_opt_end - t_opt_start:.2f} seconds")
 
         if delta < tol:
             break
@@ -218,7 +226,8 @@ def optimize_orbital_docking(
 
 
 def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 32, 64], 
-                                max_iter=120, tol=1e-8, verbose=True, use_cache=True):
+                                max_iter=120, tol=1e-8, verbose=True, debug=False, use_cache=True,
+                                v0=None, v1=None, a0=None, a1=None):
     """
     Run optimization for multiple segment counts and return results.
     Uses caching to speed up repeated runs.
@@ -259,7 +268,9 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
         # Check if cached before running
         was_cached = False
         if use_cache:
-            cache_key = get_cache_key(P_init, n_seg, r_e, max_iter, tol, 100, None, None, None, None)
+            # Match baseline behavior: cache key includes boundary values even if constraints
+            # are currently not applied in the solver call.
+            cache_key = get_cache_key(P_init, n_seg, r_e, max_iter, tol, 100, v0, v1, a0, a1)
             cache_path = get_cache_path(cache_key, n_seg)
             if cache_path.exists():
                 was_cached = True
@@ -275,7 +286,8 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
             max_iter=max_iter, 
             tol=tol,
             sample_count=100,
-            verbose=False,
+            verbose=True,
+            debug=debug,
             use_cache=use_cache
         )
 

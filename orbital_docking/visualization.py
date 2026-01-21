@@ -225,7 +225,8 @@ def create_trajectory_comparison_figure(P_init, r_e, results):
 
         # Professional styling with shared zoom level
         set_axes_equal_around(ax, center=(0,0,0), radius=view_radius, pad=0.05)
-        set_isometric(ax, elev=90, azim=0)
+        # Match baseline viewing angle used for paper figures
+        set_isometric(ax, elev=20, azim=45)
         beautify_3d_axes(ax, show_ticks=True, show_grid=True)
 
         # Title with acceleration and feasibility

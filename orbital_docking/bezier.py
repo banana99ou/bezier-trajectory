@@ -59,6 +59,20 @@ def get_E_matrix(N):
     return E
 
 
+def get_G_matrix(N: int) -> np.ndarray:
+    """
+    Compute Gram matrix for Bézier curve of degree N.
+
+    Matches the analytic closed form used in the monolithic optimizer:
+        G[i,j] = C(N,i) C(N,j) / ( C(2N, i+j) (2N+1) )
+    """
+    G = np.zeros((N + 1, N + 1), dtype=float)
+    for i in range(N + 1):
+        for j in range(N + 1):
+            G[i, j] = (comb(N, i) * comb(N, j) / comb(2 * N, i + j) / (2 * N + 1))
+    return G
+
+
 class BezierCurve:
     """
     Bézier curve implementation using D/E matrices for derivatives.
@@ -76,6 +90,15 @@ class BezierCurve:
         self.D = get_D_matrix(self.degree)
         if self.degree > 0:
             self.E = get_E_matrix(self.degree - 1)  # E elevates from N-1 to N
+
+        # Precompute Gram matrix and the quadratic-form matrix used for cost/gradient:
+        #   G_tilde = (E D E D)^T G (E D E D)
+        self.G = get_G_matrix(self.degree)
+        if self.degree >= 2:
+            EDED = self.E @ self.D @ self.E @ self.D  # (N+1, N+1)
+            self.G_tilde = EDED.T @ self.G @ EDED
+        else:
+            self.G_tilde = None
 
     def point(self, tau):
         """Evaluate curve at parameter tau using Bernstein basis."""

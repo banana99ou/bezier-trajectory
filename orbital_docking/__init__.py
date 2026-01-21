@@ -7,7 +7,7 @@ geometric acceleration and gravitational acceleration while satisfying Keep Out 
 constraints.
 """
 
-from .bezier import BezierCurve, get_D_matrix, get_E_matrix
+from .bezier import BezierCurve, get_D_matrix, get_E_matrix, get_G_matrix
 from .de_casteljau import (
     de_casteljau_split_1d,
     de_casteljau_split_matrices,
@@ -52,6 +52,7 @@ __all__ = [
     # Matrix functions
     'get_D_matrix',
     'get_E_matrix',
+    'get_G_matrix',
     
     # De Casteljau functions
     'de_casteljau_split_1d',
