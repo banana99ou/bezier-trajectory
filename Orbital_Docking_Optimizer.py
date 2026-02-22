@@ -63,9 +63,6 @@ from orbital_docking import (
 
 warnings.filterwarnings('ignore')
 
-# Keep consistent with the baseline run behavior
-MAX_ITER = 1000
-
 # Parse command-line arguments
 parser = argparse.ArgumentParser(
     description='Orbital Docking Optimizer using Bézier Curves',
@@ -139,6 +136,7 @@ print()
 # Positions in km, scaled appropriately
 
 # Start: chaser position (at 300km altitude)
+#! TODO: change theta start and end to match inclination of target scenario orbit
 theta_start = -np.pi / 4  # 45 degrees
 P_start = np.array([
     CHASER_RADIUS * np.cos(theta_start),
@@ -296,10 +294,10 @@ if 2 in args.N:
     print("\n📊 Creating visualizations for N=2 (Quadratic curve)...")
     print("=" * 60)
 
-    fig_comparison_N2 = create_trajectory_comparison_figure(P_init_N2, KOZ_RADIUS, results_N2)
+    fig_comparison_N2 = create_trajectory_comparison_figure(P_init_N2, KOZ_RADIUS, results_N2, curve_order=2)
     fig_comparison_N2.savefig(FIGURE_DIR / "comparison_N2.png", dpi=300)
 
-    fig_performance_N2 = create_performance_figure(results_N2)
+    fig_performance_N2 = create_performance_figure(results_N2, curve_order=2)
     fig_performance_N2.savefig(FIGURE_DIR / "performance_N2.png", dpi=300)
 
     print("\nCreating acceleration profiles for N=2...")
@@ -307,7 +305,14 @@ if 2 in args.N:
     _segcounts = [2, 4, 8, 16, 32, 64]
     pos_ylim, vel_ylim, acc_ylim = compute_profile_ylims(results_N2, _segcounts)
     for seg_count in [2, 4, 8, 16, 32, 64]:
-        fig = create_acceleration_figure(results_N2, segcount=seg_count, pos_ylim=pos_ylim, vel_ylim=vel_ylim, acc_ylim=acc_ylim)
+        fig = create_acceleration_figure(
+            results_N2,
+            segcount=seg_count,
+            pos_ylim=pos_ylim,
+            vel_ylim=vel_ylim,
+            acc_ylim=acc_ylim,
+            curve_order=2,
+        )
         accel_figures_N2[seg_count] = fig
         fig.savefig(FIGURE_DIR / f"accel_profiles_N2_seg{seg_count}.png", dpi=300)
         print(f"✓ Created profiles for {seg_count} segments")
@@ -315,16 +320,58 @@ if 2 in args.N:
     print("\n✅ N=2 (Quadratic) visualizations complete!")
 
 if 3 in args.N:
-    fig_comparison_N3 = create_trajectory_comparison_figure(P_init_N3, KOZ_RADIUS, results_N3)
+    print("\n📊 Creating visualizations for N=3 (Cubic curve)...")
+    print("=" * 60)
+    fig_comparison_N3 = create_trajectory_comparison_figure(P_init_N3, KOZ_RADIUS, results_N3, curve_order=3)
     fig_comparison_N3.savefig(FIGURE_DIR / "comparison_N3.png", dpi=300)
-    fig_performance_N3 = create_performance_figure(results_N3)
+    fig_performance_N3 = create_performance_figure(results_N3, curve_order=3)
     fig_performance_N3.savefig(FIGURE_DIR / "performance_N3.png", dpi=300)
 
+    print("\nCreating acceleration profiles for N=3...")
+    accel_figures_N3 = {}
+    _segcounts = [2, 4, 8, 16, 32, 64]
+    pos_ylim, vel_ylim, acc_ylim = compute_profile_ylims(results_N3, _segcounts)
+    for seg_count in _segcounts:
+        fig = create_acceleration_figure(
+            results_N3,
+            segcount=seg_count,
+            pos_ylim=pos_ylim,
+            vel_ylim=vel_ylim,
+            acc_ylim=acc_ylim,
+            curve_order=3,
+        )
+        accel_figures_N3[seg_count] = fig
+        fig.savefig(FIGURE_DIR / f"accel_profiles_N3_seg{seg_count}.png", dpi=300)
+        print(f"✓ Created profiles for {seg_count} segments")
+
+    print("\n✅ N=3 (Cubic) visualizations complete!")
+
 if 4 in args.N:
-    fig_comparison_N4 = create_trajectory_comparison_figure(P_init_N4, KOZ_RADIUS, results_N4)
+    print("\n📊 Creating visualizations for N=4 (4th degree curve)...")
+    print("=" * 60)
+    fig_comparison_N4 = create_trajectory_comparison_figure(P_init_N4, KOZ_RADIUS, results_N4, curve_order=4)
     fig_comparison_N4.savefig(FIGURE_DIR / "comparison_N4.png", dpi=300)
-    fig_performance_N4 = create_performance_figure(results_N4)
+    fig_performance_N4 = create_performance_figure(results_N4, curve_order=4)
     fig_performance_N4.savefig(FIGURE_DIR / "performance_N4.png", dpi=300)
+
+    print("\nCreating acceleration profiles for N=4...")
+    accel_figures_N4 = {}
+    _segcounts = [2, 4, 8, 16, 32, 64]
+    pos_ylim, vel_ylim, acc_ylim = compute_profile_ylims(results_N4, _segcounts)
+    for seg_count in _segcounts:
+        fig = create_acceleration_figure(
+            results_N4,
+            segcount=seg_count,
+            pos_ylim=pos_ylim,
+            vel_ylim=vel_ylim,
+            acc_ylim=acc_ylim,
+            curve_order=4,
+        )
+        accel_figures_N4[seg_count] = fig
+        fig.savefig(FIGURE_DIR / f"accel_profiles_N4_seg{seg_count}.png", dpi=300)
+        print(f"✓ Created profiles for {seg_count} segments")
+
+    print("\n✅ N=4 (4th Degree) visualizations complete!")
 
 # CALCULATION TIME VS CURVE ORDER ANALYSIS
 print("\n" + "=" * 60)
@@ -371,7 +418,10 @@ for N in [2, 3, 4]:
 # Create and display the time vs order figure
 fig_time_order = create_time_vs_order_figure(calculation_times, optimization_results)
 fig_time_order.savefig(FIGURE_DIR / "time_vs_order.png", dpi=300)
-plt.show()
+if args.show:
+    plt.show()
+else:
+    plt.close('all')
 
 print("\n✅ Calculation time vs curve order figure complete!")
 print(f"\nSummary:")

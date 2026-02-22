@@ -8,8 +8,84 @@ from mpl_toolkits.mplot3d.art3d import Line3DCollection
 
 from .bezier import BezierCurve
 from .de_casteljau import segment_matrices_equal_params
-from .constants import EARTH_RADIUS_KM, EARTH_MU_SCALED
+from .constants import EARTH_RADIUS_KM, EARTH_MU_SCALED, EARTH_J2, TRANSFER_TIME_S
 from .utils import format_number
+
+
+def _safe_set_window_title(fig, title: str) -> None:
+    """
+    Best-effort: set GUI window title for a Matplotlib figure.
+    No-op for non-interactive backends (e.g., inline notebooks, Agg).
+    """
+    if fig is None or not title:
+        return
+    try:
+        manager = getattr(getattr(fig, "canvas", None), "manager", None)
+        if manager is not None and hasattr(manager, "set_window_title"):
+            manager.set_window_title(title)
+    except Exception:
+        pass
+
+
+def accel_two_body_km_s2(r_km: np.ndarray) -> np.ndarray:
+    """Two-body gravity acceleration in km/s^2."""
+    r = np.asarray(r_km, dtype=float)
+    rn = np.linalg.norm(r)
+    if rn < 1e-12:
+        return np.zeros(3)
+    return (-EARTH_MU_SCALED / (rn**3)) * r
+
+
+def accel_j2_km_s2(r_km: np.ndarray) -> np.ndarray:
+    """
+    J2 perturbation acceleration in km/s^2.
+    Simplified model: Earth symmetry axis aligned with ECI Z.
+    """
+    r = np.asarray(r_km, dtype=float)
+    x, y, z = r
+    r2 = float(x*x + y*y + z*z)
+    rn = np.sqrt(r2)
+    if rn < 1e-12:
+        return np.zeros(3)
+    z2 = z*z
+    r5 = rn**5
+    factor = 1.5 * EARTH_J2 * EARTH_MU_SCALED * (EARTH_RADIUS_KM**2) / r5
+    k = 5.0 * z2 / r2
+    ax = factor * x * (k - 1.0)
+    ay = factor * y * (k - 1.0)
+    az = factor * z * (k - 3.0)
+    return np.array([ax, ay, az], dtype=float)
+
+
+def accel_gravity_total_km_s2(r_km: np.ndarray) -> np.ndarray:
+    """Two-body + J2 gravity acceleration in km/s^2."""
+    return accel_two_body_km_s2(r_km) + accel_j2_km_s2(r_km)
+
+
+def control_effort_metrics(info: dict):
+    """
+    Convert optimizer cost into objective-consistent physical metrics.
+
+    Returns:
+        (rms_control_accel_m_s2, l2_effort_m2_s3)
+        - RMS control acceleration is sqrt(cost_true_energy) converted to m/s^2.
+        - L2 effort is cost_true_energy integrated over physical time (m^2/s^3).
+    """
+    if info is None:
+        return None, None
+
+    J_tau = info.get('cost_true_energy', info.get('cost', None))
+    if J_tau is None:
+        return None, None
+
+    J_tau = float(J_tau)
+    if not np.isfinite(J_tau) or J_tau < 0.0:
+        return None, None
+
+    T = float(info.get('T_transfer_s', TRANSFER_TIME_S))
+    rms_control_accel_m_s2 = np.sqrt(J_tau) * 1e3
+    l2_effort_m2_s3 = J_tau * T * 1e6
+    return float(rms_control_accel_m_s2), float(l2_effort_m2_s3)
 
 
 def add_wire_sphere(ax, radius=3.0, center=(0.0, 0.0, 0.0), color='gray', alpha=0.25, resolution=40):
@@ -169,7 +245,7 @@ def plot_segments_gradient(ax, P_opt, n_seg, cmap_name='viridis', show_seg_ctrl_
     ax.add_collection3d(lc)
 
 
-def create_trajectory_comparison_figure(P_init, r_e, results):
+def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, window_title=None):
     """
     Create 2×3 layout showing trajectories with different segment counts.
     Uses same aesthetics as Orbital_Docking_Optimizer.py.
@@ -184,6 +260,9 @@ def create_trajectory_comparison_figure(P_init, r_e, results):
         matplotlib Figure object
     """
     fig = plt.figure(figsize=(16, 12), constrained_layout=True)
+    if window_title is None and curve_order is not None:
+        window_title = f"Orbital Docking — Trajectory Comparison (N={curve_order})"
+    _safe_set_window_title(fig, window_title)
 
     # Create 2×3 subplot layout
     axes = []
@@ -229,13 +308,13 @@ def create_trajectory_comparison_figure(P_init, r_e, results):
         set_isometric(ax, elev=20, azim=45)
         beautify_3d_axes(ax, show_ticks=True, show_grid=True)
 
-        # Title with acceleration and feasibility
-        accel_ms2 = info.get('accel', 0.0) / 1e3
-        accel_str = format_number(accel_ms2, '.1f')
+        # Title with optimizer-consistent control-effort metric.
+        rms_control_accel_m_s2, _ = control_effort_metrics(info)
+        accel_str = "n/a" if rms_control_accel_m_s2 is None else format_number(rms_control_accel_m_s2, '.2f')
         feasible = bool(info.get('feasible', False))
         status = 'Feasible' if feasible else 'Infeasible'
         title_color = 'black' if feasible else 'red'
-        ax.set_title(f'{n_seg} Segments — {status}\nAccel: {accel_str} m/s²',
+        ax.set_title(f'{n_seg} Segments — {status}\nRMS control accel: {accel_str} m/s²',
                      fontsize=10, pad=10, color=title_color)
 
     # Link all axes to share zoom - when one zooms, all zoom together
@@ -294,28 +373,25 @@ def compute_profile_ylims(results, segcounts):
 
         curve = BezierCurve(P_opt)
         positions = np.array([curve.point(t) for t in ts])
-        velocities = np.array([curve.velocity(t) for t in ts]) * 1e-3
-        geom_accel_vec = np.array([curve.acceleration(t) for t in ts]) * 1e-6
-        # Gravitational acceleration vectors (consistent with cost function: negative toward origin)
-        grav_accel_vec = []
-        for t in ts:
-            pos = curve.point(t)
-            r = np.linalg.norm(pos)
-            if r > 1e-6:
-                a_grav = -EARTH_MU_SCALED / r**2 * (pos / r) * 1e3
-            else:
-                a_grav = np.zeros_like(pos)
-            grav_accel_vec.append(a_grav)
-        grav_accel_vec = np.array(grav_accel_vec)
-        # Total acceleration magnitude used by cost (difference of vectors)
-        diff_accel_mag_kms2 = np.linalg.norm(geom_accel_vec - grav_accel_vec, axis=1)
+        # Convert tau-derivatives to physical time derivatives using fixed transfer time T.
+        #   v(t) = (1/T) r'(tau)
+        #   a_geom(t) = (1/T^2) r''(tau)
+        T = float(TRANSFER_TIME_S)
+        velocities_km_s = np.array([curve.velocity(t) for t in ts]) / T
+        a_geom_km_s2 = np.array([curve.acceleration(t) for t in ts]) / (T**2)
+
+        # Gravity (two-body + J2) along the curve
+        a_grav_km_s2 = np.array([accel_gravity_total_km_s2(curve.point(t)) for t in ts])
+
+        # Control acceleration magnitude (m/s^2): ||a_geom - a_grav||
+        a_u_m_s2 = np.linalg.norm(a_geom_km_s2 - a_grav_km_s2, axis=1) * 1e3
 
         # Update mins/maxes
         pos_min = min(pos_min, positions.min())
         pos_max = max(pos_max, positions.max())
-        vel_min = min(vel_min, velocities.min())
-        vel_max = max(vel_max, velocities.max())
-        acc_max = max(acc_max, diff_accel_mag_kms2.max())
+        vel_min = min(vel_min, velocities_km_s.min())
+        vel_max = max(vel_max, velocities_km_s.max())
+        acc_max = max(acc_max, float(np.max(a_u_m_s2)))
 
     # Add small padding
     def pad_limits(lo, hi, pad_ratio=0.05):
@@ -333,7 +409,7 @@ def compute_profile_ylims(results, segcounts):
     return pos_ylim, vel_ylim, acc_ylim
 
 
-def create_performance_figure(results):
+def create_performance_figure(results, curve_order=None, window_title=None):
     """
     Create performance figure showing acceleration vs segment count.
 
@@ -344,22 +420,35 @@ def create_performance_figure(results):
         matplotlib Figure object
     """
     fig = plt.figure(figsize=(10, 6), constrained_layout=True)
+    if window_title is None and curve_order is not None:
+        window_title = f"Orbital Docking — Performance (N={curve_order})"
+    _safe_set_window_title(fig, window_title)
     ax = fig.add_subplot(111)
 
-    # Extract data
-    segment_counts = [n_seg for n_seg, _, _ in results]
-    accelerations = [info['accel'] * 1e-3 for _, _, info in results]  # Convert km/s² to m/s²
+    # Extract objective-consistent control-effort metric in physical units.
+    segment_counts = []
+    rms_accelerations = []
 
-    # Create acceleration performance graph
-    ax.plot(segment_counts, accelerations, 'bo-', linewidth=3, markersize=10)
+    for n_seg, P_opt, info in results:
+        if P_opt is None or info is None:
+            continue
+        rms_control_accel_m_s2, _ = control_effort_metrics(info)
+        if rms_control_accel_m_s2 is None:
+            continue
+
+        segment_counts.append(n_seg)
+        rms_accelerations.append(rms_control_accel_m_s2)
+
+    # Create performance graph
+    ax.plot(segment_counts, rms_accelerations, 'bo-', linewidth=3, markersize=10)
     ax.set_xlabel('Number of Segments', fontsize=14)
-    ax.set_ylabel('Acceleration (m/s²)', fontsize=14)
-    ax.set_title('Performance Improvement with More Segments', fontsize=16, pad=20)
+    ax.set_ylabel('RMS Control Acceleration (m/s²)', fontsize=14)
+    ax.set_title('RMS Control Acceleration vs Segment Count', fontsize=16, pad=20)
     ax.grid(True, alpha=0.3)
     ax.set_xscale('log', base=2)  # Log scale for segment counts
 
     # Add data point labels
-    for i, (seg, accel) in enumerate(zip(segment_counts, accelerations)):
+    for i, (seg, accel) in enumerate(zip(segment_counts, rms_accelerations)):
         accel_str = format_number(accel, '.3f')
         ax.annotate(accel_str, (seg, accel), textcoords="offset points", xytext=(0,10), ha='center',
                    fontsize=10, bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8))
@@ -367,7 +456,16 @@ def create_performance_figure(results):
     return fig
 
 
-def create_acceleration_figure(results, segcount=64, pos_ylim=None, vel_ylim=None, acc_ylim=None):
+def create_acceleration_figure(
+    results,
+    segcount=64,
+    pos_ylim=None,
+    vel_ylim=None,
+    acc_ylim=None,
+    toggle_accel_legend=True,
+    curve_order=None,
+    window_title=None,
+):
     """
     Create 3x1 layout showing xyz position, xyz velocity, and acceleration profiles.
     Adapted for notebook's BezierCurve class.
@@ -380,7 +478,20 @@ def create_acceleration_figure(results, segcount=64, pos_ylim=None, vel_ylim=Non
         matplotlib Figure object
     """
     fig = plt.figure(figsize=(12, 10), constrained_layout=True)
-    fig.suptitle(f'Position, Velocity, and Acceleration Profiles for {segcount} Segments', fontsize=16)
+    if curve_order is None:
+        fig.suptitle(f'Position, Velocity, and Acceleration Profiles for {segcount} Segments', fontsize=16)
+    else:
+        fig.suptitle(
+            f'Position, Velocity, and Acceleration Profiles (N={curve_order}) for {segcount} Segments',
+            fontsize=16,
+        )
+
+    if window_title is None:
+        if curve_order is None:
+            window_title = f"Orbital Docking — Profiles ({segcount} seg)"
+        else:
+            window_title = f"Orbital Docking — Profiles (N={curve_order}, {segcount} seg)"
+    _safe_set_window_title(fig, window_title)
 
     # Create 3x1 subplot layout
     ax1 = fig.add_subplot(3, 1, 1)  # Position plot
@@ -405,32 +516,25 @@ def create_acceleration_figure(results, segcount=64, pos_ylim=None, vel_ylim=Non
     curve = BezierCurve(P_opt)
     ts = np.linspace(0.0, 1.0, 300)
 
-    # Sample positions, velocities, and accelerations
+    # Sample positions, velocities, and accelerations (unit-consistent)
+    # curve.velocity(tau) is dr/dtau [km]; convert to km/s via v = (1/T) dr/dtau
     positions = np.array([curve.point(t) for t in ts])
-    velocities = np.array([curve.velocity(t) for t in ts]) * 1e-3
+    T = float(TRANSFER_TIME_S)
+    velocities = np.array([curve.velocity(t) for t in ts]) / T
 
     # Calculate magnitudes
     position_magnitudes = np.linalg.norm(positions, axis=1)
     velocity_magnitudes = np.linalg.norm(velocities, axis=1)
 
-    # Calculate acceleration components (consistent with cost function)
-    # Geometric acceleration vectors from curve
-    geom_accelerations_vec = np.array([curve.acceleration(t) for t in ts]) * 1e-3
-    geom_accel_mag = np.linalg.norm(geom_accelerations_vec, axis=1) 
-    # Gravitational acceleration vectors (negative toward origin)
-    grav_accelerations_vec = []
-    for t in ts:
-        pos = curve.point(t)
-        r = np.linalg.norm(pos)
-        if r > 1e-6:
-            a_grav = -EARTH_MU_SCALED / r**2 * (pos / r) * 1e3
-        else:
-            a_grav = np.zeros_like(pos)
-        grav_accelerations_vec.append(a_grav)
-    grav_accelerations_vec = np.array(grav_accelerations_vec)
-    grav_accel_mag = np.linalg.norm(grav_accelerations_vec, axis=1)
-    # Total acceleration magnitude used by the cost: ||a_geom - a_grav||
-    total_accel_mag_kms2 = np.linalg.norm(geom_accelerations_vec - grav_accelerations_vec, axis=1)
+    # Accelerations:
+    # - curve.acceleration(tau) is d^2r/dtau^2 [km]; convert to km/s^2 via a = (1/T^2) d^2r/dtau^2
+    # - gravity is computed in km/s^2; we convert magnitudes to m/s^2 for plotting
+    a_geom_km_s2 = np.array([curve.acceleration(t) for t in ts]) / (T**2)
+    a_grav_km_s2 = np.array([accel_gravity_total_km_s2(curve.point(t)) for t in ts])
+
+    geom_accel_mag = np.linalg.norm(a_geom_km_s2, axis=1) * 1e3
+    grav_accel_mag = np.linalg.norm(a_grav_km_s2, axis=1) * 1e3
+    total_accel_mag_kms2 = np.linalg.norm(a_geom_km_s2 - a_grav_km_s2, axis=1) * 1e3
 
     # Plot 1: XYZ Position with total magnitude
     ax1.plot(ts, positions[:, 0], 'r-', linewidth=2.0, label='X', alpha=0.7)
@@ -459,24 +563,105 @@ def create_acceleration_figure(results, segcount=64, pos_ylim=None, vel_ylim=Non
         ax2.set_ylim(vel_ylim)
 
     # Plot 3: Acceleration components and total
-    ax3.plot(ts, geom_accel_mag, 'orange', linewidth=2.0, label='Geometric Acceleration', alpha=0.7)
-    ax3.plot(ts, grav_accel_mag, 'cyan', linewidth=2.0, label='Gravitational Acceleration', alpha=0.7)
-    ax3.plot(ts, total_accel_mag_kms2, 'purple', linewidth=2.5, label='Total Acceleration', linestyle='-')
+    geom_line, = ax3.plot(
+        ts, geom_accel_mag, 'orange', linewidth=2.0, label='Inertial Accel (from curve)', alpha=0.7
+    )
+    grav_line, = ax3.plot(
+        ts, grav_accel_mag, 'cyan', linewidth=2.0, label='Gravity + J2', alpha=0.7
+    )
+    total_line, = ax3.plot(
+        ts, total_accel_mag_kms2, 'purple', linewidth=2.5, label='Control Accel  ||a_geom - a_grav||', linestyle='-'
+    )
     ax3.set_xlabel('Parameter τ', fontsize=12)
     ax3.set_ylabel('Acceleration (m/s²)', fontsize=12)
-    accel_total_str = format_number(info["accel"]/1e3, '.1f')
-    ax3.set_title(f'Acceleration Components (Accumulated: {accel_total_str} m/s²)', 
-                 fontsize=14, pad=15)
-    ax3.grid(True, alpha=0.3)
-    ax3.legend(fontsize=11)
-    ax3.set_ylim(acc_ylim)
 
-    # Add acceleration statistics
-    max_accel = np.max(total_accel_mag_kms2)
-    avg_accel = np.mean(total_accel_mag_kms2)
-    max_str = format_number(max_accel, '.1f')
-    avg_str = format_number(avg_accel, '.1f')
-    ax3.text(0.02, 0.98, f'Max: {max_str} m/s²\nAvg: {avg_str} m/s²', 
+    # Summary metrics aligned with optimizer objective.
+    rms_control_accel_m_s2, l2_effort_m2_s3 = control_effort_metrics(info)
+    if rms_control_accel_m_s2 is not None:
+        rms_str = format_number(rms_control_accel_m_s2, '.2f')
+        ax3.set_title(f'Acceleration Components (RMS Control Accel: {rms_str} m/s²)',
+                     fontsize=14, pad=15)
+    else:
+        ax3.set_title('Acceleration Components', fontsize=14, pad=15)
+    ax3.grid(True, alpha=0.3)
+    accel_legend = ax3.legend(fontsize=11)
+    if acc_ylim is not None:
+        ax3.set_ylim(acc_ylim)
+
+    # Optional: make the acceleration legend clickable (debugging aid).
+    # Clicking a legend entry toggles the corresponding curve visibility.
+    if toggle_accel_legend and accel_legend is not None:
+        orig_lines = [geom_line, grav_line, total_line]
+
+        # Matplotlib draws separate artists in the legend; we map those back to the original lines.
+        legend_lines = list(accel_legend.get_lines())
+        legend_texts = list(accel_legend.get_texts())
+
+        line_by_legend_artist = {}
+        for leg_line, orig_line in zip(legend_lines, orig_lines):
+            line_by_legend_artist[leg_line] = orig_line
+        for leg_text, orig_line in zip(legend_texts, orig_lines):
+            line_by_legend_artist[leg_text] = orig_line
+
+        # Make legend artists pickable.
+        for artist in line_by_legend_artist.keys():
+            try:
+                artist.set_picker(True)
+            except Exception:
+                pass
+            try:
+                artist.set_pickradius(5)
+            except Exception:
+                pass
+
+        def _on_pick(event):
+            artist = event.artist
+            if artist not in line_by_legend_artist:
+                return
+
+            orig = line_by_legend_artist[artist]
+            visible = not orig.get_visible()
+            orig.set_visible(visible)
+
+            # Dim both the legend line and its text when hidden (if they exist).
+            dim_alpha = 0.25
+            for leg_line, orig_line in zip(legend_lines, orig_lines):
+                if orig_line is orig:
+                    leg_line.set_alpha(1.0 if visible else dim_alpha)
+                    break
+            for leg_text, orig_line in zip(legend_texts, orig_lines):
+                if orig_line is orig:
+                    leg_text.set_alpha(1.0 if visible else dim_alpha)
+                    break
+
+            # Redraw (works for interactive backends; harmless for static saves).
+            try:
+                event.canvas.draw_idle()
+            except Exception:
+                pass
+
+        # Store connection id on the figure to keep it alive and avoid duplicate hooks
+        # if this function is called repeatedly in the same session.
+        cid_attr = "_accel_legend_toggle_cid"
+        old_cid = getattr(fig, cid_attr, None)
+        if old_cid is not None:
+            try:
+                fig.canvas.mpl_disconnect(old_cid)
+            except Exception:
+                pass
+        try:
+            setattr(fig, cid_attr, fig.canvas.mpl_connect('pick_event', _on_pick))
+        except Exception:
+            pass
+
+    # Add objective-consistent control-effort statistics.
+    if rms_control_accel_m_s2 is not None and l2_effort_m2_s3 is not None:
+        rms_str = format_number(rms_control_accel_m_s2, '.2f')
+        l2_str = format_number(l2_effort_m2_s3, '.3e')
+        stats_text = f'RMS: {rms_str} m/s²\nL2 effort: {l2_str} m²/s³'
+    else:
+        stats_text = 'RMS: n/a\nL2 effort: n/a'
+    ax3.text(0.02, 0.98, stats_text,
             transform=ax3.transAxes, fontsize=10, verticalalignment='top',
             bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
 
@@ -525,15 +710,28 @@ def create_time_vs_order_figure(calculation_times, optimization_results):
                         f'Cubic (N={N})' if N == 3 else 
                         f'4th Degree (N={N})' for N in orders])
 
-    # Add acceleration info as text
+    # Add optimizer-consistent control-effort info as text.
     accel_info = []
     for N in orders:
-        _, info = optimization_results[N]
-        accel_ms2 = info['accel'] / 1e3  # Convert to m/s²
-        accel_str = format_number(accel_ms2, '.1f')
-        accel_info.append(f'N={N}: {accel_str} m/s²')
+        P_opt, info = optimization_results[N]
+        if P_opt is None or info is None:
+            continue
+        rms_control_accel_m_s2, l2_effort_m2_s3 = control_effort_metrics(info)
+        if rms_control_accel_m_s2 is None or l2_effort_m2_s3 is None:
+            continue
+        accel_str = format_number(rms_control_accel_m_s2, '.2f')
+        l2_str = format_number(l2_effort_m2_s3, '.2e')
+        accel_info.append(f'N={N}: RMS={accel_str} m/s², L2={l2_str} m²/s³')
 
     info_text = '\n'.join(accel_info)
+    if info_text:
+        ax.text(
+            0.02, 0.98, info_text,
+            transform=ax.transAxes,
+            fontsize=10,
+            verticalalignment='top',
+            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8),
+        )
 
     return fig
 
