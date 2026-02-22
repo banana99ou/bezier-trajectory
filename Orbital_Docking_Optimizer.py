@@ -18,7 +18,7 @@ Usage:
     Run the script with default settings (cache enabled):
         python Orbital_Docking_Optimizer.py
     
-    Disable caching:
+    Ignore existing cache and recompute (new results are still cached):
         python Orbital_Docking_Optimizer.py --no-cache
     
     Show help:
@@ -74,7 +74,7 @@ parser = argparse.ArgumentParser(
 parser.add_argument(
     '--no-cache',
     action='store_true',
-    help='Disable caching of optimization results (cache is enabled by default)'
+    help='Ignore existing cache and force fresh optimization (new results are still cached)'
 )
 parser.add_argument(
     '-N',
@@ -95,10 +95,24 @@ parser.add_argument(
     action='store_true',
     help='Print debug output'
 )
+parser.add_argument(
+    '--show',
+    action='store_true',
+    help='Display figures interactively (blocks until windows are closed). Default: save figures only.'
+)
+parser.add_argument(
+    '--max-iter',
+    type=int,
+    default=1000,
+    help='Maximum number of iterations for optimization'
+)
 args = parser.parse_args()
 
-USE_CACHE = not args.no_cache
+USE_CACHE = True
+IGNORE_EXISTING_CACHE = args.no_cache
 
+# Keep consistent with the baseline run behavior
+MAX_ITER = args.max_iter
 # Extract constants for convenience
 ISS_ALTITUDE_KM = constants.ISS_ALTITUDE_KM
 CHASER_ALTITUDE_KM = constants.CHASER_ALTITUDE_KM
@@ -109,12 +123,15 @@ ISS_RADIUS = constants.ISS_RADIUS
 CHASER_RADIUS = constants.CHASER_RADIUS
 
 # Figure directory
-FIGURE_DIR = Path(__file__).parent / "figure" / "figures"
+FIGURE_DIR = Path(__file__).parent / "figures"
 FIGURE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Display cache configuration
 print("=" * 60)
-print(f"Cache: {'ENABLED' if USE_CACHE else 'DISABLED'}")
+if IGNORE_EXISTING_CACHE:
+    print("Cache: REFRESH MODE (read disabled, write enabled)")
+else:
+    print("Cache: ENABLED (read + write)")
 print("=" * 60)
 print()
 
@@ -208,6 +225,10 @@ if 2 in args.N:
         verbose=args.verbose,
         debug=args.debug,
         use_cache=USE_CACHE,
+        ignore_existing_cache=IGNORE_EXISTING_CACHE,
+        # Quadratic Bézier (N=2) has only one interior control point (P1),
+        # so enforcing both v0 and v1 generally overconstrains the problem.
+        # Keep endpoint positions only for the baseline run.
         v0=v0,
         v1=v1
     )
@@ -233,6 +254,7 @@ if 3 in args.N:
         verbose=args.verbose,
         debug=args.debug,
         use_cache=USE_CACHE,
+        ignore_existing_cache=IGNORE_EXISTING_CACHE,
         v0=v0,
         v1=v1
     )
@@ -258,6 +280,7 @@ if 4 in args.N:
         verbose=args.verbose,
         debug=args.debug,
         use_cache=USE_CACHE,
+        ignore_existing_cache=IGNORE_EXISTING_CACHE,
         v0=v0,
         v1=v1
     )
