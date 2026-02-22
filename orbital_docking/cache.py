@@ -8,7 +8,8 @@ import numpy as np
 from pathlib import Path
 
 
-CACHE_VERSION = "1.0"  # Increment to invalidate old caches
+# Increment to invalidate old caches when the optimization formulation changes
+CACHE_VERSION = "3.0"
 
 
 def get_cache_key(P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1):
