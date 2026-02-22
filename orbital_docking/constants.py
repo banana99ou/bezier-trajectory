@@ -15,7 +15,13 @@ CHASER_RADIUS = EARTH_RADIUS_KM + CHASER_ALTITUDE_KM
 # Gravitational parameters
 EARTH_MU = 3.986004418e14  # m³/s²
 
+# Earth gravity field (z-axis aligned with ECI Z for this simplified demo)
+EARTH_J2 = 1.08262668e-3  # [-]
+
 # Scaling: use km as base unit
 SCALE_FACTOR = 1e3  # 1 unit = 1 km
 EARTH_MU_SCALED = EARTH_MU / (SCALE_FACTOR**3)  # Scaled for km
 
+# Fixed (arbitrary) transfer time for time-scaling (seconds)
+# Used when interpreting Bézier derivatives w.r.t. tau as physical time derivatives.
+TRANSFER_TIME_S = 3600.0

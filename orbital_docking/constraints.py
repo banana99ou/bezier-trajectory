@@ -69,7 +69,7 @@ def build_koz_constraints(A_list, P, r_e, dim=3, c_KOZ=None):
     return LinearConstraint(A_const, lb_const, ub_const)
 
 
-def build_boundary_constraints(P_init, v0=None, v1=None, a0=None, a1=None, dim=3):
+def build_boundary_constraints(P_init, v0=None, v1=None, a0=None, a1=None, dim=3, T=1.0):
     """
     Build boundary condition equality constraints.
 
@@ -80,6 +80,7 @@ def build_boundary_constraints(P_init, v0=None, v1=None, a0=None, a1=None, dim=3
         a0: Initial acceleration (optional, shape (dim,))
         a1: Final acceleration (optional, shape (dim,))
         dim: Spatial dimension
+        T: Transfer time in seconds for converting tau-derivatives to physical derivatives
 
     Returns:
         list of LinearConstraint objects
@@ -93,39 +94,47 @@ def build_boundary_constraints(P_init, v0=None, v1=None, a0=None, a1=None, dim=3
     # These are handled via bounds, not equality constraints
     # (we'll set bounds separately)
 
-    # Velocity constraints
+    # Velocity constraints (physical):
+    # dr/dt = (1/T) dr/dtau
+    vel_scale = 1.0 / float(T)
     if v0 is not None:
-        # v(0) = N(P1 - P0)
-        # N*P1 - N*P0 = v0
-        row = np.zeros(Np1 * dim)
-        row[0:dim] = -N  # -N * P0
-        row[dim:2*dim] = N  # N * P1
-        constraints.append(LinearConstraint(row.reshape(1, -1), v0, v0))
+        # v(0) = (N/T) (P1 - P0)
+        A = np.zeros((dim, Np1 * dim))
+        for d in range(dim):
+            A[d, 0 * dim + d] = -N * vel_scale
+            A[d, 1 * dim + d] = N * vel_scale
+        constraints.append(LinearConstraint(A, v0, v0))
 
     if v1 is not None:
-        # v(1) = N(PN - PN-1)
-        # N*PN - N*PN-1 = v1
-        row = np.zeros(Np1 * dim)
-        row[-2*dim:-dim] = -N  # -N * P_{N-1}
-        row[-dim:] = N  # N * PN
-        constraints.append(LinearConstraint(row.reshape(1, -1), v1, v1))
+        # v(1) = (N/T) (PN - PN-1)
+        A = np.zeros((dim, Np1 * dim))
+        for d in range(dim):
+            A[d, (Np1 - 2) * dim + d] = -N * vel_scale
+            A[d, (Np1 - 1) * dim + d] = N * vel_scale
+        constraints.append(LinearConstraint(A, v1, v1))
 
-    # Acceleration constraints
+    # Acceleration constraints (physical):
+    # d2r/dt2 = (1/T^2) d2r/dtau2
+    accel_scale = 1.0 / float(T) ** 2
     if a0 is not None and N >= 2:
-        # a(0) = N(N-1)(P2 - 2P1 + P0)
-        row = np.zeros(Np1 * dim)
-        row[0:dim] = N*(N-1)  # N(N-1) * P0
-        row[dim:2*dim] = -2*N*(N-1)  # -2N(N-1) * P1
-        row[2*dim:3*dim] = N*(N-1)  # N(N-1) * P2
-        constraints.append(LinearConstraint(row.reshape(1, -1), a0, a0))
+        # a(0) = (N(N-1)/T^2) (P2 - 2P1 + P0)
+        A = np.zeros((dim, Np1 * dim))
+        c = N * (N - 1) * accel_scale
+        for d in range(dim):
+            A[d, 0 * dim + d] = c
+            A[d, 1 * dim + d] = -2.0 * c
+            A[d, 2 * dim + d] = c
+        constraints.append(LinearConstraint(A, a0, a0))
 
     if a1 is not None and N >= 2:
-        # a(1) = N(N-1)(PN - 2PN-1 + PN-2)
-        row = np.zeros(Np1 * dim)
-        row[-3*dim:-2*dim] = N*(N-1)  # N(N-1) * P_{N-2}
-        row[-2*dim:-dim] = -2*N*(N-1)  # -2N(N-1) * P_{N-1}
-        row[-dim:] = N*(N-1)  # N(N-1) * PN
-        constraints.append(LinearConstraint(row.reshape(1, -1), a1, a1))
+        # a(1) = (N(N-1)/T^2) (PN - 2PN-1 + PN-2)
+        A = np.zeros((dim, Np1 * dim))
+        c = N * (N - 1) * accel_scale
+        for d in range(dim):
+            A[d, (Np1 - 3) * dim + d] = c
+            A[d, (Np1 - 2) * dim + d] = -2.0 * c
+            A[d, (Np1 - 1) * dim + d] = c
+        constraints.append(LinearConstraint(A, a1, a1))
 
     return constraints
 
