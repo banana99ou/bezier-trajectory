@@ -159,27 +159,28 @@ print(f"  Start (chaser): {P_start}")
 print(f"  End (ISS):      {P_end}")
 print(f"\nKOZ radius: {KOZ_RADIUS:.1f} km")
 
-# Calculate orbital velocities for boundary condition display (not applied in solver by default)
+# Boundary velocities: tangential to Earth-centric KOZ, parallel to equator (xy-plane),
+# and counter-clockwise (+z right-hand rule).
 EARTH_MU_SCALED = constants.EARTH_MU_SCALED
-v0_magnitude = np.sqrt(EARTH_MU_SCALED / CHASER_RADIUS)  # km/s
-v1_magnitude = np.sqrt(EARTH_MU_SCALED / ISS_RADIUS)     # km/s
+v_koz_magnitude = np.sqrt(EARTH_MU_SCALED / KOZ_RADIUS)  # km/s
 
-v0 = v0_magnitude * np.array([
-    -np.sin(theta_start),
-    np.cos(theta_start),
-    0.0
-])
-v1 = v1_magnitude * np.array([
-    -np.sin(theta_end),
-    np.cos(theta_end),
-    0.0
-])
+def ccw_equatorial_tangent(pos_xyz: np.ndarray) -> np.ndarray:
+    """Unit tangent in xy-plane, counter-clockwise, tangent to concentric sphere/KOZ."""
+    x, y, _ = pos_xyz
+    r_xy = np.hypot(x, y)
+    if r_xy < 1e-12:
+        return np.array([0.0, 1.0, 0.0])
+    # For radial [x,y,0], CCW tangent is [-y, x, 0]
+    return np.array([-y / r_xy, x / r_xy, 0.0])
+
+v0 = v_koz_magnitude * ccw_equatorial_tangent(P_start)
+v1 = v_koz_magnitude * ccw_equatorial_tangent(P_end)
 
 print(f"\nBoundary velocities (km/s):")
 print(f"  v0 (initial): {v0}")
 print(f"  v1 (final):   {v1}")
-print(f"  |v0| = {v0_magnitude:.3f} km/s")
-print(f"  |v1| = {v1_magnitude:.3f} km/s")
+print(f"  |v0| = {v_koz_magnitude:.3f} km/s (KOZ tangent speed)")
+print(f"  |v1| = {v_koz_magnitude:.3f} km/s (KOZ tangent speed)")
 
 # Generate initial control points for different curve orders
 # N=2: Quadratic (3 control points)
