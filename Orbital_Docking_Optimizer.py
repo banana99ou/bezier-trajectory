@@ -63,6 +63,37 @@ from orbital_docking import (
 
 warnings.filterwarnings('ignore')
 
+# --- helpers ---
+def _summarize_segment_times(results, label: str):
+    """
+    Print per-n_seg compute times (from cached metadata) and return total time.
+    The optimizer stores compute time in each result's info['elapsed_time'].
+    """
+    if results is None:
+        return 0.0
+
+    rows = []
+    total = 0.0
+    for n_seg, _P_opt, info in results:
+        t = None
+        if isinstance(info, dict):
+            t = info.get("elapsed_time", None)
+        try:
+            t = float(t) if t is not None else float("nan")
+        except Exception:
+            t = float("nan")
+        rows.append((int(n_seg), t))
+        if np.isfinite(t) and t >= 0.0:
+            total += t
+
+    print(f"\n⏱️  Per-segment-count compute time for {label} (from cache metadata):")
+    for n_seg, t in sorted(rows, key=lambda x: x[0]):
+        t_str = f"{t:.2f}s" if np.isfinite(t) else "n/a"
+        print(f"  - n_seg={n_seg:>2d}: {t_str}")
+    print(f"  = Total (sum over n_seg): {total:.2f}s")
+    return total
+
+
 # Parse command-line arguments
 parser = argparse.ArgumentParser(
     description='Orbital Docking Optimizer using Bézier Curves',
@@ -233,6 +264,7 @@ if 2 in args.N:
     )
     elapsed_time_N2 = time.time() - start_time_N2
     print(f"\n⏱️  Total optimization time for N=2: {elapsed_time_N2:.2f} seconds")
+    total_compute_time_N2 = _summarize_segment_times(results_N2, "N=2")
 
 
 # OPTIMIZATION for N=3 (Cubic curve)
@@ -259,6 +291,7 @@ if 3 in args.N:
     )
     elapsed_time_N3 = time.time() - start_time_N3
     print(f"\n⏱️  Total optimization time for N=3: {elapsed_time_N3:.2f} seconds")
+    total_compute_time_N3 = _summarize_segment_times(results_N3, "N=3")
 
 
 # OPTIMIZATION for N=4 (4th degree curve)
@@ -285,6 +318,7 @@ if 4 in args.N:
     )
     elapsed_time_N4 = time.time() - start_time_N4
     print(f"\n⏱️  Total optimization time for N=4: {elapsed_time_N4:.2f} seconds")
+    total_compute_time_N4 = _summarize_segment_times(results_N4, "N=4")
 
 
 
@@ -381,11 +415,12 @@ print("=" * 60)
 # Prepare data for time vs order figure (only include degrees that were actually run)
 calculation_times = {}
 if 2 in args.N:
-    calculation_times[2] = elapsed_time_N2
+    # Use per-n_seg compute times (persisted in cache) so this stays correct on cache-hit runs.
+    calculation_times[2] = float(total_compute_time_N2) if "total_compute_time_N2" in globals() else elapsed_time_N2
 if 3 in args.N:
-    calculation_times[3] = elapsed_time_N3
+    calculation_times[3] = float(total_compute_time_N3) if "total_compute_time_N3" in globals() else elapsed_time_N3
 if 4 in args.N:
-    calculation_times[4] = elapsed_time_N4
+    calculation_times[4] = float(total_compute_time_N4) if "total_compute_time_N4" in globals() else elapsed_time_N4
 
 # For optimization results, we'll use the best result (typically 64 segments)
 # Extract the best result for each curve order
@@ -426,8 +461,11 @@ else:
 print("\n✅ Calculation time vs curve order figure complete!")
 print(f"\nSummary:")
 if 2 in args.N:
-    print(f"  N=2 (Quadratic): {elapsed_time_N2:.2f} seconds")
+    tN2 = float(total_compute_time_N2) if "total_compute_time_N2" in globals() else elapsed_time_N2
+    print(f"  N=2 (Quadratic): {tN2:.2f} seconds")
 if 3 in args.N:
-    print(f"  N=3 (Cubic):      {elapsed_time_N3:.2f} seconds")
+    tN3 = float(total_compute_time_N3) if "total_compute_time_N3" in globals() else elapsed_time_N3
+    print(f"  N=3 (Cubic):      {tN3:.2f} seconds")
 if 4 in args.N:
-    print(f"  N=4 (4th Degree): {elapsed_time_N4:.2f} seconds")
+    tN4 = float(total_compute_time_N4) if "total_compute_time_N4" in globals() else elapsed_time_N4
+    print(f"  N=4 (4th Degree): {tN4:.2f} seconds")

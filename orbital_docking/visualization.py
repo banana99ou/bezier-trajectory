@@ -686,10 +686,22 @@ def create_time_vs_order_figure(calculation_times, optimization_results):
     orders = sorted(calculation_times.keys())
     times = []
     for N in orders:
-        t = calculation_times.get(N, 0.0)
-        if (t is None or t == 0.0) and N in optimization_results:
+        # Prefer the persisted optimization compute time (cached metadata) when available.
+        # This avoids near-zero bars when the caller measured wall-time during a cache-hit run.
+        t_info = None
+        if N in optimization_results:
             _, info = optimization_results[N]
-            t = float(info.get('elapsed_time', 0.0)) if info is not None else 0.0
+            if info is not None:
+                try:
+                    t_info = float(info.get('elapsed_time', 0.0))
+                except Exception:
+                    t_info = None
+
+        t_calc = calculation_times.get(N, 0.0)
+        if t_info is not None and np.isfinite(t_info) and t_info > 0.0:
+            t = t_info
+        else:
+            t = 0.0 if t_calc is None else float(t_calc)
         times.append(t)
 
     # Create bar plot
