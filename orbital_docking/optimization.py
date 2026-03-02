@@ -2,6 +2,8 @@
 Optimization functions for orbital docking trajectories.
 """
 
+import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 import time
 import warnings
@@ -438,10 +440,44 @@ def optimize_orbital_docking(
     return P, info
 
 
+def _optimize_one_segment_count(payload: dict):
+    """
+    Worker-safe wrapper to run a single n_seg optimization.
+
+    NOTE: This must be a top-level function (picklable) to support multiprocessing
+    on platforms that use the 'spawn' start method (e.g., macOS).
+    """
+    # Avoid BLAS oversubscription when running multiple processes.
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
+    n_seg = int(payload["n_seg"])
+    P_init = payload["P_init"]
+    P_opt, info = optimize_orbital_docking(
+        P_init,
+        n_seg=n_seg,
+        r_e=payload["r_e"],
+        max_iter=payload["max_iter"],
+        tol=payload["tol"],
+        sample_count=payload["sample_count"],
+        verbose=payload["verbose"],
+        debug=payload["debug"],
+        use_cache=payload["use_cache"],
+        ignore_existing_cache=payload["ignore_existing_cache"],
+        v0=payload["v0"],
+        v1=payload["v1"],
+        a0=payload["a0"],
+        a1=payload["a1"],
+    )
+    return n_seg, P_opt, info
+
+
 def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 32, 64], 
                                 max_iter=120, tol=1e-8, verbose=True, debug=False, use_cache=True,
                                 ignore_existing_cache=False,
-                                v0=None, v1=None, a0=None, a1=None):
+                                v0=None, v1=None, a0=None, a1=None,
+                                n_jobs: int = 1):
     """
     Run optimization for multiple segment counts and return results.
     Uses caching to speed up repeated runs.
@@ -455,6 +491,10 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
         verbose: Print progress
         use_cache: Whether to use cache (default: True)
         ignore_existing_cache: If True, ignore existing cache and recompute fresh
+        n_jobs: Number of worker processes to use for parallelizing across n_seg.
+            - n_jobs=1: run serially (default, preserves legacy behavior)
+            - n_jobs<=0: auto-select based on CPU count
+            - n_jobs>1: run multiple n_seg optimizations concurrently
 
     Returns:
         List of tuples: [(n_seg, P_opt, info), ...] where info includes acceleration
@@ -478,47 +518,105 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
         print("Cache: DISABLED")
     print("=" * 60)
 
-    for n_seg in segment_counts:
-        if verbose:
-            print(f"\nProcessing n_seg={n_seg}...")
+    n_jobs_eff = int(n_jobs) if n_jobs is not None else 1
+    if n_jobs_eff <= 0:
+        n_jobs_eff = int(os.cpu_count() or 1)
 
-        # Check if cached before running
-        was_cached = False
-        if use_cache and not ignore_existing_cache:
-            # Match baseline behavior: cache key includes boundary values even if constraints
-            # are currently not applied in the solver call.
+    # Pre-check cache existence for reporting (does not affect computation correctness).
+    was_cached_map = {}
+    if use_cache and not ignore_existing_cache:
+        for n_seg in segment_counts:
             cache_key = get_cache_key(P_init, n_seg, r_e, max_iter, tol, 100, v0, v1, a0, a1)
             cache_path = get_cache_path(cache_key, n_seg)
             if cache_path.exists():
-                was_cached = True
+                was_cached_map[int(n_seg)] = True
                 cache_hits += 1
             else:
+                was_cached_map[int(n_seg)] = False
                 cache_misses += 1
+    else:
+        for n_seg in segment_counts:
+            was_cached_map[int(n_seg)] = False
 
-        # Run optimization (will use cache internally if enabled)
-        P_opt, info = optimize_orbital_docking(
-            P_init, 
-            n_seg=n_seg, 
-            r_e=r_e, 
-            max_iter=max_iter, 
-            tol=tol,
-            sample_count=100,
-            verbose=True,
-            debug=debug,
-            use_cache=use_cache,
-            ignore_existing_cache=ignore_existing_cache,
-            v0=v0, v1=v1, a0=a0, a1=a1
-        )
+    if n_jobs_eff == 1 or len(segment_counts) <= 1:
+        for n_seg in segment_counts:
+            if verbose:
+                print(f"\nProcessing n_seg={n_seg}...")
 
-        results.append((n_seg, P_opt, info))
+            P_opt, info = optimize_orbital_docking(
+                P_init,
+                n_seg=n_seg,
+                r_e=r_e,
+                max_iter=max_iter,
+                tol=tol,
+                sample_count=100,
+                verbose=True,
+                debug=debug,
+                use_cache=use_cache,
+                ignore_existing_cache=ignore_existing_cache,
+                v0=v0,
+                v1=v1,
+                a0=a0,
+                a1=a1,
+            )
 
+            results.append((int(n_seg), P_opt, info))
+
+            if verbose:
+                cache_status = "[CACHED]" if was_cached_map.get(int(n_seg), False) else "[COMPUTED]"
+                cost_print = info.get("cost_true_energy", info.get("cost", np.nan))
+                max_u_print = info.get("max_control_accel_ms2", info.get("accel", np.nan))
+                print(
+                    f"  ✓ n_seg={int(n_seg):>2d} {cache_status} | iter={info['iterations']:>3d} | "
+                    f"cost={cost_print:.3e} | "
+                    f"max_u={max_u_print:.3f} m/s² | feasible={info['feasible']}"
+                )
+    else:
         if verbose:
-            cache_status = "[CACHED]" if was_cached else "[COMPUTED]"
-            cost_print = info.get('cost_true_energy', info.get('cost', np.nan))
-            max_u_print = info.get('max_control_accel_ms2', info.get('accel', np.nan))
-            print(f"  ✓ n_seg={n_seg:>2d} {cache_status} | iter={info['iterations']:>3d} | "
-                  f"cost={cost_print:.3e} | "
-                  f"max_u={max_u_print:.3f} m/s² | feasible={info['feasible']}")
+            print(f"\nParallelizing over n_seg with n_jobs={n_jobs_eff} worker(s)")
+
+        payloads = []
+        for n_seg in segment_counts:
+            if verbose:
+                print(f"\nQueueing n_seg={n_seg}...")
+            payloads.append(
+                {
+                    "n_seg": int(n_seg),
+                    "P_init": P_init,
+                    "r_e": r_e,
+                    "max_iter": max_iter,
+                    "tol": tol,
+                    "sample_count": 100,
+                    # Keep worker output quiet to avoid interleaved logs.
+                    "verbose": False,
+                    "debug": debug,
+                    "use_cache": use_cache,
+                    "ignore_existing_cache": ignore_existing_cache,
+                    "v0": v0,
+                    "v1": v1,
+                    "a0": a0,
+                    "a1": a1,
+                }
+            )
+
+        with ProcessPoolExecutor(max_workers=n_jobs_eff) as ex:
+            futs = [ex.submit(_optimize_one_segment_count, p) for p in payloads]
+            for fut in as_completed(futs):
+                n_seg_done, P_opt, info = fut.result()
+                results.append((int(n_seg_done), P_opt, info))
+
+                if verbose:
+                    cache_status = "[CACHED]" if was_cached_map.get(int(n_seg_done), False) else "[COMPUTED]"
+                    cost_print = info.get("cost_true_energy", info.get("cost", np.nan))
+                    max_u_print = info.get("max_control_accel_ms2", info.get("accel", np.nan))
+                    print(
+                        f"  ✓ n_seg={int(n_seg_done):>2d} {cache_status} | iter={info['iterations']:>3d} | "
+                        f"cost={cost_print:.3e} | "
+                        f"max_u={max_u_print:.3f} m/s² | feasible={info['feasible']}"
+                    )
+
+    # Ensure deterministic order for downstream plotting/analysis.
+    results.sort(key=lambda x: int(x[0]))
 
     print("\n" + "=" * 60)
     print("All optimizations complete!")
