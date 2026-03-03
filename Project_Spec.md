@@ -138,7 +138,7 @@ so the iteration objective is convex quadratic in `P`.
 
 In implementation form, each outer iteration solves:
 $$
-min_x   0.5 x^T H x + f^T x
+\min_{x} \;\; \frac{1}{2} x^\top H x + f^\top x
 $$
 where `H,f` come from:
 - exact geometric term `(1/T^4) * (G_tilde ⊗ I_3)`
@@ -146,7 +146,7 @@ where `H,f` come from:
 
 and reports the full least-squares energy with constant term:
 $$
-J_true(x) = 0.5 x^T H x + f^T x + c
+J_{\text{true}}(x) = 0.5\, x^\top H x + f^\top x + c
 $$
 
 ---
@@ -166,8 +166,10 @@ We approximate it by:
 
 3) Construct an outward unit normal (supporting half-space normal):
    $$
-   n_i = (c_i - c_KOZ) / ||c_i - c_KOZ||
-   (Earth-centric case: c_KOZ = 0)
+   n_i = \frac{c_i - c_{\mathrm{KOZ}}}{\left\|c_i - c_{\mathrm{KOZ}}\right\|}
+   $$
+   $$
+   \text{(Earth-centric case: } c_{\mathrm{KOZ}} = 0 \text{)}
    $$
 
 4) Enforce **linear half-space constraints** for all control points of segment `i`:
