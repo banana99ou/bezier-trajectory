@@ -52,9 +52,9 @@ def get_E_matrix(N):
     for row_idx in range(1, N+1):  # 0-indexed row: 1 to N
         i_1idx = row_idx + 1  # Convert to 1-indexed for formula
         # j = i-1 (1-indexed) → col = row_idx - 1 (0-indexed)
-        E[row_idx, row_idx - 1] = (N + 2 - i_1idx) / (N + 1)
+        E[row_idx, row_idx - 1] = (i_1idx - 1) / (N + 1)
         # j = i (1-indexed) → col = row_idx (0-indexed)
-        E[row_idx, row_idx] = (i_1idx - 1) / (N + 1)
+        E[row_idx, row_idx] = (N + 2 - i_1idx) / (N + 1)
 
     return E
 
@@ -152,7 +152,7 @@ class BezierCurve:
     def acceleration(self, tau):
         """Evaluate acceleration at parameter tau."""
         if self.degree < 2:
-            return np.zeros(((self.degree+1), self.dimension))
+            return np.zeros(self.dimension)
         A_ctrl = self.acceleration_control_points()
         # Acceleration curve has degree N due to the E matrix
         N_accel = self.degree
