@@ -33,6 +33,75 @@ def _has_required_info_keys(info: dict) -> bool:
     return all(k in info for k in required)
 
 
+def _linear_constraint_violation(c, x: np.ndarray) -> float:
+    """
+    Return max violation for a scipy.optimize.LinearConstraint at point x.
+
+    For bounds:
+      lb <= A x <= ub
+    Violation is max( lb - Ax, Ax - ub, 0 ).
+    """
+    try:
+        A = c.A
+        lb = c.lb
+        ub = c.ub
+    except Exception:
+        return float("nan")
+
+    Ax = A @ x
+    v = 0.0
+    if lb is not None:
+        v = max(v, float(np.max(lb - Ax)))
+    if ub is not None:
+        v = max(v, float(np.max(Ax - ub)))
+    return float(max(v, 0.0))
+
+
+def _koz_margin_stats(koz_constraint, x: np.ndarray) -> dict:
+    """
+    Compute KOZ half-space margin stats for the current linearization:
+      margin = (A x) - lb  (since ub=+inf)
+
+    Returns dict with keys:
+      n_rows, min_margin, p01_margin, p05_margin, median_margin
+    """
+    try:
+        A = koz_constraint.A
+        lb = koz_constraint.lb
+    except Exception:
+        return {
+            "n_rows": 0,
+            "min_margin": float("nan"),
+            "p01_margin": float("nan"),
+            "p05_margin": float("nan"),
+            "median_margin": float("nan"),
+        }
+
+    Ax = A @ x
+    m = Ax - lb
+    if m.size == 0:
+        return {
+            "n_rows": 0,
+            "min_margin": float("nan"),
+            "p01_margin": float("nan"),
+            "p05_margin": float("nan"),
+            "median_margin": float("nan"),
+        }
+
+    m_sorted = np.sort(m)
+    def _pct(p: float) -> float:
+        idx = int(np.clip(np.floor(p * (m_sorted.size - 1)), 0, m_sorted.size - 1))
+        return float(m_sorted[idx])
+
+    return {
+        "n_rows": int(m.size),
+        "min_margin": float(m_sorted[0]),
+        "p01_margin": _pct(0.01),
+        "p05_margin": _pct(0.05),
+        "median_margin": float(np.median(m_sorted)),
+    }
+
+
 def _bernstein_basis(N: int, tau: float) -> np.ndarray:
     """
     Bernstein basis weights for degree N at tau.
@@ -93,7 +162,14 @@ def _jacobian_numeric(f, r0: np.ndarray, h: float = 1e-3) -> np.ndarray:
     return J
 
 
-def _build_ctrl_accel_quadratic(P_ref: np.ndarray, T: float, sample_count: int):
+def _build_ctrl_accel_quadratic(
+    P_ref: np.ndarray,
+    T: float,
+    sample_count: int,
+    objective: str = "energy",
+    irls_eps: float = 1e-9,
+    geom_reg: float = 0.0,
+):
     """
     Build quadratic objective for control acceleration energy with gravity+J2
     linearized about P_ref, without Bernstein sampling in the optimizer core.
@@ -141,10 +217,17 @@ def _build_ctrl_accel_quadratic(P_ref: np.ndarray, T: float, sample_count: int):
     r_e = constants.EARTH_RADIUS_KM
     j2 = constants.EARTH_J2
 
-    # 1) Exact geometric term via G_tilde (no sampling):
-    #    x^T (G_tilde ⊗ I) x scaled by 1/T^4
+    objective = str(objective).lower().strip()
+    if objective not in ("energy", "dv"):
+        raise ValueError(f"Unknown objective={objective!r}; expected 'energy' or 'dv'.")
+
+    # 1) Optional geometric regularization term via G_tilde (no sampling).
+    # For 'energy' objective, this is part of the intended surrogate.
+    # For 'dv' objective, keep it as optional stabilization (default 0.0).
     if curve_ref.G_tilde is not None:
-        Q += (1.0 / (T**4)) * np.kron(curve_ref.G_tilde, np.eye(dim))
+        w_geom = 1.0 if objective == "energy" else float(geom_reg)
+        if w_geom != 0.0:
+            Q += w_geom * (1.0 / (T**4)) * np.kron(curve_ref.G_tilde, np.eye(dim))
 
     # 2) Gravity/J2 linearization via De Casteljau segment centroids.
     n_lin_seg = max(1, int(sample_count))
@@ -173,16 +256,39 @@ def _build_ctrl_accel_quadratic(P_ref: np.ndarray, T: float, sample_count: int):
         c_i = g_ref - (J_i @ r_ref)
         B_i = J_i @ R_i
 
-        # Add ||A_i x - (B_i x + c_i)||^2 contributions:
+        # Add ||A_i x - (B_i x + c_i)||^2 contributions.
+        #
+        # objective='energy':
+        #   minimize Σ ||res_i||^2  (L2 energy)
+        #
+        # objective='dv':
+        #   approximate minimize Σ ||res_i|| (delta-v proxy in tau-domain)
+        #   via IRLS/majorization:
+        #     ||r|| ≈ (1/alpha) ||r||^2 + const,  alpha = sqrt(||r_ref||^2 + eps)
+        #   so weight_i = 1/alpha.
         # = x^T[(A-B)^T(A-B)]x - 2 c^T(A-B)x + c^T c
         M_i = A_i - B_i
-        Q += w_seg * (M_i.T @ M_i)
-        q += w_seg * (-M_i.T @ c_i)
-        c_const += w_seg * float(c_i @ c_i)
+        w_i = w_seg
+        if objective == "dv":
+            r_ref_res = (M_i @ x_ref) - c_i
+            alpha = float(np.sqrt(float(r_ref_res @ r_ref_res) + float(irls_eps)))
+            # Avoid division by 0; alpha >= sqrt(eps)
+            w_i = w_seg * (1.0 / alpha)
+
+        Q += w_i * (M_i.T @ M_i)
+        q += w_i * (-M_i.T @ c_i)
+        c_const += w_i * float(c_i @ c_i)
 
     H = 2.0 * Q
     f = 2.0 * q
-    diag = {"sample_count": sample_count, "n_lin_seg": n_lin_seg, "T": float(T)}
+    diag = {
+        "sample_count": sample_count,
+        "n_lin_seg": n_lin_seg,
+        "T": float(T),
+        "objective": objective,
+        "irls_eps": float(irls_eps),
+        "geom_reg": float(geom_reg),
+    }
     return H, f, c_const, diag
 
 
@@ -248,10 +354,15 @@ def optimize_orbital_docking(
     a0=None,
     a1=None,
     sample_count=100,
+    objective_mode: str = "energy",
+    dv_irls_eps: float = 1e-9,
+    dv_geom_reg: float = 0.0,
     verbose=True,
     debug=False,
     use_cache=True,
-    ignore_existing_cache=False
+    ignore_existing_cache=False,
+    store_history: bool = False,
+    history_samples: int = 200,
 ):
     """
     Optimize Bézier curve for orbital docking.
@@ -269,8 +380,13 @@ def optimize_orbital_docking(
         use_cache: Whether to use cache (default: True)
         ignore_existing_cache: If True, skip cache reads but still write cache
 
+    Args (extra diagnostics):
+        store_history: If True, store per-outer-iteration telemetry in info['history'].
+            debug=True will also store history (even if store_history=False).
+        history_samples: Number of tau samples used for per-iteration geometry metrics.
+
     Returns:
-        (P_opt, info_dict)
+        (P_opt, info_dict) where info may include info['history'] when enabled.
     """
     from .constants import KOZ_RADIUS, TRANSFER_TIME_S
     if r_e is None:
@@ -279,7 +395,9 @@ def optimize_orbital_docking(
     t0 = time.time()
     # Check cache first (optional bypass for forced fresh computation)
     if use_cache and not ignore_existing_cache:
-        cache_key = get_cache_key(P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1)
+        cache_key = get_cache_key(
+            P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1, objective=objective_mode
+        )
         cache_path = get_cache_path(cache_key, n_seg)
         cached_result = load_from_cache(cache_path)
         
@@ -323,6 +441,8 @@ def optimize_orbital_docking(
 
     # Store results
     info = {"iterations": 0, "feasible": False, "cost": np.inf}
+    keep_history = bool(store_history or debug)
+    history = []  # list[dict]
 
     # Iterative optimization (SCP-style):
     # - update KOZ supporting half-spaces based on current solution
@@ -338,9 +458,16 @@ def optimize_orbital_docking(
         all_constraints = [koz_constraint] + boundary_constraints
 
         # Build quadratic objective for control acceleration with gravity+J2 linearized about P
-        H, f, c_const, _diag = _build_ctrl_accel_quadratic(P, T=T, sample_count=sample_count)
+        H, f, c_const, _diag = _build_ctrl_accel_quadratic(
+            P,
+            T=T,
+            sample_count=sample_count,
+            objective=objective_mode,
+            irls_eps=dv_irls_eps,
+            geom_reg=dv_geom_reg,
+        )
 
-        def objective(x):
+        def obj_fn(x):
             return 0.5 * float(x @ (H @ x)) + float(f @ x)
 
         def gradient(x):
@@ -354,7 +481,7 @@ def optimize_orbital_docking(
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore")
             res = minimize(
-                objective,
+                obj_fn,
                 P.reshape(-1),
                 method='trust-constr',
                 jac=gradient,
@@ -370,16 +497,81 @@ def optimize_orbital_docking(
         P = P_new
 
         t_iter_end = time.time()
-        if debug:
-            # Note: res.fun is the constant-dropped quadratic objective; it may be negative.
-            cost_true_iter = float(res.fun) + float(c_const)
-            print(f"N_seg={n_seg}, Iter {it}: cost_no_const={res.fun:.6e}, cost_true={cost_true_iter:.6e}, delta={delta:.6e}")
-            print(f"Time taken for iteration {it}: {t_iter_end - t_iter_start:.2f} seconds")
-            # print(f"Time taken for koz constraints: {t_koz_end - t_koz_start:.2f} seconds")
-            # print(f"Time taken for boundary constraints: {t_bc_end - t_bc_start:.2f} seconds")
-            # print(f"Time taken for segment matrices: {t_seg_end - t_seg_start:.2f} seconds")
-            # print(f"Time taken for bounds: {t_bounds_end - t_bounds_start:.2f} seconds")
-            print(f"Time taken for optimization: {t_opt_end - t_opt_start:.2f} seconds")
+        # if debug:
+        #     # Note: res.fun is the constant-dropped quadratic objective; it may be negative.
+        #     cost_true_iter = float(res.fun) + float(c_const)
+        #     print(f"N_seg={n_seg}, Iter {it}: cost_no_const={res.fun:.6e}, cost_true={cost_true_iter:.6e}, delta={delta:.6e}")
+        #     print(f"Time taken for iteration {it}: {t_iter_end - t_iter_start:.2f} seconds")
+        #     # print(f"Time taken for koz constraints: {t_koz_end - t_koz_start:.2f} seconds")
+        #     # print(f"Time taken for boundary constraints: {t_bc_end - t_bc_start:.2f} seconds")
+        #     # print(f"Time taken for segment matrices: {t_seg_end - t_seg_start:.2f} seconds")
+        #     # print(f"Time taken for bounds: {t_bounds_end - t_bounds_start:.2f} seconds")
+        #     print(f"Time taken for optimization: {t_opt_end - t_opt_start:.2f} seconds")
+
+        if keep_history:
+            x_now = P.reshape(-1)
+            # Quick geometry metrics (apoapsis growth detection)
+            hs = max(20, int(history_samples))
+            curve_now = BezierCurve(P)
+            ts_h = np.linspace(0.0, 1.0, hs)
+            pts_h = np.array([curve_now.point(t) for t in ts_h])
+            radii_h = np.linalg.norm(pts_h, axis=1)
+            r_min_h = float(np.min(radii_h))
+            r_max_h = float(np.max(radii_h))
+
+            # Constraint health (trust-constr exposes some fields when available)
+            res_constr_violation = getattr(res, "constr_violation", None)
+            res_optimality = getattr(res, "optimality", None)
+
+            bc_viol = []
+            for bc in boundary_constraints:
+                bc_viol.append(_linear_constraint_violation(bc, x_now))
+            bc_max_viol = float(np.max(bc_viol)) if bc_viol else 0.0
+
+            koz_max_viol = _linear_constraint_violation(koz_constraint, x_now)
+            koz_margins = _koz_margin_stats(koz_constraint, x_now)
+
+            # Boundary velocity residuals in physical units (if targets provided)
+            v0_rel_err = None
+            v1_rel_err = None
+            Tphys = float(T)
+            if v0 is not None:
+                v0_phys = N * (P[1] - P[0]) / Tphys
+                den = max(float(np.linalg.norm(v0)), 1e-12)
+                v0_rel_err = float(np.linalg.norm(v0_phys - v0) / den)
+            if v1 is not None:
+                v1_phys = N * (P[-1] - P[-2]) / Tphys
+                den = max(float(np.linalg.norm(v1)), 1e-12)
+                v1_rel_err = float(np.linalg.norm(v1_phys - v1) / den)
+
+            history.append(
+                {
+                    "it": int(it),
+                    "delta_P": float(delta),
+                    "res_success": bool(getattr(res, "success", False)),
+                    "res_status": int(getattr(res, "status", -1)) if getattr(res, "status", None) is not None else -1,
+                    "res_message": str(getattr(res, "message", "")),
+                    "res_nit": int(getattr(res, "nit", -1)) if getattr(res, "nit", None) is not None else -1,
+                    "res_constr_violation": None if res_constr_violation is None else float(res_constr_violation),
+                    "res_optimality": None if res_optimality is None else float(res_optimality),
+                    "objective_no_const": float(res.fun),
+                    "objective_true": float(res.fun) + float(c_const),
+                    "r_min_km": r_min_h,
+                    "r_max_km": r_max_h,
+                    "koz_max_violation": float(koz_max_viol),
+                    "koz_n_rows": int(koz_margins["n_rows"]),
+                    "koz_min_margin": float(koz_margins["min_margin"]),
+                    "koz_p01_margin": float(koz_margins["p01_margin"]),
+                    "koz_p05_margin": float(koz_margins["p05_margin"]),
+                    "koz_median_margin": float(koz_margins["median_margin"]),
+                    "bc_max_violation": float(bc_max_viol),
+                    "bc_v0_rel_err": v0_rel_err,
+                    "bc_v1_rel_err": v1_rel_err,
+                    "t_iter_s": float(t_iter_end - t_iter_start),
+                    "t_koz_s": float(t_koz_end - t_koz_start),
+                    "t_opt_s": float(t_opt_end - t_opt_start),
+                }
+            )
 
         if delta < tol:
             break
@@ -395,7 +587,14 @@ def optimize_orbital_docking(
     # - cost_no_const: quadratic part used by the solver (can be negative)
     # - cost_true_energy: full least-squares energy (>= 0) including constant term
     x_final = P.reshape(-1)
-    Hf, ff, cf, _ = _build_ctrl_accel_quadratic(P, T=T, sample_count=sample_count)
+    Hf, ff, cf, _ = _build_ctrl_accel_quadratic(
+        P,
+        T=T,
+        sample_count=sample_count,
+        objective=objective_mode,
+        irls_eps=dv_irls_eps,
+        geom_reg=dv_geom_reg,
+    )
     cost_no_const = 0.5 * float(x_final @ (Hf @ x_final)) + float(ff @ x_final)
     cost_true_energy = cost_no_const + float(cf)
 
@@ -408,8 +607,11 @@ def optimize_orbital_docking(
     max_control_accel_ms2 = float(np.max(a_u_m_s2))
     mean_control_accel_ms2 = float(np.mean(a_u_m_s2))
 
+    # Delta-v proxy (m/s): ∫ ||u(t)|| dt = T ∫_0^1 ||u(τ)|| dτ
+    dv_proxy_m_s = float(T) * float(np.trapezoid(a_u_m_s2, ts_metrics))
+
     if verbose:
-        print(f"min_radius: {min_radius:.6e}, r_e: {r_e:.6e}")
+        print(f"min_radius: {min_radius:.6e}, r_e: {r_e:.6e}, iterations: {it}")
 
     info.update({
         "iterations": it,
@@ -424,14 +626,21 @@ def optimize_orbital_docking(
         "accel": max_control_accel_ms2,
         "max_control_accel_ms2": max_control_accel_ms2,
         "mean_control_accel_ms2": mean_control_accel_ms2,
+        "dv_proxy_m_s": dv_proxy_m_s,
         "T_transfer_s": float(T),
         "sample_count": int(sample_count),
+        "objective": str(objective_mode),
         "elapsed_time": time.time() - t0
     })
+    if keep_history:
+        info["history"] = history
+        info["history_samples"] = int(max(20, int(history_samples)))
 
     # Save to cache
     if use_cache:
-        cache_key = get_cache_key(P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1)
+        cache_key = get_cache_key(
+            P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1, objective=objective_mode
+        )
         cache_path = get_cache_path(cache_key, n_seg)
         save_to_cache(cache_path, P, info)
         if verbose:
@@ -461,6 +670,9 @@ def _optimize_one_segment_count(payload: dict):
         max_iter=payload["max_iter"],
         tol=payload["tol"],
         sample_count=payload["sample_count"],
+        objective_mode=payload.get("objective", "energy"),
+        dv_irls_eps=payload.get("dv_irls_eps", 1e-9),
+        dv_geom_reg=payload.get("dv_geom_reg", 0.0),
         verbose=payload["verbose"],
         debug=payload["debug"],
         use_cache=payload["use_cache"],
@@ -477,6 +689,9 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                                 max_iter=120, tol=1e-8, verbose=True, debug=False, use_cache=True,
                                 ignore_existing_cache=False,
                                 v0=None, v1=None, a0=None, a1=None,
+                                objective: str = "energy",
+                                dv_irls_eps: float = 1e-9,
+                                dv_geom_reg: float = 0.0,
                                 n_jobs: int = 1):
     """
     Run optimization for multiple segment counts and return results.
@@ -526,7 +741,7 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
     was_cached_map = {}
     if use_cache and not ignore_existing_cache:
         for n_seg in segment_counts:
-            cache_key = get_cache_key(P_init, n_seg, r_e, max_iter, tol, 100, v0, v1, a0, a1)
+            cache_key = get_cache_key(P_init, n_seg, r_e, max_iter, tol, 100, v0, v1, a0, a1, objective=objective)
             cache_path = get_cache_path(cache_key, n_seg)
             if cache_path.exists():
                 was_cached_map[int(n_seg)] = True
@@ -550,6 +765,9 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                 max_iter=max_iter,
                 tol=tol,
                 sample_count=100,
+                objective_mode=objective,
+                dv_irls_eps=dv_irls_eps,
+                dv_geom_reg=dv_geom_reg,
                 verbose=True,
                 debug=debug,
                 use_cache=use_cache,
@@ -587,6 +805,9 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                     "max_iter": max_iter,
                     "tol": tol,
                     "sample_count": 100,
+                    "objective": objective,
+                    "dv_irls_eps": dv_irls_eps,
+                    "dv_geom_reg": dv_geom_reg,
                     # Keep worker output quiet to avoid interleaved logs.
                     "verbose": False,
                     "debug": debug,
