@@ -2,14 +2,24 @@
 Visualization functions for orbital docking trajectories.
 """
 
+import os
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d.art3d import Line3DCollection
+from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 
 from .bezier import BezierCurve
 from .de_casteljau import segment_matrices_equal_params
 from .constants import EARTH_RADIUS_KM, EARTH_MU_SCALED, EARTH_J2, TRANSFER_TIME_S
 from .utils import format_number
+
+SOYUZ_LABEL = "Soyuz"
+ISS_LABEL = "ISS"
+SOYUZ_MARKER = "^"   # rocket-like triangle marker
+ISS_MARKER = "P"     # station-like filled-plus marker
+
+# Earth 3D model (NASA): under repo assets/models, used when available
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+EARTH_GLB_PATH = os.path.join(_REPO_ROOT, "assets", "models", "earth_nasa.glb")
 
 
 def _safe_set_window_title(fig, title: str) -> None:
@@ -67,25 +77,144 @@ def control_effort_metrics(info: dict):
     Convert optimizer cost into objective-consistent physical metrics.
 
     Returns:
-        (rms_control_accel_m_s2, l2_effort_m2_s3)
-        - RMS control acceleration is sqrt(cost_true_energy) converted to m/s^2.
-        - L2 effort is cost_true_energy integrated over physical time (m^2/s^3).
+        (rms_control_accel_m_s2, l2_effort_m2_s3, dv_proxy_m_s)
+        - RMS control accel: sqrt(cost_true_energy) converted to m/s^2 (only meaningful for 'energy' objective).
+        - L2 effort: cost_true_energy integrated over physical time (m^2/s^3).
+        - Δv proxy: info['dv_proxy_m_s'] if available (m/s).
     """
     if info is None:
-        return None, None
+        return None, None, None
 
     J_tau = info.get('cost_true_energy', info.get('cost', None))
     if J_tau is None:
-        return None, None
+        return None, None, None
 
     J_tau = float(J_tau)
     if not np.isfinite(J_tau) or J_tau < 0.0:
-        return None, None
+        return None, None, None
 
     T = float(info.get('T_transfer_s', TRANSFER_TIME_S))
     rms_control_accel_m_s2 = np.sqrt(J_tau) * 1e3
     l2_effort_m2_s3 = J_tau * T * 1e6
-    return float(rms_control_accel_m_s2), float(l2_effort_m2_s3)
+    dv_proxy_m_s = info.get("dv_proxy_m_s", None)
+    try:
+        dv_proxy_m_s = float(dv_proxy_m_s) if dv_proxy_m_s is not None else None
+    except Exception:
+        dv_proxy_m_s = None
+    return float(rms_control_accel_m_s2), float(l2_effort_m2_s3), dv_proxy_m_s
+
+
+def _load_earth_mesh(radius_km=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0)):
+    """
+    Load NASA Earth mesh from assets/models/earth_nasa.glb, scale to radius_km, center at center.
+    Returns (vertices, faces) or None if file missing or trimesh unavailable.
+    """
+    if not os.path.isfile(EARTH_GLB_PATH):
+        print(f"[Earth mesh] GLB file not found at {EARTH_GLB_PATH}")
+        return None
+    try:
+        import trimesh
+    except ImportError:
+        print("[Earth mesh] trimesh not installed; falling back to wireframe Earth.")
+        return None
+    try:
+        loaded = trimesh.load(EARTH_GLB_PATH)
+        if loaded is None:
+            print("[Earth mesh] trimesh.load returned None; falling back to wireframe Earth.")
+            return None
+        if hasattr(loaded, "vertices") and hasattr(loaded, "faces"):
+            mesh = loaded
+        elif hasattr(loaded, "geometry"):
+            meshes = list(loaded.geometry.values())
+            if not meshes:
+                print("[Earth mesh] Scene.geometry is empty; falling back to wireframe Earth.")
+                return None
+            mesh = trimesh.util.concatenate(meshes) if len(meshes) > 1 else meshes[0]
+        else:
+            print("[Earth mesh] Unexpected GLB type without vertices or geometry; falling back.")
+            return None
+
+        verts = np.asarray(mesh.vertices, dtype=float)
+        faces = np.asarray(mesh.faces, dtype=int)
+        if verts.size == 0 or faces.size == 0:
+            print("[Earth mesh] Loaded mesh has no vertices or faces; falling back.")
+            return None
+
+        # Optional per-face colors from the GLB, if present.
+        face_colors = None
+        visual = getattr(mesh, "visual", None)
+        try:
+            if visual is not None and hasattr(visual, "face_colors"):
+                fc = np.asarray(visual.face_colors)
+                if fc.ndim == 2 and fc.shape[0] == faces.shape[0]:
+                    # Normalize to 0–1 if stored as 0–255.
+                    face_colors = fc.astype(float)
+                    if face_colors.max() > 1.0:
+                        face_colors /= 255.0
+        except Exception as exc:
+            print(f"[Earth mesh] Could not read face colors from GLB visual; continuing without colors. Error: {exc!r}")
+            face_colors = None
+
+        # Center and scale geometry to requested Earth radius.
+        verts = verts - verts.mean(axis=0)
+        r_max = np.linalg.norm(verts, axis=1).max()
+        if r_max < 1e-12:
+            print("[Earth mesh] Loaded mesh has near-zero radius; falling back.")
+            return None
+        scale = radius_km / r_max
+        verts = verts * scale + np.asarray(center, dtype=float)
+        return verts, faces, face_colors
+    except Exception as exc:
+        print(f"[Earth mesh] Exception while loading GLB; falling back. Error: {exc!r}")
+        return None
+
+
+def add_earth_mesh(ax, radius=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0), color='#2E86AB', alpha=0.95):
+    """
+    Add Earth as a 3D mesh from assets/models/earth_nasa.glb when available.
+    Falls back to wireframe sphere if model is missing or trimesh unavailable.
+    """
+    data = _load_earth_mesh(radius_km=radius, center=center)
+    if data is None:
+        print("[Earth mesh] Falling back to wireframe Earth in add_earth_mesh().")
+        add_wire_sphere(ax, radius=radius, center=center, color=color, alpha=alpha, resolution=20)
+        return
+
+    # Backward-compatible unpacking: handle (verts, faces) or (verts, faces, face_colors).
+    if len(data) == 3:
+        verts, faces, face_colors = data
+    else:
+        verts, faces = data
+        face_colors = None
+
+    polygons = [verts[f] for f in faces]
+
+    # If the GLB provided per-face colors, use them so continents/oceans show up.
+    if face_colors is not None:
+        fc = np.asarray(face_colors, dtype=float)
+        # Ensure alpha channel exists and respects requested alpha.
+        if fc.shape[1] == 4:
+            fc = fc.copy()
+            fc[:, 3] = alpha
+        elif fc.shape[1] == 3:
+            alpha_col = np.full((fc.shape[0], 1), alpha, dtype=float)
+            fc = np.hstack([fc, alpha_col])
+        coll = Poly3DCollection(
+            polygons,
+            facecolors=fc,
+            edgecolors="none",
+            shade=False,
+        )
+    else:
+        coll = Poly3DCollection(
+            polygons,
+            facecolor=color,
+            edgecolor="none",
+            alpha=alpha,
+            shade=False,
+        )
+
+    ax.add_collection3d(coll)
 
 
 def add_wire_sphere(ax, radius=3.0, center=(0.0, 0.0, 0.0), color='gray', alpha=0.25, resolution=40):
@@ -116,7 +245,8 @@ def add_wire_sphere(ax, radius=3.0, center=(0.0, 0.0, 0.0), color='gray', alpha=
 
 def add_earth_sphere(ax, radius=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0), color='blue', alpha=0.3):
     """
-    Add Earth as a wireframe sphere for orbital context.
+    Add Earth for orbital context: 3D mesh from assets/models/earth_nasa.glb when available,
+    otherwise a wireframe sphere.
 
     Args:
         ax: 3D matplotlib axes
@@ -125,7 +255,7 @@ def add_earth_sphere(ax, radius=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0), color='
         color: Earth color
         alpha: Transparency
     """
-    add_wire_sphere(ax, radius=radius, center=center, color=color, alpha=alpha, resolution=20)
+    add_earth_mesh(ax, radius=radius, center=center, color=color, alpha=alpha)
 
 
 def set_axes_equal_around(ax, center=(0,0,0), radius=1.0, pad=0.05):
@@ -245,7 +375,8 @@ def plot_segments_gradient(ax, P_opt, n_seg, cmap_name='viridis', show_seg_ctrl_
     ax.add_collection3d(lc)
 
 
-def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, window_title=None):
+def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, window_title=None,
+                                        v0=None, v1=None):
     """
     Create 2×3 layout showing trajectories with different segment counts.
     Uses same aesthetics as Orbital_Docking_Optimizer.py.
@@ -255,6 +386,8 @@ def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, 
         P_init: Initial control points
         r_e: KOZ radius
         results: List of (n_seg, P_opt, info) tuples
+        v0: Optional initial velocity vector (km/s) at P_init[0]
+        v1: Optional final velocity vector (km/s) at P_init[-1]
 
     Returns:
         matplotlib Figure object
@@ -286,8 +419,8 @@ def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, 
     for i, (n_seg, P_opt, info) in enumerate(results):
         ax = axes[i]
 
-        # Add Earth (smaller blue sphere, more transparent)
-        add_earth_sphere(ax, radius=EARTH_RADIUS_KM * 0.7, color='blue', alpha=1)
+        # Add Earth at physical scale for consistent geometry interpretation.
+        add_earth_sphere(ax, radius=EARTH_RADIUS_KM, color='blue', alpha=1)
 
         # Add safety zone (KOZ - smaller red sphere)
         add_wire_sphere(ax, radius=r_e, color='red', alpha=0.2, resolution=15)
@@ -295,11 +428,47 @@ def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, 
         # Plot optimized trajectory (thicker lines with color-coded segments)
         plot_segments_gradient(ax, P_opt, n_seg, cmap_name='viridis', lw=3.0)
 
-        # Add start and end markers (larger markers)
-        ax.scatter(P_init[0,0], P_init[0,1], P_init[0,2], 
-                  color='green', s=120, label='Chaser', zorder=10)
-        ax.scatter(P_init[-1,0], P_init[-1,1], P_init[-1,2], 
-                  color='orange', s=120, label='Target', zorder=10)
+        p0 = P_init[0]
+        p1 = P_init[-1]
+        ax.scatter(
+            p0[0], p0[1], p0[2],
+            color='green', s=140, marker="^", label=SOYUZ_LABEL, zorder=10
+        )
+        ax.scatter(
+            p1[0], p1[1], p1[2],
+            color='orange', s=140, marker="P", label=ISS_LABEL, zorder=10
+        )
+
+        # Draw endpoint velocity vectors if provided.
+        # We scale the arrows so they are visually legible while preserving direction.
+        if v0 is not None or v1 is not None:
+            base_radius = float(np.linalg.norm(p0))
+            mags = []
+            if v0 is not None:
+                mags.append(float(np.linalg.norm(v0)))
+            if v1 is not None:
+                mags.append(float(np.linalg.norm(v1)))
+            vmax = max(mags) if mags else 0.0
+            # Scale so the largest arrow is ~30% of the orbital radius
+            scale = (0.3 * base_radius / vmax) if vmax > 1e-9 else 0.0
+
+            if v0 is not None and scale > 0.0:
+                dv0 = np.asarray(v0, dtype=float) * scale
+                ax.quiver(
+                    p0[0], p0[1], p0[2],
+                    dv0[0], dv0[1], dv0[2],
+                    color='cyan', linewidth=1.5, arrow_length_ratio=0.08,
+                    label='v0 (scaled)'
+                )
+            if v1 is not None and scale > 0.0:
+                dv1 = np.asarray(v1, dtype=float) * scale
+                ax.quiver(
+                    p1[0], p1[1], p1[2],
+                    dv1[0], dv1[1], dv1[2],
+                    color='magenta', linewidth=1.5, arrow_length_ratio=0.08,
+                    label='v1 (scaled)'
+                )
+
         ax.legend(fontsize=8)
 
         # Professional styling with shared zoom level
@@ -309,12 +478,13 @@ def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, 
         beautify_3d_axes(ax, show_ticks=True, show_grid=True)
 
         # Title with optimizer-consistent control-effort metric.
-        rms_control_accel_m_s2, _ = control_effort_metrics(info)
+        rms_control_accel_m_s2, _l2, dv_proxy_m_s = control_effort_metrics(info)
         accel_str = "n/a" if rms_control_accel_m_s2 is None else format_number(rms_control_accel_m_s2, '.2f')
+        dv_str = "n/a" if dv_proxy_m_s is None else format_number(dv_proxy_m_s, '.1f')
         feasible = bool(info.get('feasible', False))
         status = 'Feasible' if feasible else 'Infeasible'
         title_color = 'black' if feasible else 'red'
-        ax.set_title(f'{n_seg} Segments — {status}\nRMS control accel: {accel_str} m/s²',
+        ax.set_title(f'{n_seg} Segments — {status}\nΔv proxy: {dv_str} m/s | RMS u: {accel_str} m/s²',
                      fontsize=10, pad=10, color=title_color)
 
     # Link all axes to share zoom - when one zooms, all zoom together
@@ -425,32 +595,32 @@ def create_performance_figure(results, curve_order=None, window_title=None):
     _safe_set_window_title(fig, window_title)
     ax = fig.add_subplot(111)
 
-    # Extract objective-consistent control-effort metric in physical units.
+    # Extract delta-v proxy (preferred) and RMS u as a secondary diagnostic.
     segment_counts = []
-    rms_accelerations = []
+    dv_proxies = []
 
     for n_seg, P_opt, info in results:
         if P_opt is None or info is None:
             continue
-        rms_control_accel_m_s2, _ = control_effort_metrics(info)
-        if rms_control_accel_m_s2 is None:
+        _rms_u, _l2, dv_proxy_m_s = control_effort_metrics(info)
+        if dv_proxy_m_s is None:
             continue
 
         segment_counts.append(n_seg)
-        rms_accelerations.append(rms_control_accel_m_s2)
+        dv_proxies.append(dv_proxy_m_s)
 
     # Create performance graph
-    ax.plot(segment_counts, rms_accelerations, 'bo-', linewidth=3, markersize=10)
+    ax.plot(segment_counts, dv_proxies, 'bo-', linewidth=3, markersize=10)
     ax.set_xlabel('Number of Segments', fontsize=14)
-    ax.set_ylabel('RMS Control Acceleration (m/s²)', fontsize=14)
-    ax.set_title('RMS Control Acceleration vs Segment Count', fontsize=16, pad=20)
+    ax.set_ylabel('Δv proxy (m/s)', fontsize=14)
+    ax.set_title('Δv proxy vs Segment Count', fontsize=16, pad=20)
     ax.grid(True, alpha=0.3)
     ax.set_xscale('log', base=2)  # Log scale for segment counts
 
     # Add data point labels
-    for i, (seg, accel) in enumerate(zip(segment_counts, rms_accelerations)):
-        accel_str = format_number(accel, '.3f')
-        ax.annotate(accel_str, (seg, accel), textcoords="offset points", xytext=(0,10), ha='center',
+    for i, (seg, dv) in enumerate(zip(segment_counts, dv_proxies)):
+        dv_str = format_number(dv, '.2f')
+        ax.annotate(dv_str, (seg, dv), textcoords="offset points", xytext=(0,10), ha='center',
                    fontsize=10, bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8))
 
     return fig
@@ -576,10 +746,18 @@ def create_acceleration_figure(
     ax3.set_ylabel('Acceleration (m/s²)', fontsize=12)
 
     # Summary metrics aligned with optimizer objective.
-    rms_control_accel_m_s2, l2_effort_m2_s3 = control_effort_metrics(info)
+    rms_control_accel_m_s2, l2_effort_m2_s3, dv_proxy_m_s = control_effort_metrics(info)
     if rms_control_accel_m_s2 is not None:
         rms_str = format_number(rms_control_accel_m_s2, '.2f')
-        ax3.set_title(f'Acceleration Components (RMS Control Accel: {rms_str} m/s²)',
+        if dv_proxy_m_s is not None:
+            dv_str = format_number(dv_proxy_m_s, '.1f')
+            ax3.set_title(
+                f'Acceleration Components (Δv proxy: {dv_str} m/s | RMS u: {rms_str} m/s²)',
+                fontsize=14,
+                pad=15,
+            )
+        else:
+            ax3.set_title(f'Acceleration Components (RMS Control Accel: {rms_str} m/s²)',
                      fontsize=14, pad=15)
     else:
         ax3.set_title('Acceleration Components', fontsize=14, pad=15)
@@ -658,9 +836,13 @@ def create_acceleration_figure(
     if rms_control_accel_m_s2 is not None and l2_effort_m2_s3 is not None:
         rms_str = format_number(rms_control_accel_m_s2, '.2f')
         l2_str = format_number(l2_effort_m2_s3, '.3e')
-        stats_text = f'RMS: {rms_str} m/s²\nL2 effort: {l2_str} m²/s³'
+        if dv_proxy_m_s is not None:
+            dv_str = format_number(dv_proxy_m_s, '.1f')
+            stats_text = f'Δv proxy: {dv_str} m/s\nRMS: {rms_str} m/s²\nL2 effort: {l2_str} m²/s³'
+        else:
+            stats_text = f'RMS: {rms_str} m/s²\nL2 effort: {l2_str} m²/s³'
     else:
-        stats_text = 'RMS: n/a\nL2 effort: n/a'
+        stats_text = 'Δv proxy: n/a\nRMS: n/a\nL2 effort: n/a'
     ax3.text(0.02, 0.98, stats_text,
             transform=ax3.transAxes, fontsize=10, verticalalignment='top',
             bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
@@ -728,12 +910,16 @@ def create_time_vs_order_figure(calculation_times, optimization_results):
         P_opt, info = optimization_results[N]
         if P_opt is None or info is None:
             continue
-        rms_control_accel_m_s2, l2_effort_m2_s3 = control_effort_metrics(info)
+        rms_control_accel_m_s2, l2_effort_m2_s3, dv_proxy_m_s = control_effort_metrics(info)
         if rms_control_accel_m_s2 is None or l2_effort_m2_s3 is None:
             continue
         accel_str = format_number(rms_control_accel_m_s2, '.2f')
         l2_str = format_number(l2_effort_m2_s3, '.2e')
-        accel_info.append(f'N={N}: RMS={accel_str} m/s², L2={l2_str} m²/s³')
+        if dv_proxy_m_s is not None:
+            dv_str = format_number(dv_proxy_m_s, '.1f')
+            accel_info.append(f'N={N}: Δv={dv_str} m/s, RMS={accel_str} m/s², L2={l2_str} m²/s³')
+        else:
+            accel_info.append(f'N={N}: RMS={accel_str} m/s², L2={l2_str} m²/s³')
 
     info_text = '\n'.join(accel_info)
     if info_text:

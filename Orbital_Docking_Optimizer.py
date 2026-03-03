@@ -28,7 +28,7 @@ Scenario:
     - Chaser satellite at 300 km altitude
     - Target satellite (ISS) at 423 km altitude
     - Keep Out Zone (KOZ) at 100 km altitude
-    - 90-degree angular separation between chaser and target
+    - Coplanar setup with configurable in-plane phase lag
 
 Optimization:
     The cost function minimizes the L² norm of the difference between geometric
@@ -144,6 +144,15 @@ def main() -> None:
         help="Number of worker processes for parallelizing over segment counts (n_seg). "
         "Use 1 for serial; use 0 or negative for auto.",
     )
+    parser.add_argument(
+        "--objective",
+        type=str,
+        default="dv",
+        choices=["dv", "energy"],
+        help="Objective to optimize. "
+        "'dv' uses an IRLS L1-style delta-v proxy; 'energy' uses the legacy L2 control-energy surrogate. "
+        "Default: dv.",
+    )
     args = parser.parse_args()
 
     USE_CACHE = True
@@ -153,6 +162,10 @@ def main() -> None:
     MAX_ITER = args.max_iter
 
     # Extract constants for convenience
+    ISS_ALTITUDE_KM = constants.ISS_ALTITUDE_KM
+    CHASER_ALTITUDE_KM = constants.CHASER_ALTITUDE_KM
+    KOZ_ALTITUDE_KM = constants.KOZ_ALTITUDE_KM
+    EARTH_RADIUS_KM = constants.EARTH_RADIUS_KM
     KOZ_RADIUS = constants.KOZ_RADIUS
     ISS_RADIUS = constants.ISS_RADIUS
     CHASER_RADIUS = constants.CHASER_RADIUS
@@ -171,50 +184,81 @@ def main() -> None:
     print()
 
     # Define endpoints for all curve orders
-    theta_start = -np.pi / 4  # 45 degrees
-    P_start = np.array(
-        [
-            CHASER_RADIUS * np.cos(theta_start),
-            CHASER_RADIUS * np.sin(theta_start),
-            0.0,
-        ]
-    )
+    # Positions in km, scaled appropriately
 
-    theta_end = np.pi / 4  # -45 degrees
-    P_end = np.array(
-        [
-            ISS_RADIUS * np.cos(theta_end),
-            ISS_RADIUS * np.sin(theta_end),
-            0.0,
-        ]
+    # Hardcoded Soyuz->ISS rendezvous geometry (demo):
+    # - Same inclination/RAAN plane
+    # - Soyuz parking orbit starts ~35-40 deg behind ISS
+    SOYUZ_ALTITUDE_KM = 200.0
+    ISS_ARRIVAL_ALTITUDE_KM = 419.0
+    INCLINATION_DEG = 51.67
+    RAAN_DEG = 0.0
+    ISS_U_DEG = 45.0
+    SOYUZ_LAG_DEG = 120.0
+
+    def _rotz(theta_rad: float) -> np.ndarray:
+        c = np.cos(theta_rad)
+        s = np.sin(theta_rad)
+        return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+
+    def _rotx(theta_rad: float) -> np.ndarray:
+        c = np.cos(theta_rad)
+        s = np.sin(theta_rad)
+        return np.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]])
+
+    def _eci_from_circular_elements(radius_km: float, inc_deg: float, raan_deg: float, u_deg: float) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Return (r_eci, v_eci) for circular orbit with given radius and argument of latitude.
+        Velocity direction follows prograde motion in the same orbital plane.
+        """
+        mu = constants.EARTH_MU_SCALED
+        inc = np.deg2rad(inc_deg)
+        raan = np.deg2rad(raan_deg)
+        u = np.deg2rad(u_deg)
+
+        r_pqw = np.array([radius_km * np.cos(u), radius_km * np.sin(u), 0.0])
+        v_circ = np.sqrt(mu / radius_km)
+        v_pqw = v_circ * np.array([-np.sin(u), np.cos(u), 0.0])
+
+        q = _rotz(raan) @ _rotx(inc)
+        return q @ r_pqw, q @ v_pqw
+
+    iss_u_deg = ISS_U_DEG
+    soyuz_u_deg = iss_u_deg - SOYUZ_LAG_DEG
+    soyuz_radius_km = EARTH_RADIUS_KM + SOYUZ_ALTITUDE_KM
+    iss_radius_km = EARTH_RADIUS_KM + ISS_ARRIVAL_ALTITUDE_KM
+
+    P_start, v0 = _eci_from_circular_elements(
+        soyuz_radius_km,
+        INCLINATION_DEG,
+        RAAN_DEG,
+        soyuz_u_deg,
+    )
+    P_end, v1 = _eci_from_circular_elements(
+        iss_radius_km,
+        INCLINATION_DEG,
+        RAAN_DEG,
+        iss_u_deg,
     )
 
     print(f"Endpoints (km):")
-    print(f"  Start (chaser): {P_start}")
+    print(f"  Start (Soyuz):  {P_start}")
     print(f"  End (ISS):      {P_end}")
+    print(f"  i={INCLINATION_DEG:.2f} deg, RAAN={RAAN_DEG:.2f} deg")
+    print(f"  Soyuz lag behind ISS: {SOYUZ_LAG_DEG:.2f} deg")
     print(f"\nKOZ radius: {KOZ_RADIUS:.1f} km")
-
-    # Boundary velocities: tangential to Earth-centric KOZ, parallel to equator (xy-plane),
-    # and counter-clockwise (+z right-hand rule).
-    EARTH_MU_SCALED = constants.EARTH_MU_SCALED
-    v_koz_magnitude = np.sqrt(EARTH_MU_SCALED / KOZ_RADIUS)  # km/s
-
-    def ccw_equatorial_tangent(pos_xyz: np.ndarray) -> np.ndarray:
-        """Unit tangent in xy-plane, counter-clockwise, tangent to concentric sphere/KOZ."""
-        x, y, _ = pos_xyz
-        r_xy = np.hypot(x, y)
-        if r_xy < 1e-12:
-            return np.array([0.0, 1.0, 0.0])
-        return np.array([-y / r_xy, x / r_xy, 0.0])
-
-    v0 = v_koz_magnitude * ccw_equatorial_tangent(P_start)
-    v1 = v_koz_magnitude * ccw_equatorial_tangent(P_end)
+    print(f"Transfer time T: {constants.TRANSFER_TIME_S:.1f} s")
 
     print(f"\nBoundary velocities (km/s):")
     print(f"  v0 (initial): {v0}")
     print(f"  v1 (final):   {v1}")
-    print(f"  |v0| = {v_koz_magnitude:.3f} km/s (KOZ tangent speed)")
-    print(f"  |v1| = {v_koz_magnitude:.3f} km/s (KOZ tangent speed)")
+    print(f"  |v0| = {np.linalg.norm(v0):.3f} km/s (Soyuz circular speed)")
+    print(f"  |v1| = {np.linalg.norm(v1):.3f} km/s (ISS circular speed)")
+
+    # Generate initial control points for different curve orders
+    # N=2: Quadratic (3 control points)
+    # N=3: Cubic (4 control points)
+    # N=4: 4th degree (5 control points)
 
     # Generate initial control points for different curve orders
     P_init_N2 = generate_initial_control_points(2, P_start, P_end)
@@ -238,6 +282,8 @@ def main() -> None:
         print(f"  P{i}: {P}")
 
     # OPTIMIZATION for N=2 (Quadratic curve)
+    # Measure calculation time for performance analysis
+
     if 2 in args.N:
         print("\n⚠️  Starting optimization for N=2 (Quadratic curve)...")
         print("    This may take a while depending on max_iter and convergence\n")
@@ -254,6 +300,10 @@ def main() -> None:
             debug=args.debug,
             use_cache=USE_CACHE,
             ignore_existing_cache=IGNORE_EXISTING_CACHE,
+            objective=args.objective,
+            # Quadratic Bézier (N=2) has only one interior control point (P1),
+            # so enforcing both v0 and v1 generally overconstrains the problem.
+            # Keep endpoint positions only for the baseline run.
             v0=v0,
             v1=v1,
             n_jobs=args.n_jobs,
@@ -262,7 +312,10 @@ def main() -> None:
         print(f"\n⏱️  Total optimization time for N=2: {elapsed_time_N2:.2f} seconds")
         total_compute_time_N2 = _summarize_segment_times(results_N2, "N=2")
 
+
     # OPTIMIZATION for N=3 (Cubic curve)
+    # Measure calculation time for performance analysis
+
     if 3 in args.N:
         print("\n⚠️  Starting optimization for N=3 (Cubic curve)...")
         print("    This may take a while depending on max_iter and convergence\n")
@@ -279,6 +332,7 @@ def main() -> None:
             debug=args.debug,
             use_cache=USE_CACHE,
             ignore_existing_cache=IGNORE_EXISTING_CACHE,
+            objective=args.objective,
             v0=v0,
             v1=v1,
             n_jobs=args.n_jobs,
@@ -287,7 +341,10 @@ def main() -> None:
         print(f"\n⏱️  Total optimization time for N=3: {elapsed_time_N3:.2f} seconds")
         total_compute_time_N3 = _summarize_segment_times(results_N3, "N=3")
 
+
     # OPTIMIZATION for N=4 (4th degree curve)
+    # Measure calculation time for performance analysis
+
     if 4 in args.N:
         print("\n⚠️  Starting optimization for N=4 (4th degree curve)...")
         print("    This may take a while depending on max_iter and convergence\n")
@@ -304,6 +361,7 @@ def main() -> None:
             debug=args.debug,
             use_cache=USE_CACHE,
             ignore_existing_cache=IGNORE_EXISTING_CACHE,
+            objective=args.objective,
             v0=v0,
             v1=v1,
             n_jobs=args.n_jobs,
@@ -318,7 +376,7 @@ def main() -> None:
         print("=" * 60)
 
         fig_comparison_N2 = create_trajectory_comparison_figure(
-            P_init_N2, KOZ_RADIUS, results_N2, curve_order=2
+            P_init_N2, KOZ_RADIUS, results_N2, curve_order=2, v0=v0, v1=v1
         )
         fig_comparison_N2.savefig(FIGURE_DIR / "comparison_N2.png", dpi=300)
 
@@ -348,7 +406,7 @@ def main() -> None:
         print("\n📊 Creating visualizations for N=3 (Cubic curve)...")
         print("=" * 60)
         fig_comparison_N3 = create_trajectory_comparison_figure(
-            P_init_N3, KOZ_RADIUS, results_N3, curve_order=3
+            P_init_N3, KOZ_RADIUS, results_N3, curve_order=3, v0=v0, v1=v1
         )
         fig_comparison_N3.savefig(FIGURE_DIR / "comparison_N3.png", dpi=300)
         fig_performance_N3 = create_performance_figure(results_N3, curve_order=3)
@@ -377,7 +435,7 @@ def main() -> None:
         print("\n📊 Creating visualizations for N=4 (4th degree curve)...")
         print("=" * 60)
         fig_comparison_N4 = create_trajectory_comparison_figure(
-            P_init_N4, KOZ_RADIUS, results_N4, curve_order=4
+            P_init_N4, KOZ_RADIUS, results_N4, curve_order=4, v0=v0, v1=v1
         )
         fig_comparison_N4.savefig(FIGURE_DIR / "comparison_N4.png", dpi=300)
         fig_performance_N4 = create_performance_figure(results_N4, curve_order=4)

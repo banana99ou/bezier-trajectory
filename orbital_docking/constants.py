@@ -22,6 +22,6 @@ EARTH_J2 = 1.08262668e-3  # [-]
 SCALE_FACTOR = 1e3  # 1 unit = 1 km
 EARTH_MU_SCALED = EARTH_MU / (SCALE_FACTOR**3)  # Scaled for km
 
-# Fixed (arbitrary) transfer time for time-scaling (seconds)
-# Used when interpreting Bézier derivatives w.r.t. tau as physical time derivatives.
-TRANSFER_TIME_S = 3600.0
+# Fixed transfer time for time-scaling (seconds)
+# Soyuz MS-17 launch-to-docking: 3h 03m 38s = 11,018 s.
+TRANSFER_TIME_S = 11018.0

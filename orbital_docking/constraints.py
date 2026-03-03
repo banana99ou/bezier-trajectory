@@ -54,7 +54,9 @@ def build_koz_constraints(A_list, P, r_e, dim=3, c_KOZ=None):
                 start = j * dim
                 row[start:start+dim] += coeff * nj
             rows.append(row)
-            lbs.append(r_e)
+            # Supporting half-space for sphere centered at c_KOZ:
+            #   n^T q >= n^T c_KOZ + r_e
+            lbs.append(float(np.dot(nj, c_KOZ) + r_e))
 
     if len(rows) == 0:
         # No constraints generated
