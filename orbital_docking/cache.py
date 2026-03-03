@@ -9,10 +9,10 @@ from pathlib import Path
 
 
 # Increment to invalidate old caches when the optimization formulation changes
-CACHE_VERSION = "3.0"
+CACHE_VERSION = "4.0"
 
 
-def get_cache_key(P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1):
+def get_cache_key(P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1, objective: str = "energy"):
     """
     Generate a deterministic cache key from optimization parameters.
     
@@ -41,6 +41,7 @@ def get_cache_key(P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a
         'v1': v1.tobytes() if v1 is not None and isinstance(v1, np.ndarray) else str(v1),
         'a0': a0.tobytes() if a0 is not None and isinstance(a0, np.ndarray) else str(a0),
         'a1': a1.tobytes() if a1 is not None and isinstance(a1, np.ndarray) else str(a1),
+        'objective': str(objective),
         'version': CACHE_VERSION
     }
     
