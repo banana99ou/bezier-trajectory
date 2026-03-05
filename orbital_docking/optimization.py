@@ -428,7 +428,7 @@ def optimize_orbital_docking(
     ub = np.full_like(x0, np.inf)
     lb[:dim] = ub[:dim] = x0[:dim]  # Lock P0
     lb[-dim:] = ub[-dim:] = x0[-dim:]  # Lock PN
-    bounds = Bounds(lb, ub)
+    bounds = Bounds(lb, ub, keep_feasible=True)
     t_bounds_end = time.time()
 
     # Fixed time-scaling (arbitrary baseline)
@@ -493,6 +493,11 @@ def optimize_orbital_docking(
         t_opt_end = time.time()
 
         P_new = res.x.reshape(Np1, dim)
+        # Hard-project endpoint positions each outer iteration.
+        # trust-constr can return bound-violating iterates when terminated early;
+        # endpoints are mission-critical invariants and must remain fixed.
+        P_new[0, :] = P_init[0, :]
+        P_new[-1, :] = P_init[-1, :]
         delta = np.linalg.norm(P_new - P)
         P = P_new
 
@@ -613,6 +618,9 @@ def optimize_orbital_docking(
     if verbose:
         print(f"min_radius: {min_radius:.6e}, r_e: {r_e:.6e}, iterations: {it}")
 
+    endpoint_drift_start_km = float(np.linalg.norm(P[0] - P_init[0]))
+    endpoint_drift_end_km = float(np.linalg.norm(P[-1] - P_init[-1]))
+
     info.update({
         "iterations": it,
         "feasible": min_radius >= r_e - 1e-6,
@@ -627,6 +635,8 @@ def optimize_orbital_docking(
         "max_control_accel_ms2": max_control_accel_ms2,
         "mean_control_accel_ms2": mean_control_accel_ms2,
         "dv_proxy_m_s": dv_proxy_m_s,
+        "endpoint_drift_start_km": endpoint_drift_start_km,
+        "endpoint_drift_end_km": endpoint_drift_end_km,
         "T_transfer_s": float(T),
         "sample_count": int(sample_count),
         "objective": str(objective_mode),
