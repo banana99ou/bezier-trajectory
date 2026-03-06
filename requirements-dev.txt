@@ -1,0 +1,5 @@
+# Development and test dependencies for bezier-trajectory
+# Install: pip install -r requirements-dev.txt
+
+pytest>=7.0.0
+pytest-cov>=4.0.0
