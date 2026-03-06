@@ -12,7 +12,21 @@ from pathlib import Path
 CACHE_VERSION = "4.1"
 
 
-def get_cache_key(P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1, objective: str = "energy"):
+def get_cache_key(
+    P_init,
+    n_seg,
+    r_e,
+    max_iter,
+    tol,
+    sample_count,
+    v0,
+    v1,
+    a0,
+    a1,
+    objective: str = "energy",
+    scp_prox_weight: float = 0.0,
+    scp_trust_radius: float = 0.0,
+):
     """
     Generate a deterministic cache key from optimization parameters.
     
@@ -42,6 +56,8 @@ def get_cache_key(P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a
         'a0': a0.tobytes() if a0 is not None and isinstance(a0, np.ndarray) else str(a0),
         'a1': a1.tobytes() if a1 is not None and isinstance(a1, np.ndarray) else str(a1),
         'objective': str(objective),
+        'scp_prox_weight': float(scp_prox_weight),
+        'scp_trust_radius': float(scp_trust_radius),
         'version': CACHE_VERSION
     }
     

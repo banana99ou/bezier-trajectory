@@ -357,6 +357,8 @@ def optimize_orbital_docking(
     objective_mode: str = "energy",
     dv_irls_eps: float = 1e-9,
     dv_geom_reg: float = 0.0,
+    scp_prox_weight: float = 0.0,
+    scp_trust_radius: float = 0.0,
     verbose=True,
     debug=False,
     use_cache=True,
@@ -396,7 +398,10 @@ def optimize_orbital_docking(
     # Check cache first (optional bypass for forced fresh computation)
     if use_cache and not ignore_existing_cache:
         cache_key = get_cache_key(
-            P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1, objective=objective_mode
+            P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1,
+            objective=objective_mode,
+            scp_prox_weight=scp_prox_weight,
+            scp_trust_radius=scp_trust_radius,
         )
         cache_path = get_cache_path(cache_key, n_seg)
         cached_result = load_from_cache(cache_path)
@@ -428,7 +433,7 @@ def optimize_orbital_docking(
     ub = np.full_like(x0, np.inf)
     lb[:dim] = ub[:dim] = x0[:dim]  # Lock P0
     lb[-dim:] = ub[-dim:] = x0[-dim:]  # Lock PN
-    bounds = Bounds(lb, ub, keep_feasible=True)
+    bounds = Bounds(lb, ub)
     t_bounds_end = time.time()
 
     # Fixed time-scaling (arbitrary baseline)
@@ -458,6 +463,7 @@ def optimize_orbital_docking(
         all_constraints = [koz_constraint] + boundary_constraints
 
         # Build quadratic objective for control acceleration with gravity+J2 linearized about P
+        x_ref = P.reshape(-1)
         H, f, c_const, _diag = _build_ctrl_accel_quadratic(
             P,
             T=T,
@@ -466,6 +472,15 @@ def optimize_orbital_docking(
             irls_eps=dv_irls_eps,
             geom_reg=dv_geom_reg,
         )
+        if float(scp_prox_weight) > 0.0:
+            # Proximal regularization around current SCP iterate:
+            #   + (lambda/2) ||x - x_ref||^2
+            # expands to:
+            #   + (lambda/2) x^T x - lambda x_ref^T x + const
+            lam = float(scp_prox_weight)
+            H = H + lam * np.eye(H.shape[0], dtype=H.dtype)
+            f = f - lam * x_ref
+            c_const += 0.5 * lam * float(x_ref @ x_ref)
 
         def obj_fn(x):
             return 0.5 * float(x @ (H @ x)) + float(f @ x)
@@ -482,7 +497,7 @@ def optimize_orbital_docking(
             warnings.filterwarnings("ignore")
             res = minimize(
                 obj_fn,
-                P.reshape(-1),
+                x_ref,
                 method='trust-constr',
                 jac=gradient,
                 hess=hessian,
@@ -492,12 +507,18 @@ def optimize_orbital_docking(
             )
         t_opt_end = time.time()
 
-        P_new = res.x.reshape(Np1, dim)
-        # Hard-project endpoint positions each outer iteration.
-        # trust-constr can return bound-violating iterates when terminated early;
-        # endpoints are mission-critical invariants and must remain fixed.
-        P_new[0, :] = P_init[0, :]
-        P_new[-1, :] = P_init[-1, :]
+        x_new = res.x
+        trust_clipped = False
+        trust_step_norm = float(np.linalg.norm(x_new - x_ref))
+        if float(scp_trust_radius) > 0.0 and np.isfinite(trust_step_norm):
+            radius = float(scp_trust_radius)
+            if trust_step_norm > radius and trust_step_norm > 1e-15:
+                alpha = radius / trust_step_norm
+                x_new = x_ref + alpha * (x_new - x_ref)
+                trust_clipped = True
+                trust_step_norm = radius
+
+        P_new = x_new.reshape(Np1, dim)
         delta = np.linalg.norm(P_new - P)
         P = P_new
 
@@ -575,6 +596,8 @@ def optimize_orbital_docking(
                     "t_iter_s": float(t_iter_end - t_iter_start),
                     "t_koz_s": float(t_koz_end - t_koz_start),
                     "t_opt_s": float(t_opt_end - t_opt_start),
+                    "trust_step_norm": trust_step_norm,
+                    "trust_clipped": bool(trust_clipped),
                 }
             )
 
@@ -618,9 +641,6 @@ def optimize_orbital_docking(
     if verbose:
         print(f"min_radius: {min_radius:.6e}, r_e: {r_e:.6e}, iterations: {it}")
 
-    endpoint_drift_start_km = float(np.linalg.norm(P[0] - P_init[0]))
-    endpoint_drift_end_km = float(np.linalg.norm(P[-1] - P_init[-1]))
-
     info.update({
         "iterations": it,
         "feasible": min_radius >= r_e - 1e-6,
@@ -635,11 +655,11 @@ def optimize_orbital_docking(
         "max_control_accel_ms2": max_control_accel_ms2,
         "mean_control_accel_ms2": mean_control_accel_ms2,
         "dv_proxy_m_s": dv_proxy_m_s,
-        "endpoint_drift_start_km": endpoint_drift_start_km,
-        "endpoint_drift_end_km": endpoint_drift_end_km,
         "T_transfer_s": float(T),
         "sample_count": int(sample_count),
         "objective": str(objective_mode),
+        "scp_prox_weight": float(scp_prox_weight),
+        "scp_trust_radius": float(scp_trust_radius),
         "elapsed_time": time.time() - t0
     })
     if keep_history:
@@ -649,7 +669,10 @@ def optimize_orbital_docking(
     # Save to cache
     if use_cache:
         cache_key = get_cache_key(
-            P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1, objective=objective_mode
+            P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1,
+            objective=objective_mode,
+            scp_prox_weight=scp_prox_weight,
+            scp_trust_radius=scp_trust_radius,
         )
         cache_path = get_cache_path(cache_key, n_seg)
         save_to_cache(cache_path, P, info)
@@ -683,6 +706,8 @@ def _optimize_one_segment_count(payload: dict):
         objective_mode=payload.get("objective", "energy"),
         dv_irls_eps=payload.get("dv_irls_eps", 1e-9),
         dv_geom_reg=payload.get("dv_geom_reg", 0.0),
+        scp_prox_weight=payload.get("scp_prox_weight", 0.0),
+        scp_trust_radius=payload.get("scp_trust_radius", 0.0),
         verbose=payload["verbose"],
         debug=payload["debug"],
         use_cache=payload["use_cache"],
@@ -702,6 +727,8 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                                 objective: str = "energy",
                                 dv_irls_eps: float = 1e-9,
                                 dv_geom_reg: float = 0.0,
+                                scp_prox_weight: float = 0.0,
+                                scp_trust_radius: float = 0.0,
                                 n_jobs: int = 1):
     """
     Run optimization for multiple segment counts and return results.
@@ -751,7 +778,12 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
     was_cached_map = {}
     if use_cache and not ignore_existing_cache:
         for n_seg in segment_counts:
-            cache_key = get_cache_key(P_init, n_seg, r_e, max_iter, tol, 100, v0, v1, a0, a1, objective=objective)
+            cache_key = get_cache_key(
+                P_init, n_seg, r_e, max_iter, tol, 100, v0, v1, a0, a1,
+                objective=objective,
+                scp_prox_weight=scp_prox_weight,
+                scp_trust_radius=scp_trust_radius,
+            )
             cache_path = get_cache_path(cache_key, n_seg)
             if cache_path.exists():
                 was_cached_map[int(n_seg)] = True
@@ -778,6 +810,8 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                 objective_mode=objective,
                 dv_irls_eps=dv_irls_eps,
                 dv_geom_reg=dv_geom_reg,
+                scp_prox_weight=scp_prox_weight,
+                scp_trust_radius=scp_trust_radius,
                 verbose=True,
                 debug=debug,
                 use_cache=use_cache,
@@ -818,6 +852,8 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                     "objective": objective,
                     "dv_irls_eps": dv_irls_eps,
                     "dv_geom_reg": dv_geom_reg,
+                    "scp_prox_weight": scp_prox_weight,
+                    "scp_trust_radius": scp_trust_radius,
                     # Keep worker output quiet to avoid interleaved logs.
                     "verbose": False,
                     "debug": debug,

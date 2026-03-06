@@ -153,6 +153,20 @@ def main() -> None:
         "'dv' uses an IRLS L1-style delta-v proxy; 'energy' uses the legacy L2 control-energy surrogate. "
         "Default: dv.",
     )
+    parser.add_argument(
+        "--scp-prox",
+        type=float,
+        default=1e-6,
+        help="Outer SCP proximal weight (>=0). Adds (lambda/2)||P-P_prev||^2 per SCP iteration. "
+        "Use small positive values (e.g., 1e-6 to 1e-3) for stabilization.",
+    )
+    parser.add_argument(
+        "--scp-trust-radius",
+        type=float,
+        default=2000.0,
+        help="Outer SCP trust radius in control-point vector 2-norm (km). "
+        "If >0, clips each SCP step to this radius. Default: 2000.",
+    )
     args = parser.parse_args()
 
     USE_CACHE = True
@@ -169,6 +183,8 @@ def main() -> None:
     KOZ_RADIUS = constants.KOZ_RADIUS
     ISS_RADIUS = constants.ISS_RADIUS
     CHASER_RADIUS = constants.CHASER_RADIUS
+
+    TOL = 1e-3
 
     # Figure directory
     FIGURE_DIR = Path(__file__).parent / "figures"
@@ -194,7 +210,7 @@ def main() -> None:
     INCLINATION_DEG = 51.67
     RAAN_DEG = 0.0
     ISS_U_DEG = 45.0
-    SOYUZ_LAG_DEG = 120.0
+    SOYUZ_LAG_DEG = 90.0
 
     def _rotz(theta_rad: float) -> np.ndarray:
         c = np.cos(theta_rad)
@@ -295,12 +311,14 @@ def main() -> None:
             r_e=KOZ_RADIUS,
             segment_counts=segment_counts,
             max_iter=MAX_ITER,
-            tol=1e-3,
+            tol=TOL,
             verbose=args.verbose,
             debug=args.debug,
             use_cache=USE_CACHE,
             ignore_existing_cache=IGNORE_EXISTING_CACHE,
             objective=args.objective,
+            scp_prox_weight=args.scp_prox,
+            scp_trust_radius=args.scp_trust_radius,
             # Quadratic Bézier (N=2) has only one interior control point (P1),
             # so enforcing both v0 and v1 generally overconstrains the problem.
             # Keep endpoint positions only for the baseline run.
@@ -327,12 +345,14 @@ def main() -> None:
             r_e=KOZ_RADIUS,
             segment_counts=segment_counts,
             max_iter=MAX_ITER,
-            tol=1e-3,
+            tol=TOL,
             verbose=args.verbose,
             debug=args.debug,
             use_cache=USE_CACHE,
             ignore_existing_cache=IGNORE_EXISTING_CACHE,
             objective=args.objective,
+            scp_prox_weight=args.scp_prox,
+            scp_trust_radius=args.scp_trust_radius,
             v0=v0,
             v1=v1,
             n_jobs=args.n_jobs,
@@ -356,12 +376,14 @@ def main() -> None:
             r_e=KOZ_RADIUS,
             segment_counts=segment_counts,
             max_iter=MAX_ITER,
-            tol=1e-3,
+            tol=TOL,
             verbose=args.verbose,
             debug=args.debug,
             use_cache=USE_CACHE,
             ignore_existing_cache=IGNORE_EXISTING_CACHE,
             objective=args.objective,
+            scp_prox_weight=args.scp_prox,
+            scp_trust_radius=args.scp_trust_radius,
             v0=v0,
             v1=v1,
             n_jobs=args.n_jobs,
