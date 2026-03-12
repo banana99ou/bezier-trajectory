@@ -7,7 +7,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 import time
 import warnings
-from scipy.optimize import minimize, Bounds
+from scipy.optimize import minimize, Bounds, LinearConstraint
 
 from .bezier import BezierCurve
 from .de_casteljau import segment_matrices_equal_params
@@ -111,6 +111,34 @@ def _bernstein_basis(N: int, tau: float) -> np.ndarray:
     from scipy.special import comb
     i = np.arange(N + 1)
     return comb(N, i) * (tau ** i) * ((1.0 - tau) ** (N - i))
+
+
+def _bernstein_derivative_weights(N: int, tau: float) -> np.ndarray:
+    """
+    Weights for d/dtau of degree-N Bézier at tau, expressed in the original
+    control-point basis:
+        dp/dtau = sum_j w_der[j] * P_j
+
+    Using the standard relation:
+        dp/dtau = N * sum_{i=0}^{N-1} B_{N-1,i}(tau) * (P_{i+1} - P_i)
+    """
+    if N <= 0:
+        return np.zeros(1)
+    # Basis for degree N-1
+    from scipy.special import comb
+
+    i = np.arange(N)
+    b_low = comb(N - 1, i) * (tau ** i) * ((1.0 - tau) ** (N - 1 - i))
+
+    w_der = np.zeros(N + 1, dtype=float)
+    # j = 0
+    w_der[0] = -N * b_low[0]
+    # j = 1..N-1
+    for j in range(1, N):
+        w_der[j] = N * (b_low[j - 1] - b_low[j])
+    # j = N
+    w_der[N] = N * b_low[N - 1]
+    return w_der
 
 
 def _accel_two_body(r_km: np.ndarray, mu_km3_s2: float) -> np.ndarray:
@@ -359,6 +387,8 @@ def optimize_orbital_docking(
     dv_geom_reg: float = 0.0,
     scp_prox_weight: float = 0.0,
     scp_trust_radius: float = 0.0,
+    enforce_prograde: bool = False,
+    prograde_n_samples: int = 16,
     verbose=True,
     debug=False,
     use_cache=True,
@@ -439,6 +469,18 @@ def optimize_orbital_docking(
     # Fixed time-scaling (arbitrary baseline)
     T = float(TRANSFER_TIME_S)
 
+    # Prograde angular-momentum reference (optional, dim must be 3)
+    h_hat = None
+    if enforce_prograde and v0 is not None and P.shape[1] == 3:
+        r0 = P[0]
+        v0_phys = np.asarray(v0, dtype=float)
+        h0 = np.cross(r0, v0_phys)
+        h0_norm = np.linalg.norm(h0)
+        if h0_norm > 0.0:
+            h_hat = h0 / h0_norm
+        else:
+            h_hat = None
+
     # Build boundary constraints
     t_bc_start = time.time()
     boundary_constraints = build_boundary_constraints(P, v0, v1, a0, a1, dim, T=T)
@@ -461,6 +503,45 @@ def optimize_orbital_docking(
 
         # Combine all constraints
         all_constraints = [koz_constraint] + boundary_constraints
+
+        # Prograde angular-momentum constraints via SCP linearization
+        if h_hat is not None:
+            N_loc = N
+            dim = P.shape[1]
+            x_ref = P.reshape(-1)
+            n_vars = x_ref.size
+            # Exclude exact endpoints to avoid redundancy with boundary constraints
+            taus = np.linspace(0.0, 1.0, max(3, int(prograde_n_samples) + 2))[1:-1]
+            prograde_constraints = []
+            for tau in taus:
+                w = _bernstein_basis(N_loc, tau)  # (N+1,)
+                w_der = _bernstein_derivative_weights(N_loc, tau)  # (N+1,)
+
+                # Reference r, v at this tau
+                r_ref = w @ P  # (3,)
+                v_tau_ref = w_der @ P  # dr/dtau
+                v_ref = v_tau_ref / T
+                h_ref = np.cross(r_ref, v_ref)
+                c_ref = float(h_hat @ h_ref)
+
+                # Gradient wrt control-point vector x = vec(P):
+                #   grad = R^T (h_hat × v_ref) + V^T (r_ref × h_hat)
+                alpha = np.cross(h_hat, v_ref)  # shape (3,)
+                beta = np.cross(r_ref, h_hat)   # shape (3,)
+                g = np.zeros(n_vars, dtype=float)
+                for j in range(N_loc + 1):
+                    g_block = w[j] * alpha + (w_der[j] / T) * beta
+                    start = 3 * j
+                    g[start:start + 3] = g_block
+
+                # Linearized constraint: c(x) ≈ c_ref + g·(x - x_ref) >= 0
+                rhs = -c_ref + float(g @ x_ref)
+                A_row = g.reshape(1, -1)
+                prograde_constraints.append(
+                    LinearConstraint(A_row, rhs, np.full(1, np.inf))
+                )
+
+            all_constraints.extend(prograde_constraints)
 
         # Build quadratic objective for control acceleration with gravity+J2 linearized about P
         x_ref = P.reshape(-1)
@@ -708,6 +789,7 @@ def _optimize_one_segment_count(payload: dict):
         dv_geom_reg=payload.get("dv_geom_reg", 0.0),
         scp_prox_weight=payload.get("scp_prox_weight", 0.0),
         scp_trust_radius=payload.get("scp_trust_radius", 0.0),
+        enforce_prograde=payload.get("enforce_prograde", False),
         verbose=payload["verbose"],
         debug=payload["debug"],
         use_cache=payload["use_cache"],
@@ -729,6 +811,7 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                                 dv_geom_reg: float = 0.0,
                                 scp_prox_weight: float = 0.0,
                                 scp_trust_radius: float = 0.0,
+                                enforce_prograde: bool = False,
                                 n_jobs: int = 1):
     """
     Run optimization for multiple segment counts and return results.
@@ -812,6 +895,7 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                 dv_geom_reg=dv_geom_reg,
                 scp_prox_weight=scp_prox_weight,
                 scp_trust_radius=scp_trust_radius,
+                enforce_prograde=enforce_prograde,
                 verbose=True,
                 debug=debug,
                 use_cache=use_cache,
@@ -854,6 +938,7 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                     "dv_geom_reg": dv_geom_reg,
                     "scp_prox_weight": scp_prox_weight,
                     "scp_trust_radius": scp_trust_radius,
+                    "enforce_prograde": enforce_prograde,
                     # Keep worker output quiet to avoid interleaved logs.
                     "verbose": False,
                     "debug": debug,
