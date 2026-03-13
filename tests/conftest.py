@@ -2,7 +2,8 @@
 Shared pytest fixtures for bezier-trajectory tests.
 
 Fixtures provide a fixed-seed RNG, default scenario parameters (N, n_seg, T, r_e),
-3D endpoints P_start/P_end from constants, and P_init from generate_initial_control_points.
+3D endpoints P_start/P_end from constants (Progress-to-ISS inspired radii),
+and P_init from generate_initial_control_points.
 """
 
 import numpy as np
@@ -44,10 +45,10 @@ def r_e():
 @pytest.fixture
 def P_start():
     """
-    Start endpoint (chaser position) in 3D.
+    Start endpoint (Progress-like chaser position) in 3D.
 
     Prefer angle parameters from constants if present; otherwise fall back to the
-    simple coplanar demo geometry used by the top-level optimizer runner.
+    simple coplanar demo geometry.
     """
     if hasattr(constants, "THETA_END_DEG") and hasattr(constants, "PHASE_LAG_DEG"):
         theta_end = np.deg2rad(constants.THETA_END_DEG)
@@ -64,10 +65,10 @@ def P_start():
 @pytest.fixture
 def P_end():
     """
-    End endpoint (ISS position) in 3D.
+    End endpoint (ISS-like target position) in 3D.
 
     Prefer angle parameters from constants if present; otherwise fall back to the
-    simple coplanar demo geometry used by the top-level optimizer runner.
+    simple coplanar demo geometry.
     """
     if hasattr(constants, "THETA_END_DEG"):
         theta_end = np.deg2rad(constants.THETA_END_DEG)

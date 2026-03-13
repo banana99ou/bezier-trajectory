@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 # Increment to invalidate old caches when the optimization formulation changes
-CACHE_VERSION = "4.1"
+CACHE_VERSION = "4.2"
 
 
 def get_cache_key(

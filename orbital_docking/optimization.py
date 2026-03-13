@@ -604,16 +604,17 @@ def optimize_orbital_docking(
         P = P_new
 
         t_iter_end = time.time()
-        # if debug:
-        #     # Note: res.fun is the constant-dropped quadratic objective; it may be negative.
-        #     cost_true_iter = float(res.fun) + float(c_const)
-        #     print(f"N_seg={n_seg}, Iter {it}: cost_no_const={res.fun:.6e}, cost_true={cost_true_iter:.6e}, delta={delta:.6e}")
-        #     print(f"Time taken for iteration {it}: {t_iter_end - t_iter_start:.2f} seconds")
-        #     # print(f"Time taken for koz constraints: {t_koz_end - t_koz_start:.2f} seconds")
-        #     # print(f"Time taken for boundary constraints: {t_bc_end - t_bc_start:.2f} seconds")
-        #     # print(f"Time taken for segment matrices: {t_seg_end - t_seg_start:.2f} seconds")
-        #     # print(f"Time taken for bounds: {t_bounds_end - t_bounds_start:.2f} seconds")
-        #     print(f"Time taken for optimization: {t_opt_end - t_opt_start:.2f} seconds")
+        if debug:
+            if it % 100 == 0:
+                # Note: res.fun is the constant-dropped quadratic objective; it may be negative.
+                cost_true_iter = float(res.fun) + float(c_const)
+                print(f"N_seg={n_seg}, Iter {it}: cost_no_const={res.fun:.6e}, cost_true={cost_true_iter:.6e}, delta={delta:.6e}")
+                print(f"Time taken for iteration {it}: {t_iter_end - t_iter_start:.2f} seconds")
+            #     # print(f"Time taken for koz constraints: {t_koz_end - t_koz_start:.2f} seconds")
+            #     # print(f"Time taken for boundary constraints: {t_bc_end - t_bc_start:.2f} seconds")
+            #     # print(f"Time taken for segment matrices: {t_seg_end - t_seg_start:.2f} seconds")
+            #     # print(f"Time taken for bounds: {t_bounds_end - t_bounds_start:.2f} seconds")
+                print(f"Time taken for optimization: {t_opt_end - t_opt_start:.2f} seconds")
 
         if keep_history:
             x_now = P.reshape(-1)

@@ -12,14 +12,14 @@ from .de_casteljau import segment_matrices_equal_params
 from .constants import EARTH_RADIUS_KM, EARTH_MU_SCALED, EARTH_J2, TRANSFER_TIME_S
 from .utils import format_number
 
-SOYUZ_LABEL = "Soyuz"
+PROGRESS_LABEL = "Progress"
 ISS_LABEL = "ISS"
-SOYUZ_MARKER = "^"   # rocket-like triangle marker
+PROGRESS_MARKER = "^"   # cargo-vehicle triangle marker
 ISS_MARKER = "P"     # station-like filled-plus marker
 
 # Earth 3D model (NASA): under repo assets/models, used when available
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EARTH_GLB_PATH = os.path.join(_REPO_ROOT, "assets", "models", "earth_nasa.glb")
+EARTH_GLB_PATH = os.path.join(_REPO_ROOT, "assets", "models", "earth_n@asa.glb")
 
 
 def _safe_set_window_title(fig, title: str) -> None:
@@ -79,7 +79,7 @@ def control_effort_metrics(info: dict):
     Returns:
         (rms_control_accel_m_s2, l2_effort_m2_s3, dv_proxy_m_s)
         - RMS control accel: sqrt(cost_true_energy) converted to m/s^2 (only meaningful for 'energy' objective).
-        - L2 effort: cost_true_energy integrated over physical time (m^2/s^3).
+        - Energy surrogate over physical time: cost_true_energy * T (m^2/s^3).
         - Δv proxy: info['dv_proxy_m_s'] if available (m/s).
     """
     if info is None:
@@ -432,11 +432,11 @@ def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, 
         p1 = P_init[-1]
         ax.scatter(
             p0[0], p0[1], p0[2],
-            color='green', s=140, marker="^", label=SOYUZ_LABEL, zorder=10
+            color='green', s=140, marker=PROGRESS_MARKER, label=PROGRESS_LABEL, zorder=10
         )
         ax.scatter(
             p1[0], p1[1], p1[2],
-            color='orange', s=140, marker="P", label=ISS_LABEL, zorder=10
+            color='orange', s=140, marker=ISS_MARKER, label=ISS_LABEL, zorder=10
         )
 
         # Draw endpoint velocity vectors if provided.
@@ -450,7 +450,7 @@ def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, 
                 mags.append(float(np.linalg.norm(v1)))
             vmax = max(mags) if mags else 0.0
             # Scale so the largest arrow is ~30% of the orbital radius
-            scale = (0.3 * base_radius / vmax) if vmax > 1e-9 else 0.0
+            scale = (1 * base_radius / vmax) if vmax > 1e-9 else 0.0
 
             if v0 is not None and scale > 0.0:
                 dv0 = np.asarray(v0, dtype=float) * scale
@@ -458,7 +458,7 @@ def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, 
                     p0[0], p0[1], p0[2],
                     dv0[0], dv0[1], dv0[2],
                     color='cyan', linewidth=1.5, arrow_length_ratio=0.08,
-                    label='v0 (scaled)'
+                    label='v0'
                 )
             if v1 is not None and scale > 0.0:
                 dv1 = np.asarray(v1, dtype=float) * scale
@@ -466,7 +466,7 @@ def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, 
                     p1[0], p1[1], p1[2],
                     dv1[0], dv1[1], dv1[2],
                     color='magenta', linewidth=1.5, arrow_length_ratio=0.08,
-                    label='v1 (scaled)'
+                    label='v1'
                 )
 
         ax.legend(fontsize=8)
@@ -474,7 +474,7 @@ def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, 
         # Professional styling with shared zoom level
         set_axes_equal_around(ax, center=(0,0,0), radius=view_radius, pad=0.05)
         # Match baseline viewing angle used for paper figures
-        set_isometric(ax, elev=-10, azim=-60)
+        set_isometric(ax, elev=20, azim=-45)
         beautify_3d_axes(ax, show_ticks=True, show_grid=True)
 
         # Title with optimizer-consistent control-effort metric.
@@ -835,14 +835,13 @@ def create_acceleration_figure(
     # Add objective-consistent control-effort statistics.
     if rms_control_accel_m_s2 is not None and l2_effort_m2_s3 is not None:
         rms_str = format_number(rms_control_accel_m_s2, '.2f')
-        l2_str = format_number(l2_effort_m2_s3, '.3e')
         if dv_proxy_m_s is not None:
             dv_str = format_number(dv_proxy_m_s, '.1f')
-            stats_text = f'Δv proxy: {dv_str} m/s\nRMS: {rms_str} m/s²\nL2 effort: {l2_str} m²/s³'
+            stats_text = f'Δv proxy: {dv_str} m/s\nRMS accel: {rms_str} m/s²'
         else:
-            stats_text = f'RMS: {rms_str} m/s²\nL2 effort: {l2_str} m²/s³'
+            stats_text = f'Δv proxy: n/a\nRMS accel: {rms_str} m/s²'
     else:
-        stats_text = 'Δv proxy: n/a\nRMS: n/a\nL2 effort: n/a'
+        stats_text = 'Δv proxy: n/a\nRMS accel: n/a'
     ax3.text(0.02, 0.98, stats_text,
             transform=ax3.transAxes, fontsize=10, verticalalignment='top',
             bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
@@ -914,12 +913,11 @@ def create_time_vs_order_figure(calculation_times, optimization_results):
         if rms_control_accel_m_s2 is None or l2_effort_m2_s3 is None:
             continue
         accel_str = format_number(rms_control_accel_m_s2, '.2f')
-        l2_str = format_number(l2_effort_m2_s3, '.2e')
         if dv_proxy_m_s is not None:
             dv_str = format_number(dv_proxy_m_s, '.1f')
-            accel_info.append(f'N={N}: Δv={dv_str} m/s, RMS={accel_str} m/s², L2={l2_str} m²/s³')
+            accel_info.append(f'N={N}: Δv={dv_str} m/s, RMS={accel_str} m/s²')
         else:
-            accel_info.append(f'N={N}: RMS={accel_str} m/s², L2={l2_str} m²/s³')
+            accel_info.append(f'N={N}: Δv=n/a, RMS={accel_str} m/s²')
 
     info_text = '\n'.join(accel_info)
     if info_text:

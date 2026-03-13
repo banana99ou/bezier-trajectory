@@ -30,7 +30,7 @@ def build_koz_constraints(A_list, P, r_e, dim=3, c_KOZ=None):
     rows, lbs = [], []
 
     if c_KOZ is None:
-        warnings.warn("c_KOZ (KOZ center) not specified; defaulting to origin.")
+        # warnings.warn("c_KOZ (KOZ center) not specified; defaulting to origin.")
         c_KOZ = np.zeros(dim)
 
     for Ai in A_list:
