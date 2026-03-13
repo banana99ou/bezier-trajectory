@@ -24,16 +24,17 @@ Usage:
     Show help:
         python Orbital_Docking_Optimizer.py --help
 
-Scenario:
-    - Chaser satellite at 300 km altitude
-    - Target satellite (ISS) at 423 km altitude
+Scenario (Progress-to-ISS inspired, simplified single-arc):
+    - Chaser (Progress-like) at 245 km circularized parking orbit
+    - Target (ISS-like) at 400 km circular orbit
+    - Both at 51.64 deg inclination, same plane
     - Keep Out Zone (KOZ) at 100 km altitude
-    - Coplanar setup with configurable in-plane phase lag
+    - 30 deg phase lag
 
 Optimization:
-    The cost function minimizes the L² norm of the difference between geometric
-    acceleration (from Bézier curve) and gravitational acceleration (from two-body dynamics).
-    KOZ constraints are enforced through iterative linearization using De Casteljau subdivision.
+    The cost function minimizes a delta-v surrogate (control acceleration minus gravity)
+    while satisfying KOZ constraints enforced through iterative linearization
+    using De Casteljau subdivision.
 
 Visualization:
     - 3D trajectory plots with Earth and KOZ spheres
@@ -176,13 +177,8 @@ def main() -> None:
     MAX_ITER = args.max_iter
 
     # Extract constants for convenience
-    ISS_ALTITUDE_KM = constants.ISS_ALTITUDE_KM
-    CHASER_ALTITUDE_KM = constants.CHASER_ALTITUDE_KM
-    KOZ_ALTITUDE_KM = constants.KOZ_ALTITUDE_KM
     EARTH_RADIUS_KM = constants.EARTH_RADIUS_KM
     KOZ_RADIUS = constants.KOZ_RADIUS
-    ISS_RADIUS = constants.ISS_RADIUS
-    CHASER_RADIUS = constants.CHASER_RADIUS
 
     TOL = 1e-3
 
@@ -202,15 +198,17 @@ def main() -> None:
     # Define endpoints for all curve orders
     # Positions in km, scaled appropriately
 
-    # Hardcoded Soyuz->ISS rendezvous geometry (demo):
-    # - Same inclination/RAAN plane
-    # - Soyuz parking orbit starts ~35-40 deg behind ISS
-    SOYUZ_ALTITUDE_KM = 200.0
-    ISS_ARRIVAL_ALTITUDE_KM = 419.0
-    INCLINATION_DEG = 51.67
+    # Progress->ISS fast-rendezvous-inspired geometry (simplified):
+    # - Use a circularized Progress-like start orbit based on the published
+    #   245 km insertion-orbit apogee for Progress MS missions.
+    # - Use an ISS-like 400 km circular target orbit in the same plane.
+    # - Use a 30 deg phase lag as a reduced-order, single-arc proxy.
+    PROGRESS_START_ALTITUDE_KM = 245.0
+    ISS_TARGET_ALTITUDE_KM = 400.0
+    INCLINATION_DEG = 51.64
     RAAN_DEG = 0.0
     ISS_U_DEG = 45.0
-    SOYUZ_LAG_DEG = 90.0
+    PROGRESS_LAG_DEG = 30.0
 
     def _rotz(theta_rad: float) -> np.ndarray:
         c = np.cos(theta_rad)
@@ -240,15 +238,15 @@ def main() -> None:
         return q @ r_pqw, q @ v_pqw
 
     iss_u_deg = ISS_U_DEG
-    soyuz_u_deg = iss_u_deg - SOYUZ_LAG_DEG
-    soyuz_radius_km = EARTH_RADIUS_KM + SOYUZ_ALTITUDE_KM
-    iss_radius_km = EARTH_RADIUS_KM + ISS_ARRIVAL_ALTITUDE_KM
+    progress_u_deg = iss_u_deg - PROGRESS_LAG_DEG
+    progress_radius_km = EARTH_RADIUS_KM + PROGRESS_START_ALTITUDE_KM
+    iss_radius_km = EARTH_RADIUS_KM + ISS_TARGET_ALTITUDE_KM
 
     P_start, v0 = _eci_from_circular_elements(
-        soyuz_radius_km,
+        progress_radius_km,
         INCLINATION_DEG,
         RAAN_DEG,
-        soyuz_u_deg,
+        progress_u_deg,
     )
     P_end, v1 = _eci_from_circular_elements(
         iss_radius_km,
@@ -258,17 +256,17 @@ def main() -> None:
     )
 
     print(f"Endpoints (km):")
-    print(f"  Start (Soyuz):  {P_start}")
+    print(f"  Start (Progress): {P_start}")
     print(f"  End (ISS):      {P_end}")
     print(f"  i={INCLINATION_DEG:.2f} deg, RAAN={RAAN_DEG:.2f} deg")
-    print(f"  Soyuz lag behind ISS: {SOYUZ_LAG_DEG:.2f} deg")
+    print(f"  Progress lag behind ISS: {PROGRESS_LAG_DEG:.2f} deg")
     print(f"\nKOZ radius: {KOZ_RADIUS:.1f} km")
     print(f"Transfer time T: {constants.TRANSFER_TIME_S:.1f} s")
 
     print(f"\nBoundary velocities (km/s):")
     print(f"  v0 (initial): {v0}")
     print(f"  v1 (final):   {v1}")
-    print(f"  |v0| = {np.linalg.norm(v0):.3f} km/s (Soyuz circular speed)")
+    print(f"  |v0| = {np.linalg.norm(v0):.3f} km/s (Progress circular speed)")
     print(f"  |v1| = {np.linalg.norm(v1):.3f} km/s (ISS circular speed)")
 
     # Generate initial control points for different curve orders
@@ -319,11 +317,12 @@ def main() -> None:
             objective=args.objective,
             scp_prox_weight=args.scp_prox,
             scp_trust_radius=args.scp_trust_radius,
+            enforce_prograde=True,
             # Quadratic Bézier (N=2) has only one interior control point (P1),
             # so enforcing both v0 and v1 generally overconstrains the problem.
             # Keep endpoint positions only for the baseline run.
-            v0=v0,
-            v1=v1,
+            v0=None,
+            v1=None,
             n_jobs=args.n_jobs,
         )
         elapsed_time_N2 = time.time() - start_time_N2
@@ -353,8 +352,9 @@ def main() -> None:
             objective=args.objective,
             scp_prox_weight=args.scp_prox,
             scp_trust_radius=args.scp_trust_radius,
-            v0=v0,
-            v1=v1,
+            enforce_prograde=True,
+            v0=None,
+            v1=None,
             n_jobs=args.n_jobs,
         )
         elapsed_time_N3 = time.time() - start_time_N3
@@ -384,8 +384,9 @@ def main() -> None:
             objective=args.objective,
             scp_prox_weight=args.scp_prox,
             scp_trust_radius=args.scp_trust_radius,
-            v0=v0,
-            v1=v1,
+            enforce_prograde=True,
+            v0=None,
+            v1=None,
             n_jobs=args.n_jobs,
         )
         elapsed_time_N4 = time.time() - start_time_N4
