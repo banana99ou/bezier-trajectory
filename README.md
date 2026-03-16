@@ -1,6 +1,6 @@
 ## Bézier Trajectory – Orbital Docking Optimizer
 
-An orbital docking trajectory optimizer based on Bézier curves. The code finds fuel‑efficient paths for a chaser satellite to rendezvous with the ISS while respecting a spherical Keep‑Out Zone (KOZ), and generates all figures used in the paper and slides.
+An orbital docking trajectory optimizer based on Bézier curves. The code finds low control-effort trajectories (proxy objective) for a chaser satellite to rendezvous with the ISS while respecting a spherical Keep‑Out Zone (KOZ), and generates all figures used in the paper and slides.
 
 ## Requirements
 
@@ -25,7 +25,7 @@ python generate_all_figures.py
 This will:
 - **Run** `Orbital_Docking_Optimizer.py` to:
   - Optimize docking trajectories for different segment counts and curve orders
-  - Save main figures under `figure/figures/`, including:
+  - Save main figures under `figures/`, including:
     - `comparison_N2.png`, `comparison_N3.png`, `comparison_N4.png`
     - `performance_N2.png`, `performance_N3.png`, `performance_N4.png`
     - `accel_profiles_N2_seg{2,4,8,16,32,64}.png`
@@ -41,14 +41,20 @@ This will:
 
 - **`Orbital_Docking_Optimizer.py`**  
   - Full orbital docking optimizer using Bézier curves (N=2,3,4).  
-  - Minimizes the difference between geometric and gravitational acceleration with KOZ constraints.  
-  - Saves the main optimization, performance, and profile figures into `figure/figures/`.  
+  - Uses an SCP-style loop with:
+    - KOZ supporting-half-space updates
+    - a quadratic objective built from geometric acceleration plus gravity/J2 linearization around the current iterate
+  - Saves the main optimization, performance, and profile figures into `figures/`.  
+  - Boundary conditions:
+    - **Always enforced**: endpoint positions \(r(0)=P_0\), \(r(1)=P_N\) (implemented by locking the first/last control points via bounds).
+    - **Optional**: endpoint velocity/acceleration equality constraints.
+      - `v0`, `v1`, `a0`, `a1` are forwarded through `optimize_all_segment_counts(...)` into `optimize_orbital_docking(...)` and enforced when provided.
   - Usage:
     - **Default (cache enabled)**:
       ```bash
       python Orbital_Docking_Optimizer.py
       ```
-    - **Force recomputation (no cache)**:
+    - **Force recomputation (ignore existing cache, still write new cache)**:
       ```bash
       python Orbital_Docking_Optimizer.py --no-cache
       ```
@@ -91,8 +97,8 @@ This will:
 
 ## Directories
 
-- **`figure/figures/`**  
-  - Output directory for all generated figures (PNG/PDF) from the main optimizer and some helper scripts.
+- **`figures/`**  
+  - Output directory for generated figures (PNG) from the main optimizer and diagnostic scripts.
 
 - **`cache/`**  
   - Stores pickled optimization results used by `Orbital_Docking_Optimizer.py` for faster repeated runs.
@@ -101,3 +107,22 @@ This will:
   - Legacy code and figure generators corresponding to the initial paper versions.  
 
 
+## A/B: endpoint feasibility fix (parallel)
+
+The repo includes a reproducible A/B benchmark script:
+
+- **Script**: `tools/ab_endpoint_fix_parallel.py`
+- **Output**: writes CSV + Markdown reports into `artifacts/ab_tests/`
+- **Windows-friendly**: no here-doc, and it defaults to using `.venv/Scripts/python.exe` when present
+
+Run (example):
+
+```bash
+python tools/ab_endpoint_fix_parallel.py --objective dv --max-iter 1000 --tol 1e-3 --workers 32
+```
+
+You can also pass lists:
+
+```bash
+python tools/ab_endpoint_fix_parallel.py --orders 2 3 4 --seg-counts 2 4 8 16 32 64
+```
