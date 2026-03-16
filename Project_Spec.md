@@ -1,4 +1,4 @@
-# Bézier-curve-based trajectory optimization (Earth-orbit docking demo)
+# Bézier-curve-based trajectory optimization (Earth-orbit rendezvous demo)
 
 This project optimizes a **Bézier curve trajectory** for a simplified orbital rendezvous/docking approach scenario.
 The trajectory is represented in **ECI coordinates** and is constrained to stay outside an **Earth-centric spherical keep-out zone (KOZ)** (i.e., minimum geocentric radius).
@@ -28,11 +28,32 @@ $$
 
 ---
 
-## Scenario (current simplified demo)
+## Scenario (Progress-to-ISS fast-rendezvous inspired)
 
-- **ISS orbit altitude (target radius)**: 423 km AMSL at correct inclination / 0 RAAN
-- ~~**Chaser altitude (start radius)**: 300 km AMSL~~ -> changed to soyuze in LEO at same plane as ISS
-- **Earth-centric KOZ altitude**: 100 km AMSL  
+Mission basis:
+- **Progress fast-rendezvous timeline**: Progress MS-09 completed a two-orbit rendezvous to the ISS in about 3 h 40 min.
+- **Progress insertion orbit**: published mission profile values for Progress MS give an insertion orbit of 193 km x 245 km at 51.67 deg inclination.
+- **ISS orbit**: NASA reports the ISS operates at roughly 370-460 km altitude with 51.6 deg inclination.
+
+Reduced-order modeling choice used in this project:
+- **Start orbit**: circularized Progress-like parking orbit at **245 km** altitude.
+- **Target orbit**: ISS-like circular orbit at **400 km** altitude.
+- **Inclination**: **51.64 deg**.
+- **RAAN**: **0 deg**.
+- **Target argument of latitude**: **45 deg**.
+- **Progress phase lag behind ISS**: **30 deg**.
+- **Earth-centric KOZ altitude**: **100 km AMSL**.
+
+This is intentionally **not** a literal reconstruction of Progress MS-09. The sourced mission values define the orbital regime; the circularized start orbit, fixed RAAN, and 30 deg phase lag are simplified single-arc choices for the present Bézier-based optimizer.
+
+Derived Bézier endpoint positions used by the current simplified scenario:
+- **Start endpoint** `P0` (Progress-like): `[6390.565267, 1062.683295, 1342.697206] km`
+- **End endpoint** `PN` (ISS-like): `[4787.820015, 2971.323532, 3754.258511] km`
+
+Source URLs for later paper references:
+- NASA ISS facts: <https://www.nasa.gov/international-space-station/space-station-facts-and-figures>
+- TASS report on Progress MS-09 fast rendezvous: <https://tass.com/science/1012518>
+- Progress MS mission profile / insertion orbit: <https://spaceflight101.com/progress-ms/progress-ms-flight-profile/>
 
 Interpretation (Earth-centric KOZ):
 $$
@@ -202,7 +223,7 @@ This is iterated (fixed-point / SCP-style): update normals from the current solu
 
 ## TODO / next steps
 
-- **Realistic scenario**: fetch ISS state at an epoch (e.g., via TLE), pick a realistic chaser parking orbit (e.g., Soyuz/Dragon-like), convert to ECI endpoints `r0, v0, r_f, v_f`.
+- **Realistic scenario**: if time allows later, fetch an epoch-specific ISS state and a matching visiting-vehicle state instead of using the current Progress-inspired reduced-order geometry.
 - **Time scaling**: select a meaningful fixed `T` (e.g., minutes-hours) and report how `J` changes; later add `T` as a variable with thrust limits.
 - **Dynamics-aware objective**: implemented in baseline form (gravity + J2 linearization each SCP iteration).
   - Remaining work: improve linearization robustness (e.g., trust region/proximal regularization) and report convergence quality vs `K`.
