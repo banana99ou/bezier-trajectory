@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Space-Time Bézier — Interactive Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; }
+  #ui {
+    position: fixed; top: 10px; left: 10px; z-index: 10;
+    background: rgba(20,20,40,0.92); padding: 14px 18px; border-radius: 10px;
+    border: 1px solid #333; min-width: 260px;
+  }
+  #ui h2 { font-size: 14px; margin-bottom: 8px; color: #8af; }
+  #ui label { font-size: 12px; display: block; margin-top: 6px; color: #aaa; }
+  #ui input[type=range] { width: 100%; }
+  #ui .val { float: right; color: #ff0; font-size: 12px; }
+  .toggle { margin-top: 6px; font-size: 12px; cursor: pointer; user-select: none; }
+  .toggle input { margin-right: 5px; }
+  #info {
+    position: fixed; bottom: 10px; left: 10px; z-index: 10;
+    background: rgba(20,20,40,0.92); padding: 10px 14px; border-radius: 8px;
+    border: 1px solid #333; font-size: 11px; font-family: monospace; white-space: pre;
+    max-width: 350px;
+  }
+  #legend {
+    position: fixed; top: 10px; right: 10px; z-index: 10;
+    background: rgba(20,20,40,0.92); padding: 10px 14px; border-radius: 8px;
+    border: 1px solid #333; font-size: 11px;
+  }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <h2>Space-Time Bézier Demo</h2>
+  <label>Curve <span class="val" id="curveInfo" style="color:#0f0"></span></label>
+  <select id="curveSelect" style="width:100%;margin:4px 0 4px;background:#222;color:#eee;border:1px solid #555;padding:3px;font-size:11px"></select>
+  <label>Time t <span class="val" id="tVal">0.0</span></label>
+  <input type="range" id="tSlider" min="0" max="1" step="0.002" value="0">
+  <label>View rotation <span class="val" id="rotVal">-55°</span></label>
+  <input type="range" id="rotSlider" min="-180" max="180" step="1" value="-55">
+  <label>View elevation <span class="val" id="elevVal">22°</span></label>
+  <input type="range" id="elevSlider" min="5" max="85" step="1" value="22">
+  <div class="toggle"><input type="checkbox" id="chkTubes" checked>Obstacle tubes</div>
+  <div class="toggle"><input type="checkbox" id="chkHull" checked>Convex hull</div>
+  <div class="toggle"><input type="checkbox" id="chkSegments" checked>De Casteljau segments</div>
+  <div class="toggle"><input type="checkbox" id="chkHalfspace">Supporting half-spaces</div>
+  <div class="toggle"><input type="checkbox" id="chkDistLines">Distance lines</div>
+  <div class="toggle"><input type="checkbox" id="chkTimePlane" checked>Time-sweep plane</div>
+  <div class="toggle"><input type="checkbox" id="chk2D">Show 2D overlay</div>
+  <label>Subdivisions <span class="val" id="subVal">4</span></label>
+  <input type="range" id="subSlider" min="1" max="16" step="1" value="4">
+  <div style="margin-top:10px">
+    <button id="btnPlay" style="padding:4px 14px;cursor:pointer">▶ Play</button>
+    <button id="btnReset" style="padding:4px 14px;cursor:pointer">Reset</button>
+  </div>
+</div>
+
+<div id="info"></div>
+<div id="legend">
+  <div><span style="color:#e74c3c">●</span> Obstacle A (Red)</div>
+  <div><span style="color:#2980b9">●</span> Obstacle B (Blue)</div>
+  <div><span style="color:#27ae60">●</span> Obstacle C (Green)</div>
+  <div style="margin-top:4px"><span style="color:#ff0">—</span> Bézier trajectory</div>
+  <div><span style="color:#888">□</span> Control polygon</div>
+  <div><span style="color:rgba(255,200,0,0.3)">■</span> Convex hull</div>
+  <div><span style="color:#f0f">—</span> Segment boundaries</div>
+</div>
+
+<canvas id="c"></canvas>
+
+<script>
+// ── Config ───────────────────────────────────────────────
+const T_TOTAL = 10;
+const OBSTACLES = [
+  { pos0: [2.0, 8.0], vel: [0.5, -0.7], r: 0.8, color: '#e74c3c', name: 'A' },
+  { pos0: [6.0, 2.0], vel: [-0.3, 0.5], r: 0.7, color: '#2980b9', name: 'B' },
+  { pos0: [4.5, 5.5], vel: [0.1, -0.3], r: 0.6, color: '#27ae60', name: 'C' },
+];
+// ── Optimized curves from SCP ────────────────────────────
+const CURVES = {
+  'Manual (hand-tuned)': {
+    cp: [[0.5,1.0,0.0],[2.0,1.5,2.0],[6.5,1.0,4.5],[8.5,4.5,7.5],[8.5,8.5,10.0]],
+    N: 4, n_seg: '-', clearance: 0.953,
+  },
+  'N4, 8 seg (SCP)': {
+    cp: [[0.5,1.0,0.0],[1.4934,1.7838,3.3015],[2.1779,2.2327,5.4091],[5.3103,5.3354,7.7286],[8.5,8.5,10.0]],
+    N: 4, n_seg: 8, clearance: 0.327,
+  },
+  'N4, 16 seg (SCP)': {
+    cp: [[0.5,1.0,0.0],[1.7857,2.0485,2.9906],[2.9063,2.8512,5.3689],[5.7418,5.6604,8.1587],[8.5,8.5,10.0]],
+    N: 4, n_seg: 16, clearance: 0.185,
+  },
+  'N6, 8 seg (SCP)': {
+    cp: [[0.4988,0.996,0.0],[1.2006,1.5251,2.5849],[1.9284,2.1485,4.1225],[2.6201,2.6962,5.4539],[4.2684,4.281,6.8946],[6.4097,6.4235,8.3713],[8.4974,8.4994,10.0]],
+    N: 6, n_seg: 8, clearance: 0.317,
+  },
+  'N8, 8 seg (SCP) [best]': {
+    cp: [[0.5,1.0,0.0],[1.0348,1.415,2.1054],[1.5586,1.8176,3.3659],[2.2293,2.3851,4.4441],[2.8934,2.9457,5.5283],[3.8981,3.8881,6.6194],[5.4189,5.4107,7.6997],[6.9503,6.945,8.8188],[8.5,8.5,10.0]],
+    N: 8, n_seg: 8, clearance: 0.353,
+  },
+};
+let currentCurveKey = 'N8, 8 seg (SCP) [best]';
+let CTRL_PTS = CURVES[currentCurveKey].cp;
+
+// ── Math utilities ───────────────────────────────────────
+function comb(n, k) {
+  if (k < 0 || k > n) return 0;
+  let r = 1;
+  for (let i = 0; i < k; i++) r = r * (n - i) / (i + 1);
+  return r;
+}
+
+function bernstein(n, i, t) {
+  return comb(n, i) * Math.pow(t, i) * Math.pow(1 - t, n - i);
+}
+
+function evalBezier(cp, t) {
+  const n = cp.length - 1;
+  let pt = [0, 0, 0];
+  for (let i = 0; i <= n; i++) {
+    const b = bernstein(n, i, t);
+    pt[0] += b * cp[i][0];
+    pt[1] += b * cp[i][1];
+    pt[2] += b * cp[i][2];
+  }
+  return pt;
+}
+
+function bezierCurve(cp, num = 400) {
+  const pts = [];
+  for (let i = 0; i <= num; i++) {
+    pts.push(evalBezier(cp, i / num));
+  }
+  return pts;
+}
+
+// De Casteljau split at parameter u
+function deCasteljauSplit(cp, u) {
+  const n = cp.length - 1;
+  let left = [cp[0].slice()];
+  let right = [cp[n].slice()];
+  let work = cp.map(p => p.slice());
+  for (let r = 1; r <= n; r++) {
+    let next = [];
+    for (let i = 0; i < work.length - 1; i++) {
+      next.push([
+        (1 - u) * work[i][0] + u * work[i + 1][0],
+        (1 - u) * work[i][1] + u * work[i + 1][1],
+        (1 - u) * work[i][2] + u * work[i + 1][2],
+      ]);
+    }
+    left.push(next[0].slice());
+    right.unshift(next[next.length - 1].slice());
+    work = next;
+  }
+  return { left, right };
+}
+
+// Subdivide into nSeg equal-parameter segments
+function subdivide(cp, nSeg) {
+  const segments = [];
+  let remaining = cp.map(p => p.slice());
+  for (let i = 0; i < nSeg - 1; i++) {
+    const u = 1 / (nSeg - i);
+    const { left, right } = deCasteljauSplit(remaining, u);
+    segments.push(left);
+    remaining = right;
+  }
+  segments.push(remaining);
+  return segments;
+}
+
+// Convex hull of 2D projected points (simple gift wrap for display)
+function convexHull2D(points) {
+  if (points.length < 3) return points.map((_, i) => i);
+  // Graham scan on projected points
+  const pts = points.map((p, i) => ({ x: p[0], y: p[1], i }));
+  pts.sort((a, b) => a.x - b.x || a.y - b.y);
+  const cross = (O, A, B) => (A.x - O.x) * (B.y - O.y) - (A.y - O.y) * (B.x - O.x);
+  const lower = [];
+  for (const p of pts) { while (lower.length >= 2 && cross(lower[lower.length-2], lower[lower.length-1], p) <= 0) lower.pop(); lower.push(p); }
+  const upper = [];
+  for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (upper.length >= 2 && cross(upper[upper.length-2], upper[upper.length-1], p) <= 0) upper.pop(); upper.push(p); }
+  upper.pop(); lower.pop();
+  return lower.concat(upper).map(p => p.i);
+}
+
+// ── 3D Projection ───────────────────────────────────────
+let azimuth = -55, elevation = 22;
+const SCALE = 38;
+const SCENE_CENTER = [5, 5, 5];
+
+function project(x, y, z) {
+  // center
+  const cx = x - SCENE_CENTER[0], cy = y - SCENE_CENTER[1], cz = z - SCENE_CENTER[2];
+  const az = azimuth * Math.PI / 180, el = elevation * Math.PI / 180;
+  // rotate around z (azimuth)
+  const rx = cx * Math.cos(az) - cy * Math.sin(az);
+  const ry = cx * Math.sin(az) + cy * Math.cos(az);
+  const rz = cz;
+  // rotate around x (elevation)
+  const ry2 = ry * Math.cos(el) - rz * Math.sin(el);
+  const rz2 = ry * Math.sin(el) + rz * Math.cos(el);
+  return { x: rx * SCALE, y: -rz2 * SCALE, z: ry2 }; // z for depth
+}
+
+// ── Canvas setup ─────────────────────────────────────────
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ── State ────────────────────────────────────────────────
+let tFrac = 0;
+let playing = false;
+let animId = null;
+
+const tSlider = document.getElementById('tSlider');
+const rotSlider = document.getElementById('rotSlider');
+const elevSlider = document.getElementById('elevSlider');
+const subSlider = document.getElementById('subSlider');
+
+// ── Curve selector ──
+const curveSelect = document.getElementById('curveSelect');
+Object.keys(CURVES).forEach(k => {
+  const opt = document.createElement('option');
+  opt.value = k; opt.textContent = k;
+  if (k === currentCurveKey) opt.selected = true;
+  curveSelect.appendChild(opt);
+});
+curveSelect.addEventListener('change', () => {
+  currentCurveKey = curveSelect.value;
+  CTRL_PTS = CURVES[currentCurveKey].cp;
+  draw();
+});
+
+tSlider.addEventListener('input', () => { tFrac = parseFloat(tSlider.value); draw(); });
+rotSlider.addEventListener('input', () => { azimuth = parseFloat(rotSlider.value); draw(); });
+elevSlider.addEventListener('input', () => { elevation = parseFloat(elevSlider.value); draw(); });
+subSlider.addEventListener('input', () => { draw(); });
+
+document.getElementById('btnPlay').addEventListener('click', () => {
+  playing = !playing;
+  document.getElementById('btnPlay').textContent = playing ? '⏸ Pause' : '▶ Play';
+  if (playing) animate();
+});
+document.getElementById('btnReset').addEventListener('click', () => {
+  tFrac = 0; tSlider.value = 0; playing = false;
+  document.getElementById('btnPlay').textContent = '▶ Play';
+  draw();
+});
+
+function animate() {
+  if (!playing) return;
+  tFrac += 0.003;
+  if (tFrac > 1) { tFrac = 0; }
+  tSlider.value = tFrac;
+  draw();
+  requestAnimationFrame(animate);
+}
+
+// ── Drawing helpers ──────────────────────────────────────
+function toScreen(x, y, z) {
+  const p = project(x, y, z);
+  return { x: canvas.width * 0.55 + p.x, y: canvas.height * 0.5 + p.y, z: p.z };
+}
+
+function drawLine3D(p1, p2, color, width = 1, alpha = 1) {
+  const a = toScreen(...p1), b = toScreen(...p2);
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = width;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+function drawCircle3D(center, radius, tVal, color, alpha = 0.3, nPts = 36) {
+  const pts = [];
+  for (let i = 0; i <= nPts; i++) {
+    const th = (i / nPts) * Math.PI * 2;
+    pts.push(toScreen(
+      center[0] + radius * Math.cos(th),
+      center[1] + radius * Math.sin(th),
+      tVal
+    ));
+  }
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.globalAlpha = alpha * 0.3;
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+function drawTube(obs, tMax, color, nRings = 25) {
+  for (let i = 0; i < nRings; i++) {
+    const t1 = (i / nRings) * tMax;
+    const t2 = ((i + 1) / nRings) * tMax;
+    const c1 = [obs.pos0[0] + obs.vel[0] * t1, obs.pos0[1] + obs.vel[1] * t1];
+    const c2 = [obs.pos0[0] + obs.vel[0] * t2, obs.pos0[1] + obs.vel[1] * t2];
+    // draw connecting lines
+    const nL = 12;
+    for (let j = 0; j < nL; j++) {
+      const th = (j / nL) * Math.PI * 2;
+      drawLine3D(
+        [c1[0] + obs.r * Math.cos(th), c1[1] + obs.r * Math.sin(th), t1],
+        [c2[0] + obs.r * Math.cos(th), c2[1] + obs.r * Math.sin(th), t2],
+        color, 0.5, 0.15
+      );
+    }
+    // draw ring at t2
+    drawCircle3D(c2, obs.r, t2, color, 0.2);
+  }
+  // bottom ring
+  drawCircle3D(obs.pos0, obs.r, 0, color, 0.4);
+}
+
+function drawConvexHullFaces(points3d, color, alpha) {
+  // project to screen, draw filled polygon
+  const screenPts = points3d.map(p => toScreen(...p));
+  // get hull indices in screen space
+  const hull = convexHull2D(screenPts);
+  if (hull.length < 3) return;
+  ctx.beginPath();
+  ctx.moveTo(screenPts[hull[0]].x, screenPts[hull[0]].y);
+  for (let i = 1; i < hull.length; i++) {
+    ctx.lineTo(screenPts[hull[i]].x, screenPts[hull[i]].y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.globalAlpha = alpha;
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = alpha * 2;
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+// ── Main draw ────────────────────────────────────────────
+function draw() {
+  const tNow = tFrac * T_TOTAL;
+  const nSub = parseInt(subSlider.value);
+  const showTubes = document.getElementById('chkTubes').checked;
+  const showHull = document.getElementById('chkHull').checked;
+  const showSegments = document.getElementById('chkSegments').checked;
+  const showHalfspace = document.getElementById('chkHalfspace').checked;
+  const showDist = document.getElementById('chkDistLines').checked;
+  const showTimePlane = document.getElementById('chkTimePlane').checked;
+  const show2D = document.getElementById('chk2D').checked;
+
+  document.getElementById('tVal').textContent = tNow.toFixed(1);
+  document.getElementById('rotVal').textContent = azimuth + '°';
+  document.getElementById('elevVal').textContent = elevation + '°';
+  document.getElementById('subVal').textContent = nSub;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // ── Axes ──
+  const axLen = 10;
+  drawLine3D([0,0,0], [axLen,0,0], '#666', 1, 0.4);
+  drawLine3D([0,0,0], [0,axLen,0], '#666', 1, 0.4);
+  drawLine3D([0,0,0], [0,0,T_TOTAL], '#666', 1, 0.4);
+  // axis labels
+  const lx = toScreen(axLen + 0.5, 0, 0);
+  const ly = toScreen(0, axLen + 0.5, 0);
+  const lz = toScreen(0, 0, T_TOTAL + 0.5);
+  ctx.font = '12px monospace'; ctx.fillStyle = '#888';
+  ctx.fillText('x', lx.x, lx.y);
+  ctx.fillText('y', ly.x, ly.y);
+  ctx.fillText('t', lz.x, lz.y);
+
+  // ── Grid on t=0 plane ──
+  for (let i = 0; i <= 10; i += 2) {
+    drawLine3D([i, 0, 0], [i, 10, 0], '#333', 0.5, 0.2);
+    drawLine3D([0, i, 0], [10, i, 0], '#333', 0.5, 0.2);
+  }
+
+  // ── Obstacle tubes ──
+  if (showTubes) {
+    OBSTACLES.forEach(obs => drawTube(obs, T_TOTAL, obs.color));
+  }
+
+  // ── Time-sweep plane ──
+  if (showTimePlane && tNow > 0) {
+    const corners = [[0,0,tNow],[10,0,tNow],[10,10,tNow],[0,10,tNow]];
+    const sc = corners.map(c => toScreen(...c));
+    ctx.beginPath();
+    ctx.moveTo(sc[0].x, sc[0].y);
+    for (let i = 1; i < 4; i++) ctx.lineTo(sc[i].x, sc[i].y);
+    ctx.closePath();
+    ctx.fillStyle = '#fff';
+    ctx.globalAlpha = 0.04;
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.globalAlpha = 0.15;
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // obstacle cross-sections at tNow
+    OBSTACLES.forEach(obs => {
+      const cx = obs.pos0[0] + obs.vel[0] * tNow;
+      const cy = obs.pos0[1] + obs.vel[1] * tNow;
+      drawCircle3D([cx, cy], obs.r, tNow, obs.color, 0.6);
+    });
+  }
+
+  // ── De Casteljau segments ──
+  const segments = subdivide(CTRL_PTS, nSub);
+  if (showSegments) {
+    const segColors = ['#f0f', '#0ff', '#ff0', '#f80', '#8f0', '#08f', '#f08', '#0f8'];
+    segments.forEach((seg, si) => {
+      const curve = bezierCurve(seg, 60);
+      for (let i = 0; i < curve.length - 1; i++) {
+        drawLine3D(curve[i], curve[i+1], segColors[si % segColors.length], 1.5, 0.5);
+      }
+      // segment control points
+      seg.forEach(p => {
+        const sp = toScreen(...p);
+        ctx.beginPath();
+        ctx.arc(sp.x, sp.y, 3, 0, Math.PI * 2);
+        ctx.fillStyle = segColors[si % segColors.length];
+        ctx.globalAlpha = 0.6;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      });
+      // segment control polygon
+      for (let i = 0; i < seg.length - 1; i++) {
+        drawLine3D(seg[i], seg[i+1], segColors[si % segColors.length], 0.5, 0.3);
+      }
+
+      // segment convex hull
+      if (showHull) {
+        drawConvexHullFaces(seg, segColors[si % segColors.length], 0.06);
+      }
+    });
+  }
+
+  // ── Global convex hull ──
+  if (showHull && !showSegments) {
+    drawConvexHullFaces(CTRL_PTS, '#ffc800', 0.08);
+  }
+
+  // ── Supporting half-spaces ──
+  if (showHalfspace) {
+    segments.forEach((seg) => {
+      // centroid of segment control points
+      const centroid = [0, 0, 0];
+      seg.forEach(p => { centroid[0] += p[0]; centroid[1] += p[1]; centroid[2] += p[2]; });
+      centroid[0] /= seg.length; centroid[1] /= seg.length; centroid[2] /= seg.length;
+      const tSeg = centroid[2];
+
+      OBSTACLES.forEach(obs => {
+        const ox = obs.pos0[0] + obs.vel[0] * tSeg;
+        const oy = obs.pos0[1] + obs.vel[1] * tSeg;
+        // direction from obstacle to centroid (in xy)
+        const dx = centroid[0] - ox, dy = centroid[1] - oy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 0.01) return;
+        const nx = dx / dist, ny = dy / dist;
+        // supporting point on obstacle boundary
+        const sx = ox + obs.r * nx, sy = oy + obs.r * ny;
+        // draw half-space line (perpendicular to normal, through supporting point)
+        const hLen = 3;
+        const p1 = [sx - ny * hLen, sy + nx * hLen, tSeg];
+        const p2 = [sx + ny * hLen, sy - nx * hLen, tSeg];
+        drawLine3D(p1, p2, '#ff0', 1, 0.4);
+        // normal arrow
+        drawLine3D([sx, sy, tSeg], [sx + nx * 0.8, sy + ny * 0.8, tSeg], '#ff0', 1.5, 0.6);
+        // shade the feasible side
+        const mid = [(p1[0]+p2[0])/2 + nx*1.5, (p1[1]+p2[1])/2 + ny*1.5, tSeg];
+        const q1 = [p1[0] + nx*3, p1[1] + ny*3, tSeg];
+        const q2 = [p2[0] + nx*3, p2[1] + ny*3, tSeg];
+        const quad = [p1, p2, q2, q1].map(p => toScreen(...p));
+        ctx.beginPath();
+        ctx.moveTo(quad[0].x, quad[0].y);
+        for (let k = 1; k < 4; k++) ctx.lineTo(quad[k].x, quad[k].y);
+        ctx.closePath();
+        ctx.fillStyle = '#ff0';
+        ctx.globalAlpha = 0.04;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      });
+    });
+  }
+
+  // ── Full Bézier trajectory ──
+  const fullCurve = bezierCurve(CTRL_PTS, 400);
+  // ghost full curve
+  for (let i = 0; i < fullCurve.length - 1; i++) {
+    drawLine3D(fullCurve[i], fullCurve[i+1], '#ff0', 2, 0.15);
+  }
+  // traced portion up to tNow
+  for (let i = 0; i < fullCurve.length - 1; i++) {
+    if (fullCurve[i][2] > tNow) break;
+    drawLine3D(fullCurve[i], fullCurve[i+1], '#ff0', 2.5, 1);
+  }
+
+  // ── Control polygon ──
+  for (let i = 0; i < CTRL_PTS.length - 1; i++) {
+    drawLine3D(CTRL_PTS[i], CTRL_PTS[i+1], '#888', 1, 0.5);
+  }
+  CTRL_PTS.forEach((p, i) => {
+    const sp = toScreen(...p);
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = i === 0 ? '#0f0' : i === CTRL_PTS.length - 1 ? '#f00' : '#fff';
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  });
+
+  // ── Current position dot ──
+  // find curve point at tNow
+  let curPt = fullCurve[0];
+  for (let i = 0; i < fullCurve.length; i++) {
+    if (fullCurve[i][2] >= tNow) { curPt = fullCurve[i]; break; }
+  }
+  const sp = toScreen(...curPt);
+  ctx.beginPath();
+  ctx.arc(sp.x, sp.y, 7, 0, Math.PI * 2);
+  ctx.fillStyle = '#fff';
+  ctx.fill();
+  ctx.strokeStyle = '#ff0';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // ── Distance lines ──
+  const dists = [];
+  OBSTACLES.forEach(obs => {
+    const ox = obs.pos0[0] + obs.vel[0] * tNow;
+    const oy = obs.pos0[1] + obs.vel[1] * tNow;
+    const dx = curPt[0] - ox, dy = curPt[1] - oy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const clearance = dist - obs.r;
+    dists.push({ name: obs.name, dist: clearance, color: obs.color });
+
+    if (showDist) {
+      // line from current point to nearest obstacle surface point
+      const nx = dx / dist, ny = dy / dist;
+      const surfPt = [ox + obs.r * nx, oy + obs.r * ny, tNow];
+      drawLine3D(curPt, surfPt, obs.color, 1.5, 0.8);
+      // distance label
+      const mid = toScreen(
+        (curPt[0] + surfPt[0]) / 2, (curPt[1] + surfPt[1]) / 2, tNow
+      );
+      ctx.font = '11px monospace';
+      ctx.fillStyle = clearance < 0 ? '#f00' : obs.color;
+      ctx.fillText(clearance.toFixed(2), mid.x + 5, mid.y - 5);
+    }
+  });
+
+  // ── Compute min clearance over full trajectory ──
+  let minClearances = OBSTACLES.map(() => Infinity);
+  for (const pt of fullCurve) {
+    OBSTACLES.forEach((obs, oi) => {
+      const ox = obs.pos0[0] + obs.vel[0] * pt[2];
+      const oy = obs.pos0[1] + obs.vel[1] * pt[2];
+      const d = Math.sqrt((pt[0]-ox)**2 + (pt[1]-oy)**2) - obs.r;
+      if (d < minClearances[oi]) minClearances[oi] = d;
+    });
+  }
+
+  // ── Info panel ──
+  const cInfo = CURVES[currentCurveKey];
+  document.getElementById('curveInfo').textContent = `clr=${cInfo.clearance.toFixed(3)}`;
+  let info = `Curve: ${currentCurveKey}\n`;
+  info += `  degree=${cInfo.N}, opt_seg=${cInfo.n_seg}, CPs=${CTRL_PTS.length}\n`;
+  info += `  reported clearance: ${cInfo.clearance.toFixed(4)}\n\n`;
+  info += `t = ${tNow.toFixed(2)} / ${T_TOTAL}\n`;
+  info += `pos = (${curPt[0].toFixed(2)}, ${curPt[1].toFixed(2)})\n`;
+  info += `subdivisions = ${nSub}\n\n`;
+  info += `Current clearance:\n`;
+  dists.forEach(d => {
+    const flag = d.dist < 0 ? ' !! COLLISION' : '';
+    info += `  ${d.name}: ${d.dist.toFixed(3)}${flag}\n`;
+  });
+  info += `\nMin clearance (full traj):\n`;
+  OBSTACLES.forEach((obs, oi) => {
+    const flag = minClearances[oi] < 0 ? ' !! COLLISION' : '';
+    info += `  ${obs.name}: ${minClearances[oi].toFixed(3)}${flag}\n`;
+  });
+  document.getElementById('info').textContent = info;
+
+  // ── 2D overlay ──
+  if (show2D) {
+    const ox = 20, oy = canvas.height - 220, sz = 180;
+    // background
+    ctx.fillStyle = 'rgba(10,10,30,0.85)';
+    ctx.fillRect(ox - 5, oy - 5, sz + 10, sz + 10);
+    ctx.strokeStyle = '#444';
+    ctx.strokeRect(ox - 5, oy - 5, sz + 10, sz + 10);
+    const s = sz / 11; // scale: 0-10 maps to 0-sz, with 0.5 margin
+    const tx = v => ox + (v + 0.5) * s;
+    const ty = v => oy + sz - (v + 0.5) * s;
+
+    // obstacles
+    OBSTACLES.forEach(obs => {
+      const cx = obs.pos0[0] + obs.vel[0] * tNow;
+      const cy = obs.pos0[1] + obs.vel[1] * tNow;
+      ctx.beginPath();
+      ctx.arc(tx(cx), ty(cy), obs.r * s, 0, Math.PI * 2);
+      ctx.fillStyle = obs.color;
+      ctx.globalAlpha = 0.3;
+      ctx.fill();
+      ctx.strokeStyle = obs.color;
+      ctx.globalAlpha = 0.8;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    });
+
+    // trajectory
+    ctx.beginPath();
+    ctx.moveTo(tx(fullCurve[0][0]), ty(fullCurve[0][1]));
+    fullCurve.forEach(p => ctx.lineTo(tx(p[0]), ty(p[1])));
+    ctx.strokeStyle = '#ff0';
+    ctx.globalAlpha = 0.3;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // traced
+    ctx.beginPath();
+    ctx.moveTo(tx(fullCurve[0][0]), ty(fullCurve[0][1]));
+    for (const p of fullCurve) {
+      if (p[2] > tNow) break;
+      ctx.lineTo(tx(p[0]), ty(p[1]));
+    }
+    ctx.strokeStyle = '#ff0';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // current pos
+    ctx.beginPath();
+    ctx.arc(tx(curPt[0]), ty(curPt[1]), 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+
+    // label
+    ctx.font = '10px monospace';
+    ctx.fillStyle = '#888';
+    ctx.fillText('2D (x,y)', ox, oy - 8);
+  }
+}
+
+// ── Checkbox listeners ───────────────────────────────────
+['chkTubes','chkHull','chkSegments','chkHalfspace','chkDistLines','chkTimePlane','chk2D'].forEach(id => {
+  document.getElementById(id).addEventListener('change', draw);
+});
+
+// Initial draw
+draw();
+</script>
+</body>
+</html>
