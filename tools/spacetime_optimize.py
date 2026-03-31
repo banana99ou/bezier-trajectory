@@ -418,7 +418,7 @@ def scenario_wall():
         p1=[2.5, 0.0], p2=[2.5, 10.0],
         thickness=0.5, spacing=0.8,
         color='#e67e22', name_prefix='W',
-        t_start=0.0, t_end=5.0,
+        t_start=0.0, t_end=8.0,
     )
     other_obs = [
         {'pos0': [7.0, 3.0], 'vel': [0.0, 0.3], 'r': 0.6, 'color': '#2980b9', 'name': 'M1'},
