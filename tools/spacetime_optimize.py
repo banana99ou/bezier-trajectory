@@ -182,19 +182,65 @@ def build_energy_objective(N, dim):
     return 0.5 * (H + H.T)
 
 
+def build_initial_guess(p_start, p_end, n_cp, init_curve=None):
+    """
+    Build the initial control polygon for SCP.
+
+    The default is a straight line in space-time. For 2D spatial demos we can
+    optionally add a quadratic-looking lateral bow so the initial curve swings
+    toward a corner instead of passing through the middle of the workspace.
+    """
+    p_start = np.asarray(p_start, dtype=float)
+    p_end = np.asarray(p_end, dtype=float)
+    s_vals = np.linspace(0.0, 1.0, n_cp)
+    P = np.array([(1.0 - s) * p_start + s * p_end for s in s_vals])
+
+    if not init_curve or init_curve.get('mode', 'straight') == 'straight':
+        return P
+
+    if init_curve.get('mode') != 'quadratic_bow':
+        raise ValueError(f"Unknown init_curve mode: {init_curve.get('mode')}")
+
+    spatial_dim = p_start.size - 1
+    if spatial_dim < 2:
+        return P
+
+    bow = float(init_curve.get('bow', 0.0))
+    if bow <= 0.0:
+        return P
+
+    chord = p_end[:2] - p_start[:2]
+    chord_norm = np.linalg.norm(chord)
+    if chord_norm < 1e-12:
+        return P
+
+    normal = np.array([-chord[1], chord[0]], dtype=float) / chord_norm
+    workspace_center = init_curve.get('workspace_center')
+    if workspace_center is not None:
+        workspace_center = np.asarray(workspace_center, dtype=float)
+        midpoint = 0.5 * (p_start[:2] + p_end[:2])
+        if np.dot(workspace_center - midpoint, normal) > 0.0:
+            normal *= -1.0
+    normal *= float(init_curve.get('side', 1.0))
+
+    bump = bow * (4.0 * s_vals * (1.0 - s_vals))
+    P[:, :2] += bump[:, None] * normal
+    return P
+
+
 # ══════════════════════════════════════════════════════════════════
 # SCP loop
 # ══════════════════════════════════════════════════════════════════
 
 def optimize_spacetime(N, dim, p_start, p_end, obstacles, n_seg=8,
                        max_iter=30, tol=1e-6, scp_prox_weight=0.5,
-                       verbose=True):
+                       verbose=True, init_curve=None):
     """Successive convexification optimizer for space-time Bézier."""
     n_cp = N + 1
     p_start, p_end = np.array(p_start), np.array(p_end)
 
-    # Initialize: straight line in space-time
-    P = np.array([(1 - i/N) * p_start + (i/N) * p_end for i in range(n_cp)])
+    # Initialize with either a straight line or a bowed demo curve.
+    P = build_initial_guess(p_start, p_end, n_cp, init_curve=init_curve)
 
     # Precompute (using baseline De Casteljau)
     A_list = segment_matrices_equal_params(N, n_seg)
@@ -324,6 +370,12 @@ def scenario_original():
     return {
         'name': 'original',
         'title': '3 Moving Obstacles',
+        'init_curve': {
+            'mode': 'quadratic_bow',
+            'bow': 2.3,
+            'side': 1.0,
+            'workspace_center': [5.0, 5.0],
+        },
         'obstacles': [
             {'pos0': [2.0, 8.0], 'vel': [0.5, -0.7], 'r': 0.8, 'color': '#e74c3c', 'name': 'A'},
             {'pos0': [6.0, 2.0], 'vel': [-0.3, 0.5], 'r': 0.7, 'color': '#2980b9', 'name': 'B'},
@@ -339,6 +391,12 @@ def scenario_diverse():
     return {
         'name': 'diverse',
         'title': 'Diverse Moving Obstacles',
+        'init_curve': {
+            'mode': 'quadratic_bow',
+            'bow': 3.2,
+            'side': 1.0,
+            'workspace_center': [5.0, 5.0],
+        },
         'obstacles': [
             {'pos0': [1.0, 6.0], 'vel': [0.8, -0.1], 'r': 0.6, 'color': '#e74c3c', 'name': 'A'},
             {'pos0': [5.0, 5.0], 'vel': [0.05, -0.15], 'r': 1.0, 'color': '#2980b9', 'name': 'B'},
@@ -357,8 +415,8 @@ def scenario_diverse():
 def scenario_wall():
     """Wall that disappears at t=5. Curve should wait then pass through."""
     wall_obs = make_wall(
-        p1=[4.5, 0.0], p2=[4.5, 10.0],
-        thickness=0.5, spacing=0.6,
+        p1=[2.5, 0.0], p2=[2.5, 10.0],
+        thickness=0.5, spacing=0.8,
         color='#e67e22', name_prefix='W',
         t_start=0.0, t_end=5.0,
     )
@@ -369,6 +427,7 @@ def scenario_wall():
     return {
         'name': 'wall',
         'title': 'Disappearing Wall (t<5)',
+        'init_curve': {'mode': 'straight'},
         'obstacles': wall_obs + other_obs,
         'start': [1.0, 5.0, 0.0],
         'end': [8.0, 5.0, 10.0],
@@ -384,6 +443,7 @@ def optimize_scenario(scenario, configs):
     obstacles = scenario['obstacles']
     p_start = scenario['start']
     p_end = scenario['end']
+    init_curve = scenario.get('init_curve')
 
     results = {}
     for N, n_seg in configs:
@@ -394,7 +454,8 @@ def optimize_scenario(scenario, configs):
         P_opt = optimize_spacetime(
             N=N, dim=3, p_start=p_start, p_end=p_end,
             obstacles=obstacles, n_seg=n_seg,
-            max_iter=50, scp_prox_weight=0.3,
+            max_iter=200, scp_prox_weight=0.3,
+            init_curve=init_curve,
         )
 
         clearance = compute_min_clearance(P_opt, obstacles, dim=3, n_eval=3000)
@@ -420,6 +481,7 @@ def optimize_scenario(scenario, configs):
         'name': scenario['name'], 'title': scenario['title'],
         'best': best_key, 'obstacles': obstacles,
         'start': p_start, 'end': p_end, 'T': scenario['T'],
+        'init_curve': init_curve,
         'results': results,
     }
 
