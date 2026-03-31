@@ -29,7 +29,7 @@
     background: rgba(20,20,40,0.92); padding: 10px 14px; border-radius: 8px;
     border: 1px solid #333; font-size: 11px;
   }
-  canvas { display: block; }
+  canvas { display: block; cursor: grab; }
   button { padding: 4px 14px; cursor: pointer; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px; }
   button:hover { background: #444; }
 </style>
@@ -980,13 +980,17 @@ let CTRL_PTS = [];
 let T_TOTAL = 10;
 let tFrac = 0, playing = false;
 let azimuth = -55, elevation = 22;
-const SCALE = 38, SCENE_CENTER = [5, 5, 5];
+let viewScale = 38, panX = 0, panY = 0;
+let dragMode = null, lastMouseX = 0, lastMouseY = 0;
+const SCENE_CENTER = [5, 5, 5];
 
 // ══════════════════════════════════════════════════════════════
 // Math
 // ══════════════════════════════════════════════════════════════
 function comb(n, k) { if (k < 0 || k > n) return 0; let r = 1; for (let i = 0; i < k; i++) r = r * (n - i) / (i + 1); return r; }
 function bernstein(n, i, t) { return comb(n, i) * Math.pow(t, i) * Math.pow(1 - t, n - i); }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function wrapAngle(deg) { return ((deg + 180) % 360 + 360) % 360 - 180; }
 
 function evalBezier(cp, t) {
   const n = cp.length - 1; let pt = new Array(cp[0].length).fill(0);
@@ -1034,8 +1038,10 @@ function convexHull2D(points) {
 // ══════════════════════════════════════════════════════════════
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
+function updateCanvasCursor() { canvas.style.cursor = dragMode ? 'grabbing' : 'grab'; }
 function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
 window.addEventListener('resize', () => { resize(); draw(); }); resize();
+updateCanvasCursor();
 
 function project(x, y, z) {
   const cx = x - SCENE_CENTER[0], cy = y - SCENE_CENTER[1], cz = z - SCENE_CENTER[2];
@@ -1044,9 +1050,9 @@ function project(x, y, z) {
   const ry = cx * Math.sin(az) + cy * Math.cos(az);
   const ry2 = ry * Math.cos(el) - cz * Math.sin(el);
   const rz2 = ry * Math.sin(el) + cz * Math.cos(el);
-  return { x: rx * SCALE, y: -rz2 * SCALE, z: ry2 };
+  return { x: rx * viewScale, y: -rz2 * viewScale, z: ry2 };
 }
-function toScreen(x, y, z) { const p = project(x, y, z); return { x: canvas.width * 0.55 + p.x, y: canvas.height * 0.5 + p.y, z: p.z }; }
+function toScreen(x, y, z) { const p = project(x, y, z); return { x: canvas.width * 0.55 + panX + p.x, y: canvas.height * 0.5 + panY + p.y, z: p.z }; }
 
 // ══════════════════════════════════════════════════════════════
 // Drawing helpers
@@ -1112,9 +1118,11 @@ function draw() {
   const show2D = document.getElementById('chk2D').checked;
 
   document.getElementById('tVal').textContent = tNow.toFixed(1);
-  document.getElementById('rotVal').textContent = azimuth;
-  document.getElementById('elevVal').textContent = elevation;
+  document.getElementById('rotVal').textContent = azimuth.toFixed(1);
+  document.getElementById('elevVal').textContent = elevation.toFixed(1);
   document.getElementById('subVal').textContent = nSub;
+  document.getElementById('rotSlider').value = azimuth;
+  document.getElementById('elevSlider').value = elevation;
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -1339,6 +1347,47 @@ document.getElementById('elevSlider').addEventListener('input', function() { ele
 document.getElementById('subSlider').addEventListener('input', draw);
 ['chkTubes','chkHull','chkSegments','chkHalfspace','chkDistLines','chkTimePlane','chk2D'].forEach(id =>
   document.getElementById(id).addEventListener('change', draw));
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('mousedown', e => {
+  if (e.button === 0) dragMode = 'pan';
+  else if (e.button === 2) dragMode = 'rotate';
+  else return;
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+  updateCanvasCursor();
+  e.preventDefault();
+});
+window.addEventListener('mousemove', e => {
+  if (!dragMode) return;
+  if (e.buttons === 0) {
+    dragMode = null;
+    updateCanvasCursor();
+    return;
+  }
+  const dx = e.clientX - lastMouseX;
+  const dy = e.clientY - lastMouseY;
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+  if (dragMode === 'pan') {
+    panX += dx;
+    panY += dy;
+  } else {
+    azimuth = wrapAngle(azimuth + dx * 0.6);
+    elevation = clamp(elevation - dy * 0.35, 5, 85);
+  }
+  draw();
+  e.preventDefault();
+});
+window.addEventListener('mouseup', () => {
+  dragMode = null;
+  updateCanvasCursor();
+});
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  viewScale = clamp(viewScale * Math.exp(-e.deltaY * 0.0015), 16, 140);
+  draw();
+}, { passive: false });
 
 document.getElementById('btnPlay').addEventListener('click', () => {
   playing = !playing;
