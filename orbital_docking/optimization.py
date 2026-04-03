@@ -9,6 +9,8 @@ import time
 import warnings
 from scipy.optimize import minimize, Bounds, LinearConstraint
 
+import bezier_opt as _bezier_opt_rs
+
 from .bezier import BezierCurve
 from .de_casteljau import segment_matrices_equal_params
 from .constraints import build_koz_constraints, build_boundary_constraints
@@ -447,315 +449,45 @@ def optimize_orbital_docking(
         elif verbose:
             print(f"[Cache miss] Running optimization for n_seg={n_seg}...")
     
-    P = P_init.copy()
-    Np1, dim = P.shape
-    N = Np1 - 1
-
-    # Get segment matrices
-    t_seg_start = time.time()
-    A_list = segment_matrices_equal_params(N, n_seg)
-    t_seg_end = time.time()
-
-    # Set up bounds: fix endpoints for position constraints
-    t_bounds_start = time.time()
-    x0 = P.reshape(-1)
-    lb = np.full_like(x0, -np.inf)
-    ub = np.full_like(x0, np.inf)
-    lb[:dim] = ub[:dim] = x0[:dim]  # Lock P0
-    lb[-dim:] = ub[-dim:] = x0[-dim:]  # Lock PN
-    bounds = Bounds(lb, ub)
-    t_bounds_end = time.time()
-
-    # Fixed time-scaling (arbitrary baseline)
-    T = float(TRANSFER_TIME_S)
-
-    # Prograde angular-momentum reference (optional, dim must be 3)
-    h_hat = None
-    if enforce_prograde and v0 is not None and P.shape[1] == 3:
-        r0 = P[0]
-        v0_phys = np.asarray(v0, dtype=float)
-        h0 = np.cross(r0, v0_phys)
-        h0_norm = np.linalg.norm(h0)
-        if h0_norm > 0.0:
-            h_hat = h0 / h0_norm
-        else:
-            h_hat = None
-
-    # Build boundary constraints
-    t_bc_start = time.time()
-    boundary_constraints = build_boundary_constraints(P, v0, v1, a0, a1, dim, T=T)
-    t_bc_end = time.time()
-
-    # Store results
-    info = {"iterations": 0, "feasible": False, "cost": np.inf}
-    keep_history = bool(store_history or debug)
-    history = []  # list[dict]
-
-    # Iterative optimization (SCP-style):
-    # - update KOZ supporting half-spaces based on current solution
-    # - update linearized gravity+J2 objective based on current solution
-    last_delta = None
-    termination_reason = "not_run"
-    for it in range(1, max_iter + 1):
-        t_iter_start = time.time()
-        # Build KOZ constraints based on current control points
-        t_koz_start = time.time()
-        koz_constraint = build_koz_constraints(A_list, P, r_e, dim)
-        t_koz_end = time.time()
-
-        # Combine all constraints
-        all_constraints = [koz_constraint] + boundary_constraints
-
-        # Prograde angular-momentum constraints via SCP linearization
-        if h_hat is not None:
-            N_loc = N
-            dim = P.shape[1]
-            x_ref = P.reshape(-1)
-            n_vars = x_ref.size
-            # Exclude exact endpoints to avoid redundancy with boundary constraints
-            taus = np.linspace(0.0, 1.0, max(3, int(prograde_n_samples) + 2))[1:-1]
-            prograde_constraints = []
-            for tau in taus:
-                w = _bernstein_basis(N_loc, tau)  # (N+1,)
-                w_der = _bernstein_derivative_weights(N_loc, tau)  # (N+1,)
-
-                # Reference r, v at this tau
-                r_ref = w @ P  # (3,)
-                v_tau_ref = w_der @ P  # dr/dtau
-                v_ref = v_tau_ref / T
-                h_ref = np.cross(r_ref, v_ref)
-                c_ref = float(h_hat @ h_ref)
-
-                # Gradient wrt control-point vector x = vec(P):
-                #   grad = R^T (h_hat × v_ref) + V^T (r_ref × h_hat)
-                alpha = np.cross(h_hat, v_ref)  # shape (3,)
-                beta = np.cross(r_ref, h_hat)   # shape (3,)
-                g = np.zeros(n_vars, dtype=float)
-                for j in range(N_loc + 1):
-                    g_block = w[j] * alpha + (w_der[j] / T) * beta
-                    start = 3 * j
-                    g[start:start + 3] = g_block
-
-                # Linearized constraint: c(x) ≈ c_ref + g·(x - x_ref) >= 0
-                rhs = -c_ref + float(g @ x_ref)
-                A_row = g.reshape(1, -1)
-                prograde_constraints.append(
-                    LinearConstraint(A_row, rhs, np.full(1, np.inf))
-                )
-
-            all_constraints.extend(prograde_constraints)
-
-        # Build quadratic objective for control acceleration with gravity+J2 linearized about P
-        x_ref = P.reshape(-1)
-        H, f, c_const, _diag = _build_ctrl_accel_quadratic(
-            P,
-            T=T,
-            sample_count=sample_count,
-            objective=objective_mode,
-            irls_eps=dv_irls_eps,
-            geom_reg=dv_geom_reg,
-        )
-        if float(scp_prox_weight) > 0.0:
-            # Proximal regularization around current SCP iterate:
-            #   + (lambda/2) ||x - x_ref||^2
-            # expands to:
-            #   + (lambda/2) x^T x - lambda x_ref^T x + const
-            lam = float(scp_prox_weight)
-            H = H + lam * np.eye(H.shape[0], dtype=H.dtype)
-            f = f - lam * x_ref
-            c_const += 0.5 * lam * float(x_ref @ x_ref)
-
-        def obj_fn(x):
-            return 0.5 * float(x @ (H @ x)) + float(f @ x)
-
-        def gradient(x):
-            return (H @ x) + f
-
-        def hessian(_x):
-            return H
-
-        # Solve
-        t_opt_start = time.time()
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore")
-            res = minimize(
-                obj_fn,
-                x_ref,
-                method='trust-constr',
-                jac=gradient,
-                hess=hessian,
-                constraints=all_constraints,
-                bounds=bounds,
-                options={'maxiter': 50, 'gtol': 1e-8, 'disp': False}
-            )
-        t_opt_end = time.time()
-
-        x_new = res.x
-        trust_clipped = False
-        trust_step_norm = float(np.linalg.norm(x_new - x_ref))
-        if float(scp_trust_radius) > 0.0 and np.isfinite(trust_step_norm):
-            radius = float(scp_trust_radius)
-            if trust_step_norm > radius and trust_step_norm > 1e-15:
-                alpha = radius / trust_step_norm
-                x_new = x_ref + alpha * (x_new - x_ref)
-                trust_clipped = True
-                trust_step_norm = radius
-
-        P_new = x_new.reshape(Np1, dim)
-        delta = np.linalg.norm(P_new - P)
-        last_delta = float(delta)
-        P = P_new
-
-        t_iter_end = time.time()
-        if debug:
-            if it % 100 == 0:
-                # Note: res.fun is the constant-dropped quadratic objective; it may be negative.
-                cost_true_iter = float(res.fun) + float(c_const)
-                print(f"N_seg={n_seg}, Iter {it}: cost_no_const={res.fun:.6e}, cost_true={cost_true_iter:.6e}, delta={delta:.6e}")
-                print(f"Time taken for iteration {it}: {t_iter_end - t_iter_start:.2f} seconds")
-            #     # print(f"Time taken for koz constraints: {t_koz_end - t_koz_start:.2f} seconds")
-            #     # print(f"Time taken for boundary constraints: {t_bc_end - t_bc_start:.2f} seconds")
-            #     # print(f"Time taken for segment matrices: {t_seg_end - t_seg_start:.2f} seconds")
-            #     # print(f"Time taken for bounds: {t_bounds_end - t_bounds_start:.2f} seconds")
-                print(f"Time taken for optimization: {t_opt_end - t_opt_start:.2f} seconds")
-
-        if keep_history:
-            x_now = P.reshape(-1)
-            # Quick geometry metrics (apoapsis growth detection)
-            hs = max(20, int(history_samples))
-            curve_now = BezierCurve(P)
-            ts_h = np.linspace(0.0, 1.0, hs)
-            pts_h = np.array([curve_now.point(t) for t in ts_h])
-            radii_h = np.linalg.norm(pts_h, axis=1)
-            r_min_h = float(np.min(radii_h))
-            r_max_h = float(np.max(radii_h))
-
-            # Constraint health (trust-constr exposes some fields when available)
-            res_constr_violation = getattr(res, "constr_violation", None)
-            res_optimality = getattr(res, "optimality", None)
-
-            bc_viol = []
-            for bc in boundary_constraints:
-                bc_viol.append(_linear_constraint_violation(bc, x_now))
-            bc_max_viol = float(np.max(bc_viol)) if bc_viol else 0.0
-
-            koz_max_viol = _linear_constraint_violation(koz_constraint, x_now)
-            koz_margins = _koz_margin_stats(koz_constraint, x_now)
-
-            # Boundary velocity residuals in physical units (if targets provided)
-            v0_rel_err = None
-            v1_rel_err = None
-            Tphys = float(T)
-            if v0 is not None:
-                v0_phys = N * (P[1] - P[0]) / Tphys
-                den = max(float(np.linalg.norm(v0)), 1e-12)
-                v0_rel_err = float(np.linalg.norm(v0_phys - v0) / den)
-            if v1 is not None:
-                v1_phys = N * (P[-1] - P[-2]) / Tphys
-                den = max(float(np.linalg.norm(v1)), 1e-12)
-                v1_rel_err = float(np.linalg.norm(v1_phys - v1) / den)
-
-            history.append(
-                {
-                    "it": int(it),
-                    "delta_P": float(delta),
-                    "res_success": bool(getattr(res, "success", False)),
-                    "res_status": int(getattr(res, "status", -1)) if getattr(res, "status", None) is not None else -1,
-                    "res_message": str(getattr(res, "message", "")),
-                    "res_nit": int(getattr(res, "nit", -1)) if getattr(res, "nit", None) is not None else -1,
-                    "res_constr_violation": None if res_constr_violation is None else float(res_constr_violation),
-                    "res_optimality": None if res_optimality is None else float(res_optimality),
-                    "objective_no_const": float(res.fun),
-                    "objective_true": float(res.fun) + float(c_const),
-                    "r_min_km": r_min_h,
-                    "r_max_km": r_max_h,
-                    "koz_max_violation": float(koz_max_viol),
-                    "koz_n_rows": int(koz_margins["n_rows"]),
-                    "koz_min_margin": float(koz_margins["min_margin"]),
-                    "koz_p01_margin": float(koz_margins["p01_margin"]),
-                    "koz_p05_margin": float(koz_margins["p05_margin"]),
-                    "koz_median_margin": float(koz_margins["median_margin"]),
-                    "bc_max_violation": float(bc_max_viol),
-                    "bc_v0_rel_err": v0_rel_err,
-                    "bc_v1_rel_err": v1_rel_err,
-                    "t_iter_s": float(t_iter_end - t_iter_start),
-                    "t_koz_s": float(t_koz_end - t_koz_start),
-                    "t_opt_s": float(t_opt_end - t_opt_start),
-                    "trust_step_norm": trust_step_norm,
-                    "trust_clipped": bool(trust_clipped),
-                }
-            )
-
-        if delta < tol:
-            termination_reason = "converged_delta_below_tol"
-            break
-        if it >= max_iter:
-            termination_reason = "stopped_max_iter"
-
-    # Final feasibility check
-    curve = BezierCurve(P)
-    ts_check = np.linspace(0, 1, 1000)
-    pts = np.array([curve.point(t) for t in ts_check])
-    radii = np.linalg.norm(pts, axis=1)
-    min_radius = float(np.min(radii))
-
-    # Compute rigorous objective values at the final solution.
-    # - cost_no_const: quadratic part used by the solver (can be negative)
-    # - cost_true_energy: full least-squares energy (>= 0) including constant term
-    x_final = P.reshape(-1)
-    Hf, ff, cf, _ = _build_ctrl_accel_quadratic(
-        P,
-        T=T,
+    # ---- Rust backend ----
+    P_opt, rust_info = _bezier_opt_rs.optimize_orbital_docking(
+        p_init=P_init,
+        n_seg=n_seg,
+        r_e=r_e,
+        max_iter=max_iter,
+        tol=tol,
+        v0=v0, v1=v1, a0=a0, a1=a1,
         sample_count=sample_count,
-        objective=objective_mode,
-        irls_eps=dv_irls_eps,
-        geom_reg=dv_geom_reg,
+        objective_mode=objective_mode,
+        dv_irls_eps=dv_irls_eps,
+        dv_geom_reg=dv_geom_reg,
+        scp_prox_weight=scp_prox_weight,
+        scp_trust_radius=scp_trust_radius,
+        enforce_prograde=enforce_prograde,
+        prograde_n_samples=prograde_n_samples,
     )
-    cost_no_const = 0.5 * float(x_final @ (Hf @ x_final)) + float(ff @ x_final)
-    cost_true_energy = cost_no_const + float(cf)
+    P = np.asarray(P_opt)
+    info = dict(rust_info)
 
-    # Physically interpretable trajectory metrics (using the same fixed T and gravity model)
-    ts_metrics = np.linspace(0.0, 1.0, 300)
-    a_geom_km_s2 = np.array([curve.acceleration(t) for t in ts_metrics]) / (T**2)
-    from .constants import EARTH_RADIUS_KM, EARTH_J2, EARTH_MU_SCALED
-    a_grav_km_s2 = np.array([_accel_total(curve.point(t), EARTH_MU_SCALED, EARTH_RADIUS_KM, EARTH_J2) for t in ts_metrics])
-    a_u_m_s2 = np.linalg.norm(a_geom_km_s2 - a_grav_km_s2, axis=1) * 1e3
-    max_control_accel_ms2 = float(np.max(a_u_m_s2))
-    mean_control_accel_ms2 = float(np.mean(a_u_m_s2))
+    # Fill in keys not provided by Rust
+    info["elapsed_time"] = time.time() - t0
+    info["max_iterations"] = int(max_iter)
+    info["accel"] = info.get("max_control_accel_ms2", 0.0)
+    info["T_transfer_s"] = float(TRANSFER_TIME_S)
+    info["sample_count"] = int(sample_count)
+    info["objective"] = str(objective_mode)
+    info["scp_prox_weight"] = float(scp_prox_weight)
+    info["scp_trust_radius"] = float(scp_trust_radius)
+    if info.get("iterations", max_iter) < max_iter:
+        info["termination_reason"] = "converged_delta_below_tol"
+    else:
+        info["termination_reason"] = "stopped_max_iter"
 
-    # Delta-v proxy (m/s): ∫ ||u(t)|| dt = T ∫_0^1 ||u(τ)|| dτ
-    dv_proxy_m_s = float(T) * float(np.trapezoid(a_u_m_s2, ts_metrics))
+    it = info["iterations"]
+    # ---- verbose + cache (shared tail) ----
 
     if verbose:
-        print(f"min_radius: {min_radius:.6e}, r_e: {r_e:.6e}, iterations: {it}")
-
-    info.update({
-        "iterations": it,
-        "max_iterations": int(max_iter),
-        "termination_reason": termination_reason,
-        "final_delta_norm": last_delta,
-        "feasible": min_radius >= r_e - 1e-6,
-        "min_radius": min_radius,
-        # Keep legacy keys but redefine them rigorously:
-        # - cost: true nonnegative least-squares energy
-        # - accel: max control acceleration magnitude (m/s^2)
-        "cost": cost_true_energy,
-        "cost_no_const": cost_no_const,
-        "cost_true_energy": cost_true_energy,
-        "accel": max_control_accel_ms2,
-        "max_control_accel_ms2": max_control_accel_ms2,
-        "mean_control_accel_ms2": mean_control_accel_ms2,
-        "dv_proxy_m_s": dv_proxy_m_s,
-        "T_transfer_s": float(T),
-        "sample_count": int(sample_count),
-        "objective": str(objective_mode),
-        "scp_prox_weight": float(scp_prox_weight),
-        "scp_trust_radius": float(scp_trust_radius),
-        "elapsed_time": time.time() - t0
-    })
-    if keep_history:
-        info["history"] = history
-        info["history_samples"] = int(max(20, int(history_samples)))
+        print(f"min_radius: {info.get('min_radius', 'N/A')}, r_e: {r_e:.6e}, iterations: {it}")
 
     # Save to cache
     if use_cache:
