@@ -494,6 +494,8 @@ def optimize_orbital_docking(
     # Iterative optimization (SCP-style):
     # - update KOZ supporting half-spaces based on current solution
     # - update linearized gravity+J2 objective based on current solution
+    last_delta = None
+    termination_reason = "not_run"
     for it in range(1, max_iter + 1):
         t_iter_start = time.time()
         # Build KOZ constraints based on current control points
@@ -601,6 +603,7 @@ def optimize_orbital_docking(
 
         P_new = x_new.reshape(Np1, dim)
         delta = np.linalg.norm(P_new - P)
+        last_delta = float(delta)
         P = P_new
 
         t_iter_end = time.time()
@@ -684,7 +687,10 @@ def optimize_orbital_docking(
             )
 
         if delta < tol:
+            termination_reason = "converged_delta_below_tol"
             break
+        if it >= max_iter:
+            termination_reason = "stopped_max_iter"
 
     # Final feasibility check
     curve = BezierCurve(P)
@@ -725,6 +731,9 @@ def optimize_orbital_docking(
 
     info.update({
         "iterations": it,
+        "max_iterations": int(max_iter),
+        "termination_reason": termination_reason,
+        "final_delta_norm": last_delta,
         "feasible": min_radius >= r_e - 1e-6,
         "min_radius": min_radius,
         # Keep legacy keys but redefine them rigorously:

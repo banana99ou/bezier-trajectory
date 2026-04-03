@@ -57,6 +57,7 @@ from orbital_docking import (
     generate_initial_control_points,
     create_trajectory_comparison_figure,
     create_performance_figure,
+    create_multi_order_performance_figure,
     create_acceleration_figure,
     create_time_vs_order_figure,
     compute_profile_ylims
@@ -526,6 +527,20 @@ def main() -> None:
 
     fig_time_order = create_time_vs_order_figure(calculation_times, optimization_results)
     fig_time_order.savefig(FIGURE_DIR / "time_vs_order.png", dpi=300)
+
+    # Combined performance figure across all requested curve orders.
+    if len(args.N) > 1:
+        results_by_order = {}
+        if 2 in args.N:
+            results_by_order[2] = results_N2
+        if 3 in args.N:
+            results_by_order[3] = results_N3
+        if 4 in args.N:
+            results_by_order[4] = results_N4
+        if results_by_order:
+            fig_multi_perf = create_multi_order_performance_figure(results_by_order)
+            fig_multi_perf.savefig(FIGURE_DIR / "performance_multi_order.png", dpi=300)
+
     if args.show:
         plt.show()
     else:

@@ -22,3 +22,15 @@ tolerances), update the golden values so the regression test reflects the new ba
 
 Do **not** update the golden file to make a failing test pass unless you have explicitly
 changed the optimizer or scenario and accept the new baseline.
+
+## J2 reference data
+
+`j2_reference/egm2008_degree2_samples.json` stores a small offline fixture for the J2 validation suite.
+It is derived from the public `EGM-08norm100.txt` coefficient table by extracting the normalized `C20`
+term and generating deterministic sample accelerations through an independent scalar-potential path.
+
+Refresh intentionally with:
+
+```bash
+python tools/fetch_j2_reference_data.py --output tests/data/j2_reference/egm2008_degree2_samples.json
+```
