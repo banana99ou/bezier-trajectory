@@ -2,7 +2,9 @@
 Visualization functions for orbital docking trajectories.
 """
 
+import json
 import os
+import time
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
@@ -19,7 +21,72 @@ ISS_MARKER = "P"     # station-like filled-plus marker
 
 # Earth 3D model (NASA): under repo assets/models, used when available
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EARTH_GLB_PATH = os.path.join(_REPO_ROOT, "assets", "models", "earth_n@asa.glb")
+EARTH_GLB_PATH = os.path.join(_REPO_ROOT, "assets", "models", "earth_nasa.glb")
+DEBUG_LOG_PATH = os.path.join(_REPO_ROOT, ".cursor", "debug-90cb20.log")
+DEBUG_SESSION_ID = "90cb20"
+_EARTH_MESH_CACHE = None
+
+
+def _debug_log(run_id, hypothesis_id, location, message, data):
+    """Append one NDJSON debug log line for this debug session."""
+    try:
+        os.makedirs(os.path.dirname(DEBUG_LOG_PATH), exist_ok=True)
+        timestamp = int(time.time() * 1000)
+        payload = {
+            "sessionId": DEBUG_SESSION_ID,
+            "id": f"{run_id}:{hypothesis_id}:{timestamp}",
+            "timestamp": timestamp,
+            "location": location,
+            "message": message,
+            "data": data,
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+        }
+        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, separators=(",", ":"), default=str) + "\n")
+    except Exception:
+        pass
+
+
+def _infer_texture_up_axis(mesh, verts) -> dict | None:
+    """
+    Infer which world axis corresponds to the texture's north-south direction.
+    """
+    visual = getattr(mesh, "visual", None)
+    if visual is None or not hasattr(visual, "uv"):
+        return None
+
+    uv = np.asarray(visual.uv, dtype=float)
+    if uv.ndim != 2 or uv.shape[1] != 2 or uv.shape[0] != verts.shape[0]:
+        return None
+
+    # GLTF/GLB UVs use v=1 at the top of the image; larger v means farther north
+    # for this Earth atlas, so the previous sign convention inverted the poles.
+    northness = uv[:, 1] - 0.5
+    if np.std(northness) < 1e-12:
+        return None
+
+    norms = np.linalg.norm(verts, axis=1)
+    unit_verts = np.divide(
+        verts,
+        norms[:, None],
+        out=np.zeros_like(verts),
+        where=norms[:, None] > 1e-12,
+    )
+    correlations = {}
+    for idx, axis_name in enumerate(("x", "y", "z")):
+        coord = unit_verts[:, idx]
+        if np.std(coord) < 1e-12:
+            correlations[axis_name] = 0.0
+        else:
+            correlations[axis_name] = float(np.corrcoef(coord, northness)[0, 1])
+
+    dominant_axis = max(correlations, key=lambda k: abs(correlations[k]))
+    return {
+        "dominant_axis": dominant_axis,
+        "north_positive": bool(correlations[dominant_axis] > 0.0),
+        "correlations": correlations,
+    }
 
 
 def _safe_set_window_title(fig, title: str) -> None:
@@ -35,6 +102,73 @@ def _safe_set_window_title(fig, title: str) -> None:
             manager.set_window_title(title)
     except Exception:
         pass
+
+
+def _sample_texture_face_colors(mesh, faces, run_id=None) -> np.ndarray | None:
+    """
+    Convert a textured trimesh visual into per-face RGBA colors for Matplotlib.
+
+    Matplotlib's Poly3DCollection cannot render GLB/PBR materials directly, so we
+    sample the texture at each triangle's centroid UV and use that as the face color.
+    """
+    visual = getattr(mesh, "visual", None)
+    if visual is None or not hasattr(visual, "uv"):
+        return None
+
+    material = getattr(visual, "material", None)
+    texture = getattr(material, "baseColorTexture", None) if material is not None else None
+    if texture is None:
+        return None
+
+    try:
+        uv = np.asarray(visual.uv, dtype=float)
+        if uv.ndim != 2 or uv.shape[1] != 2 or uv.shape[0] == 0:
+            return None
+
+        rgba = np.asarray(texture.convert("RGBA"), dtype=float) / 255.0
+        if rgba.ndim != 3 or rgba.shape[2] != 4:
+            return None
+
+        h, w = rgba.shape[:2]
+        face_uv = uv[faces].mean(axis=1)
+        u = np.mod(face_uv[:, 0], 1.0)
+        v = np.clip(face_uv[:, 1], 0.0, 1.0)
+        x = np.clip(np.rint(u * (w - 1)).astype(int), 0, w - 1)
+        y = np.clip(np.rint((1.0 - v) * (h - 1)).astype(int), 0, h - 1)
+        face_colors = rgba[y, x]
+
+        base_factor = getattr(material, "baseColorFactor", None)
+        if base_factor is not None:
+            factor = np.asarray(base_factor, dtype=float)
+            if factor.shape == (4,):
+                if factor.max() > 1.0:
+                    factor = factor / 255.0
+                face_colors = np.clip(face_colors * factor, 0.0, 1.0)
+
+        if run_id is not None:
+            unique_face_colors = int(
+                np.unique((face_colors[:, :3] * 255).astype(np.uint8), axis=0).shape[0]
+            )
+            # region agent log
+            _debug_log(
+                run_id,
+                "H2",
+                "orbital_docking/visualization.py:_sample_texture_face_colors",
+                "Sampled Earth texture into per-face colors",
+                {
+                    "texture_size_px": [int(w), int(h)],
+                    "mesh_faces": int(faces.shape[0]),
+                    "mesh_vertices": int(uv.shape[0]),
+                    "unique_face_colors": unique_face_colors,
+                    "sampling_mode": "triangle_centroid_uv",
+                },
+            )
+            # endregion
+
+        return face_colors
+    except Exception as exc:
+        print(f"[Earth mesh] Could not sample GLB texture; continuing without textured colors. Error: {exc!r}")
+        return None
 
 
 def accel_two_body_km_s2(r_km: np.ndarray) -> np.ndarray:
@@ -104,11 +238,34 @@ def control_effort_metrics(info: dict):
     return float(rms_control_accel_m_s2), float(l2_effort_m2_s3), dv_proxy_m_s
 
 
-def _load_earth_mesh(radius_km=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0)):
+def _load_earth_mesh(radius_km=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0), run_id=None):
     """
     Load NASA Earth mesh from assets/models/earth_nasa.glb, scale to radius_km, center at center.
     Returns (vertices, faces) or None if file missing or trimesh unavailable.
     """
+    global _EARTH_MESH_CACHE
+    if _EARTH_MESH_CACHE is not None:
+        unit_verts, faces, face_colors, orientation, rotation_label = _EARTH_MESH_CACHE
+        verts = unit_verts * float(radius_km) + np.asarray(center, dtype=float)
+        if run_id is not None:
+            # region agent log
+            _debug_log(
+                run_id,
+                "H5",
+                "orbital_docking/visualization.py:_load_earth_mesh",
+                "Using cached UV-mapped Earth mesh",
+                {
+                    "render_mode": "cached_uv_mesh",
+                    "cache_hit": True,
+                    "mesh_faces": int(faces.shape[0]),
+                    "rotation_applied": rotation_label,
+                    "dominant_up_axis": None if orientation is None else orientation["dominant_axis"],
+                    "north_positive": None if orientation is None else orientation["north_positive"],
+                },
+            )
+            # endregion
+        return verts, faces, face_colors
+
     if not os.path.isfile(EARTH_GLB_PATH):
         print(f"[Earth mesh] GLB file not found at {EARTH_GLB_PATH}")
         return None
@@ -155,14 +312,61 @@ def _load_earth_mesh(radius_km=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0)):
             print(f"[Earth mesh] Could not read face colors from GLB visual; continuing without colors. Error: {exc!r}")
             face_colors = None
 
+        if face_colors is None:
+            face_colors = _sample_texture_face_colors(mesh, faces, run_id=run_id)
+
         # Center and scale geometry to requested Earth radius.
         verts = verts - verts.mean(axis=0)
+        orientation = _infer_texture_up_axis(mesh, verts)
+        rotation = np.eye(3, dtype=float)
+        rotation_label = "identity"
+        if orientation is not None and orientation["dominant_axis"] == "y":
+            if orientation["north_positive"]:
+                rotation = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]], dtype=float)
+                rotation_label = "rotate_x_plus_90"
+            else:
+                rotation = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, -1.0, 0.0]], dtype=float)
+                rotation_label = "rotate_x_minus_90"
+        verts = verts @ rotation.T
         r_max = np.linalg.norm(verts, axis=1).max()
         if r_max < 1e-12:
             print("[Earth mesh] Loaded mesh has near-zero radius; falling back.")
             return None
-        scale = radius_km / r_max
-        verts = verts * scale + np.asarray(center, dtype=float)
+        unit_verts = verts / r_max
+        _EARTH_MESH_CACHE = (unit_verts, faces, face_colors, orientation, rotation_label)
+        verts = unit_verts * float(radius_km) + np.asarray(center, dtype=float)
+        if run_id is not None:
+            orientation = _infer_texture_up_axis(mesh, verts - np.asarray(center, dtype=float))
+            # region agent log
+            _debug_log(
+                run_id,
+                "H1",
+                "orbital_docking/visualization.py:_load_earth_mesh",
+                "Inferred Earth texture orientation",
+                {
+                    "face_colors_available": bool(face_colors is not None),
+                    "dominant_up_axis": None if orientation is None else orientation["dominant_axis"],
+                    "north_positive": None if orientation is None else orientation["north_positive"],
+                    "axis_correlations": None if orientation is None else orientation["correlations"],
+                    "rotation_applied": rotation_label,
+                },
+            )
+            # endregion
+            # region agent log
+            _debug_log(
+                run_id,
+                "H5",
+                "orbital_docking/visualization.py:_load_earth_mesh",
+                "Prepared Earth mesh from GLB UV atlas",
+                {
+                    "render_mode": "cached_uv_mesh",
+                    "cache_hit": False,
+                    "mesh_faces": int(faces.shape[0]),
+                    "mesh_vertices": int(verts.shape[0]),
+                    "rotation_applied": rotation_label,
+                },
+            )
+            # endregion
         return verts, faces, face_colors
     except Exception as exc:
         print(f"[Earth mesh] Exception while loading GLB; falling back. Error: {exc!r}")
@@ -174,7 +378,8 @@ def add_earth_mesh(ax, radius=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0), color='#2
     Add Earth as a 3D mesh from assets/models/earth_nasa.glb when available.
     Falls back to wireframe sphere if model is missing or trimesh unavailable.
     """
-    data = _load_earth_mesh(radius_km=radius, center=center)
+    run_id = getattr(getattr(ax, "figure", None), "_debug_run_id", "earth-standalone")
+    data = _load_earth_mesh(radius_km=radius, center=center, run_id=run_id)
     if data is None:
         print("[Earth mesh] Falling back to wireframe Earth in add_earth_mesh().")
         add_wire_sphere(ax, radius=radius, center=center, color=color, alpha=alpha, resolution=20)
@@ -215,6 +420,7 @@ def add_earth_mesh(ax, radius=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0), color='#2
         )
 
     ax.add_collection3d(coll)
+    ax._earth_debug_mesh_faces = int(faces.shape[0])
 
 
 def add_wire_sphere(ax, radius=3.0, center=(0.0, 0.0, 0.0), color='gray', alpha=0.25, resolution=40):
@@ -376,7 +582,7 @@ def plot_segments_gradient(ax, P_opt, n_seg, cmap_name='viridis', show_seg_ctrl_
 
 
 def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, window_title=None,
-                                        v0=None, v1=None):
+                                       v0=None, v1=None):
     """
     Create 2×3 layout showing trajectories with different segment counts.
     Uses same aesthetics as Orbital_Docking_Optimizer.py.
@@ -392,7 +598,9 @@ def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, 
     Returns:
         matplotlib Figure object
     """
+    build_started = time.perf_counter()
     fig = plt.figure(figsize=(16, 12), constrained_layout=True)
+    fig._debug_run_id = f"earth-debug-{int(time.time() * 1000)}"
     if window_title is None and curve_order is not None:
         window_title = f"Orbital Docking — Trajectory Comparison (N={curve_order})"
     _safe_set_window_title(fig, window_title)
@@ -402,6 +610,25 @@ def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, 
     for i in range(6):
         ax = fig.add_subplot(2, 3, i+1, projection='3d')
         axes.append(ax)
+
+    manager = getattr(fig.canvas, "manager", None)
+    toolbar = getattr(manager, "toolbar", None) if manager is not None else None
+    # region agent log
+    _debug_log(
+        fig._debug_run_id,
+        "H3",
+        "orbital_docking/visualization.py:create_trajectory_comparison_figure",
+        "Figure interactivity backend state",
+        {
+            "backend": str(plt.get_backend()),
+            "interactive": bool(plt.isinteractive()),
+            "canvas_class": type(fig.canvas).__name__,
+            "manager_class": None if manager is None else type(manager).__name__,
+            "toolbar_class": None if toolbar is None else type(toolbar).__name__,
+            "axes_count": int(len(axes)),
+        },
+    )
+    # endregion
 
     # Plot trajectories for different segment counts
     segment_counts = [2, 4, 8, 16, 32, 64]
@@ -469,6 +696,7 @@ def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, 
                     label='v1'
                 )
 
+        # Build legend entries (vehicle markers + optional velocity arrows).
         ax.legend(fontsize=8)
 
         # Professional styling with shared zoom level
@@ -477,32 +705,53 @@ def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, 
         set_isometric(ax, elev=20, azim=-45)
         beautify_3d_axes(ax, show_ticks=True, show_grid=True)
 
-        # Title with optimizer-consistent control-effort metric.
+        # Title with optimizer-consistent control-effort metric and termination reason.
         rms_control_accel_m_s2, _l2, dv_proxy_m_s = control_effort_metrics(info)
         accel_str = "n/a" if rms_control_accel_m_s2 is None else format_number(rms_control_accel_m_s2, '.2f')
         dv_str = "n/a" if dv_proxy_m_s is None else format_number(dv_proxy_m_s, '.1f')
         feasible = bool(info.get('feasible', False))
         status = 'Feasible' if feasible else 'Infeasible'
         title_color = 'black' if feasible else 'red'
-        ax.set_title(f'{n_seg} Segments — {status}\nΔv proxy: {dv_str} m/s | RMS u: {accel_str} m/s²',
-                     fontsize=10, pad=10, color=title_color)
+
+        term = str(info.get("termination_reason", "") or "").strip().lower()
+        if term == "converged_delta_below_tol":
+            term_label = "converged (ΔP < tol)"
+        elif term == "stopped_max_iter":
+            term_label = "stopped (max_iter)"
+        elif term == "not_run":
+            term_label = "not run"
+        elif term:
+            term_label = term
+        else:
+            term_label = "termination: n/a"
+
+        ax.set_title(
+            f'{n_seg} Segments — {status}\n'
+            f'Δv proxy: {dv_str} m/s | RMS u: {accel_str} m/s²\n'
+            f'{term_label}',
+            fontsize=10,
+            pad=10,
+            color=title_color,
+        )
 
     # Link all axes to share zoom - when one zooms, all zoom together
     # Use a flag to prevent infinite recursion
     _syncing = False
+    sync_debug_state = {"count": 0}
     
     def sync_limits(ax_source):
         """Sync limits from source axis to all other axes."""
         nonlocal _syncing
         if _syncing:
             return
-        
+
+        started = time.perf_counter()
         _syncing = True
         try:
             xlim = ax_source.get_xlim3d()
             ylim = ax_source.get_ylim3d()
             zlim = ax_source.get_zlim3d()
-            
+
             # Update all other axes
             for ax_target in axes:
                 if ax_target is not ax_source:
@@ -512,6 +761,24 @@ def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, 
                     ax_target.set_zlim3d(zlim, emit=False)
         finally:
             _syncing = False
+        if sync_debug_state["count"] < 6:
+            sync_debug_state["count"] += 1
+            # region agent log
+            _debug_log(
+                fig._debug_run_id,
+                "H7",
+                "orbital_docking/visualization.py:create_trajectory_comparison_figure",
+                "Synced axis limits across comparison panels",
+                {
+                    "sync_index": int(sync_debug_state["count"]),
+                    "source_axis_index": int(axes.index(ax_source)),
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                    "xlim": [float(xlim[0]), float(xlim[1])],
+                    "ylim": [float(ylim[0]), float(ylim[1])],
+                    "zlim": [float(zlim[0]), float(zlim[1])],
+                },
+            )
+            # endregion
     
     # Connect the callback to each axis for all three dimensions
     for ax in axes:
@@ -519,6 +786,72 @@ def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, 
         ax.callbacks.connect('xlim_changed', lambda event, ax=ax: sync_limits(ax))
         ax.callbacks.connect('ylim_changed', lambda event, ax=ax: sync_limits(ax))
         ax.callbacks.connect('zlim_changed', lambda event, ax=ax: sync_limits(ax))
+
+    total_earth_faces = int(sum(getattr(ax, "_earth_debug_mesh_faces", 0) for ax in axes))
+    build_ms = int((time.perf_counter() - build_started) * 1000)
+    # region agent log
+    _debug_log(
+        fig._debug_run_id,
+        "H4",
+        "orbital_docking/visualization.py:create_trajectory_comparison_figure",
+        "Figure build complete",
+        {
+            "build_ms": build_ms,
+            "total_earth_faces": total_earth_faces,
+            "sync_callback_count": int(len(axes) * 3),
+            "earth_render_mode": "cached_uv_mesh",
+            "view_radius_km": float(view_radius),
+        },
+    )
+    # endregion
+
+    ui_debug_state = {"draws": 0, "mouse": 0}
+
+    def _axis_index(event):
+        return None if getattr(event, "inaxes", None) is None else axes.index(event.inaxes) if event.inaxes in axes else "other"
+
+    def _log_mouse_event(event):
+        if ui_debug_state["mouse"] >= 4:
+            return
+        ui_debug_state["mouse"] += 1
+        step = getattr(event, "step", None)
+        # region agent log
+        _debug_log(
+            fig._debug_run_id,
+            "H3",
+            "orbital_docking/visualization.py:create_trajectory_comparison_figure",
+            "Mouse event received by Matplotlib canvas",
+            {
+                "event_name": str(getattr(event, "name", "unknown")),
+                "axis_index": _axis_index(event),
+                "button": None if getattr(event, "button", None) is None else str(event.button),
+                "step": None if step is None else float(step),
+                "xdata": None if getattr(event, "xdata", None) is None else float(event.xdata),
+                "ydata": None if getattr(event, "ydata", None) is None else float(event.ydata),
+            },
+        )
+        # endregion
+
+    def _log_draw_event(_event):
+        if ui_debug_state["draws"] >= 4:
+            return
+        ui_debug_state["draws"] += 1
+        # region agent log
+        _debug_log(
+            fig._debug_run_id,
+            "H4",
+            "orbital_docking/visualization.py:create_trajectory_comparison_figure",
+            "Draw event completed",
+            {
+                "draw_index": int(ui_debug_state["draws"]),
+                "elapsed_since_build_ms": int((time.perf_counter() - build_started) * 1000),
+            },
+        )
+        # endregion
+
+    fig.canvas.mpl_connect("button_press_event", _log_mouse_event)
+    fig.canvas.mpl_connect("scroll_event", _log_mouse_event)
+    fig.canvas.mpl_connect("draw_event", _log_draw_event)
 
     return fig
 
@@ -622,6 +955,76 @@ def create_performance_figure(results, curve_order=None, window_title=None):
         dv_str = format_number(dv, '.2f')
         ax.annotate(dv_str, (seg, dv), textcoords="offset points", xytext=(0,10), ha='center',
                    fontsize=10, bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8))
+
+    return fig
+
+
+def create_multi_order_performance_figure(results_by_order, window_title=None):
+    """
+    Create a single performance figure showing Δv proxy vs segment count
+    for multiple curve orders simultaneously.
+
+    Args:
+        results_by_order: Dict mapping curve order N -> list of (n_seg, P_opt, info)
+    """
+    fig = plt.figure(figsize=(10, 6), constrained_layout=True)
+    if window_title is None:
+        window_title = "Orbital Docking — Performance (multi-order)"
+    _safe_set_window_title(fig, window_title)
+    ax = fig.add_subplot(111)
+
+    colors = {
+        2: "#3498DB",
+        3: "#E74C3C",
+        4: "#F39C12",
+    }
+
+    for N, results in sorted(results_by_order.items()):
+        segment_counts = []
+        dv_proxies = []
+        for n_seg, P_opt, info in results:
+            if P_opt is None or info is None:
+                continue
+            _rms_u, _l2, dv_proxy_m_s = control_effort_metrics(info)
+            if dv_proxy_m_s is None:
+                continue
+            segment_counts.append(n_seg)
+            dv_proxies.append(dv_proxy_m_s)
+
+        if not segment_counts:
+            continue
+
+        c = colors.get(N, None)
+        label = f"N={N}"
+        ax.plot(
+            segment_counts,
+            dv_proxies,
+            marker="o",
+            linewidth=3,
+            markersize=9,
+            label=label,
+            color=c,
+        )
+
+        # Annotate points for this order.
+        for seg, dv in zip(segment_counts, dv_proxies):
+            dv_str = format_number(dv, ".2f")
+            ax.annotate(
+                dv_str,
+                (seg, dv),
+                textcoords="offset points",
+                xytext=(0, 7),
+                ha="center",
+                fontsize=9,
+                bbox=dict(boxstyle="round,pad=0.15", facecolor="white", alpha=0.8),
+            )
+
+    ax.set_xlabel("Number of Segments", fontsize=14)
+    ax.set_ylabel("Δv proxy (m/s)", fontsize=14)
+    ax.set_title("Δv proxy vs Segment Count (multi-order)", fontsize=16, pad=20)
+    ax.grid(True, alpha=0.3)
+    ax.set_xscale("log", base=2)
+    ax.legend(title="Curve order", fontsize=11)
 
     return fig
 

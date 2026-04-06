@@ -1,10 +1,9 @@
 """
-Orbital Docking Optimizer using Bézier Curves
+Orbital Rendezvous Optimizer using Bézier Curves
 
-This package implements an optimization framework for designing orbital docking trajectories
-using Bézier curves. The optimizer finds trajectories that minimize the difference between
-geometric acceleration and gravitational acceleration while satisfying Keep Out Zone (KOZ)
-constraints.
+This package implements an optimization framework for designing orbital rendezvous trajectories
+using Bézier curves. The optimizer finds trajectories that minimize a delta-v surrogate
+(control acceleration minus gravity) while satisfying Keep Out Zone (KOZ) constraints.
 """
 
 from .bezier import BezierCurve, get_D_matrix, get_E_matrix, get_G_matrix
@@ -28,6 +27,7 @@ from .visualization import (
     plot_segments_gradient,
     create_trajectory_comparison_figure,
     create_performance_figure,
+    create_multi_order_performance_figure,
     create_acceleration_figure,
     create_time_vs_order_figure,
     compute_profile_ylims
@@ -77,6 +77,7 @@ __all__ = [
     'plot_segments_gradient',
     'create_trajectory_comparison_figure',
     'create_performance_figure',
+    'create_multi_order_performance_figure',
     'create_acceleration_figure',
     'create_time_vs_order_figure',
     'compute_profile_ylims',

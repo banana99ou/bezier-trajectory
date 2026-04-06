@@ -1,0 +1,13 @@
+[package]
+name = "bezier_opt"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "bezier_opt"
+crate-type = ["cdylib"]
+
+[dependencies]
+bezier_opt_core = { path = "../core" }
+pyo3 = { version = "0.24", features = ["extension-module"] }
+numpy = "0.24"
