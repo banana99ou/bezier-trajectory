@@ -12,8 +12,10 @@ Use these documents as the paper's control system:
 
 - `doc/paper_claim_scope_nonclaims.md`: claim boundary and explicit non-claims
 - `doc/paper_evidence_map.md`: claim-to-evidence map and gap analysis
+- `doc/figure_table_per_claim_plan.md`: figure/table inventory tied to claims
+- `doc/paper_technical_skeleton.md`: current Stage 3 source-of-truth section architecture
 - `doc/paper_quality_rubric.md`: scoring rubric for readiness checks
-- `doc/paper_positioning_strategy_report.md`: broader positioning logic and long-form framing guidance
+- `doc/paper_positioning_strategy_report.md`: advisory positioning guidance, not canonical claim control
 
 Use these implementation references when writing the method section:
 
@@ -74,7 +76,8 @@ Purpose:
 
 Required output:
 
-- a list of all planned figures, tables, and metrics
+
+- a list of all planned figures, tables, and metrics: `doc/figure_table_per_claim_plan.md`
 
 Minimum recommended items:
 
@@ -101,26 +104,27 @@ Purpose:
 
 Required output:
 
-- a section outline with purpose, key message, and evidence source for each section
+- a section outline with purpose, key message, and evidence source for each section: `doc/paper_technical_skeleton.md`
 
 Pass criteria:
 
 - each section solves one problem in the paper's argument
+- the conservative eight-section structure is fixed as the current source-of-truth
 - there is no section whose real job is only "background filler"
 
 Failure mode to avoid:
 
 - an introduction that meanders across orbital motivation, Bézier history, and planner taxonomy without a single sharp gap statement
 
-## Stage 4: Method draft
+## Stage 4: Problem setup and method draft
 
 Purpose:
 
-- write the method from the actual formulation, not from remembered intent
+- write Sections 3 and 4 from the actual formulation, not from remembered intent
 
-Writing order inside the method section:
+Writing order inside the technical core:
 
-1. trajectory parameterization and notation
+1. problem setup and notation
 2. control-point-space derivative structure (`D`, `E`, Gram matrix)
 3. KOZ subdivision and supporting-half-space construction
 4. objective definitions and what they do and do not mean
@@ -148,10 +152,6 @@ Required comparisons:
 - ablation over subdivision count
 - ablation over Bézier degree
 - downstream comparison: direct collocation from naive initialization vs from Bézier-based warm start
-
-Optional comparison:
-
-- L1 proxy vs L2 surrogate behavior, if it can be presented honestly without over-interpretation
 
 Pass criteria:
 
@@ -238,15 +238,15 @@ If the answer to the last question is "probably not," rewrite it.
 
 Only after the earlier stages are locked should prose drafting proceed in this order:
 
-1. notation and method skeleton
-2. KOZ handling and safety argument
-3. objective definitions and SCP algorithm
-4. experiment plan and figure captions
-5. results section
-6. limitations section
+1. problem setup and notation
+2. method
+3. experiment setup and figure captions
+4. results section
+5. limitations and scope
+6. related work and positioning
 7. introduction
-8. abstract
-9. conclusion
+8. conclusion
+9. abstract
 10. title
 
 This order is deliberate. Weak papers often do the reverse.
