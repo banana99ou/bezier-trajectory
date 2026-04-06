@@ -181,7 +181,7 @@ def main() -> None:
     EARTH_RADIUS_KM = constants.EARTH_RADIUS_KM
     KOZ_RADIUS = constants.KOZ_RADIUS
 
-    TOL = 1e-3
+    TOL = 1e-12
 
     # Figure directory
     FIGURE_DIR = Path(__file__).parent / "figures"
