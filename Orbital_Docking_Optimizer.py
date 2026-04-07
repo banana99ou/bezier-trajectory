@@ -6,7 +6,7 @@ It finds trajectories that minimize the difference between geometric acceleratio
 gravitational acceleration while satisfying Keep Out Zone (KOZ) constraints.
 
 Key Features:
-    - Bézier curve trajectory representation with configurable degree (N=2, 3, 4)
+    - Bézier curve trajectory representation with configurable degree (current paper focus: N=5, 6, 7)
     - Iterative optimization with KOZ constraint linearization using segment subdivision
     - Support for velocity and acceleration boundary conditions
     - Caching system for optimization results to speed up repeated runs (enabled by default)
@@ -57,7 +57,6 @@ from orbital_docking import (
     generate_initial_control_points,
     create_trajectory_comparison_figure,
     create_performance_figure,
-    create_multi_order_performance_figure,
     create_acceleration_figure,
     create_time_vs_order_figure,
     compute_profile_ylims
@@ -111,10 +110,10 @@ def main() -> None:
         "-N",
         type=int,
         nargs="+",
-        choices=[2, 3, 4],
-        default=[2],
-        help="List of Bézier curve degrees N to optimize (any of 2, 3, 4). "
-        'Examples: "-N 2", "-N 2 3 4", "-N 2 4". Default: 2.',
+        choices=[5, 6, 7],
+        default=[5, 6, 7],
+        help="List of Bézier curve degrees N to optimize (any of 5, 6, 7). "
+        'Examples: "-N 5", "-N 5 6 7", "-N 5 7". Default: 5 6 7.',
     )
     parser.add_argument(
         "-v",
@@ -138,6 +137,12 @@ def main() -> None:
         type=int,
         default=1000,
         help="Maximum number of iterations for optimization",
+    )
+    parser.add_argument(
+        "--tol",
+        type=float,
+        default=1e-6,
+        help="Outer SCP convergence tolerance on control-point update norm. Default: 1e-6.",
     )
     parser.add_argument(
         "--n-jobs",
@@ -181,7 +186,7 @@ def main() -> None:
     EARTH_RADIUS_KM = constants.EARTH_RADIUS_KM
     KOZ_RADIUS = constants.KOZ_RADIUS
 
-    TOL = 1e-3
+    TOL = args.tol
 
     # Figure directory
     FIGURE_DIR = Path(__file__).parent / "figures"
@@ -270,43 +275,44 @@ def main() -> None:
     print(f"  |v0| = {np.linalg.norm(v0):.3f} km/s (Progress circular speed)")
     print(f"  |v1| = {np.linalg.norm(v1):.3f} km/s (ISS circular speed)")
 
-    # Generate initial control points for different curve orders
-    # N=2: Quadratic (3 control points)
-    # N=3: Cubic (4 control points)
-    # N=4: 4th degree (5 control points)
+    def _order_label(N: int) -> str:
+        suffix = "th"
+        if N % 100 not in (11, 12, 13):
+            if N % 10 == 1:
+                suffix = "st"
+            elif N % 10 == 2:
+                suffix = "nd"
+            elif N % 10 == 3:
+                suffix = "rd"
+        return f"{N}{suffix} Degree"
 
-    # Generate initial control points for different curve orders
-    P_init_N2 = generate_initial_control_points(2, P_start, P_end)
-    P_init_N3 = generate_initial_control_points(3, P_start, P_end)
-    P_init_N4 = generate_initial_control_points(4, P_start, P_end)
+    # Generate initial control points for the requested curve orders
+    p_init_by_order = {
+        N: generate_initial_control_points(N, P_start, P_end)
+        for N in args.N
+    }
 
     print("\n" + "=" * 60)
     print("Initial control points for each curve order:")
     print("=" * 60)
 
-    print(f"\nN=2 (Quadratic, {P_init_N2.shape[0]} control points):")
-    for i, P in enumerate(P_init_N2):
-        print(f"  P{i}: {P}")
+    for N in sorted(args.N):
+        P_init = p_init_by_order[N]
+        print(f"\nN={N} ({_order_label(N)}, {P_init.shape[0]} control points):")
+        for i, P in enumerate(P_init):
+            print(f"  P{i}: {P}")
 
-    print(f"\nN=3 (Cubic, {P_init_N3.shape[0]} control points):")
-    for i, P in enumerate(P_init_N3):
-        print(f"  P{i}: {P}")
+    segment_counts = [2, 4, 8, 16, 32, 64]
+    results_by_order = {}
+    total_time_by_order = {}
 
-    print(f"\nN=4 (4th Degree, {P_init_N4.shape[0]} control points):")
-    for i, P in enumerate(P_init_N4):
-        print(f"  P{i}: {P}")
-
-    # OPTIMIZATION for N=2 (Quadratic curve)
-    # Measure calculation time for performance analysis
-
-    if 2 in args.N:
-        print("\n⚠️  Starting optimization for N=2 (Quadratic curve)...")
+    for N in sorted(args.N):
+        print(f"\n⚠️  Starting optimization for N={N} ({_order_label(N)})...")
         print("    This may take a while depending on max_iter and convergence\n")
 
-        segment_counts = [2, 4, 8, 16, 32, 64]
-        start_time_N2 = time.time()
-        results_N2 = optimize_all_segment_counts(
-            P_init_N2,
+        start_time = time.time()
+        results = optimize_all_segment_counts(
+            p_init_by_order[N],
             r_e=KOZ_RADIUS,
             segment_counts=segment_counts,
             max_iter=MAX_ITER,
@@ -319,203 +325,53 @@ def main() -> None:
             scp_prox_weight=args.scp_prox,
             scp_trust_radius=args.scp_trust_radius,
             enforce_prograde=True,
-            # Quadratic Bézier (N=2) has only one interior control point (P1),
-            # so enforcing both v0 and v1 generally overconstrains the problem.
-            # Keep endpoint positions only for the baseline run.
-            v0=None,
-            v1=None,
+            v0=v0,
+            v1=v1,
             n_jobs=args.n_jobs,
         )
-        elapsed_time_N2 = time.time() - start_time_N2
-        print(f"\n⏱️  Total optimization time for N=2: {elapsed_time_N2:.2f} seconds")
-        total_compute_time_N2 = _summarize_segment_times(results_N2, "N=2")
+        elapsed_time = time.time() - start_time
+        print(f"\n⏱️  Total optimization time for N={N}: {elapsed_time:.2f} seconds")
+        total_time_by_order[N] = _summarize_segment_times(results, f"N={N}")
+        results_by_order[N] = results
 
-
-    # OPTIMIZATION for N=3 (Cubic curve)
-    # Measure calculation time for performance analysis
-
-    if 3 in args.N:
-        print("\n⚠️  Starting optimization for N=3 (Cubic curve)...")
-        print("    This may take a while depending on max_iter and convergence\n")
-
-        segment_counts = [2, 4, 8, 16, 32, 64]
-        start_time_N3 = time.time()
-        results_N3 = optimize_all_segment_counts(
-            P_init_N3,
-            r_e=KOZ_RADIUS,
-            segment_counts=segment_counts,
-            max_iter=MAX_ITER,
-            tol=TOL,
-            verbose=args.verbose,
-            debug=args.debug,
-            use_cache=USE_CACHE,
-            ignore_existing_cache=IGNORE_EXISTING_CACHE,
-            objective=args.objective,
-            scp_prox_weight=args.scp_prox,
-            scp_trust_radius=args.scp_trust_radius,
-            enforce_prograde=True,
-            v0=None,
-            v1=None,
-            n_jobs=args.n_jobs,
-        )
-        elapsed_time_N3 = time.time() - start_time_N3
-        print(f"\n⏱️  Total optimization time for N=3: {elapsed_time_N3:.2f} seconds")
-        total_compute_time_N3 = _summarize_segment_times(results_N3, "N=3")
-
-
-    # OPTIMIZATION for N=4 (4th degree curve)
-    # Measure calculation time for performance analysis
-
-    if 4 in args.N:
-        print("\n⚠️  Starting optimization for N=4 (4th degree curve)...")
-        print("    This may take a while depending on max_iter and convergence\n")
-
-        segment_counts = [2, 4, 8, 16, 32, 64]
-        start_time_N4 = time.time()
-        results_N4 = optimize_all_segment_counts(
-            P_init_N4,
-            r_e=KOZ_RADIUS,
-            segment_counts=segment_counts,
-            max_iter=MAX_ITER,
-            tol=TOL,
-            verbose=args.verbose,
-            debug=args.debug,
-            use_cache=USE_CACHE,
-            ignore_existing_cache=IGNORE_EXISTING_CACHE,
-            objective=args.objective,
-            scp_prox_weight=args.scp_prox,
-            scp_trust_radius=args.scp_trust_radius,
-            enforce_prograde=True,
-            v0=None,
-            v1=None,
-            n_jobs=args.n_jobs,
-        )
-        elapsed_time_N4 = time.time() - start_time_N4
-        print(f"\n⏱️  Total optimization time for N=4: {elapsed_time_N4:.2f} seconds")
-        total_compute_time_N4 = _summarize_segment_times(results_N4, "N=4")
-
-    # VISUALIZATION: N=2 (Quadratic) Results
-    if 2 in args.N:
-        print("\n📊 Creating visualizations for N=2 (Quadratic curve)...")
+    for N in sorted(args.N):
+        print(f"\n📊 Creating visualizations for N={N} ({_order_label(N)})...")
         print("=" * 60)
 
-        fig_comparison_N2 = create_trajectory_comparison_figure(
-            P_init_N2, KOZ_RADIUS, results_N2, curve_order=2, v0=v0, v1=v1
+        results = results_by_order[N]
+        fig_comparison = create_trajectory_comparison_figure(
+            p_init_by_order[N], KOZ_RADIUS, results, curve_order=N, v0=v0, v1=v1
         )
-        fig_comparison_N2.savefig(FIGURE_DIR / "comparison_N2.png", dpi=300)
+        fig_comparison.savefig(FIGURE_DIR / f"comparison_N{N}.png", dpi=300)
 
-        fig_performance_N2 = create_performance_figure(results_N2, curve_order=2)
-        fig_performance_N2.savefig(FIGURE_DIR / "performance_N2.png", dpi=300)
+        fig_performance = create_performance_figure(results, curve_order=N)
+        fig_performance.savefig(FIGURE_DIR / f"performance_N{N}.png", dpi=300)
 
-        print("\nCreating acceleration profiles for N=2...")
-        accel_figures_N2 = {}
-        _segcounts = [2, 4, 8, 16, 32, 64]
-        pos_ylim, vel_ylim, acc_ylim = compute_profile_ylims(results_N2, _segcounts)
-        for seg_count in _segcounts:
+        print(f"\nCreating acceleration profiles for N={N}...")
+        pos_ylim, vel_ylim, acc_ylim = compute_profile_ylims(results, segment_counts)
+        for seg_count in segment_counts:
             fig = create_acceleration_figure(
-                results_N2,
+                results,
                 segcount=seg_count,
                 pos_ylim=pos_ylim,
                 vel_ylim=vel_ylim,
                 acc_ylim=acc_ylim,
-                curve_order=2,
+                curve_order=N,
             )
-            accel_figures_N2[seg_count] = fig
-            fig.savefig(FIGURE_DIR / f"accel_profiles_N2_seg{seg_count}.png", dpi=300)
+            fig.savefig(FIGURE_DIR / f"accel_profiles_N{N}_seg{seg_count}.png", dpi=300)
             print(f"✓ Created profiles for {seg_count} segments")
 
-        print("\n✅ N=2 (Quadratic) visualizations complete!")
-
-    if 3 in args.N:
-        print("\n📊 Creating visualizations for N=3 (Cubic curve)...")
-        print("=" * 60)
-        fig_comparison_N3 = create_trajectory_comparison_figure(
-            P_init_N3, KOZ_RADIUS, results_N3, curve_order=3, v0=v0, v1=v1
-        )
-        fig_comparison_N3.savefig(FIGURE_DIR / "comparison_N3.png", dpi=300)
-        fig_performance_N3 = create_performance_figure(results_N3, curve_order=3)
-        fig_performance_N3.savefig(FIGURE_DIR / "performance_N3.png", dpi=300)
-
-        print("\nCreating acceleration profiles for N=3...")
-        accel_figures_N3 = {}
-        _segcounts = [2, 4, 8, 16, 32, 64]
-        pos_ylim, vel_ylim, acc_ylim = compute_profile_ylims(results_N3, _segcounts)
-        for seg_count in _segcounts:
-            fig = create_acceleration_figure(
-                results_N3,
-                segcount=seg_count,
-                pos_ylim=pos_ylim,
-                vel_ylim=vel_ylim,
-                acc_ylim=acc_ylim,
-                curve_order=3,
-            )
-            accel_figures_N3[seg_count] = fig
-            fig.savefig(FIGURE_DIR / f"accel_profiles_N3_seg{seg_count}.png", dpi=300)
-            print(f"✓ Created profiles for {seg_count} segments")
-
-        print("\n✅ N=3 (Cubic) visualizations complete!")
-
-    if 4 in args.N:
-        print("\n📊 Creating visualizations for N=4 (4th degree curve)...")
-        print("=" * 60)
-        fig_comparison_N4 = create_trajectory_comparison_figure(
-            P_init_N4, KOZ_RADIUS, results_N4, curve_order=4, v0=v0, v1=v1
-        )
-        fig_comparison_N4.savefig(FIGURE_DIR / "comparison_N4.png", dpi=300)
-        fig_performance_N4 = create_performance_figure(results_N4, curve_order=4)
-        fig_performance_N4.savefig(FIGURE_DIR / "performance_N4.png", dpi=300)
-
-        print("\nCreating acceleration profiles for N=4...")
-        accel_figures_N4 = {}
-        _segcounts = [2, 4, 8, 16, 32, 64]
-        pos_ylim, vel_ylim, acc_ylim = compute_profile_ylims(results_N4, _segcounts)
-        for seg_count in _segcounts:
-            fig = create_acceleration_figure(
-                results_N4,
-                segcount=seg_count,
-                pos_ylim=pos_ylim,
-                vel_ylim=vel_ylim,
-                acc_ylim=acc_ylim,
-                curve_order=4,
-            )
-            accel_figures_N4[seg_count] = fig
-            fig.savefig(FIGURE_DIR / f"accel_profiles_N4_seg{seg_count}.png", dpi=300)
-            print(f"✓ Created profiles for {seg_count} segments")
-
-        print("\n✅ N=4 (4th Degree) visualizations complete!")
+        print(f"\n✅ N={N} ({_order_label(N)}) visualizations complete!")
 
     # CALCULATION TIME VS CURVE ORDER ANALYSIS
     print("\n" + "=" * 60)
     print("📈 Creating calculation time vs curve order figure...")
     print("=" * 60)
 
-    calculation_times = {}
-    if 2 in args.N:
-        calculation_times[2] = (
-            float(total_compute_time_N2) if "total_compute_time_N2" in globals() else elapsed_time_N2
-        )
-    if 3 in args.N:
-        calculation_times[3] = (
-            float(total_compute_time_N3) if "total_compute_time_N3" in globals() else elapsed_time_N3
-        )
-    if 4 in args.N:
-        calculation_times[4] = (
-            float(total_compute_time_N4) if "total_compute_time_N4" in globals() else elapsed_time_N4
-        )
+    calculation_times = {N: float(total_time_by_order[N]) for N in sorted(results_by_order)}
 
     optimization_results = {}
-    for N in [2, 3, 4]:
-        if N not in args.N:
-            continue
-        if N == 2:
-            results = results_N2
-        elif N == 3:
-            results = results_N3
-        elif N == 4:
-            results = results_N4
-        else:
-            continue
-
+    for N, results in sorted(results_by_order.items()):
         P_opt, info = None, None
         for seg_count, P_opt_iter, info_iter in results:
             if seg_count == 64:
@@ -527,20 +383,6 @@ def main() -> None:
 
     fig_time_order = create_time_vs_order_figure(calculation_times, optimization_results)
     fig_time_order.savefig(FIGURE_DIR / "time_vs_order.png", dpi=300)
-
-    # Combined performance figure across all requested curve orders.
-    if len(args.N) > 1:
-        results_by_order = {}
-        if 2 in args.N:
-            results_by_order[2] = results_N2
-        if 3 in args.N:
-            results_by_order[3] = results_N3
-        if 4 in args.N:
-            results_by_order[4] = results_N4
-        if results_by_order:
-            fig_multi_perf = create_multi_order_performance_figure(results_by_order)
-            fig_multi_perf.savefig(FIGURE_DIR / "performance_multi_order.png", dpi=300)
-
     if args.show:
         plt.show()
     else:
@@ -548,15 +390,8 @@ def main() -> None:
 
     print("\n✅ Calculation time vs curve order figure complete!")
     print(f"\nSummary:")
-    if 2 in args.N:
-        tN2 = float(total_compute_time_N2) if "total_compute_time_N2" in globals() else elapsed_time_N2
-        print(f"  N=2 (Quadratic): {tN2:.2f} seconds")
-    if 3 in args.N:
-        tN3 = float(total_compute_time_N3) if "total_compute_time_N3" in globals() else elapsed_time_N3
-        print(f"  N=3 (Cubic):      {tN3:.2f} seconds")
-    if 4 in args.N:
-        tN4 = float(total_compute_time_N4) if "total_compute_time_N4" in globals() else elapsed_time_N4
-        print(f"  N=4 (4th Degree): {tN4:.2f} seconds")
+    for N in sorted(results_by_order):
+        print(f"  N={N} ({_order_label(N)}): {float(total_time_by_order[N]):.2f} seconds")
 
 
 if __name__ == "__main__":

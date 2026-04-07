@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 # Increment to invalidate old caches when the optimization formulation changes
-CACHE_VERSION = "4.2"
+CACHE_VERSION = "5.0-rust-default"
 
 
 def get_cache_key(
@@ -58,6 +58,7 @@ def get_cache_key(
         'objective': str(objective),
         'scp_prox_weight': float(scp_prox_weight),
         'scp_trust_radius': float(scp_trust_radius),
+        'solver_backend': 'rust',
         'version': CACHE_VERSION
     }
     

@@ -973,11 +973,14 @@ def create_multi_order_performance_figure(results_by_order, window_title=None):
     _safe_set_window_title(fig, window_title)
     ax = fig.add_subplot(111)
 
-    colors = {
-        2: "#3498DB",
-        3: "#E74C3C",
-        4: "#F39C12",
-    }
+    palette = [
+        "#3498DB",
+        "#E74C3C",
+        "#F39C12",
+        "#2CA02C",
+        "#9467BD",
+        "#8C564B",
+    ]
 
     for N, results in sorted(results_by_order.items()):
         segment_counts = []
@@ -994,7 +997,7 @@ def create_multi_order_performance_figure(results_by_order, window_title=None):
         if not segment_counts:
             continue
 
-        c = colors.get(N, None)
+        c = palette[(sorted(results_by_order).index(N)) % len(palette)]
         label = f"N={N}"
         ax.plot(
             segment_counts,
@@ -1288,8 +1291,11 @@ def create_time_vs_order_figure(calculation_times, optimization_results):
             t = 0.0 if t_calc is None else float(t_calc)
         times.append(t)
 
+    palette = ["#3498DB", "#E74C3C", "#F39C12", "#2CA02C", "#9467BD", "#8C564B"]
+    bar_colors = [palette[i % len(palette)] for i in range(len(orders))]
+
     # Create bar plot
-    bars = ax.bar(orders, times, color=['#3498DB', '#E74C3C', '#F39C12'], alpha=0.7, edgecolor='black', linewidth=1.5)
+    bars = ax.bar(orders, times, color=bar_colors, alpha=0.7, edgecolor='black', linewidth=1.5)
 
     # Add value labels on bars
     for i, (order, time_val) in enumerate(zip(orders, times)):
@@ -1302,9 +1308,7 @@ def create_time_vs_order_figure(calculation_times, optimization_results):
     ax.set_title('Optimization Time vs Bézier Curve Order', fontsize=16, pad=20)
     ax.grid(True, alpha=0.3, axis='y')
     ax.set_xticks(orders)
-    ax.set_xticklabels([f'Quadratic (N={N})' if N == 2 else 
-                        f'Cubic (N={N})' if N == 3 else 
-                        f'4th Degree (N={N})' for N in orders])
+    ax.set_xticklabels([f'N={N}' for N in orders])
 
     # Add optimizer-consistent control-effort info as text.
     accel_info = []
