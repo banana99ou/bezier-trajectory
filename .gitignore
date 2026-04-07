@@ -5,5 +5,22 @@ __pycache__
 .git_corrupt_*
 ref/*
 cache
-doc/20250902_보안성검토(KSAS정현용_Pcd)
 artifacts
+
+# IDE / tool dirs
+.specstory/
+.cursor/
+.claude/
+
+# Generated figures (regenerable from code)
+figures/*.png
+figures/*.mp4
+
+# Syncthing conflict files
+*.sync-conflict-*
+
+# Specific excludes
+doc/20250902_*
+
+# Reference papers
+*.pdf
