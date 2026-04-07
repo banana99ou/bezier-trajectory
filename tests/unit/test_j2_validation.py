@@ -5,6 +5,7 @@ Deeper validation tests for the J2 logic and its local linearization behavior.
 import numpy as np
 
 from orbital_docking import constants
+from orbital_docking.gravity import _accel_j2, _accel_total, _jacobian_numeric
 from orbital_docking.j2_validation import (
     accel_total_from_c20_numeric_gradient,
     default_validation_cases,
@@ -12,7 +13,6 @@ from orbital_docking.j2_validation import (
     j2_from_c20,
     spherical_to_cartesian_km,
 )
-from orbital_docking.optimization import _accel_j2, _accel_total, _jacobian_numeric
 from orbital_docking.visualization import accel_gravity_total_km_s2
 
 
@@ -48,7 +48,7 @@ def test_numeric_gradient_reference_matches_closed_form_j2():
 
 
 def test_visualization_total_gravity_matches_optimizer_total_gravity(rng):
-    """The visualization helper must stay numerically identical to the optimizer model."""
+    """The visualization helper must stay numerically identical to the gravity helper."""
     for _ in range(8):
         altitude_km = float(rng.uniform(245.0, 20000.0))
         latitude_deg = float(rng.uniform(-85.0, 85.0))

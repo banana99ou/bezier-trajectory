@@ -10,8 +10,8 @@ from pathlib import Path
 import numpy as np
 
 from orbital_docking import constants
+from orbital_docking.gravity import _accel_total
 from orbital_docking.j2_validation import load_reference_dataset
-from orbital_docking.optimization import _accel_total
 from orbital_docking.visualization import accel_gravity_total_km_s2
 
 
@@ -24,7 +24,7 @@ def _dataset_path() -> Path:
     return Path(__file__).resolve().parent.parent / "data" / "j2_reference" / "egm2008_degree2_samples.json"
 
 
-def test_j2_reference_dataset_matches_optimizer_and_visualization():
+def test_j2_reference_dataset_matches_gravity_helper_and_visualization():
     dataset_path = _dataset_path()
     assert dataset_path.exists(), f"Missing J2 reference dataset: {dataset_path}"
     dataset = load_reference_dataset(dataset_path)
@@ -45,7 +45,7 @@ def test_j2_reference_dataset_matches_optimizer_and_visualization():
             a_ref,
             rtol=REL_TOL_TOTAL,
             atol=ABS_TOL_TOTAL,
-            err_msg=f"optimizer mismatch for sample {sample['sample_id']}",
+            err_msg=f"gravity helper mismatch for sample {sample['sample_id']}",
         )
         np.testing.assert_allclose(
             a_viz,
@@ -59,5 +59,5 @@ def test_j2_reference_dataset_matches_optimizer_and_visualization():
             a_viz,
             rtol=0.0,
             atol=ABS_TOL_CROSS,
-            err_msg=f"optimizer-vs-visualization mismatch for sample {sample['sample_id']}",
+            err_msg=f"gravity-helper-vs-visualization mismatch for sample {sample['sample_id']}",
         )

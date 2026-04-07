@@ -1,20 +1,17 @@
 """
-Unit tests for gravity and objective math in the optimizer.
+Unit tests for the shared gravity helpers.
 
 Covers: two-body acceleration (direction and magnitude), J2 perturbation,
-total gravity (two-body + J2), and the control-accel quadratic builder
-(H symmetric, PSD, constant term c >= 0).
+and total gravity (two-body + J2).
 """
 
 import numpy as np
-import pytest
 
 from orbital_docking import constants
-from orbital_docking.optimization import (
+from orbital_docking.gravity import (
     _accel_two_body,
     _accel_j2,
     _accel_total,
-    _build_ctrl_accel_quadratic,
 )
 
 
@@ -103,49 +100,3 @@ def test_accel_total_equals_two_body_plus_j2(rng):
     a_two = _accel_two_body(r, mu)
     a_j2 = _accel_j2(r, mu, r_e, j2)
     np.testing.assert_allclose(a_total, a_two + a_j2, rtol=1e-12, atol=1e-15)
-
-
-# -----------------------------------------------------------------------------
-# _build_ctrl_accel_quadratic: H symmetric, PSD, c >= 0
-# -----------------------------------------------------------------------------
-
-
-def test_build_ctrl_accel_quadratic_H_symmetric(T, P_init):
-    """H from _build_ctrl_accel_quadratic is symmetric."""
-    P_ref = np.asarray(P_init, dtype=float)
-    sample_count = 4
-    H, f, c_const, _ = _build_ctrl_accel_quadratic(P_ref, T=T, sample_count=sample_count)
-    np.testing.assert_allclose(H, H.T, rtol=0, atol=1e-12)
-
-
-def test_build_ctrl_accel_quadratic_H_positive_semidefinite(T, P_init):
-    """H from _build_ctrl_accel_quadratic is positive semidefinite."""
-    P_ref = np.asarray(P_init, dtype=float)
-    sample_count = 4
-    H, f, c_const, _ = _build_ctrl_accel_quadratic(P_ref, T=T, sample_count=sample_count)
-    evals = np.linalg.eigvalsh(H)
-    assert np.all(evals >= -1e-10), f"min eigenvalue {evals.min()}"
-
-
-def test_build_ctrl_accel_quadratic_constant_term_non_negative(T, P_init):
-    """Objective 0.5 x'Hx + f'x + c has c >= 0."""
-    P_ref = np.asarray(P_init, dtype=float)
-    sample_count = 4
-    H, f, c_const, _ = _build_ctrl_accel_quadratic(P_ref, T=T, sample_count=sample_count)
-    assert c_const >= -1e-12, f"constant term c = {c_const}"
-
-
-def test_build_ctrl_accel_quadratic_small_P_ref(T):
-    """With a small reference trajectory (degree 2), H is symmetric PSD and c >= 0."""
-    # Minimal (3, 3) = degree 2 Bézier so G_tilde exists
-    P_ref = np.array([
-        [6700.0, 0.0, 0.0],
-        [6800.0, 200.0, 50.0],
-        [6900.0, 0.0, 0.0],
-    ], dtype=float)
-    sample_count = 2
-    H, f, c_const, _ = _build_ctrl_accel_quadratic(P_ref, T=T, sample_count=sample_count)
-    np.testing.assert_allclose(H, H.T, rtol=0, atol=1e-12)
-    evals = np.linalg.eigvalsh(H)
-    assert np.all(evals >= -1e-10), f"min eigenvalue {evals.min()}"
-    assert c_const >= -1e-12, f"constant term c = {c_const}"

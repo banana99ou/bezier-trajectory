@@ -3,7 +3,7 @@
 Compare the repo's J2 gravity logic against a normalized reference dataset.
 
 The script validates both:
-- optimizer gravity path: orbital_docking.optimization._accel_total
+- shared gravity path: orbital_docking.gravity._accel_total
 - visualization gravity path: orbital_docking.visualization.accel_gravity_total_km_s2
 
 Optionally writes summary plots for visual inspection.
@@ -23,8 +23,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from orbital_docking import constants
+from orbital_docking.gravity import _accel_total
 from orbital_docking.j2_validation import error_summary, load_reference_dataset
-from orbital_docking.optimization import _accel_total
 from orbital_docking.visualization import accel_gravity_total_km_s2
 
 DEFAULT_DATASET = REPO_ROOT / "tests" / "data" / "j2_reference" / "egm2008_degree2_samples.json"
@@ -76,7 +76,7 @@ def _print_summary(rows: list[dict]) -> None:
         )
     print("-" * 108)
     print(
-        "optimizer".ljust(20),
+        "gravity_helper".ljust(20),
         "max".rjust(8),
         _fmt(opt_abs["max"]).rjust(14),
         _fmt(opt_rel["max"]).rjust(14),
@@ -88,7 +88,7 @@ def _print_summary(rows: list[dict]) -> None:
         _fmt(viz_rel["max"]).rjust(14),
     )
     print(
-        "optimizer_vs_viz".ljust(20),
+        "gravity_vs_viz".ljust(20),
         "max".rjust(8),
         _fmt(xv_abs["max"]).rjust(70),
     )
@@ -200,15 +200,15 @@ def main() -> None:
     failed = []
     for row in rows:
         if row["opt_abs_norm"] > args.max_abs_error:
-            failed.append(f"{row['sample_id']} optimizer abs error {row['opt_abs_norm']}")
+            failed.append(f"{row['sample_id']} gravity helper abs error {row['opt_abs_norm']}")
         if row["opt_rel_norm"] > args.max_rel_error:
-            failed.append(f"{row['sample_id']} optimizer rel error {row['opt_rel_norm']}")
+            failed.append(f"{row['sample_id']} gravity helper rel error {row['opt_rel_norm']}")
         if row["viz_abs_norm"] > args.max_abs_error:
             failed.append(f"{row['sample_id']} visualization abs error {row['viz_abs_norm']}")
         if row["viz_rel_norm"] > args.max_rel_error:
             failed.append(f"{row['sample_id']} visualization rel error {row['viz_rel_norm']}")
         if row["cross_abs_norm"] > args.max_cross_error:
-            failed.append(f"{row['sample_id']} optimizer-vs-visualization error {row['cross_abs_norm']}")
+            failed.append(f"{row['sample_id']} gravity-helper-vs-visualization error {row['cross_abs_norm']}")
 
     if failed:
         print("threshold failures:")

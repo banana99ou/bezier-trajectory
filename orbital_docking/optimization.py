@@ -1,19 +1,14 @@
 """
-Optimization functions for orbital docking trajectories.
+Rust-backed optimization functions for orbital docking trajectories.
 """
 
 import os
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import numpy as np
 import time
-import warnings
-from scipy.optimize import minimize, Bounds, LinearConstraint
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import bezier_opt as _bezier_opt_rs
+import numpy as np
 
-from .bezier import BezierCurve
-from .de_casteljau import segment_matrices_equal_params
-from .constraints import build_koz_constraints, build_boundary_constraints
 from .cache import get_cache_key, get_cache_path, load_from_cache, save_to_cache
 
 
@@ -33,344 +28,6 @@ def _has_required_info_keys(info: dict) -> bool:
         "elapsed_time",
     )
     return all(k in info for k in required)
-
-
-def _linear_constraint_violation(c, x: np.ndarray) -> float:
-    """
-    Return max violation for a scipy.optimize.LinearConstraint at point x.
-
-    For bounds:
-      lb <= A x <= ub
-    Violation is max( lb - Ax, Ax - ub, 0 ).
-    """
-    try:
-        A = c.A
-        lb = c.lb
-        ub = c.ub
-    except Exception:
-        return float("nan")
-
-    Ax = A @ x
-    v = 0.0
-    if lb is not None:
-        v = max(v, float(np.max(lb - Ax)))
-    if ub is not None:
-        v = max(v, float(np.max(Ax - ub)))
-    return float(max(v, 0.0))
-
-
-def _koz_margin_stats(koz_constraint, x: np.ndarray) -> dict:
-    """
-    Compute KOZ half-space margin stats for the current linearization:
-      margin = (A x) - lb  (since ub=+inf)
-
-    Returns dict with keys:
-      n_rows, min_margin, p01_margin, p05_margin, median_margin
-    """
-    try:
-        A = koz_constraint.A
-        lb = koz_constraint.lb
-    except Exception:
-        return {
-            "n_rows": 0,
-            "min_margin": float("nan"),
-            "p01_margin": float("nan"),
-            "p05_margin": float("nan"),
-            "median_margin": float("nan"),
-        }
-
-    Ax = A @ x
-    m = Ax - lb
-    if m.size == 0:
-        return {
-            "n_rows": 0,
-            "min_margin": float("nan"),
-            "p01_margin": float("nan"),
-            "p05_margin": float("nan"),
-            "median_margin": float("nan"),
-        }
-
-    m_sorted = np.sort(m)
-    def _pct(p: float) -> float:
-        idx = int(np.clip(np.floor(p * (m_sorted.size - 1)), 0, m_sorted.size - 1))
-        return float(m_sorted[idx])
-
-    return {
-        "n_rows": int(m.size),
-        "min_margin": float(m_sorted[0]),
-        "p01_margin": _pct(0.01),
-        "p05_margin": _pct(0.05),
-        "median_margin": float(np.median(m_sorted)),
-    }
-
-
-def _bernstein_basis(N: int, tau: float) -> np.ndarray:
-    """
-    Bernstein basis weights for degree N at tau.
-    Returns shape (N+1,).
-    """
-    # Use the curve evaluator for numerical stability/consistency via comb in bezier.py
-    from scipy.special import comb
-    i = np.arange(N + 1)
-    return comb(N, i) * (tau ** i) * ((1.0 - tau) ** (N - i))
-
-
-def _bernstein_derivative_weights(N: int, tau: float) -> np.ndarray:
-    """
-    Weights for d/dtau of degree-N Bézier at tau, expressed in the original
-    control-point basis:
-        dp/dtau = sum_j w_der[j] * P_j
-
-    Using the standard relation:
-        dp/dtau = N * sum_{i=0}^{N-1} B_{N-1,i}(tau) * (P_{i+1} - P_i)
-    """
-    if N <= 0:
-        return np.zeros(1)
-    # Basis for degree N-1
-    from scipy.special import comb
-
-    i = np.arange(N)
-    b_low = comb(N - 1, i) * (tau ** i) * ((1.0 - tau) ** (N - 1 - i))
-
-    w_der = np.zeros(N + 1, dtype=float)
-    # j = 0
-    w_der[0] = -N * b_low[0]
-    # j = 1..N-1
-    for j in range(1, N):
-        w_der[j] = N * (b_low[j - 1] - b_low[j])
-    # j = N
-    w_der[N] = N * b_low[N - 1]
-    return w_der
-
-
-def _accel_two_body(r_km: np.ndarray, mu_km3_s2: float) -> np.ndarray:
-    """Two-body gravitational acceleration in km/s^2."""
-    r = np.asarray(r_km, dtype=float)
-    rn = np.linalg.norm(r)
-    return (-mu_km3_s2 / (rn**3)) * r
-
-
-def _accel_j2(r_km: np.ndarray, mu_km3_s2: float, r_e_km: float, j2: float) -> np.ndarray:
-    """
-    J2 perturbation acceleration in km/s^2 (simplified: Earth symmetry axis aligned with ECI Z).
-    """
-    r = np.asarray(r_km, dtype=float)
-    x, y, z = r
-    r2 = float(x*x + y*y + z*z)
-    rn = np.sqrt(r2)
-    if rn < 1e-12:
-        return np.zeros(3)
-
-    z2 = z*z
-    r5 = rn**5
-    factor = 1.5 * j2 * mu_km3_s2 * (r_e_km**2) / r5
-    k = 5.0 * z2 / r2
-    ax = factor * x * (k - 1.0)
-    ay = factor * y * (k - 1.0)
-    az = factor * z * (k - 3.0)
-    return np.array([ax, ay, az], dtype=float)
-
-
-def _accel_total(r_km: np.ndarray, mu_km3_s2: float, r_e_km: float, j2: float) -> np.ndarray:
-    """Two-body + J2 total gravitational acceleration in km/s^2."""
-    return _accel_two_body(r_km, mu_km3_s2) + _accel_j2(r_km, mu_km3_s2, r_e_km, j2)
-
-
-def _jacobian_numeric(f, r0: np.ndarray, h: float = 1e-3) -> np.ndarray:
-    """
-    Central-difference Jacobian of f: R^3 -> R^3 at r0.
-    h is in km (default 1e-3 km = 1 m).
-    """
-    r0 = np.asarray(r0, dtype=float)
-    J = np.zeros((3, 3), dtype=float)
-    for i in range(3):
-        dr = np.zeros(3)
-        dr[i] = h
-        fp = f(r0 + dr)
-        fm = f(r0 - dr)
-        J[:, i] = (fp - fm) / (2.0 * h)
-    return J
-
-
-def _build_ctrl_accel_quadratic(
-    P_ref: np.ndarray,
-    T: float,
-    sample_count: int,
-    objective: str = "energy",
-    irls_eps: float = 1e-9,
-    geom_reg: float = 0.0,
-):
-    """
-    Build quadratic objective for control acceleration energy with gravity+J2
-    linearized about P_ref, without Bernstein sampling in the optimizer core.
-
-    Matrix-only structure:
-      1) Exact geometric acceleration-energy term from precomputed G_tilde
-         (derived from E/D matrices):
-             J_geom = (1/T^4) * x^T (G_tilde ⊗ I_3) x
-
-      2) Gravity/J2 linearization term built on De Casteljau segment centroids:
-             r_i(x)      = R_i x
-             a_geom_i(x) = A_i x
-             g_i(x) ≈ J_i r_i(x) + c_i
-         and approximate:
-             J ≈ J_geom + Σ_i w_i ||a_geom_i - g_i||^2
-
-    This avoids Bernstein basis evaluation in the optimizer and keeps all mappings
-    linear in control points via D/E and De Casteljau segment matrices.
-
-    Returns:
-        H, f, c for objective: 0.5 x^T H x + f^T x + c
-        where c is the constant term (>= 0) that makes the value a true least-squares energy.
-        (and some diagnostics dict)
-    """
-    from . import constants
-
-    Np1, dim = P_ref.shape
-    if dim != 3:
-        raise ValueError("This dynamics cost currently assumes dim=3 (ECI).")
-    N = Np1 - 1
-
-    # Linear mapping from control points to acceleration control points:
-    # A_ctrl = L @ P, where L = E D E D (shape (N+1, N+1))
-    curve_ref = BezierCurve(P_ref)
-    if curve_ref.degree < 2:
-        raise ValueError("Control-acceleration cost requires Bézier degree >= 2.")
-    L = curve_ref.E @ curve_ref.D @ curve_ref.E @ curve_ref.D  # (N+1, N+1)
-
-    n = Np1 * dim
-    Q = np.zeros((n, n), dtype=float)
-    q = np.zeros(n, dtype=float)
-    c_const = 0.0
-
-    mu = constants.EARTH_MU_SCALED
-    r_e = constants.EARTH_RADIUS_KM
-    j2 = constants.EARTH_J2
-
-    objective = str(objective).lower().strip()
-    if objective not in ("energy", "dv"):
-        raise ValueError(f"Unknown objective={objective!r}; expected 'energy' or 'dv'.")
-
-    # 1) Optional geometric regularization term via G_tilde (no sampling).
-    # For 'energy' objective, this is part of the intended surrogate.
-    # For 'dv' objective, keep it as optional stabilization (default 0.0).
-    if curve_ref.G_tilde is not None:
-        w_geom = 1.0 if objective == "energy" else float(geom_reg)
-        if w_geom != 0.0:
-            Q += w_geom * (1.0 / (T**4)) * np.kron(curve_ref.G_tilde, np.eye(dim))
-
-    # 2) Gravity/J2 linearization via De Casteljau segment centroids.
-    n_lin_seg = max(1, int(sample_count))
-    A_seg_list = segment_matrices_equal_params(N, n_lin_seg)
-    w_seg = 1.0 / float(n_lin_seg)
-    x_ref = P_ref.reshape(-1)
-
-    for Aseg in A_seg_list:
-        # Segment centroid linear map in control-point space:
-        #   c_i = mean(Aseg @ P) = (w_row @ P), w_row shape (N+1,)
-        w_row = Aseg.mean(axis=0)
-
-        # r_i(x) = R_i x
-        R_i = np.kron(w_row, np.eye(dim))  # (3, n)
-
-        # a_geom_i(x) = A_i x with a_ctrl = (1/T^2) * (w_row @ L) @ P
-        a_row = (w_row @ L)
-        A_i = (1.0 / (T**2)) * np.kron(a_row, np.eye(dim))  # (3, n)
-
-        # Reference point for gravity/J2 linearization
-        r_ref = (R_i @ x_ref).reshape(3)
-        g_ref = _accel_total(r_ref, mu, r_e, j2)
-        J_i = _jacobian_numeric(lambda rr: _accel_total(rr, mu, r_e, j2), r_ref)
-
-        # g_i(x) ≈ J_i R_i x + c_i
-        c_i = g_ref - (J_i @ r_ref)
-        B_i = J_i @ R_i
-
-        # Add ||A_i x - (B_i x + c_i)||^2 contributions.
-        #
-        # objective='energy':
-        #   minimize Σ ||res_i||^2  (L2 energy)
-        #
-        # objective='dv':
-        #   approximate minimize Σ ||res_i|| (delta-v proxy in tau-domain)
-        #   via IRLS/majorization:
-        #     ||r|| ≈ (1/alpha) ||r||^2 + const,  alpha = sqrt(||r_ref||^2 + eps)
-        #   so weight_i = 1/alpha.
-        # = x^T[(A-B)^T(A-B)]x - 2 c^T(A-B)x + c^T c
-        M_i = A_i - B_i
-        w_i = w_seg
-        if objective == "dv":
-            r_ref_res = (M_i @ x_ref) - c_i
-            alpha = float(np.sqrt(float(r_ref_res @ r_ref_res) + float(irls_eps)))
-            # Avoid division by 0; alpha >= sqrt(eps)
-            w_i = w_seg * (1.0 / alpha)
-
-        Q += w_i * (M_i.T @ M_i)
-        q += w_i * (-M_i.T @ c_i)
-        c_const += w_i * float(c_i @ c_i)
-
-    H = 2.0 * Q
-    f = 2.0 * q
-    diag = {
-        "sample_count": sample_count,
-        "n_lin_seg": n_lin_seg,
-        "T": float(T),
-        "objective": objective,
-        "irls_eps": float(irls_eps),
-        "geom_reg": float(geom_reg),
-    }
-    return H, f, c_const, diag
-
-
-def _compute_cost_only(P_flat, Np1, dim, n_samples=50):
-    """
-    Helper function to compute cost only (no recursion).
-
-    Matches the monolithic optimizer behavior on `revert-3750d57`:
-    - Cost uses the quadratic form based on G_tilde (no gravity term)
-    - Returns cost=accel=a_geom for backward-compatible plotting/reporting
-    """
-    P = P_flat.reshape(Np1, dim)
-    curve = BezierCurve(P)
-
-    if curve.G_tilde is None:
-        return 0.0, 0.0, 0.0, None
-
-    # Quadratic form: tr(P^T G_tilde P) = sum(P * (G_tilde @ P))
-    GP = curve.G_tilde @ P
-    a_geom = float(np.sum(P * GP))
-    cost = a_geom
-    accel = a_geom
-    return cost, accel, a_geom, None
-
-
-def cost_function_gradient_hessian(P_flat, Np1, dim, n_samples=50, compute_grad=True):
-    """
-    Compute cost function, gradient, and Hessian approximation.
-    Returns: (cost, gradient, hessian)
-
-    Args:
-        compute_grad: If False, only compute cost (for efficiency when gradient not needed)
-    """
-    # Analytic gradient/Hessian for the quadratic form:
-    #   J(P) = tr(P^T G_tilde P)
-    #   dJ/dP = 2 G_tilde P
-    #   H(vec(P)) = 2 kron(I_dim, G_tilde)
-    P = P_flat.reshape(Np1, dim)
-    curve = BezierCurve(P)
-
-    if curve.G_tilde is None:
-        cost = 0.0
-        grad = np.zeros(Np1 * dim)
-        hess = np.zeros((Np1 * dim, Np1 * dim))
-        return cost, grad, hess
-
-    GP = curve.G_tilde @ P
-    cost = float(np.sum(P * GP))
-    grad_P = 2.0 * GP
-    grad = grad_P.reshape(-1)
-    hess = 2.0 * np.kron(np.eye(dim), curve.G_tilde)
-    return cost, grad, hess
 
 
 def optimize_orbital_docking(
@@ -399,7 +56,7 @@ def optimize_orbital_docking(
     history_samples: int = 200,
 ):
     """
-    Optimize Bézier curve for orbital docking.
+    Optimize Bézier curve for orbital docking via the Rust backend.
 
     Args:
         P_init: Initial control points (N+1, dim)
@@ -414,10 +71,9 @@ def optimize_orbital_docking(
         use_cache: Whether to use cache (default: True)
         ignore_existing_cache: If True, skip cache reads but still write cache
 
-    Args (extra diagnostics):
-        store_history: If True, store per-outer-iteration telemetry in info['history'].
-            debug=True will also store history (even if store_history=False).
-        history_samples: Number of tau samples used for per-iteration geometry metrics.
+    Compatibility args:
+        store_history: Retained for API compatibility; ignored by the Rust backend.
+        history_samples: Retained for API compatibility; ignored by the Rust backend.
 
     Returns:
         (P_opt, info_dict) where info may include info['history'] when enabled.
