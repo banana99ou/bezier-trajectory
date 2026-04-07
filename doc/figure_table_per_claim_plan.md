@@ -169,7 +169,7 @@ It is intentionally claim-driven rather than figure-driven. The goal is not to b
   - `T4. Degree ablation under matched settings.` Suggested columns: degree, number of control points, solve success, safety metric, objective-aligned effort metric, runtime, and selected smoothness indicator.
   - `F5. Multi-order performance trends.` Use degree-coded series over subdivision count for one or two carefully chosen metrics.
 - Required data, experiment, or analysis inputs:
-  - Runs for `N = 2, 3, 4` under matched settings
+  - Runs for `N = 5, 6, 7` under matched settings
   - Common boundary-condition protocol
   - Clearly defined comparison metrics
 - Input status: partially present

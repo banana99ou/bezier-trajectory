@@ -64,7 +64,7 @@ This order is defensible because:
 - `6.1` establishes that the method works on the target demonstration case before ablations are interpreted.
 - `6.2` carries the main ablation claim (`C6`).
 - `6.3` carries the secondary ablation claim (`C7`).
-- `6.4` carries the strongest external-value claim (`C9`) and should appear last because it is fairness-sensitive and currently blocked by missing evidence.
+- `6.4` carries the strongest external-value claim (`C9`) and should appear last because it is fairness-sensitive and, for the current paper pass, remains placeholder-only.
 
 Results-section discipline rules:
 
@@ -142,7 +142,7 @@ Results-section discipline rules:
   - outer iteration count
 - Required interpretation discipline:
   - "Reduced conservatism" must not mean only that a path looks tighter.
-  - The safe operational reading is: how the safety metric and the objective-aligned effort change under matched settings as the approximation is refined.
+  - The safe operational reading is: whether comparable certified clearance can be maintained with lower objective-aligned effort, or whether both quantities improve, under matched settings as the approximation is refined.
   - If the data do not support a clean monotone trend, the text must report that instead of forcing a story.
 - Likely failure modes or reviewer attacks:
   - "Conservatism is undefined."
@@ -151,7 +151,7 @@ Results-section discipline rules:
   - "The trend is scenario-specific or noisy, yet the prose sounds universal."
 - Safe conclusions:
   - Increasing subdivision count changes the approximation quality and computation burden.
-  - If supported by the actual runs, one may say that larger subdivision counts can reduce safety-approximation conservatism at increased runtime.
+  - If supported by the actual runs, one may say that larger subdivision counts can improve effective conservatism by maintaining comparable certified clearance at lower cost, but only under the stated metric set.
   - The conclusion should remain tied to the tested scenario and metric definitions.
 - Overclaims:
   - Higher subdivision is always better.
@@ -306,14 +306,13 @@ This section covers only the results figures/tables. Method-support figures such
 ### T4. Degree ablation under matched settings
 
 - Working caption:
-  - `Degree ablation under matched settings. The table reports solve success, safety, effort, runtime, and a selected smoothness indicator for quadratic, cubic, and quartic Bézier parameterizations under a common protocol.`
+  - `Degree ablation under matched settings. The table reports solve success, safety, effort, runtime, and a selected smoothness indicator for fifth-, sixth-, and seventh-degree Bézier parameterizations under a common protocol.`
 - What the reader should conclude:
   - Degree changes performance characteristics, but any advantage must be tied to a named metric.
   - The paper is not claiming blanket superiority of higher order.
 - Missing evidence or implementation work still blocking it:
-  - a declared fairness regime for comparing different degrees
-  - final sweep outputs for `N = 2, 3, 4`
-  - a justified selected smoothness indicator
+  - final manuscript wording that explains the fixed-`n_seg = 16` table protocol without overselling it
+  - a justified selected smoothness-adjacent indicator and caption note
   - final interpretation boundary for what degree is allowed to claim
 
 ### F5. Multi-order performance trends
@@ -324,9 +323,8 @@ This section covers only the results figures/tables. Method-support figures such
   - Degree interacts with the experimental settings in interpretable but limited ways.
   - The role of this figure is comparative structure, not "higher degree wins."
 - Missing evidence or implementation work still blocking it:
-  - final trend data from the degree study
-  - choice of one or two metrics worth plotting
-  - enough stability in the data to justify a trend figure rather than only a table
+  - final caption and manuscript-facing panel labeling for the current draft asset
+  - final decision on whether the figure adds enough value beyond `T4` to remain in the main text
 
 ### T6. Downstream direct-collocation initialization comparison
 
@@ -364,7 +362,8 @@ This section covers only the results figures/tables. Method-support figures such
   - naive versus Bézier-warm-start initialization protocol
   - identical solver settings, stopping rules, and constraint reporting
   - reported success, time, iterations, final objective, and final constraint satisfaction
-- Until this exists, `C9` is not an achieved results claim.
+- For the current paper pass, keep this subsection placeholder-only while the downstream direct-collocation machinery is still under active development.
+- Until a stable comparison exists, `C9` is not an achieved results claim.
 - Required fallback wording:
   - the method is intended as a warm-start generator for downstream solvers
 
@@ -372,16 +371,15 @@ This section covers only the results figures/tables. Method-support figures such
 
 - `C6` is not publishable as a strong claim if the paper only shows plots without a clear operational definition of conservatism reduction.
 - What is still needed:
-  - a completed matched sweep over subdivision count
   - a stable reporting table
-  - a stated definition of how the reported metrics reflect conservatism/computation trade-off
-  - explicit reporting of failures or non-monotone behavior
+  - a stated definition of how the reported metrics reflect effective conservatism / computation trade-off
+  - explicit reporting of the current flat-margin, nearly flat-effort outcome rather than forcing a stronger story
 
 ### Gap 3: Degree ablation remains weak unless the comparison regime is declared
 
 - `C7` is easy to overstate because different degrees alter representation freedom and problem size at the same time.
 - What is still needed:
-  - a declared fairness regime
+  - a manuscript-level declaration of the fixed-`n_seg = 16` comparison regime for `T4`
   - matched reporting across degree values
   - a named criterion for any claimed improvement
 - Without this, degree should remain a secondary result with restrained wording.
