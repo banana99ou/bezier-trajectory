@@ -1,0 +1,1422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Space-Time Bezier - Interactive Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; color: #eee; font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; }
+  #ui {
+    position: fixed; top: 10px; left: 10px; z-index: 10;
+    background: rgba(20,20,40,0.92); padding: 14px 18px; border-radius: 10px;
+    border: 1px solid #333; min-width: 270px;
+  }
+  #ui h2 { font-size: 14px; margin-bottom: 8px; color: #8af; }
+  #ui label { font-size: 12px; display: block; margin-top: 6px; color: #aaa; }
+  #ui select, #ui input[type=range] { width: 100%; }
+  select { background: #222; color: #eee; border: 1px solid #555; padding: 3px; font-size: 11px; margin: 3px 0; }
+  .val { float: right; color: #ff0; font-size: 12px; }
+  .toggle { margin-top: 5px; font-size: 12px; cursor: pointer; user-select: none; }
+  .toggle input { margin-right: 5px; }
+  #info {
+    position: fixed; bottom: 10px; right: 10px; z-index: 10;
+    background: rgba(20,20,40,0.92); padding: 10px 14px; border-radius: 8px;
+    border: 1px solid #333; font-size: 11px; font-family: monospace; white-space: pre;
+    max-width: 380px; max-height: 300px; overflow-y: auto;
+  }
+  #legend {
+    position: fixed; top: 10px; right: 10px; z-index: 10;
+    background: rgba(20,20,40,0.92); padding: 10px 14px; border-radius: 8px;
+    border: 1px solid #333; font-size: 11px;
+  }
+  canvas { display: block; cursor: grab; }
+  button { padding: 4px 14px; cursor: pointer; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px; }
+  button:hover { background: #444; }
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <h2>Space-Time Bezier Demo</h2>
+
+  <label>Scenario</label>
+  <select id="scenarioSelect"></select>
+
+  <label>Curve config <span class="val" id="curveInfo" style="color:#0f0"></span></label>
+  <select id="curveSelect"></select>
+
+  <label>Time t <span class="val" id="tVal">0.0</span></label>
+  <input type="range" id="tSlider" min="0" max="1" step="0.002" value="0">
+
+  <label>View rotation <span class="val" id="rotVal">-55</span></label>
+  <input type="range" id="rotSlider" min="-180" max="180" step="1" value="-55">
+
+  <label>View elevation <span class="val" id="elevVal">22</span></label>
+  <input type="range" id="elevSlider" min="5" max="85" step="1" value="22">
+
+  <div class="toggle"><input type="checkbox" id="chkTubes" checked>Obstacle tubes</div>
+  <div class="toggle"><input type="checkbox" id="chkHull">Convex hull</div>
+  <div class="toggle"><input type="checkbox" id="chkSegments" checked>De Casteljau segments</div>
+  <div class="toggle"><input type="checkbox" id="chkHalfspace">Supporting half-spaces</div>
+  <div class="toggle"><input type="checkbox" id="chkDistLines">Distance lines</div>
+  <div class="toggle"><input type="checkbox" id="chkTimePlane" checked>Time-sweep plane</div>
+  <div class="toggle"><input type="checkbox" id="chk2D" checked>Show 2D overlay</div>
+
+  <label>Subdivisions <span class="val" id="subVal">4</span></label>
+  <input type="range" id="subSlider" min="1" max="16" step="1" value="4">
+
+  <div style="margin-top:10px">
+    <button id="btnPlay">Play</button>
+    <button id="btnReset">Reset</button>
+  </div>
+</div>
+
+<div id="info"></div>
+<div id="legend"></div>
+
+<canvas id="c"></canvas>
+
+<script>
+// ══════════════════════════════════════════════════════════════
+// Embedded scenario data (from spacetime_scenarios.json)
+// ══════════════════════════════════════════════════════════════
+const SCENARIOS = {
+  "original": {
+    "name": "original",
+    "title": "3 Moving Obstacles",
+    "best": "N6_seg8",
+    "obstacles": [
+      {
+        "pos0": [
+          2.0,
+          8.0
+        ],
+        "vel": [
+          0.5,
+          -0.7
+        ],
+        "r": 0.8,
+        "color": "#e74c3c",
+        "name": "A"
+      },
+      {
+        "pos0": [
+          6.0,
+          2.0
+        ],
+        "vel": [
+          -0.3,
+          0.5
+        ],
+        "r": 0.7,
+        "color": "#2980b9",
+        "name": "B"
+      },
+      {
+        "pos0": [
+          4.5,
+          5.5
+        ],
+        "vel": [
+          0.1,
+          -0.3
+        ],
+        "r": 0.6,
+        "color": "#27ae60",
+        "name": "C"
+      }
+    ],
+    "start": [
+      0.5,
+      1.0,
+      0.0
+    ],
+    "end": [
+      8.5,
+      8.5,
+      10.0
+    ],
+    "T": 10.0,
+    "results": {
+      "N4_seg8": {
+        "N": 4,
+        "n_seg": 8,
+        "control_points": [
+          [
+            0.49999999999999933,
+            0.9999999999999993,
+            4.3150317779079914e-17
+          ],
+          [
+            1.5280156957500342,
+            1.7966507690216955,
+            3.3250417679186994
+          ],
+          [
+            2.2580787275121135,
+            2.263305423027048,
+            5.613686198391184
+          ],
+          [
+            5.351826830870016,
+            5.351173827263954,
+            7.6663946741972975
+          ],
+          [
+            8.5,
+            8.5,
+            10.0
+          ]
+        ],
+        "min_clearance": 0.3524260258084355,
+        "feasible": true
+      },
+      "N6_seg8": {
+        "N": 6,
+        "n_seg": 8,
+        "control_points": [
+          [
+            0.49999999999999845,
+            1.000000000000003,
+            -4.821604014022984e-16
+          ],
+          [
+            1.215281432329038,
+            1.5521872850132235,
+            2.6335124581188647
+          ],
+          [
+            1.980736744129102,
+            2.1610431188885952,
+            4.082414490317569
+          ],
+          [
+            2.705619552891151,
+            2.724005804955524,
+            5.556281623357154
+          ],
+          [
+            4.336299338594962,
+            4.309731497586562,
+            7.020170512530804
+          ],
+          [
+            6.4362512015429365,
+            6.425303256367894,
+            8.403187587168695
+          ],
+          [
+            8.500000000000002,
+            8.500000000000002,
+            10.000000000000002
+          ]
+        ],
+        "min_clearance": 0.36115954997229593,
+        "feasible": true
+      },
+      "N8_seg8": {
+        "N": 8,
+        "n_seg": 8,
+        "control_points": [
+          [
+            0.49999999999999833,
+            0.9999999999999997,
+            3.180423199787871e-16
+          ],
+          [
+            1.037188406999816,
+            1.415874021638922,
+            2.113632633363913
+          ],
+          [
+            1.563381259446728,
+            1.819298557641427,
+            3.375979685391576
+          ],
+          [
+            2.2354960166793676,
+            2.3874764935577266,
+            4.438321614586333
+          ],
+          [
+            2.902054969168029,
+            2.9487025580177963,
+            5.552852830591082
+          ],
+          [
+            3.905770674873322,
+            3.891246065989788,
+            6.600293308364279
+          ],
+          [
+            5.424366239952098,
+            5.412826504700001,
+            7.7362558945438735
+          ],
+          [
+            6.953003550341645,
+            6.946099602135449,
+            8.796243586222745
+          ],
+          [
+            8.499999999999996,
+            8.5,
+            10.000000000000002
+          ]
+        ],
+        "min_clearance": 0.35644213791871393,
+        "feasible": true
+      }
+    }
+  },
+  "diverse": {
+    "name": "diverse",
+    "title": "Diverse Moving Obstacles",
+    "best": "N8_seg8",
+    "obstacles": [
+      {
+        "pos0": [
+          1.0,
+          6.0
+        ],
+        "vel": [
+          0.8,
+          -0.1
+        ],
+        "r": 0.6,
+        "color": "#e74c3c",
+        "name": "A"
+      },
+      {
+        "pos0": [
+          5.0,
+          5.0
+        ],
+        "vel": [
+          0.05,
+          -0.15
+        ],
+        "r": 1.0,
+        "color": "#2980b9",
+        "name": "B"
+      },
+      {
+        "pos0": [
+          8.0,
+          1.0
+        ],
+        "vel": [
+          -0.6,
+          0.4
+        ],
+        "r": 0.5,
+        "color": "#27ae60",
+        "name": "C"
+      },
+      {
+        "pos0": [
+          3.0,
+          1.5
+        ],
+        "vel": [
+          0.3,
+          0.6
+        ],
+        "r": 0.4,
+        "color": "#9b59b6",
+        "name": "D"
+      },
+      {
+        "pos0": [
+          4.0,
+          8.0
+        ],
+        "vel": [
+          0.1,
+          -0.5
+        ],
+        "r": 0.9,
+        "color": "#e67e22",
+        "name": "E"
+      },
+      {
+        "pos0": [
+          7.0,
+          7.0
+        ],
+        "vel": [
+          -0.4,
+          -0.3
+        ],
+        "r": 0.35,
+        "color": "#1abc9c",
+        "name": "F"
+      },
+      {
+        "pos0": [
+          2.5,
+          4.0
+        ],
+        "vel": [
+          0.0,
+          0.0
+        ],
+        "r": 0.7,
+        "color": "#f39c12",
+        "name": "G"
+      }
+    ],
+    "start": [
+      0.5,
+      0.5,
+      0.0
+    ],
+    "end": [
+      9.0,
+      9.0,
+      10.0
+    ],
+    "T": 10.0,
+    "init_curve": {
+      "mode": "quadratic_bow",
+      "bow": 3.2,
+      "side": 1.0,
+      "workspace_center": [
+        5.0,
+        5.0
+      ]
+    },
+    "results": {
+      "N8_seg8": {
+        "N": 8,
+        "n_seg": 8,
+        "control_points": [
+          [
+            0.4999999999999941,
+            0.4999999999999964,
+            3.21750821519459e-16
+          ],
+          [
+            0.725047280568612,
+            1.9299625351027323,
+            1.2460186357331384
+          ],
+          [
+            0.9780737432175078,
+            3.3474722980789218,
+            2.5023631050633948
+          ],
+          [
+            1.2475557861758424,
+            4.758682207269163,
+            3.7318253245206554
+          ],
+          [
+            2.301705716751684,
+            5.822930080569931,
+            4.994279534277745
+          ],
+          [
+            3.8766025110181923,
+            6.662444092039261,
+            6.245007009701468
+          ],
+          [
+            5.440410465004232,
+            7.50398907292813,
+            7.5003885286086005
+          ],
+          [
+            7.2287241842721395,
+            8.24836023735723,
+            8.751699919253841
+          ],
+          [
+            9.000000000000005,
+            9.000000000000007,
+            10.0
+          ]
+        ],
+        "min_clearance": 0.21231193824342387,
+        "feasible": true
+      },
+      "N8_seg16": {
+        "N": 8,
+        "n_seg": 16,
+        "control_points": [
+          [
+            0.49999999999999745,
+            0.4999999999999983,
+            7.474516485188905e-17
+          ],
+          [
+            0.9034656969696525,
+            2.164869736534115,
+            1.2377325613702779
+          ],
+          [
+            1.332277730867412,
+            3.8065284835924,
+            2.5041875911795524
+          ],
+          [
+            1.737103731959813,
+            5.470194551835624,
+            3.7438792029259043
+          ],
+          [
+            3.1329602329306026,
+            6.227789778274881,
+            4.993872235494043
+          ],
+          [
+            4.3277572944582925,
+            7.169499442423488,
+            6.241115869713123
+          ],
+          [
+            5.853017335948808,
+            7.808990158088904,
+            7.491819999267056
+          ],
+          [
+            7.42511639174139,
+            8.405718398952967,
+            8.75283721732185
+          ],
+          [
+            8.999999999999998,
+            9.000000000000005,
+            10.000000000000002
+          ]
+        ],
+        "min_clearance": 0.0824632746052616,
+        "feasible": true
+      },
+      "N10_seg16": {
+        "N": 10,
+        "n_seg": 16,
+        "control_points": [
+          [
+            0.4999999999999967,
+            0.49999999999999767,
+            1.431670470775595e-16
+          ],
+          [
+            0.8231480120883368,
+            1.8310305591470362,
+            0.9734339921397842
+          ],
+          [
+            1.1416207858259586,
+            3.166266039253856,
+            2.0083668102272503
+          ],
+          [
+            1.603843272790445,
+            4.3698819581764035,
+            3.0584308866722494
+          ],
+          [
+            1.904450194785462,
+            5.723037831028221,
+            3.9825817844709417
+          ],
+          [
+            3.3752895844363557,
+            6.002474598665913,
+            5.017669663449235
+          ],
+          [
+            3.947610383068715,
+            7.109476441162545,
+            6.017778049767
+          ],
+          [
+            5.308556292263975,
+            7.493263448271998,
+            6.995337971550684
+          ],
+          [
+            6.473648359743059,
+            8.054825307452589,
+            8.000134618048087
+          ],
+          [
+            7.740114993073153,
+            8.524481521357082,
+            9.00735115177095
+          ],
+          [
+            9.000000000000004,
+            9.000000000000005,
+            10.0
+          ]
+        ],
+        "min_clearance": 0.08253080171807148,
+        "feasible": true
+      }
+    }
+  },
+  "wall": {
+    "name": "wall",
+    "title": "Disappearing Wall (t<5)",
+    "best": "N10_seg24",
+    "obstacles": [
+      {
+        "pos0": [
+          2.5,
+          0.0
+        ],
+        "vel": [
+          0.0,
+          0.0
+        ],
+        "r": 0.5,
+        "color": "#e67e22",
+        "name": "W0",
+        "t_start": 0.0,
+        "t_end": 5.0
+      },
+      {
+        "pos0": [
+          2.5,
+          0.8333333333333333
+        ],
+        "vel": [
+          0.0,
+          0.0
+        ],
+        "r": 0.5,
+        "color": "#e67e22",
+        "name": "W1",
+        "t_start": 0.0,
+        "t_end": 5.0
+      },
+      {
+        "pos0": [
+          2.5,
+          1.6666666666666665
+        ],
+        "vel": [
+          0.0,
+          0.0
+        ],
+        "r": 0.5,
+        "color": "#e67e22",
+        "name": "W2",
+        "t_start": 0.0,
+        "t_end": 5.0
+      },
+      {
+        "pos0": [
+          2.5,
+          2.5
+        ],
+        "vel": [
+          0.0,
+          0.0
+        ],
+        "r": 0.5,
+        "color": "#e67e22",
+        "name": "W3",
+        "t_start": 0.0,
+        "t_end": 5.0
+      },
+      {
+        "pos0": [
+          2.5,
+          3.333333333333333
+        ],
+        "vel": [
+          0.0,
+          0.0
+        ],
+        "r": 0.5,
+        "color": "#e67e22",
+        "name": "W4",
+        "t_start": 0.0,
+        "t_end": 5.0
+      },
+      {
+        "pos0": [
+          2.5,
+          4.166666666666667
+        ],
+        "vel": [
+          0.0,
+          0.0
+        ],
+        "r": 0.5,
+        "color": "#e67e22",
+        "name": "W5",
+        "t_start": 0.0,
+        "t_end": 5.0
+      },
+      {
+        "pos0": [
+          2.5,
+          5.0
+        ],
+        "vel": [
+          0.0,
+          0.0
+        ],
+        "r": 0.5,
+        "color": "#e67e22",
+        "name": "W6",
+        "t_start": 0.0,
+        "t_end": 5.0
+      },
+      {
+        "pos0": [
+          2.5,
+          5.833333333333334
+        ],
+        "vel": [
+          0.0,
+          0.0
+        ],
+        "r": 0.5,
+        "color": "#e67e22",
+        "name": "W7",
+        "t_start": 0.0,
+        "t_end": 5.0
+      },
+      {
+        "pos0": [
+          2.5,
+          6.666666666666666
+        ],
+        "vel": [
+          0.0,
+          0.0
+        ],
+        "r": 0.5,
+        "color": "#e67e22",
+        "name": "W8",
+        "t_start": 0.0,
+        "t_end": 5.0
+      },
+      {
+        "pos0": [
+          2.5,
+          7.5
+        ],
+        "vel": [
+          0.0,
+          0.0
+        ],
+        "r": 0.5,
+        "color": "#e67e22",
+        "name": "W9",
+        "t_start": 0.0,
+        "t_end": 5.0
+      },
+      {
+        "pos0": [
+          2.5,
+          8.333333333333334
+        ],
+        "vel": [
+          0.0,
+          0.0
+        ],
+        "r": 0.5,
+        "color": "#e67e22",
+        "name": "W10",
+        "t_start": 0.0,
+        "t_end": 5.0
+      },
+      {
+        "pos0": [
+          2.5,
+          9.166666666666666
+        ],
+        "vel": [
+          0.0,
+          0.0
+        ],
+        "r": 0.5,
+        "color": "#e67e22",
+        "name": "W11",
+        "t_start": 0.0,
+        "t_end": 5.0
+      },
+      {
+        "pos0": [
+          2.5,
+          10.0
+        ],
+        "vel": [
+          0.0,
+          0.0
+        ],
+        "r": 0.5,
+        "color": "#e67e22",
+        "name": "W12",
+        "t_start": 0.0,
+        "t_end": 5.0
+      },
+      {
+        "pos0": [
+          7.0,
+          3.0
+        ],
+        "vel": [
+          0.0,
+          0.3
+        ],
+        "r": 0.6,
+        "color": "#2980b9",
+        "name": "M1"
+      },
+      {
+        "pos0": [
+          6.5,
+          8.0
+        ],
+        "vel": [
+          0.2,
+          -0.2
+        ],
+        "r": 0.5,
+        "color": "#27ae60",
+        "name": "M2"
+      }
+    ],
+    "start": [
+      1.0,
+      5.0,
+      0.0
+    ],
+    "end": [
+      8.0,
+      5.0,
+      10.0
+    ],
+    "T": 10.0,
+    "results": {
+      "N8_seg16": {
+        "N": 8,
+        "n_seg": 16,
+        "control_points": [
+          [
+            0.9072937104387748,
+            4.997450808670901,
+            0.010158234186311222
+          ],
+          [
+            1.8438613151503425,
+            5.415646562092686,
+            2.274606304329012
+          ],
+          [
+            2.7513525836170096,
+            6.003576364250655,
+            3.6895688453670608
+          ],
+          [
+            3.8918741260199075,
+            4.687152766786511,
+            4.775992584092025
+          ],
+          [
+            4.2074793713459036,
+            5.8867207153171925,
+            6.08604163897048
+          ],
+          [
+            5.419006714787517,
+            4.850290986548381,
+            6.783047070210226
+          ],
+          [
+            6.085261230271163,
+            4.9962719349633975,
+            7.755528271006338
+          ],
+          [
+            7.080187865856327,
+            4.973473980797911,
+            9.166250787551464
+          ],
+          [
+            8.012738518833263,
+            4.961722880194587,
+            10.00321222211127
+          ]
+        ],
+        "min_clearance": -0.09803435225321544,
+        "feasible": false
+      },
+      "N10_seg16": {
+        "N": 10,
+        "n_seg": 16,
+        "control_points": [
+          [
+            0.9191086336876737,
+            5.000800510502475,
+            0.005952373402361605
+          ],
+          [
+            1.6592098545262348,
+            5.317981614106854,
+            2.199058852002319
+          ],
+          [
+            2.393784522462475,
+            5.674393187741439,
+            3.366866163248984
+          ],
+          [
+            3.1725355083437026,
+            5.76794898825653,
+            4.405131208993433
+          ],
+          [
+            3.9274597917908554,
+            4.401442564801288,
+            5.245477071942233
+          ],
+          [
+            4.350197365459597,
+            6.422543280306018,
+            6.039667971705682
+          ],
+          [
+            5.22362704104361,
+            4.4750423462493725,
+            6.83411191652662
+          ],
+          [
+            5.73651049929482,
+            5.247493876974523,
+            7.6178502703213935
+          ],
+          [
+            6.514099684436239,
+            4.93871901024459,
+            8.369361563410095
+          ],
+          [
+            7.2539529765154604,
+            4.966579100649207,
+            9.188925565007962
+          ],
+          [
+            8.010693393062693,
+            4.965009337990356,
+            9.99933484814978
+          ]
+        ],
+        "min_clearance": -0.09692190201345213,
+        "feasible": false
+      },
+      "N10_seg24": {
+        "N": 10,
+        "n_seg": 24,
+        "control_points": [
+          [
+            0.9999999999999979,
+            5.0,
+            1.188228564235894e-16
+          ],
+          [
+            0.3579838929544399,
+            5.176199523362354,
+            1.949056192846539
+          ],
+          [
+            -0.30292997992158754,
+            5.356223928054179,
+            3.379125059806862
+          ],
+          [
+            -0.5844247838301279,
+            5.455098615121639,
+            4.389224220679844
+          ],
+          [
+            -1.2669839680783526,
+            5.678369415135844,
+            5.247872518279458
+          ],
+          [
+            0.13892201781906194,
+            5.290177185518694,
+            6.083924738861445
+          ],
+          [
+            1.2990123644476728,
+            5.284655792987327,
+            6.719216670760737
+          ],
+          [
+            2.6745143648021603,
+            5.1449762924907825,
+            7.53374205962677
+          ],
+          [
+            4.51125866480587,
+            4.920220474446657,
+            8.324508936537331
+          ],
+          [
+            6.247272078522001,
+            4.966331614853343,
+            9.206908139995456
+          ],
+          [
+            8.0,
+            4.999999999999998,
+            10.000000000000002
+          ]
+        ],
+        "min_clearance": 0.26952014115337397,
+        "feasible": true
+      }
+    }
+  }
+};
+// ══════════════════════════════════════════════════════════════
+// State
+// ══════════════════════════════════════════════════════════════
+let currentScenario = null;
+let currentCurveKey = null;
+let OBSTACLES = [];
+let CTRL_PTS = [];
+let T_TOTAL = 10;
+let tFrac = 0, playing = false;
+let azimuth = -55, elevation = 22;
+let viewScale = 38, panX = 0, panY = 0;
+let dragMode = null, lastMouseX = 0, lastMouseY = 0;
+const SCENE_CENTER = [5, 5, 5];
+
+// ══════════════════════════════════════════════════════════════
+// Math
+// ══════════════════════════════════════════════════════════════
+function comb(n, k) { if (k < 0 || k > n) return 0; let r = 1; for (let i = 0; i < k; i++) r = r * (n - i) / (i + 1); return r; }
+function bernstein(n, i, t) { return comb(n, i) * Math.pow(t, i) * Math.pow(1 - t, n - i); }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function wrapAngle(deg) { return ((deg + 180) % 360 + 360) % 360 - 180; }
+
+function evalBezier(cp, t) {
+  const n = cp.length - 1; let pt = new Array(cp[0].length).fill(0);
+  for (let i = 0; i <= n; i++) { const b = bernstein(n, i, t); for (let d = 0; d < pt.length; d++) pt[d] += b * cp[i][d]; }
+  return pt;
+}
+
+function bezierCurve(cp, num = 400) {
+  const pts = []; for (let i = 0; i <= num; i++) pts.push(evalBezier(cp, i / num)); return pts;
+}
+
+function deCasteljauSplit(cp, u) {
+  const n = cp.length - 1, dim = cp[0].length;
+  let left = [cp[0].slice()], right = [cp[n].slice()];
+  let work = cp.map(p => p.slice());
+  for (let r = 1; r <= n; r++) {
+    let next = [];
+    for (let i = 0; i < work.length - 1; i++) {
+      let p = []; for (let d = 0; d < dim; d++) p.push((1 - u) * work[i][d] + u * work[i + 1][d]);
+      next.push(p);
+    }
+    left.push(next[0].slice()); right.unshift(next[next.length - 1].slice()); work = next;
+  }
+  return { left, right };
+}
+
+function subdivide(cp, nSeg) {
+  const segs = []; let rem = cp.map(p => p.slice());
+  for (let i = 0; i < nSeg - 1; i++) { const { left, right } = deCasteljauSplit(rem, 1 / (nSeg - i)); segs.push(left); rem = right; }
+  segs.push(rem); return segs;
+}
+
+function convexHull2D(points) {
+  if (points.length < 3) return points.map((_, i) => i);
+  const pts = points.map((p, i) => ({ x: p[0] || p.x, y: p[1] || p.y, i }));
+  pts.sort((a, b) => a.x - b.x || a.y - b.y);
+  const cross = (O, A, B) => (A.x - O.x) * (B.y - O.y) - (A.y - O.y) * (B.x - O.x);
+  const lower = []; for (const p of pts) { while (lower.length >= 2 && cross(lower[lower.length-2], lower[lower.length-1], p) <= 0) lower.pop(); lower.push(p); }
+  const upper = []; for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (upper.length >= 2 && cross(upper[upper.length-2], upper[upper.length-1], p) <= 0) upper.pop(); upper.push(p); }
+  upper.pop(); lower.pop(); return lower.concat(upper).map(p => p.i);
+}
+
+// ══════════════════════════════════════════════════════════════
+// 3D Projection
+// ══════════════════════════════════════════════════════════════
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+function updateCanvasCursor() { canvas.style.cursor = dragMode ? 'grabbing' : 'grab'; }
+function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+window.addEventListener('resize', () => { resize(); draw(); }); resize();
+updateCanvasCursor();
+
+function project(x, y, z) {
+  const cx = x - SCENE_CENTER[0], cy = y - SCENE_CENTER[1], cz = z - SCENE_CENTER[2];
+  const az = azimuth * Math.PI / 180, el = elevation * Math.PI / 180;
+  const rx = cx * Math.cos(az) - cy * Math.sin(az);
+  const ry = cx * Math.sin(az) + cy * Math.cos(az);
+  const ry2 = ry * Math.cos(el) - cz * Math.sin(el);
+  const rz2 = ry * Math.sin(el) + cz * Math.cos(el);
+  return { x: rx * viewScale, y: -rz2 * viewScale, z: ry2 };
+}
+function toScreen(x, y, z) { const p = project(x, y, z); return { x: canvas.width * 0.55 + panX + p.x, y: canvas.height * 0.5 + panY + p.y, z: p.z }; }
+
+// ══════════════════════════════════════════════════════════════
+// Drawing helpers
+// ══════════════════════════════════════════════════════════════
+function drawLine3D(p1, p2, color, width = 1, alpha = 1) {
+  const a = toScreen(...p1), b = toScreen(...p2);
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+  ctx.strokeStyle = color; ctx.globalAlpha = alpha; ctx.lineWidth = width; ctx.stroke(); ctx.globalAlpha = 1;
+}
+
+function drawCircle3D(center, radius, tVal, color, alpha = 0.3, nPts = 36) {
+  const pts = [];
+  for (let i = 0; i <= nPts; i++) { const th = (i / nPts) * Math.PI * 2; pts.push(toScreen(center[0] + radius * Math.cos(th), center[1] + radius * Math.sin(th), tVal)); }
+  ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y); ctx.closePath();
+  ctx.fillStyle = color; ctx.globalAlpha = alpha * 0.3; ctx.fill();
+  ctx.strokeStyle = color; ctx.globalAlpha = alpha; ctx.lineWidth = 1; ctx.stroke(); ctx.globalAlpha = 1;
+}
+
+function drawTube(obs, color) {
+  const tStart = obs.t_start != null ? obs.t_start : 0;
+  const tEnd = obs.t_end != null ? obs.t_end : T_TOTAL;
+  const nRings = 20;
+  for (let i = 0; i < nRings; i++) {
+    const t1 = tStart + (i / nRings) * (tEnd - tStart);
+    const t2 = tStart + ((i + 1) / nRings) * (tEnd - tStart);
+    const c1 = [obs.pos0[0] + obs.vel[0] * t1, obs.pos0[1] + obs.vel[1] * t1];
+    const c2 = [obs.pos0[0] + obs.vel[0] * t2, obs.pos0[1] + obs.vel[1] * t2];
+    for (let j = 0; j < 10; j++) {
+      const th = (j / 10) * Math.PI * 2;
+      drawLine3D([c1[0]+obs.r*Math.cos(th), c1[1]+obs.r*Math.sin(th), t1],
+                 [c2[0]+obs.r*Math.cos(th), c2[1]+obs.r*Math.sin(th), t2], color, 0.5, 0.12);
+    }
+    drawCircle3D(c2, obs.r, t2, color, 0.15);
+  }
+  drawCircle3D([obs.pos0[0]+obs.vel[0]*tStart, obs.pos0[1]+obs.vel[1]*tStart], obs.r, tStart, color, 0.3);
+  // cap at tEnd for time-limited obstacles
+  if (obs.t_end != null) drawCircle3D([obs.pos0[0]+obs.vel[0]*tEnd, obs.pos0[1]+obs.vel[1]*tEnd], obs.r, tEnd, color, 0.4);
+}
+
+function drawHullFaces(pts3d, color, alpha) {
+  const sp = pts3d.map(p => toScreen(...p));
+  const hull = convexHull2D(sp);
+  if (hull.length < 3) return;
+  ctx.beginPath(); ctx.moveTo(sp[hull[0]].x, sp[hull[0]].y);
+  for (let i = 1; i < hull.length; i++) ctx.lineTo(sp[hull[i]].x, sp[hull[i]].y);
+  ctx.closePath(); ctx.fillStyle = color; ctx.globalAlpha = alpha; ctx.fill();
+  ctx.strokeStyle = color; ctx.globalAlpha = alpha * 2; ctx.lineWidth = 0.5; ctx.stroke(); ctx.globalAlpha = 1;
+}
+
+// ══════════════════════════════════════════════════════════════
+// Main draw
+// ══════════════════════════════════════════════════════════════
+function draw() {
+  if (!CTRL_PTS.length) return;
+  const tNow = tFrac * T_TOTAL;
+  const nSub = parseInt(document.getElementById('subSlider').value);
+  const showTubes = document.getElementById('chkTubes').checked;
+  const showHull = document.getElementById('chkHull').checked;
+  const showSeg = document.getElementById('chkSegments').checked;
+  const showHS = document.getElementById('chkHalfspace').checked;
+  const showDist = document.getElementById('chkDistLines').checked;
+  const showTP = document.getElementById('chkTimePlane').checked;
+  const show2D = document.getElementById('chk2D').checked;
+
+  document.getElementById('tVal').textContent = tNow.toFixed(1);
+  document.getElementById('rotVal').textContent = azimuth.toFixed(1);
+  document.getElementById('elevVal').textContent = elevation.toFixed(1);
+  document.getElementById('subVal').textContent = nSub;
+  document.getElementById('rotSlider').value = azimuth;
+  document.getElementById('elevSlider').value = elevation;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Axes
+  drawLine3D([0,0,0],[10,0,0],'#666',1,0.4); drawLine3D([0,0,0],[0,10,0],'#666',1,0.4); drawLine3D([0,0,0],[0,0,T_TOTAL],'#666',1,0.4);
+  const lx=toScreen(10.5,0,0),ly=toScreen(0,10.5,0),lz=toScreen(0,0,T_TOTAL+0.5);
+  ctx.font='12px monospace'; ctx.fillStyle='#888'; ctx.fillText('x',lx.x,lx.y); ctx.fillText('y',ly.x,ly.y); ctx.fillText('t',lz.x,lz.y);
+  for(let i=0;i<=10;i+=2){drawLine3D([i,0,0],[i,10,0],'#333',0.5,0.2);drawLine3D([0,i,0],[10,i,0],'#333',0.5,0.2);}
+
+  // Obstacle tubes
+  if (showTubes) { for (const obs of OBSTACLES) drawTube(obs, obs.color); }
+
+  // Time-sweep plane
+  if (showTP && tNow > 0) {
+    const co = [[0,0,tNow],[10,0,tNow],[10,10,tNow],[0,10,tNow]].map(c => toScreen(...c));
+    ctx.beginPath(); ctx.moveTo(co[0].x,co[0].y); for(let i=1;i<4;i++) ctx.lineTo(co[i].x,co[i].y);
+    ctx.closePath(); ctx.fillStyle='#fff'; ctx.globalAlpha=0.04; ctx.fill(); ctx.strokeStyle='#fff'; ctx.globalAlpha=0.15; ctx.lineWidth=0.5; ctx.stroke(); ctx.globalAlpha=1;
+    for (const obs of OBSTACLES) {
+      const t0=obs.t_start!=null?obs.t_start:-Infinity, t1=obs.t_end!=null?obs.t_end:Infinity;
+      if (tNow >= t0 && tNow <= t1) {
+        drawCircle3D([obs.pos0[0]+obs.vel[0]*tNow, obs.pos0[1]+obs.vel[1]*tNow], obs.r, tNow, obs.color, 0.6);
+      }
+    }
+  }
+
+  // Segments
+  const segColors = ['#f0f','#0ff','#ff0','#f80','#8f0','#08f','#f08','#0f8','#fa0','#0fa','#a0f','#af0','#f0a','#0af','#a00','#0a0'];
+  const segments = subdivide(CTRL_PTS, nSub);
+  if (showSeg) {
+    segments.forEach((seg, si) => {
+      const c = segColors[si % segColors.length];
+      const crv = bezierCurve(seg, 50);
+      for (let i=0;i<crv.length-1;i++) drawLine3D(crv[i],crv[i+1],c,1.5,0.5);
+      seg.forEach(p => { const sp=toScreen(...p); ctx.beginPath(); ctx.arc(sp.x,sp.y,3,0,Math.PI*2); ctx.fillStyle=c; ctx.globalAlpha=0.6; ctx.fill(); ctx.globalAlpha=1; });
+      for(let i=0;i<seg.length-1;i++) drawLine3D(seg[i],seg[i+1],c,0.5,0.3);
+      if(showHull) drawHullFaces(seg,c,0.06);
+    });
+  }
+  if(showHull && !showSeg) drawHullFaces(CTRL_PTS,'#ffc800',0.08);
+
+  // Half-spaces
+  if (showHS) {
+    segments.forEach(seg => {
+      const centroid = [0,0,0]; seg.forEach(p => {for(let d=0;d<3;d++) centroid[d]+=p[d];}); for(let d=0;d<3;d++) centroid[d]/=seg.length;
+      const tSeg = centroid[2];
+      for (const obs of OBSTACLES) {
+        const t0=obs.t_start!=null?obs.t_start:-Infinity, t1=obs.t_end!=null?obs.t_end:Infinity;
+        if (tSeg < t0 || tSeg > t1) continue;
+        const ox=obs.pos0[0]+obs.vel[0]*tSeg, oy=obs.pos0[1]+obs.vel[1]*tSeg;
+        const dx=centroid[0]-ox, dy=centroid[1]-oy, dist=Math.sqrt(dx*dx+dy*dy);
+        if(dist<0.01)continue;
+        const nx=dx/dist, ny=dy/dist, sx=ox+obs.r*nx, sy=oy+obs.r*ny;
+        const hLen=3;
+        drawLine3D([sx-ny*hLen,sy+nx*hLen,tSeg],[sx+ny*hLen,sy-nx*hLen,tSeg],'#ff0',1,0.4);
+        drawLine3D([sx,sy,tSeg],[sx+nx*0.8,sy+ny*0.8,tSeg],'#ff0',1.5,0.6);
+      }
+    });
+  }
+
+  // Full trajectory
+  const fullCurve = bezierCurve(CTRL_PTS, 400);
+  for(let i=0;i<fullCurve.length-1;i++) drawLine3D(fullCurve[i],fullCurve[i+1],'#ff0',2,0.15);
+  for(let i=0;i<fullCurve.length-1;i++){if(fullCurve[i][2]>tNow)break; drawLine3D(fullCurve[i],fullCurve[i+1],'#ff0',2.5,1);}
+
+  // Control polygon
+  for(let i=0;i<CTRL_PTS.length-1;i++) drawLine3D(CTRL_PTS[i],CTRL_PTS[i+1],'#888',1,0.5);
+  CTRL_PTS.forEach((p,i)=>{const sp=toScreen(...p); ctx.beginPath(); ctx.arc(sp.x,sp.y,5,0,Math.PI*2); ctx.fillStyle=i===0?'#0f0':i===CTRL_PTS.length-1?'#f00':'#fff'; ctx.fill(); ctx.strokeStyle='#000'; ctx.lineWidth=1; ctx.stroke();});
+
+  // Current position
+  let curPt = fullCurve[0];
+  for(let i=0;i<fullCurve.length;i++){if(fullCurve[i][2]>=tNow){curPt=fullCurve[i];break;}}
+  const sp = toScreen(...curPt);
+  ctx.beginPath(); ctx.arc(sp.x,sp.y,7,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill(); ctx.strokeStyle='#ff0'; ctx.lineWidth=2; ctx.stroke();
+
+  // Distance lines + clearance
+  const dists = [];
+  for (const obs of OBSTACLES) {
+    const t0=obs.t_start!=null?obs.t_start:-Infinity, t1=obs.t_end!=null?obs.t_end:Infinity;
+    if (tNow < t0 || tNow > t1) continue;
+    const ox=obs.pos0[0]+obs.vel[0]*tNow, oy=obs.pos0[1]+obs.vel[1]*tNow;
+    const dx=curPt[0]-ox, dy=curPt[1]-oy, dist=Math.sqrt(dx*dx+dy*dy), clearance=dist-obs.r;
+    dists.push({name:obs.name,dist:clearance,color:obs.color});
+    if(showDist && dist>0.01){
+      const nx=dx/dist,ny=dy/dist;
+      drawLine3D(curPt,[ox+obs.r*nx,oy+obs.r*ny,tNow],obs.color,1.5,0.8);
+      const mid=toScreen((curPt[0]+ox+obs.r*nx)/2,(curPt[1]+oy+obs.r*ny)/2,tNow);
+      ctx.font='11px monospace'; ctx.fillStyle=clearance<0?'#f00':obs.color; ctx.fillText(clearance.toFixed(2),mid.x+5,mid.y-5);
+    }
+  }
+
+  // Min clearance over full trajectory
+  let minClearances = {};
+  for (const pt of fullCurve) {
+    for (const obs of OBSTACLES) {
+      const t0=obs.t_start!=null?obs.t_start:-Infinity, t1=obs.t_end!=null?obs.t_end:Infinity;
+      if (pt[2]<t0||pt[2]>t1) continue;
+      const ox=obs.pos0[0]+obs.vel[0]*pt[2], oy=obs.pos0[1]+obs.vel[1]*pt[2];
+      const d=Math.sqrt((pt[0]-ox)**2+(pt[1]-oy)**2)-obs.r;
+      if(!(obs.name in minClearances)||d<minClearances[obs.name]) minClearances[obs.name]=d;
+    }
+  }
+
+  // Info
+  const cData = currentScenario.results[currentCurveKey];
+  let info = `Scenario: ${currentScenario.title}\n`;
+  info += `Curve: ${currentCurveKey} (N=${cData.N}, seg=${cData.n_seg})\n`;
+  info += `CPs: ${CTRL_PTS.length}, reported clr: ${cData.min_clearance.toFixed(4)}\n\n`;
+  info += `t = ${tNow.toFixed(2)} / ${T_TOTAL}\n`;
+  info += `pos = (${curPt[0].toFixed(2)}, ${curPt[1].toFixed(2)})\n\n`;
+  if (dists.length > 0) {
+    info += `Active clearance:\n`;
+    // deduplicate wall obstacles: show only worst
+    const byPrefix = {};
+    for (const d of dists) {
+      const prefix = d.name.replace(/\d+$/,'');
+      if (!(prefix in byPrefix) || d.dist < byPrefix[prefix].dist) byPrefix[prefix] = d;
+    }
+    for (const [prefix, d] of Object.entries(byPrefix)) {
+      info += `  ${prefix}: ${d.dist.toFixed(3)}${d.dist<0?' !!':''}\n`;
+    }
+  }
+  info += `\nMin clearance (full):\n`;
+  const mcByPrefix = {};
+  for (const [name, d] of Object.entries(minClearances)) {
+    const prefix = name.replace(/\d+$/,'');
+    if (!(prefix in mcByPrefix) || d < mcByPrefix[prefix]) mcByPrefix[prefix] = d;
+  }
+  for (const [prefix, d] of Object.entries(mcByPrefix)) {
+    info += `  ${prefix}: ${d.toFixed(3)}${d<0?' !!':''}\n`;
+  }
+  document.getElementById('info').textContent = info;
+
+  // 2D overlay
+  if (show2D) {
+    const ox=20, oy=canvas.height-240, sz=200;
+    ctx.fillStyle='rgba(10,10,30,0.85)'; ctx.fillRect(ox-5,oy-5,sz+10,sz+10);
+    ctx.strokeStyle='#444'; ctx.strokeRect(ox-5,oy-5,sz+10,sz+10);
+    const s=sz/11, tx=v=>ox+(v+0.5)*s, ty=v=>oy+sz-(v+0.5)*s;
+
+    // obstacles
+    for(const obs of OBSTACLES){
+      const t0=obs.t_start!=null?obs.t_start:-Infinity, t1=obs.t_end!=null?obs.t_end:Infinity;
+      const active = tNow>=t0&&tNow<=t1;
+      const cx=obs.pos0[0]+obs.vel[0]*tNow, cy=obs.pos0[1]+obs.vel[1]*tNow;
+      ctx.beginPath(); ctx.arc(tx(cx),ty(cy),obs.r*s,0,Math.PI*2);
+      ctx.fillStyle=obs.color; ctx.globalAlpha=active?0.3:0.05; ctx.fill();
+      ctx.strokeStyle=obs.color; ctx.globalAlpha=active?0.8:0.15; ctx.lineWidth=1; ctx.stroke(); ctx.globalAlpha=1;
+    }
+
+    // trajectory
+    ctx.beginPath(); ctx.moveTo(tx(fullCurve[0][0]),ty(fullCurve[0][1]));
+    fullCurve.forEach(p=>ctx.lineTo(tx(p[0]),ty(p[1]))); ctx.strokeStyle='#ff0'; ctx.globalAlpha=0.3; ctx.lineWidth=1; ctx.stroke(); ctx.globalAlpha=1;
+    ctx.beginPath(); ctx.moveTo(tx(fullCurve[0][0]),ty(fullCurve[0][1]));
+    for(const p of fullCurve){if(p[2]>tNow)break; ctx.lineTo(tx(p[0]),ty(p[1]));} ctx.strokeStyle='#ff0'; ctx.lineWidth=2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(tx(curPt[0]),ty(curPt[1]),4,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
+
+    ctx.font='10px monospace'; ctx.fillStyle='#888'; ctx.fillText(`2D (x,y) t=${tNow.toFixed(1)}`,ox,oy-8);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
+// UI wiring
+// ══════════════════════════════════════════════════════════════
+function loadScenario(name) {
+  currentScenario = SCENARIOS[name];
+  OBSTACLES = currentScenario.obstacles;
+  T_TOTAL = currentScenario.T;
+
+  // Populate curve selector
+  const cs = document.getElementById('curveSelect');
+  cs.innerHTML = '';
+  for (const key of Object.keys(currentScenario.results)) {
+    const r = currentScenario.results[key];
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = `${key} (clr=${r.min_clearance.toFixed(3)}, ${r.feasible?'ok':'INFEASIBLE'})`;
+    if (key === currentScenario.best) opt.selected = true;
+    cs.appendChild(opt);
+  }
+  loadCurve(currentScenario.best);
+  updateLegend();
+}
+
+function loadCurve(key) {
+  currentCurveKey = key;
+  const r = currentScenario.results[key];
+  CTRL_PTS = r.control_points;
+  document.getElementById('curveInfo').textContent = `N=${r.N} clr=${r.min_clearance.toFixed(3)}`;
+  draw();
+}
+
+function updateLegend() {
+  const el = document.getElementById('legend');
+  // deduplicate wall obstacles by prefix
+  const seen = {};
+  let html = '';
+  for (const obs of OBSTACLES) {
+    const prefix = obs.name.replace(/\d+$/,'');
+    if (seen[prefix]) continue;
+    seen[prefix] = true;
+    const label = prefix === 'W' ? `W0-W${OBSTACLES.filter(o=>o.name.startsWith('W')).length-1} (wall, t<5)` : obs.name;
+    html += `<div><span style="color:${obs.color}">*</span> ${label}</div>`;
+  }
+  html += `<div style="margin-top:4px"><span style="color:#ff0">-</span> Bezier trajectory</div>`;
+  html += `<div><span style="color:#888">o</span> Control polygon</div>`;
+  el.innerHTML = html;
+}
+
+// Scenario selector
+const scenarioSelect = document.getElementById('scenarioSelect');
+for (const [key, sc] of Object.entries(SCENARIOS)) {
+  const opt = document.createElement('option');
+  opt.value = key; opt.textContent = sc.title;
+  scenarioSelect.appendChild(opt);
+}
+scenarioSelect.addEventListener('change', () => loadScenario(scenarioSelect.value));
+
+document.getElementById('curveSelect').addEventListener('change', function() { loadCurve(this.value); });
+document.getElementById('tSlider').addEventListener('input', function() { tFrac = parseFloat(this.value); draw(); });
+document.getElementById('rotSlider').addEventListener('input', function() { azimuth = parseFloat(this.value); draw(); });
+document.getElementById('elevSlider').addEventListener('input', function() { elevation = parseFloat(this.value); draw(); });
+document.getElementById('subSlider').addEventListener('input', draw);
+['chkTubes','chkHull','chkSegments','chkHalfspace','chkDistLines','chkTimePlane','chk2D'].forEach(id =>
+  document.getElementById(id).addEventListener('change', draw));
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('mousedown', e => {
+  if (e.button === 0) dragMode = 'pan';
+  else if (e.button === 2) dragMode = 'rotate';
+  else return;
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+  updateCanvasCursor();
+  e.preventDefault();
+});
+window.addEventListener('mousemove', e => {
+  if (!dragMode) return;
+  if (e.buttons === 0) {
+    dragMode = null;
+    updateCanvasCursor();
+    return;
+  }
+  const dx = e.clientX - lastMouseX;
+  const dy = e.clientY - lastMouseY;
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+  if (dragMode === 'pan') {
+    panX += dx;
+    panY += dy;
+  } else {
+    azimuth = wrapAngle(azimuth + dx * 0.6);
+    elevation = clamp(elevation - dy * 0.35, 5, 85);
+  }
+  draw();
+  e.preventDefault();
+});
+window.addEventListener('mouseup', () => {
+  dragMode = null;
+  updateCanvasCursor();
+});
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  viewScale = clamp(viewScale * Math.exp(-e.deltaY * 0.0015), 16, 140);
+  draw();
+}, { passive: false });
+
+document.getElementById('btnPlay').addEventListener('click', () => {
+  playing = !playing;
+  document.getElementById('btnPlay').textContent = playing ? 'Pause' : 'Play';
+  if (playing) requestAnimationFrame(animate);
+});
+document.getElementById('btnReset').addEventListener('click', () => {
+  tFrac = 0; document.getElementById('tSlider').value = 0; playing = false;
+  document.getElementById('btnPlay').textContent = 'Play'; draw();
+});
+
+function animate() {
+  if (!playing) return;
+  tFrac += 0.003; if (tFrac > 1) tFrac = 0;
+  document.getElementById('tSlider').value = tFrac; draw();
+  requestAnimationFrame(animate);
+}
+
+// Init
+loadScenario(Object.keys(SCENARIOS)[0]);
+</script>
+</body>
+</html>
