@@ -202,7 +202,7 @@ fn build_ctrl_accel_quadratic(
 
 /// Solve a QP: min 0.5 x^T P x + q^T x  s.t.  l <= Ax <= u
 /// using Clarabel (interior-point conic solver). Returns the solution x.
-fn solve_qp(
+pub(crate) fn solve_qp(
     h: &[f64],         // (n, n) row-major
     f: &[f64],         // (n,)
     constraints_a: &[f64], // (m, n) row-major
@@ -212,7 +212,7 @@ fn solve_qp(
     m: usize,
 ) -> Option<Vec<f64>> {
     use clarabel::algebra::CscMatrix;
-    use clarabel::solver::{DefaultSettings, DefaultSettingsBuilder, DefaultSolver, IPSolver, SolverStatus};
+    use clarabel::solver::{DefaultSettingsBuilder, DefaultSolver, IPSolver, SolverStatus};
 
     // Build P as upper-triangular CSC
     let mut p_col_ptr = vec![0usize; n + 1];
@@ -297,8 +297,6 @@ fn solve_qp(
     if n_ineq > 0 {
         cones.push(clarabel::solver::SupportedConeT::NonnegativeConeT(n_ineq));
     }
-
-    let total_rows = a_rows.len();
 
     // Build A as CSC
     // Clarabel convention: A x + s = b, s in cone
