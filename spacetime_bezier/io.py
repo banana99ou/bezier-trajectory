@@ -20,6 +20,44 @@ DEFAULT_OUTPUT_PATH = Path("figures/spacetime_scenarios.json")
 DEFAULT_VIEWER_HOST = "127.0.0.1"
 DEFAULT_VIEWER_PORT = 8765
 VIEWER_HTML = "spacetime_bezier_interactive.html"
+DEFAULT_N_SEG_SWEEP = (2, 8, 32, 64)
+
+
+def _positive_int(value: str) -> int:
+    degree = int(value)
+    if degree <= 0:
+        raise argparse.ArgumentTypeError("N must be a positive integer")
+    return degree
+
+
+def _normalize_degree_args(argv: list[str]) -> list[str]:
+    normalized = []
+    idx = 0
+    while idx < len(argv):
+        token = argv[idx]
+        if token != "-N":
+            normalized.append(token)
+            idx += 1
+            continue
+
+        idx += 1
+        degree_tokens = []
+        while idx < len(argv):
+            candidate = argv[idx]
+            try:
+                _positive_int(candidate)
+            except (ValueError, argparse.ArgumentTypeError):
+                break
+            degree_tokens.append(candidate)
+            idx += 1
+
+        if not degree_tokens:
+            raise argparse.ArgumentTypeError("-N requires at least one positive integer")
+
+        for degree in degree_tokens:
+            normalized.extend(["-N", degree])
+
+    return normalized
 
 
 def load_outputs(path: str | Path = DEFAULT_OUTPUT_PATH) -> dict:
@@ -91,16 +129,29 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Which scenarios to run (default: all)",
     )
     parser.add_argument(
-        "--backend",
-        choices=["auto", "python", "rust"],
-        default="rust",
-        help="Optimization backend to use.",
+        "-N",
+        action="append",
+        type=_positive_int,
+        default=None,
+        help="Override with one or more positive Bezier degrees and run n_seg in {2, 8, 32, 64}.",
+    )
+    parser.add_argument(
+        "--tol",
+        type=float,
+        default=1e-6,
+        help="Tolerance for optimization.",
     )
     parser.add_argument(
         "--max-iter",
         type=int,
         default=10000,
         help="Maximum number of iterations for optimization.",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=["auto", "python", "rust"],
+        default="rust",
+        help="Optimization backend to use.",
     )
     parser.add_argument(
         "--output",
@@ -126,18 +177,35 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_scenario_map(base_map: dict, degree_overrides: list[int] | None) -> dict:
+    if degree_overrides is None:
+        return base_map
+    degrees = list(dict.fromkeys(int(degree) for degree in degree_overrides))
+    return {
+        name: (scenario_fn, [(degree, n_seg) for degree in degrees for n_seg in DEFAULT_N_SEG_SWEEP])
+        for name, (scenario_fn, _configs) in base_map.items()
+    }
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = build_arg_parser()
-    args = parser.parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    try:
+        normalized_argv = _normalize_degree_args(raw_argv)
+    except argparse.ArgumentTypeError as exc:
+        parser.error(str(exc))
+    args = parser.parse_args(normalized_argv)
 
     output_path = Path(args.output)
     existing_outputs = load_outputs(output_path)
+    scenario_map = _resolve_scenario_map(SCENARIO_MAP, args.N)
     all_outputs = optimize_scenarios(
         scenario_names=args.scenarios,
-        scenario_map=SCENARIO_MAP,
+        scenario_map=scenario_map,
         existing_outputs=existing_outputs,
         backend=args.backend,
         max_iter=args.max_iter,
+        tol=args.tol
     )
     saved_path = save_outputs(all_outputs, output_path)
     print(f"\nSaved: {saved_path}")

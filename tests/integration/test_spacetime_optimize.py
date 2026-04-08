@@ -2,11 +2,13 @@
 Integration tests for the space-time Bezier optimizer package.
 """
 
+import argparse
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+import spacetime_bezier.io as spacetime_io
 from spacetime_bezier.io import load_outputs, save_outputs
 from spacetime_bezier.optimize import compute_min_clearance, optimize_scenario, optimize_spacetime
 
@@ -126,3 +128,78 @@ def test_spacetime_output_json_round_trip(tmp_path: Path):
     assert loaded["toy"]["best"] == "N4_seg4"
     assert loaded["toy"]["results"]["N4_seg4"]["N"] == 4
     assert loaded["toy"]["results"]["N4_seg4"]["n_seg"] == 4
+
+
+def test_main_with_degree_override_runs_fixed_segment_sweep(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    captured = {}
+
+    def fake_optimize_scenarios(
+        scenario_names,
+        scenario_map,
+        existing_outputs=None,
+        backend="auto",
+        max_iter=200,
+        tol=1e-6,
+        scp_prox_weight=0.3,
+        scp_trust_radius=0.0,
+        min_dt=0.1,
+        verbose=True,
+    ):
+        captured["scenario_names"] = list(scenario_names)
+        captured["configs"] = scenario_map["original"][1]
+        return {
+            "original": {
+                "title": "Original",
+                "best": "N6_seg2",
+                "results": {
+                    "N6_seg2": {
+                        "min_clearance": 1.0,
+                        "control_points": [[0.0, 0.0, 0.0]],
+                    }
+                },
+            }
+        }
+
+    monkeypatch.setattr(spacetime_io, "optimize_scenarios", fake_optimize_scenarios)
+
+    spacetime_io.main(
+        [
+            "original",
+            "-N",
+            "6",
+            "8",
+            "--output",
+            str(tmp_path / "spacetime_scenarios.json"),
+            "--no-open",
+        ]
+    )
+
+    assert captured["scenario_names"] == ["original"]
+    assert captured["configs"] == [
+        (6, 2),
+        (6, 8),
+        (6, 32),
+        (6, 64),
+        (8, 2),
+        (8, 8),
+        (8, 32),
+        (8, 64),
+    ]
+
+
+def test_degree_override_parser_requires_positive_integer():
+    parser = spacetime_io.build_arg_parser()
+
+    args = parser.parse_args(spacetime_io._normalize_degree_args(["original", "-N", "17", "--no-open"]))
+    assert args.N == [17]
+
+    args = parser.parse_args(
+        spacetime_io._normalize_degree_args(["original", "-N", "6", "8", "10", "12", "--no-open"])
+    )
+    assert args.N == [6, 8, 10, 12]
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        spacetime_io._normalize_degree_args(["original", "-N", "0", "--no-open"])
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        spacetime_io._normalize_degree_args(["original", "-N", "-3", "--no-open"])
