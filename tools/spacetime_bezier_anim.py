@@ -1,64 +1,45 @@
 """
-Animated Space-Time Bézier Concept Demo
-
-Left panel:  2D top-down view — obstacles move, trajectory point advances.
-Right panel: 3D (x, y, t) space-time view builds up as time sweeps forward.
+Animated space-time Bezier concept demo.
 """
 
-import numpy as np
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-from matplotlib.animation import FuncAnimation, FFMpegWriter, PillowWriter
-from scipy.special import comb
+from __future__ import annotations
+
 import os
+import sys
+from pathlib import Path
+
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.animation import FFMpegWriter, FuncAnimation, PillowWriter
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+matplotlib.use("Agg")
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from spacetime_bezier.geometry import MovingObstacle, bezier_curve
+from spacetime_bezier.scenarios import scenario_original
 
 
-# ── Bézier utilities ──────────────────────────────────────────────
-
-def bernstein(n, i, t):
-    return comb(n, i, exact=True) * t**i * (1 - t)**(n - i)
-
-
-def bezier_curve(control_points, num_pts=300):
-    n = len(control_points) - 1
-    t = np.linspace(0, 1, num_pts)
-    curve = np.zeros((num_pts, control_points.shape[1]))
-    for i in range(n + 1):
-        curve += np.outer(bernstein(n, i, t), control_points[i])
-    return curve
-
-
-# ── Scene ─────────────────────────────────────────────────────────
-
-class MovingObstacle:
-    def __init__(self, pos0, velocity, radius, color):
-        self.pos0 = np.array(pos0, dtype=float)
-        self.velocity = np.array(velocity, dtype=float)
-        self.radius = radius
-        self.color = color
-
-    def position(self, t):
-        return self.pos0 + self.velocity * t
-
-
-T_TOTAL = 10.0
-OBSTACLES = [
-    MovingObstacle([2.0, 8.0], [0.5, -0.7], 0.8, '#e74c3c'),
-    MovingObstacle([6.0, 2.0], [-0.3, 0.5], 0.7, '#2980b9'),
-    MovingObstacle([4.5, 5.5], [0.1, -0.3], 0.6, '#27ae60'),
-]
-CTRL_PTS = np.array([
-    [0.5, 1.0,  0.0],
-    [1.5, 4.5,  2.5],
-    [5.0, 7.0,  5.0],
-    [7.5, 4.0,  7.5],
-    [8.5, 8.5, 10.0],
-])
+SCENE = scenario_original()
+T_TOTAL = float(SCENE["T"])
+OBSTACLES = [MovingObstacle.from_dict(obs) for obs in SCENE["obstacles"]]
+CTRL_PTS = np.array(
+    [
+        [0.5, 1.0, 0.0],
+        [1.5, 4.5, 2.5],
+        [5.0, 7.0, 5.0],
+        [7.5, 4.0, 7.5],
+        [8.5, 8.5, 10.0],
+    ],
+    dtype=float,
+)
 CURVE = bezier_curve(CTRL_PTS, 300)
 N_FRAMES = 120
-THETA = np.linspace(0, 2 * np.pi, 60)
+THETA = np.linspace(0.0, 2.0 * np.pi, 60)
 
 
 def make_tube_polys(obs, t_max, n_circ=20, n_t=30):

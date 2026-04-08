@@ -1,101 +1,38 @@
 """
-Space-Time Bézier Trajectory Optimization — Conceptual Demo
-
-Key idea: lift 2D moving-obstacle avoidance into (x, y, t) space.
-- Constant-velocity obstacles become straight tubes in space-time.
-- A Bézier curve in (x, y, t) simultaneously plans path AND timing.
-- Convex hull property + De Casteljau subdivision enforce continuous
-  avoidance of moving obstacles, reusing the same machinery as the
-  static keep-out zone framework.
-
-This script produces a single figure showing the concept.
+Space-Time Bezier trajectory optimization conceptual demo.
 """
 
-import numpy as np
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
+import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-from scipy.special import comb
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-# ── Bézier utilities ──────────────────────────────────────────────
+from spacetime_bezier.geometry import MovingObstacle, bezier_curve
+from spacetime_bezier.scenarios import scenario_original
 
-def bernstein(n, i, t):
-    return comb(n, i, exact=True) * t**i * (1 - t)**(n - i)
-
-
-def bezier_curve(control_points, num_pts=200):
-    """Evaluate a Bézier curve from control points (K x D)."""
-    n = len(control_points) - 1
-    t = np.linspace(0, 1, num_pts)
-    curve = np.zeros((num_pts, control_points.shape[1]))
-    for i in range(n + 1):
-        curve += np.outer(bernstein(n, i, t), control_points[i])
-    return curve
-
-
-def convex_hull_2d_ordered(points):
-    """Simple convex hull for a small set of 2D points (gift wrap)."""
-    from scipy.spatial import ConvexHull
-    if len(points) < 3:
-        return points
-    try:
-        hull = ConvexHull(points)
-        return points[hull.vertices]
-    except Exception:
-        return points
-
-
-# ── Obstacle definition ──────────────────────────────────────────
-
-class MovingObstacle:
-    def __init__(self, pos0, velocity, radius):
-        self.pos0 = np.array(pos0, dtype=float)
-        self.velocity = np.array(velocity, dtype=float)
-        self.radius = radius
-
-    def position(self, t):
-        return self.pos0 + self.velocity * t
-
-    def tube_mesh(self, t_range, n_circ=24, n_t=30):
-        """Generate a cylinder mesh in (x, y, t) space."""
-        ts = np.linspace(t_range[0], t_range[1], n_t)
-        theta = np.linspace(0, 2 * np.pi, n_circ)
-        verts = []
-        for t in ts:
-            cx, cy = self.position(t)
-            ring = np.column_stack([
-                cx + self.radius * np.cos(theta),
-                cy + self.radius * np.sin(theta),
-                np.full_like(theta, t),
-            ])
-            verts.append(ring)
-        return verts
-
-
-# ── Scene setup ───────────────────────────────────────────────────
 
 def build_scene():
-    T_total = 10.0  # total time window
-
-    obstacles = [
-        MovingObstacle(pos0=[2.0, 8.0], velocity=[0.5, -0.7], radius=0.8),
-        MovingObstacle(pos0=[6.0, 2.0], velocity=[-0.3, 0.5], radius=0.7),
-        MovingObstacle(pos0=[4.5, 5.5], velocity=[0.1, -0.3], radius=0.6),
-    ]
-
-    # Bézier control points in (x, y, t)
-    # Degree 4 curve: 5 control points
-    # t-components are monotonically increasing (time moves forward)
-    control_points = np.array([
-        [0.5, 1.0,  0.0],   # start
-        [1.5, 4.5,  2.5],
-        [5.0, 7.0,  5.0],
-        [7.5, 4.0,  7.5],
-        [8.5, 8.5, 10.0],   # end
-    ])
-
-    return obstacles, control_points, T_total
+    scenario = scenario_original()
+    obstacles = [MovingObstacle.from_dict(obs) for obs in scenario["obstacles"]]
+    control_points = np.array(
+        [
+            [0.5, 1.0, 0.0],
+            [1.5, 4.5, 2.5],
+            [5.0, 7.0, 5.0],
+            [7.5, 4.0, 7.5],
+            [8.5, 8.5, 10.0],
+        ],
+        dtype=float,
+    )
+    return obstacles, control_points, float(scenario["T"])
 
 
 # ── Plotting ──────────────────────────────────────────────────────

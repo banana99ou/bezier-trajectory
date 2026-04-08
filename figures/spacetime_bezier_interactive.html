@@ -1331,13 +1331,35 @@ function updateLegend() {
   el.innerHTML = html;
 }
 
+async function refreshScenarioData() {
+  try {
+    const response = await fetch('./spacetime_scenarios.json', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).length === 0) {
+      throw new Error('spacetime_scenarios.json is empty');
+    }
+    for (const key of Object.keys(SCENARIOS)) delete SCENARIOS[key];
+    Object.assign(SCENARIOS, data);
+    return true;
+  } catch (err) {
+    console.warn('Falling back to embedded scenario data:', err);
+    return false;
+  }
+}
+
+function populateScenarioSelector() {
+  scenarioSelect.innerHTML = '';
+  for (const [key, sc] of Object.entries(SCENARIOS)) {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = sc.title;
+    scenarioSelect.appendChild(opt);
+  }
+}
+
 // Scenario selector
 const scenarioSelect = document.getElementById('scenarioSelect');
-for (const [key, sc] of Object.entries(SCENARIOS)) {
-  const opt = document.createElement('option');
-  opt.value = key; opt.textContent = sc.title;
-  scenarioSelect.appendChild(opt);
-}
 scenarioSelect.addEventListener('change', () => loadScenario(scenarioSelect.value));
 
 document.getElementById('curveSelect').addEventListener('change', function() { loadCurve(this.value); });
@@ -1407,7 +1429,22 @@ function animate() {
 }
 
 // Init
-loadScenario(Object.keys(SCENARIOS)[0]);
+async function init() {
+  const loadedFreshJson = await refreshScenarioData();
+  populateScenarioSelector();
+  const names = Object.keys(SCENARIOS);
+  if (!names.length) {
+    document.getElementById('info').textContent = 'No scenario data available.';
+    return;
+  }
+  if (!loadedFreshJson) {
+    document.getElementById('info').textContent =
+      'Viewer fell back to embedded scenario data. Run the optimizer from a local HTTP server for fresh JSON.';
+  }
+  loadScenario(names[0]);
+}
+
+init();
 </script>
 </body>
 </html>
