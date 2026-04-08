@@ -10,3 +10,4 @@ artifacts
 target/
 .cursor/debug-90cb20.log
 .specstory
+.vscode/settings.json
