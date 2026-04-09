@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Space-Time Optimizer Step Debugger</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #131726; color: #eef2ff; font-family: system-ui, sans-serif; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; cursor: grab; }
+  #controls, #details {
+    position: fixed;
+    top: 10px;
+    z-index: 10;
+    width: 360px;
+    max-height: calc(100vh - 20px);
+    overflow-y: auto;
+    padding: 14px 16px;
+    background: rgba(17, 21, 34, 0.94);
+    border: 1px solid #2f3957;
+    border-radius: 10px;
+  }
+  #controls { left: 10px; }
+  #details { right: 10px; }
+  h2, h3 { margin: 0 0 10px; font-size: 15px; color: #8cb4ff; }
+  h3 { margin-top: 14px; font-size: 13px; }
+  label { display: block; margin-top: 8px; font-size: 12px; color: #bdc9ef; }
+  input, select, button {
+    width: 100%;
+    margin-top: 4px;
+    padding: 6px 8px;
+    background: #1b2134;
+    color: #eef2ff;
+    border: 1px solid #40507d;
+    border-radius: 6px;
+    font-size: 12px;
+  }
+  .row2, .row3 {
+    display: grid;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .row2 { grid-template-columns: repeat(2, 1fr); }
+  .row3 { grid-template-columns: repeat(3, 1fr); }
+  .toggle { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; }
+  .toggle input { width: auto; margin: 0; }
+  pre {
+    margin: 0;
+    padding: 10px;
+    background: #0f1320;
+    border: 1px solid #27304a;
+    border-radius: 8px;
+    white-space: pre-wrap;
+    font-size: 11px;
+    line-height: 1.4;
+    color: #d9e2ff;
+  }
+  #status { margin-top: 10px; font-size: 12px; color: #d9e2ff; }
+  #busyStatus {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid #33405f;
+    background: #141a2b;
+    font-size: 12px;
+    color: #d9e2ff;
+  }
+  #busyStatus.busy {
+    border-color: #8cb4ff;
+    background: #18233d;
+    color: #eef5ff;
+  }
+  #busyStatus.error {
+    border-color: #ff7b72;
+    background: #341a1a;
+    color: #ffd7d4;
+  }
+  button:disabled, input:disabled, select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+</style>
+</head>
+<body>
+<div id="controls">
+  <h2>Live Optimizer Step Debugger</h2>
+  <label>Scenario</label>
+  <select id="scenarioSelect"></select>
+  <label>Config</label>
+  <select id="configSelect"></select>
+
+  <div class="row2">
+    <label>Max iter<input id="maxIterInput" type="number" min="1" value="200"></label>
+    <label>Tol<input id="tolInput" type="number" step="0.000001" value="0.000001"></label>
+  </div>
+  <div class="row2">
+    <label>Prox<input id="proxInput" type="number" step="0.1" value="0.3"></label>
+    <label>Trust<input id="trustInput" type="number" step="0.1" value="0"></label>
+  </div>
+  <label>Min dt</label>
+  <input id="minDtInput" type="number" step="0.01" value="0.1">
+
+  <div class="row2">
+    <button id="startBtn">Start</button>
+    <button id="resetBtn">Reset</button>
+  </div>
+  <div class="row3">
+    <button id="prevBtn">Prev</button>
+    <button id="nextBtn">Next</button>
+    <button id="nextIterBtn">Next Iter</button>
+  </div>
+
+  <div id="busyStatus">Idle.</div>
+  <div id="status">Loading...</div>
+
+  <h3>Display</h3>
+  <label class="toggle"><input id="chkTubes" type="checkbox" checked>Obstacle tubes</label>
+  <label class="toggle"><input id="chkSegments" type="checkbox" checked>Segments</label>
+  <label class="toggle"><input id="chkHalfspaces" type="checkbox" checked>Half-spaces</label>
+  <label class="toggle"><input id="chkCompare" type="checkbox" checked>Candidate/best overlays</label>
+  <label class="toggle"><input id="chkCentroids" type="checkbox" checked>Centroids</label>
+
+  <h3>Inspect</h3>
+  <label>Segment</label>
+  <select id="segmentSelect"></select>
+  <label>Obstacle</label>
+  <select id="obstacleSelect"></select>
+</div>
+
+<div id="details">
+  <h2>Frame Details</h2>
+  <pre id="summaryPre">Loading...</pre>
+  <h3>Selection</h3>
+  <pre id="detailPre">No data.</pre>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const summaryPre = document.getElementById('summaryPre');
+const detailPre = document.getElementById('detailPre');
+const statusEl = document.getElementById('status');
+const busyStatusEl = document.getElementById('busyStatus');
+const scenarioSelect = document.getElementById('scenarioSelect');
+const configSelect = document.getElementById('configSelect');
+const segmentSelect = document.getElementById('segmentSelect');
+const obstacleSelect = document.getElementById('obstacleSelect');
+const startBtn = document.getElementById('startBtn');
+const resetBtn = document.getElementById('resetBtn');
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+const nextIterBtn = document.getElementById('nextIterBtn');
+
+let appState = null;
+let azimuth = -58;
+let elevation = 22;
+let viewScale = 36;
+let panX = 0;
+let panY = 0;
+let dragMode = null;
+let lastMouseX = 0;
+let lastMouseY = 0;
+let pendingAction = null;
+let pendingStartedAt = 0;
+let pendingTimer = null;
+let lastBusyError = null;
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', () => { resize(); draw(); });
+resize();
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function wrapAngle(deg) { return ((deg + 180) % 360 + 360) % 360 - 180; }
+
+async function fetchJson(url, options = {}) {
+  const response = await fetch(url, options);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
+}
+
+async function postJson(url, payload) {
+  return fetchJson(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+function scenarioCatalog() {
+  return appState?.available?.scenarios || [];
+}
+
+function currentFrame() {
+  return appState?.current_frame || null;
+}
+
+function currentScenario() {
+  return appState?.scenario || null;
+}
+
+function setControlsDisabled(disabled) {
+  [
+    scenarioSelect,
+    configSelect,
+    segmentSelect,
+    obstacleSelect,
+    document.getElementById('maxIterInput'),
+    document.getElementById('tolInput'),
+    document.getElementById('proxInput'),
+    document.getElementById('trustInput'),
+    document.getElementById('minDtInput'),
+    startBtn,
+    resetBtn,
+    prevBtn,
+    nextBtn,
+    nextIterBtn,
+  ].forEach(el => { if (el) el.disabled = disabled; });
+}
+
+function refreshBusyStatus() {
+  if (pendingAction) {
+    const elapsed = (Date.now() - pendingStartedAt) / 1000;
+    busyStatusEl.className = 'busy';
+    busyStatusEl.textContent =
+      `Accepted "${pendingAction}". Processing for ${elapsed.toFixed(1)}s. ` +
+      `If this keeps increasing, the solver is still running or stuck in a heavy step.`;
+    return;
+  }
+  if (lastBusyError) {
+    busyStatusEl.className = 'error';
+    busyStatusEl.textContent = lastBusyError;
+    return;
+  }
+  busyStatusEl.className = '';
+  busyStatusEl.textContent = 'Idle.';
+}
+
+function beginBusy(actionLabel) {
+  pendingAction = actionLabel;
+  pendingStartedAt = Date.now();
+  lastBusyError = null;
+  setControlsDisabled(true);
+  if (pendingTimer) clearInterval(pendingTimer);
+  pendingTimer = window.setInterval(refreshBusyStatus, 200);
+  refreshBusyStatus();
+}
+
+function endBusy(errorMessage = null) {
+  pendingAction = null;
+  pendingStartedAt = 0;
+  lastBusyError = errorMessage;
+  if (pendingTimer) {
+    clearInterval(pendingTimer);
+    pendingTimer = null;
+  }
+  setControlsDisabled(false);
+  refreshBusyStatus();
+}
+
+async function withBusy(actionLabel, operation) {
+  beginBusy(actionLabel);
+  try {
+    const result = await operation();
+    endBusy(null);
+    return result;
+  } catch (err) {
+    endBusy(`Last request failed after being accepted: ${String(err)}`);
+    throw err;
+  }
+}
+
+function controlPointsForFrame(frame) {
+  if (!frame) return null;
+  const payload = frame.payload || {};
+  return payload.control_points || payload.last_iterate_control_points || null;
+}
+
+function comparisonCurves(frame) {
+  if (!frame) return [];
+  const payload = frame.payload || {};
+  const curves = [];
+  if (payload.control_points_before) curves.push({ label: 'before', color: '#95a1c6', cp: payload.control_points_before });
+  if (payload.candidate_control_points) curves.push({ label: 'candidate', color: '#00d4ff', cp: payload.candidate_control_points });
+  if (payload.accepted_control_points) curves.push({ label: 'accepted', color: '#00ff95', cp: payload.accepted_control_points });
+  if (payload.best_control_points) curves.push({ label: 'best feasible', color: '#ff7b72', cp: payload.best_control_points });
+  return curves;
+}
+
+function segmentsForFrame(frame) {
+  if (!frame) return [];
+  const payload = frame.payload || {};
+  if (payload.segments) return payload.segments;
+  if (payload.koz && payload.koz.segments) return payload.koz.segments;
+  return [];
+}
+
+function halfspaceSegments(frame) {
+  return frame?.payload?.koz?.segments || [];
+}
+
+function populateScenarioControls() {
+  const catalog = scenarioCatalog();
+  scenarioSelect.innerHTML = '';
+  catalog.forEach(entry => {
+    const option = document.createElement('option');
+    option.value = entry.name;
+    option.textContent = entry.title;
+    scenarioSelect.appendChild(option);
+  });
+  const cfg = appState?.session?.config;
+  if (cfg) scenarioSelect.value = cfg.scenario_name;
+  populateConfigControls();
+  if (cfg) {
+    configSelect.value = `N${cfg.N}_seg${cfg.n_seg}`;
+    document.getElementById('maxIterInput').value = cfg.max_iter;
+    document.getElementById('tolInput').value = cfg.tol;
+    document.getElementById('proxInput').value = cfg.scp_prox_weight;
+    document.getElementById('trustInput').value = cfg.scp_trust_radius;
+    document.getElementById('minDtInput').value = cfg.min_dt;
+  }
+}
+
+function populateConfigControls() {
+  const entry = scenarioCatalog().find(item => item.name === scenarioSelect.value) || scenarioCatalog()[0];
+  configSelect.innerHTML = '';
+  if (!entry) return;
+  entry.configs.forEach(cfg => {
+    const option = document.createElement('option');
+    option.value = cfg.key;
+    option.textContent = cfg.key;
+    option.dataset.degree = cfg.N;
+    option.dataset.nSeg = cfg.n_seg;
+    configSelect.appendChild(option);
+  });
+}
+
+function selectedConfig() {
+  const selected = configSelect.selectedOptions[0];
+  if (!selected) return null;
+  return {
+    N: parseInt(selected.dataset.degree, 10),
+    n_seg: parseInt(selected.dataset.nSeg, 10),
+  };
+}
+
+function updateInspectSelectors() {
+  const frame = currentFrame();
+  const segments = segmentsForFrame(frame);
+  const previousSegment = segmentSelect.value;
+  const previousObstacle = obstacleSelect.value;
+
+  segmentSelect.innerHTML = '';
+  segments.forEach(segment => {
+    const option = document.createElement('option');
+    option.value = String(segment.segment_index);
+    option.textContent = `segment ${segment.segment_index}`;
+    segmentSelect.appendChild(option);
+  });
+  if (segments.length) {
+    segmentSelect.value = segments.some(seg => String(seg.segment_index) === previousSegment)
+      ? previousSegment
+      : String(segments[0].segment_index);
+  }
+
+  obstacleSelect.innerHTML = '';
+  const hsSegment = halfspaceSegments(frame).find(seg => String(seg.segment_index) === segmentSelect.value);
+  (hsSegment?.active_obstacles || []).forEach(obs => {
+    const option = document.createElement('option');
+    option.value = String(obs.obstacle_index);
+    option.textContent = obs.obstacle_name;
+    obstacleSelect.appendChild(option);
+  });
+  const active = hsSegment?.active_obstacles || [];
+  if (active.length) {
+    obstacleSelect.value = active.some(obs => String(obs.obstacle_index) === previousObstacle)
+      ? previousObstacle
+      : String(active[0].obstacle_index);
+  }
+}
+
+function summaryTextForState() {
+  const frame = currentFrame();
+  const scenario = currentScenario();
+  const session = appState?.session || {};
+  if (!frame || !scenario) {
+    return 'Press Next to emit the first optimizer stage.';
+  }
+  const payload = frame.payload || {};
+  const metrics = payload.metrics || {};
+  const trust = payload.trust_region || {};
+  const solver = payload.solver || {};
+  const lines = [
+    `Scenario: ${scenario.title}`,
+    `Stage: ${frame.stage}`,
+    `Label: ${frame.label}`,
+    `Iteration: ${frame.iteration == null ? '-' : frame.iteration + 1}`,
+    `Frame: ${session.frame_index + 1} / ${session.frame_count}`,
+  ];
+  if (metrics.delta != null) lines.push(`delta=${metrics.delta.toFixed(6)}`);
+  if (metrics.clearance != null) lines.push(`clearance=${metrics.clearance.toFixed(6)}`);
+  if (metrics.cost != null) lines.push(`cost=${metrics.cost.toFixed(6)}`);
+  if (trust.raw_step_norm != null) lines.push(`raw_step_norm=${trust.raw_step_norm.toFixed(6)}`);
+  if (trust.used_step_norm != null) lines.push(`used_step_norm=${trust.used_step_norm.toFixed(6)}`);
+  if (trust.clipped != null) lines.push(`clipped=${trust.clipped}`);
+  if (solver.status != null) lines.push(`solver_status=${solver.status}`);
+  if (solver.fun != null) lines.push(`solver_fun=${solver.fun.toFixed(6)}`);
+  if (payload.final_clearance != null) lines.push(`final_clearance=${payload.final_clearance.toFixed(6)}`);
+  return lines.join('\n');
+}
+
+function selectionTextForState() {
+  const frame = currentFrame();
+  if (!frame) return 'No frame selected.';
+  const segments = segmentsForFrame(frame);
+  const selectedSegment = segments.find(seg => String(seg.segment_index) === segmentSelect.value) || segments[0];
+  const hsSegment = halfspaceSegments(frame).find(seg => String(seg.segment_index) === segmentSelect.value) || null;
+  const selectedObstacle = hsSegment?.active_obstacles?.find(obs => String(obs.obstacle_index) === obstacleSelect.value)
+    || hsSegment?.active_obstacles?.[0]
+    || null;
+  const lines = [];
+  if (selectedSegment) {
+    lines.push(`segment ${selectedSegment.segment_index}`);
+    lines.push(`centroid = (${selectedSegment.centroid.map(v => Number(v).toFixed(3)).join(', ')})`);
+    lines.push(`centroid_time = ${Number(selectedSegment.centroid_time).toFixed(3)}`);
+  } else {
+    lines.push('No segment data for this frame.');
+  }
+  if (selectedObstacle) {
+    lines.push('');
+    lines.push(`obstacle ${selectedObstacle.obstacle_name}`);
+    lines.push(`center = (${selectedObstacle.center.map(v => Number(v).toFixed(3)).join(', ')})`);
+    lines.push(`radius = ${Number(selectedObstacle.radius).toFixed(3)}`);
+    lines.push(`normal = (${selectedObstacle.normal.map(v => Number(v).toFixed(3)).join(', ')})`);
+    lines.push(`support = (${selectedObstacle.support_point.map(v => Number(v).toFixed(3)).join(', ')})`);
+    lines.push(`lb = ${Number(selectedObstacle.lower_bound).toFixed(3)}`);
+    lines.push(`rows = ${selectedObstacle.row_indices.join(', ')}`);
+  }
+  lines.push('');
+  lines.push('raw data:');
+  lines.push(JSON.stringify(frame.payload, null, 2).slice(0, 3000));
+  return lines.join('\n');
+}
+
+function updatePanels() {
+  summaryPre.textContent = summaryTextForState();
+  detailPre.textContent = selectionTextForState();
+  const scenario = currentScenario();
+  const session = appState?.session || {};
+  statusEl.textContent = scenario
+    ? `${scenario.title} | N=${session.config?.N ?? '-'} seg=${session.config?.n_seg ?? '-'} | frame ${session.frame_index + 1}/${session.frame_count}`
+    : 'No session loaded';
+}
+
+function comb(n, k) {
+  if (k < 0 || k > n) return 0;
+  let result = 1;
+  for (let i = 0; i < k; i++) result = result * (n - i) / (i + 1);
+  return result;
+}
+
+function bernstein(n, i, t) { return comb(n, i) * Math.pow(t, i) * Math.pow(1 - t, n - i); }
+
+function evalBezier(cp, t) {
+  const n = cp.length - 1;
+  const pt = new Array(cp[0].length).fill(0);
+  for (let i = 0; i <= n; i++) {
+    const b = bernstein(n, i, t);
+    for (let d = 0; d < pt.length; d++) pt[d] += b * cp[i][d];
+  }
+  return pt;
+}
+
+function bezierCurve(cp, samples = 100) {
+  const pts = [];
+  for (let i = 0; i <= samples; i++) pts.push(evalBezier(cp, i / samples));
+  return pts;
+}
+
+function sceneCenter() {
+  const points = [];
+  const scenario = currentScenario();
+  const frame = currentFrame();
+  if (scenario) {
+    points.push(scenario.start, scenario.end);
+    scenario.obstacles.forEach(obs => {
+      const t0 = obs.t_start != null ? obs.t_start : 0;
+      const t1 = obs.t_end != null ? obs.t_end : scenario.T;
+      points.push([obs.pos0[0], obs.pos0[1], t0]);
+      points.push([obs.pos0[0] + obs.vel[0] * t1, obs.pos0[1] + obs.vel[1] * t1, t1]);
+    });
+  }
+  const primary = controlPointsForFrame(frame);
+  if (primary) primary.forEach(p => points.push(p));
+  comparisonCurves(frame).forEach(curve => curve.cp.forEach(p => points.push(p)));
+  segmentsForFrame(frame).forEach(segment => segment.control_points.forEach(p => points.push(p)));
+  if (!points.length) return [5, 5, 5];
+  const mins = [Infinity, Infinity, Infinity];
+  const maxs = [-Infinity, -Infinity, -Infinity];
+  points.forEach(pt => {
+    for (let i = 0; i < 3; i++) {
+      mins[i] = Math.min(mins[i], pt[i]);
+      maxs[i] = Math.max(maxs[i], pt[i]);
+    }
+  });
+  return [(mins[0] + maxs[0]) / 2, (mins[1] + maxs[1]) / 2, (mins[2] + maxs[2]) / 2];
+}
+
+function project(x, y, z) {
+  const center = sceneCenter();
+  const cx = x - center[0];
+  const cy = y - center[1];
+  const cz = z - center[2];
+  const az = azimuth * Math.PI / 180;
+  const el = elevation * Math.PI / 180;
+  const rx = cx * Math.cos(az) - cy * Math.sin(az);
+  const ry = cx * Math.sin(az) + cy * Math.cos(az);
+  const ry2 = ry * Math.cos(el) - cz * Math.sin(el);
+  const rz2 = ry * Math.sin(el) + cz * Math.cos(el);
+  return { x: rx * viewScale, y: -rz2 * viewScale, z: ry2 };
+}
+
+function toScreen(x, y, z) {
+  const p = project(x, y, z);
+  return { x: canvas.width * 0.5 + panX + p.x, y: canvas.height * 0.52 + panY + p.y, z: p.z };
+}
+
+function drawLine3D(a, b, color, width = 1, alpha = 1) {
+  const p = toScreen(...a);
+  const q = toScreen(...b);
+  ctx.beginPath();
+  ctx.moveTo(p.x, p.y);
+  ctx.lineTo(q.x, q.y);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.globalAlpha = alpha;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+function drawPoint3D(p, radius, fill) {
+  const s = toScreen(...p);
+  ctx.beginPath();
+  ctx.arc(s.x, s.y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.strokeStyle = '#05070e';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+function drawPolyline(points, color, width = 1, alpha = 1) {
+  for (let i = 0; i < points.length - 1; i++) drawLine3D(points[i], points[i + 1], color, width, alpha);
+}
+
+function drawTube(obs, totalTime, color) {
+  const tStart = obs.t_start != null ? obs.t_start : 0;
+  const tEnd = obs.t_end != null ? obs.t_end : totalTime;
+  for (let i = 0; i <= 12; i++) {
+    const t = tStart + (i / 12) * (tEnd - tStart);
+    const center = [obs.pos0[0] + obs.vel[0] * t, obs.pos0[1] + obs.vel[1] * t, t];
+    drawPoint3D(center, 2, color);
+    if (i > 0) {
+      const tPrev = tStart + ((i - 1) / 12) * (tEnd - tStart);
+      const prev = [obs.pos0[0] + obs.vel[0] * tPrev, obs.pos0[1] + obs.vel[1] * tPrev, tPrev];
+      drawLine3D(prev, center, color, 1, 0.25);
+    }
+  }
+}
+
+function drawControlCurve(cp, color, alpha = 1) {
+  if (!cp || !cp.length) return;
+  drawPolyline(cp, color, 1, alpha * 0.6);
+  drawPolyline(bezierCurve(cp, 100), color, 2, alpha);
+  cp.forEach((p, idx) => drawPoint3D(p, idx === 0 || idx === cp.length - 1 ? 5 : 4, color));
+}
+
+function drawScene() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawLine3D([0, 0, 0], [10, 0, 0], '#485472', 1, 0.5);
+  drawLine3D([0, 0, 0], [0, 10, 0], '#485472', 1, 0.5);
+  drawLine3D([0, 0, 0], [0, 0, 10], '#485472', 1, 0.5);
+
+  const scenario = currentScenario();
+  const frame = currentFrame();
+  if (!scenario) return;
+
+  if (document.getElementById('chkTubes').checked) {
+    scenario.obstacles.forEach(obs => drawTube(obs, scenario.T, obs.color || '#e67e22'));
+  }
+
+  const primary = controlPointsForFrame(frame);
+  if (primary) drawControlCurve(primary, '#ffd166', 1);
+
+  if (document.getElementById('chkCompare').checked) {
+    comparisonCurves(frame).forEach(curve => drawControlCurve(curve.cp, curve.color, 0.7));
+  }
+
+  if (document.getElementById('chkSegments').checked) {
+    const colors = ['#ff77cc', '#50e3c2', '#8cb4ff', '#ffd166', '#ef476f', '#95d67b'];
+    segmentsForFrame(frame).forEach((segment, idx) => {
+      const color = colors[idx % colors.length];
+      drawControlCurve(segment.control_points, color, 0.35);
+      if (document.getElementById('chkCentroids').checked) drawPoint3D(segment.centroid, 4, color);
+    });
+  }
+
+  if (document.getElementById('chkHalfspaces').checked) {
+    const selectedSegment = segmentSelect.value;
+    const selectedObstacle = obstacleSelect.value;
+    halfspaceSegments(frame).forEach(segment => {
+      segment.active_obstacles.forEach(active => {
+        const highlight =
+          (!selectedSegment || String(segment.segment_index) === selectedSegment) &&
+          (!selectedObstacle || String(active.obstacle_index) === selectedObstacle);
+        const color = highlight ? '#ffe66d' : '#b8c1ec';
+        const [nx, ny] = active.normal;
+        const [sx, sy] = active.support_point;
+        const t = segment.centroid_time;
+        const halfLen = highlight ? 2.2 : 1.3;
+        drawLine3D([sx - ny * halfLen, sy + nx * halfLen, t], [sx + ny * halfLen, sy - nx * halfLen, t], color, highlight ? 2 : 1, 0.8);
+        drawLine3D([active.center[0], active.center[1], t], [sx, sy, t], color, 1.5, 0.9);
+        drawPoint3D([sx, sy, t], 4, color);
+      });
+    });
+  }
+}
+
+function draw() {
+  updatePanels();
+  drawScene();
+}
+
+async function refreshState() {
+  appState = await withBusy('initial load', () => fetchJson('/api/state'));
+  populateScenarioControls();
+  updateInspectSelectors();
+  draw();
+}
+
+async function startSession() {
+  const cfg = selectedConfig();
+  if (!cfg) return;
+  appState = await withBusy('start session', () => postJson('/api/start', {
+    scenario_name: scenarioSelect.value,
+    N: cfg.N,
+    n_seg: cfg.n_seg,
+    max_iter: Number(document.getElementById('maxIterInput').value),
+    tol: Number(document.getElementById('tolInput').value),
+    scp_prox_weight: Number(document.getElementById('proxInput').value),
+    scp_trust_radius: Number(document.getElementById('trustInput').value),
+    min_dt: Number(document.getElementById('minDtInput').value),
+  }));
+  updateInspectSelectors();
+  draw();
+}
+
+async function sessionAction(action) {
+  const actionLabel = action === 'next-iteration' ? 'next iteration' : action;
+  appState = await withBusy(actionLabel, () => postJson('/api/action', { action }));
+  updateInspectSelectors();
+  draw();
+}
+
+scenarioSelect.addEventListener('change', populateConfigControls);
+segmentSelect.addEventListener('change', () => { updateInspectSelectors(); draw(); });
+obstacleSelect.addEventListener('change', draw);
+['chkTubes', 'chkSegments', 'chkHalfspaces', 'chkCompare', 'chkCentroids'].forEach(id => {
+  document.getElementById(id).addEventListener('change', draw);
+});
+document.getElementById('startBtn').addEventListener('click', startSession);
+document.getElementById('resetBtn').addEventListener('click', () => sessionAction('reset'));
+document.getElementById('prevBtn').addEventListener('click', () => sessionAction('prev'));
+document.getElementById('nextBtn').addEventListener('click', () => sessionAction('next'));
+document.getElementById('nextIterBtn').addEventListener('click', () => sessionAction('next-iteration'));
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('mousedown', e => {
+  dragMode = e.button === 0 ? 'pan' : e.button === 2 ? 'rotate' : null;
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+  canvas.style.cursor = dragMode ? 'grabbing' : 'grab';
+  e.preventDefault();
+});
+window.addEventListener('mousemove', e => {
+  if (!dragMode) return;
+  const dx = e.clientX - lastMouseX;
+  const dy = e.clientY - lastMouseY;
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+  if (dragMode === 'pan') {
+    panX += dx;
+    panY += dy;
+  } else {
+    azimuth = wrapAngle(azimuth + dx * 0.6);
+    elevation = clamp(elevation - dy * 0.35, 5, 85);
+  }
+  draw();
+  e.preventDefault();
+});
+window.addEventListener('mouseup', () => {
+  dragMode = null;
+  canvas.style.cursor = 'grab';
+});
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  viewScale = clamp(viewScale * Math.exp(-e.deltaY * 0.0015), 12, 160);
+  draw();
+}, { passive: false });
+
+refreshState().catch(err => {
+  statusEl.textContent = String(err);
+  summaryPre.textContent = 'Failed to load debugger state.';
+  detailPre.textContent = String(err);
+});
+</script>
+</body>
+</html>
