@@ -66,6 +66,32 @@ def test_spacetime_koz_constraints_build_rows_for_active_obstacle():
     np.testing.assert_allclose(constraint.ub, np.full(3, np.inf))
 
 
+def test_spacetime_koz_constraints_return_debug_metadata():
+    A_list = segment_matrices_equal_params(2, 1)
+    P = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [2.0, 2.0, 2.0],
+        ]
+    )
+    obstacles = [{"pos0": [0.0, 1.0], "vel": [0.0, 0.0], "r": 0.5, "name": "A"}]
+
+    constraint, debug = build_spacetime_koz_constraints(A_list, P, obstacles, dim=3, return_debug=True)
+
+    assert constraint is not None
+    assert debug["row_count"] == 3
+    assert len(debug["segments"]) == 1
+    seg = debug["segments"][0]
+    assert seg["segment_index"] == 0
+    assert seg["rows_added"] == 3
+    assert len(seg["active_obstacles"]) == 1
+    active = seg["active_obstacles"][0]
+    assert active["obstacle_name"] == "A"
+    assert active["row_count"] == 3
+    np.testing.assert_allclose(active["support_point"], np.array([0.5, 1.0]))
+
+
 def test_box_bounds_fix_endpoints_and_limit_time():
     P_init = np.array(
         [

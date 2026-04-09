@@ -9,8 +9,15 @@ import numpy as np
 import pytest
 
 import spacetime_bezier.io as spacetime_io
+from spacetime_bezier.debug_session import OptimizerDebugSession, SessionConfig
 from spacetime_bezier.io import load_outputs, save_outputs
-from spacetime_bezier.optimize import compute_min_clearance, optimize_scenario, optimize_spacetime
+from spacetime_bezier.optimize import (
+    _clip_trust_region,
+    compute_min_clearance,
+    create_spacetime_debug_stepper,
+    optimize_scenario,
+    optimize_spacetime,
+)
 
 
 def _toy_scenario() -> dict:
@@ -203,3 +210,132 @@ def test_degree_override_parser_requires_positive_integer():
 
     with pytest.raises(argparse.ArgumentTypeError):
         spacetime_io._normalize_degree_args(["original", "-N", "-3", "--no-open"])
+
+
+def test_debug_stepper_matches_python_optimizer_result():
+    scenario = _toy_scenario()
+    kwargs = dict(
+        N=4,
+        dim=3,
+        p_start=scenario["start"],
+        p_end=scenario["end"],
+        obstacles=scenario["obstacles"],
+        n_seg=4,
+        max_iter=8,
+        tol=1e-6,
+        scp_prox_weight=0.3,
+        scp_trust_radius=0.0,
+        min_dt=0.1,
+        init_curve=scenario["init_curve"],
+        backend="python",
+    )
+    direct = optimize_spacetime(verbose=False, **kwargs)
+    stepper = create_spacetime_debug_stepper(**kwargs)
+    stepped, info = stepper.run_to_completion(verbose=False)
+
+    np.testing.assert_allclose(stepped, direct, atol=1e-8)
+    assert info["iterations"] >= 1
+    assert np.all(np.diff(stepped[:, -1]) >= 0.1 - 1e-9)
+
+
+def test_debug_stepper_trust_region_frame_matches_clip_function():
+    scenario = _toy_scenario()
+    stepper = create_spacetime_debug_stepper(
+        N=4,
+        dim=3,
+        p_start=scenario["start"],
+        p_end=scenario["end"],
+        obstacles=scenario["obstacles"],
+        n_seg=4,
+        max_iter=2,
+        tol=1e-6,
+        scp_prox_weight=0.3,
+        scp_trust_radius=0.25,
+        min_dt=0.1,
+        init_curve=scenario["init_curve"],
+        backend="python",
+    )
+
+    frames = []
+    while True:
+        frame = stepper.next_frame()
+        if frame is None:
+            break
+        frames.append(frame.to_dict())
+        if frame.stage == "trust-region":
+            break
+
+    trust_frame = frames[-1]
+    assert trust_frame["stage"] == "trust-region"
+    payload = trust_frame["payload"]
+    x_ref = np.array(frames[4]["payload"]["control_points"], dtype=float).reshape(-1)
+    raw = np.array(payload["candidate_control_points"], dtype=float).reshape(-1)
+    accepted = np.array(payload["accepted_control_points"], dtype=float).reshape(-1)
+    expected = _clip_trust_region(raw, x_ref, 0.25)
+    np.testing.assert_allclose(accepted, expected)
+
+
+def test_debug_session_next_prev_reset_are_history_based():
+    session = OptimizerDebugSession(
+        {
+            "toy": (
+                _toy_scenario,
+                [(4, 4)],
+            )
+        }
+    )
+    state = session.start(SessionConfig(scenario_name="toy", N=4, n_seg=4, max_iter=8))
+    assert state["current_frame"] is None
+
+    state = session.next()
+    first_frame = state["current_frame"]
+    assert first_frame["stage"] == "init-guess"
+
+    state = session.next()
+    second_frame = state["current_frame"]
+    assert second_frame["stage"] == "boundary-constraints"
+
+    state = session.prev()
+    assert state["current_frame"]["frame_id"] == first_frame["frame_id"]
+
+    state = session.reset()
+    assert state["current_frame"] is None
+    assert state["session"]["frame_count"] == 0
+
+
+def test_debug_stepper_emits_expected_stage_order_prefix():
+    scenario = _toy_scenario()
+    stepper = create_spacetime_debug_stepper(
+        N=4,
+        dim=3,
+        p_start=scenario["start"],
+        p_end=scenario["end"],
+        obstacles=scenario["obstacles"],
+        n_seg=4,
+        max_iter=1,
+        tol=1e-6,
+        scp_prox_weight=0.3,
+        scp_trust_radius=0.0,
+        min_dt=0.1,
+        init_curve=scenario["init_curve"],
+        backend="python",
+    )
+    stages = []
+    while True:
+        frame = stepper.next_frame()
+        if frame is None:
+            break
+        stages.append(frame.stage)
+
+    assert stages[:9] == [
+        "init-guess",
+        "boundary-constraints",
+        "time-monotonicity",
+        "box-bounds",
+        "iteration-start",
+        "segment-subdivision",
+        "koz-linearization",
+        "qp-assembly",
+        "solver-candidate",
+    ]
+    assert stages[-2:] == ["post-eval", "finalize"]

@@ -10,13 +10,21 @@ from scipy.optimize import Bounds, LinearConstraint
 from .geometry import obstacle_array_bundle
 
 
-def build_spacetime_koz_constraints(A_list, P: np.ndarray, obstacles: list[dict], dim: int = 3):
+def build_spacetime_koz_constraints(
+    A_list,
+    P: np.ndarray,
+    obstacles: list[dict],
+    dim: int = 3,
+    return_debug: bool = False,
+):
     """
     Build supporting half-space constraints for moving obstacles.
 
     The support plane is linearized at each segment centroid time.
     """
     if not obstacles:
+        if return_debug:
+            return None, {"segments": [], "row_count": 0}
         return None
 
     P = np.asarray(P, dtype=float)
@@ -27,15 +35,26 @@ def build_spacetime_koz_constraints(A_list, P: np.ndarray, obstacles: list[dict]
 
     blocks_A = []
     blocks_lb = []
+    segment_debug = []
+    total_rows = 0
 
-    for A_seg in A_list:
+    for segment_idx, A_seg in enumerate(A_list):
         Q = A_seg @ P
         centroid = Q.mean(axis=0)
         t_seg = float(centroid[-1])
         c_spatial = centroid[:spatial_dim]
+        segment_info = {
+            "segment_index": int(segment_idx),
+            "control_points": np.asarray(Q, dtype=float).tolist(),
+            "centroid": np.asarray(centroid, dtype=float).tolist(),
+            "centroid_time": t_seg,
+            "active_obstacles": [],
+            "rows_added": 0,
+        }
 
         active = (t_seg >= obs_t0) & (t_seg <= obs_t1)
         if not active.any():
+            segment_debug.append(segment_info)
             continue
 
         o_positions = obs_pos0 + obs_vel * t_seg
@@ -43,6 +62,7 @@ def build_spacetime_koz_constraints(A_list, P: np.ndarray, obstacles: list[dict]
         dists = np.linalg.norm(diffs, axis=1)
         valid = active & (dists > 1e-10)
         if not valid.any():
+            segment_debug.append(segment_info)
             continue
 
         idx = np.where(valid)[0]
@@ -62,15 +82,41 @@ def build_spacetime_koz_constraints(A_list, P: np.ndarray, obstacles: list[dict]
 
         blocks_A.append(A_block)
         blocks_lb.append(lb_block)
+        total_rows += n_rows
+
+        for local_idx, obstacle_idx in enumerate(idx):
+            support_point = o_pos_valid[local_idx] + r_valid[local_idx] * n_hats[local_idx]
+            row_start = local_idx * n_cp_seg
+            row_end = row_start + n_cp_seg
+            segment_info["active_obstacles"].append(
+                {
+                    "obstacle_index": int(obstacle_idx),
+                    "obstacle_name": obstacles[obstacle_idx].get("name", f"obs{obstacle_idx}"),
+                    "center": np.asarray(o_pos_valid[local_idx], dtype=float).tolist(),
+                    "radius": float(r_valid[local_idx]),
+                    "normal": np.asarray(n_hats[local_idx], dtype=float).tolist(),
+                    "support_point": np.asarray(support_point, dtype=float).tolist(),
+                    "lower_bound": float(lb_per_obs[local_idx]),
+                    "row_count": int(n_cp_seg),
+                    "row_indices": list(range(row_start, row_end)),
+                }
+            )
+        segment_info["rows_added"] = int(n_rows)
+        segment_debug.append(segment_info)
 
     if not blocks_A:
+        if return_debug:
+            return None, {"segments": segment_debug, "row_count": 0}
         return None
 
-    return LinearConstraint(
+    constraint = LinearConstraint(
         np.vstack(blocks_A),
         np.concatenate(blocks_lb),
         np.full(sum(len(block) for block in blocks_lb), np.inf),
     )
+    if return_debug:
+        return constraint, {"segments": segment_debug, "row_count": int(total_rows)}
+    return constraint
 
 
 def build_boundary_constraints(n_cp: int, dim: int, p_start, p_end) -> LinearConstraint:

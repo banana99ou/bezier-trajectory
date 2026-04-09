@@ -7,19 +7,14 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from scipy.optimize import minimize
 
-from orbital_docking.bezier import BezierCurve
-from orbital_docking.de_casteljau import segment_matrices_equal_params
-
-from .constraints import (
-    build_boundary_constraints,
-    build_box_bounds,
-    build_spacetime_koz_constraints,
-    build_time_monotonicity,
+from .debug_stepper import (
+    clip_trust_region,
+    create_debug_stepper,
+    create_debug_stepper_from_control_points,
 )
 from .geometry import bezier_curve, obstacle_array_bundle
-from .objective import build_energy_objective, build_initial_guess
+from .objective import build_initial_guess
 
 try:
     import bezier_opt as _bezier_opt_rs
@@ -28,13 +23,7 @@ except ImportError:  # pragma: no cover - exercised when the native extension is
 
 
 def _clip_trust_region(x_new: np.ndarray, x_ref: np.ndarray, trust_radius: float) -> np.ndarray:
-    if trust_radius <= 0.0:
-        return x_new
-    step = x_new - x_ref
-    step_norm = np.linalg.norm(step)
-    if step_norm <= trust_radius or step_norm <= 1e-15:
-        return x_new
-    return x_ref + (trust_radius / step_norm) * step
+    return clip_trust_region(np.asarray(x_new, dtype=float), np.asarray(x_ref, dtype=float), trust_radius)
 
 
 def compute_min_clearance(P, obstacles: list[dict], dim: int, n_eval: int = 1500) -> float:
@@ -81,16 +70,16 @@ def _optimize_spacetime_python(
     verbose: bool = True,
 ) -> np.ndarray:
     """Successive convexification solver using SciPy trust-constr."""
-    P = np.asarray(P_init, dtype=float).copy()
-    n_cp, dim = P.shape
-    N = n_cp - 1
-
-    A_list = segment_matrices_equal_params(N, n_seg)
-    H_energy = build_energy_objective(N, dim)
-    bc_con = build_boundary_constraints(n_cp, dim, P[0], P[-1])
-    mono_con = build_time_monotonicity(n_cp, dim, min_dt=min_dt)
-    bounds = build_box_bounds(
-        P,
+    stepper = create_debug_stepper_from_control_points(
+        np.asarray(P_init, dtype=float),
+        obstacles,
+        clearance_fn=compute_min_clearance,
+        n_seg=n_seg,
+        max_iter=max_iter,
+        tol=tol,
+        scp_prox_weight=scp_prox_weight,
+        scp_trust_radius=scp_trust_radius,
+        min_dt=min_dt,
         coord_lb=coord_lb,
         coord_ub=coord_ub,
         time_lb=time_lb,
@@ -99,58 +88,11 @@ def _optimize_spacetime_python(
 
     if verbose:
         print(
-            f"SCP: N={N}, dim={dim}, n_seg={n_seg}, n_cp={n_cp}, n_obs={len(obstacles)}, backend=python"
+            f"SCP: N={stepper.N}, dim={stepper.dim}, n_seg={n_seg}, n_cp={stepper.n_cp}, "
+            f"n_obs={len(obstacles)}, backend=python"
         )
-
-    best_P = P.copy()
-    best_clearance = compute_min_clearance(best_P, obstacles, dim)
-    for iteration in range(max_iter):
-        x_ref = P.reshape(-1)
-        koz_con = build_spacetime_koz_constraints(A_list, P, obstacles, dim)
-
-        H = H_energy + float(scp_prox_weight) * np.eye(n_cp * dim)
-        f = -float(scp_prox_weight) * x_ref
-
-        constraints = [bc_con, mono_con]
-        if koz_con is not None:
-            constraints.append(koz_con)
-
-        result = minimize(
-            lambda x: 0.5 * x @ H @ x + f @ x,
-            x_ref,
-            jac=lambda x: H @ x + f,
-            hess=lambda _x: H,
-            method="trust-constr",
-            constraints=constraints,
-            bounds=bounds,
-            options={"maxiter": 80, "gtol": 1e-9, "verbose": 0},
-        )
-
-        x_new = _clip_trust_region(np.asarray(result.x, dtype=float), x_ref, float(scp_trust_radius))
-        P_new = x_new.reshape(n_cp, dim)
-        delta = float(np.linalg.norm(P_new - P))
-        clearance = compute_min_clearance(P_new, obstacles, dim)
-
-        if verbose:
-            print(
-                f"  iter {iteration + 1}: delta={delta:.6f}, cost={float(result.fun):.4f}, clearance={clearance:.4f}"
-            )
-
-        P = P_new
-        if clearance > 0.0 and clearance > best_clearance:
-            best_P = P.copy()
-            best_clearance = clearance
-        if delta < tol:
-            if verbose:
-                print(f"  Converged at iter {iteration + 1}")
-            break
-
-    final_clearance = compute_min_clearance(P, obstacles, dim)
-    if final_clearance < 0.0 and best_clearance > 0.0:
-        if verbose:
-            print("  Using best feasible iterate")
-        return best_P
-    return P
+    final_control_points, _info = stepper.run_to_completion(verbose=verbose)
+    return final_control_points
 
 
 def _optimize_spacetime_rust(
@@ -315,6 +257,84 @@ def optimize_spacetime(
         time_ub_scale=time_ub_scale,
         verbose=verbose,
         backend=backend,
+    )
+
+
+def create_spacetime_debug_stepper_from_control_points(
+    P_init,
+    obstacles: list[dict],
+    n_seg: int = 8,
+    max_iter: int = 30,
+    tol: float = 1e-6,
+    scp_prox_weight: float = 0.5,
+    scp_trust_radius: float = 0.0,
+    min_dt: float = 0.1,
+    coord_lb: float = -20.0,
+    coord_ub: float = 20.0,
+    time_lb: float = 0.0,
+    time_ub_scale: float = 1.5,
+    backend: str = "python",
+):
+    backend = str(backend).lower().strip()
+    if backend != "python":
+        raise ValueError("Live optimizer stepping currently supports only the Python backend.")
+    return create_debug_stepper_from_control_points(
+        np.asarray(P_init, dtype=float),
+        obstacles,
+        clearance_fn=compute_min_clearance,
+        n_seg=n_seg,
+        max_iter=max_iter,
+        tol=tol,
+        scp_prox_weight=scp_prox_weight,
+        scp_trust_radius=scp_trust_radius,
+        min_dt=min_dt,
+        coord_lb=coord_lb,
+        coord_ub=coord_ub,
+        time_lb=time_lb,
+        time_ub_scale=time_ub_scale,
+    )
+
+
+def create_spacetime_debug_stepper(
+    N: int,
+    dim: int,
+    p_start,
+    p_end,
+    obstacles: list[dict],
+    n_seg: int = 8,
+    max_iter: int = 30,
+    tol: float = 1e-6,
+    scp_prox_weight: float = 0.5,
+    scp_trust_radius: float = 0.0,
+    min_dt: float = 0.1,
+    coord_lb: float = -20.0,
+    coord_ub: float = 20.0,
+    time_lb: float = 0.0,
+    time_ub_scale: float = 1.5,
+    init_curve: dict | None = None,
+    backend: str = "python",
+):
+    backend = str(backend).lower().strip()
+    if backend != "python":
+        raise ValueError("Live optimizer stepping currently supports only the Python backend.")
+    return create_debug_stepper(
+        N=N,
+        dim=dim,
+        p_start=p_start,
+        p_end=p_end,
+        obstacles=obstacles,
+        clearance_fn=compute_min_clearance,
+        n_seg=n_seg,
+        max_iter=max_iter,
+        tol=tol,
+        scp_prox_weight=scp_prox_weight,
+        scp_trust_radius=scp_trust_radius,
+        min_dt=min_dt,
+        coord_lb=coord_lb,
+        coord_ub=coord_ub,
+        time_lb=time_lb,
+        time_ub_scale=time_ub_scale,
+        init_curve=init_curve,
     )
 
 
