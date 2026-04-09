@@ -24,9 +24,26 @@ The baseline `orbital_docking/` package has dimension-agnostic building blocks. 
 - `constraints.py` — reference for how half-space constraints are built (adapt for moving obstacles)
 
 What is genuinely **new** in the spacetime extension:
-1. KOZ constraint builder must compute obstacle position at each segment's centroid time (`pos0 + vel * t_seg`), with optional `t_start`/`t_end` for time-limited obstacles
-2. Time monotonicity constraint: `P[i+1, t] - P[i, t] >= min_dt`
-3. Objective penalizes only **spatial** acceleration, not time-acceleration
+1. KOZ constraint builder must lift moving obstacles into a single static obstacle in space-time. For a constant-velocity obstacle, the object in `(x, y, t)` is one straight world-tube, and the half-space construction must operate on that tube directly. Do not freeze the obstacle at a segment centroid time and then build a purely spatial half-space on that time slice.
+2. One Bezier coordinate is the time axis. The control points live in ordinary higher-dimensional Bezier space, so the existing convex-hull and supporting-half-space logic should be reused with the time coordinate included in the constraint geometry.
+3. Time-limited obstacles should become finite-height tubes by clipping the tube with `t_start` and `t_end`, not by switching between unrelated per-slice constraints.
+4. Time monotonicity constraint: `P[i+1, t] - P[i, t] >= min_dt`
+5. Objective penalizes only **spatial** acceleration, not time-acceleration
+
+## Important Implementation Warning
+
+The intended model is a static obstacle in space-time, not a 2D obstacle re-evaluated on each time slice.
+
+Bad pattern to avoid:
+- Compute `pos0 + vel * t_seg`
+- Build a normal using only spatial coordinates
+- Emit a half-space with zero coefficient on the time coordinate
+- Visualize the result as a flat line on the plane `t = t_seg`
+
+Correct pattern:
+- Treat the obstacle as one object in `(x, y, t)` or `(x, y, z, t)`
+- Build supporting half-spaces in the full lifted space so the time coordinate can appear in the plane equation
+- Visualize the corresponding slanted plane in space-time, not just its intersection with one time slice
 
 ## Commands
 
