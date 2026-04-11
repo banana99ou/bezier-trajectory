@@ -29,3 +29,4 @@ doc/20250902_*
 # Reference papers
 *.pdf
 rust_optimizer/target
+doc/career_profile_and_advice.md
