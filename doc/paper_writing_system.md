@@ -17,6 +17,7 @@ Use these documents as the paper's control system:
 
 - `doc/paper_claim_scope_nonclaims.md`: claim boundary and explicit non-claims
 - `doc/paper_evidence_map.md`: claim-to-evidence map and gap analysis
+- `doc/dcm_db_experiment_note.md`: provisional DB-seeded DCM comparison framing and fairness conditions
 - `doc/figure_table_per_claim_plan.md`: figure/table inventory tied to claims
 - `doc/paper_technical_skeleton.md`: current Stage 3 source-of-truth section architecture
 - `doc/paper_quality_rubric.md`: scoring rubric for readiness checks
@@ -69,12 +70,15 @@ Pass criteria:
 
 - every major claim is labeled `present`, `partial`, or `missing`
 - every `missing` claim is either assigned new work or deleted from the target paper
-- the downstream direct-collocation comparison is explicitly classified as a required major paper component or the paper scope is deliberately rewritten
+- the downstream DCM / direct-collocation comparison is explicitly classified as a required major paper component or the paper scope is deliberately rewritten
+- the downstream comparison is defined on matched cases, with the same downstream settings and the same metrics across pipelines
+- any case-selection rule is reproducible and not phrased as "good looking" or other aesthetic filtering
 
 Failure mode to avoid:
 
 - letting "intended use" silently become "demonstrated capability"
 - treating the downstream comparison as optional while still writing the paper as if its usefulness case has been established
+- allowing subjective case selection or hidden filtering to masquerade as experiment design
 
 ## Stage 2: Figure and table plan
 
@@ -93,7 +97,9 @@ Minimum recommended items:
 - KOZ linearization figure for one representative sub-arc
 - degree/segment-count ablation table
 - compute-time versus degree/segment-count figure
-- downstream comparison table: naive direct collocation vs warm-started direct collocation
+- downstream comparison table: `DB init -> DCM` versus `same DB init -> upstream optimizer -> DCM`
+- case-selection rule and case-count summary for the downstream comparison set
+- region-of-improvement summary if the proposed pipeline helps only on a subset of cases
 
 Pass criteria:
 
@@ -159,7 +165,7 @@ Required comparisons:
 
 - ablation over subdivision count
 - ablation over Bézier degree
-- downstream comparison: direct collocation from naive initialization vs from Bézier-based warm start
+- downstream comparison: matched DB-seeded baseline versus matched DB-seeded upstream-optimized pipeline
 
 Pass criteria:
 
@@ -167,11 +173,17 @@ Pass criteria:
 - baselines are fair and clearly defined
 - captions explain what conclusion the reader should draw
 - if results are still moving, captions and prose remain provisional and avoid locking in pessimistic or over-strong interpretations
+- the downstream comparison states the exact baseline and proposed pipelines in input-output form
+- the downstream comparison retains failed or non-improving cases rather than reporting wins only
+- if the proposed pipeline helps only in a subset of cases, the prose says so explicitly instead of implying broad superiority
 
 Failure mode to avoid:
 
 - comparing against a weakly tuned baseline and calling the result meaningful
 - writing ablation prose that freezes a negative or sweeping interpretation before the evidence stabilizes
+- cherry-picking visually appealing cases without a reproducible selection rule
+- changing downstream settings between the baseline and proposed pipelines
+- describing subset improvement as if it were general downstream superiority
 
 ## Stage 6: Introduction, abstract, title
 
@@ -188,6 +200,7 @@ Pass criteria:
 - title, abstract, and conclusion do not promise more than the evidence shows
 - the paper is application-agnostic in framing but honest about its demonstration base
 - the opening framing leads with the framework contribution before the downstream usefulness angle
+- downstream usefulness claims are conditional and matched-case-specific unless broader evidence actually exists
 
 Failure mode to avoid:
 
@@ -243,6 +256,10 @@ Use this checklist every time a major section is revised.
 - Is any provisional ablation wording prematurely pessimistic or stronger than the still-moving evidence?
 - Is any scenario-specific or local feasibility device being mispresented as part of the reusable framework?
 - Is any baseline being weakened by bad initialization, unequal tuning, or mismatched scope?
+- Is the downstream baseline defined as the actual DB-seeded DCM pipeline rather than an easier substitute?
+- Is the case-selection rule reproducible rather than aesthetic?
+- Are failed, neutral, and losing downstream cases retained in the reported evidence?
+- Does any sentence turn subset improvement into a global downstream claim?
 - Is any objective interpretation being oversold?
 - Is the prose using paper-level concepts rather than unnecessary code identifiers, mode names, or repository narration?
 - Would a skeptical reviewer call this sentence fair?
@@ -276,5 +293,7 @@ This order is deliberate. Weak papers often do the reverse.
 - Do not let scenario-specific protocol details quietly become framework claims.
 - Do not write the paper as a narrated tour of code internals unless those internals are analytically necessary.
 - Do not let convenience phrasing outrun proof or experiment.
+- Do not use aesthetic filtering such as "good looking curve" unless it has been replaced by a reproducible case-selection rule.
+- Do not turn conditional downstream wins on a subset of cases into a claim of general superiority.
 
 If a sentence sounds stronger than the evidence map, the sentence is wrong, not bold.
