@@ -30,7 +30,7 @@ The paper should therefore act as:
 
 The paper should be positioned as:
 
-**a Bézier-based continuous-safety trajectory initialization framework for constrained motion planning, demonstrated on orbital transfer and framed as a warm-start method rather than a final guidance law**
+**a Bézier-based continuous-safety trajectory framework for constrained motion planning, demonstrated on orbital transfer, with downstream warm-start usefulness treated as a major value component rather than the paper's sole identity**
 
 This is stronger and more honest than calling it:
 
@@ -137,7 +137,7 @@ We present a Bézier-based trajectory initialization framework that generates sm
 
 ### Short version for abstract / talk / interview
 
-This work is a constrained trajectory initializer, not a final high-fidelity guidance law. It uses Bézier control points, subdivision-based safety enforcement, and efficient derivative operators in control-point space to generate smooth safety-compliant warm starts for downstream planners.
+This work is a constrained trajectory framework, not a final high-fidelity guidance law. It uses Bézier control points, subdivision-based safety enforcement, and structured derivative operators in control-point space to generate smooth safety-compliant trajectories, and it evaluates their usefulness as warm starts for downstream planners.
 
 ### Best paper identity
 
@@ -182,7 +182,7 @@ For the author's current situation, the best default scope is:
 - strong method framing,
 - strong ablations,
 - clear explanation of the `E/D` construction's structured role,
-- and clear warm-start motivation.
+- and a strong downstream comparison that supports the warm-start usefulness case without taking over the paper's identity.
 
 ### When a second demo is worth it
 
@@ -238,11 +238,15 @@ The safest supporting language is:
 
 ### Tertiary contribution
 
-A reusable formulation for smooth safe warm starts in keep-out-constrained trajectory problems.
+A major external-value component: evidence that the framework's trajectories are useful as smooth safe warm starts in keep-out-constrained downstream optimization.
 
 Important nuance:
 
-This tertiary claim should be framed as **portability potential** unless a second demo actually demonstrates portability.
+This component is important and should remain in the paper plan. However, it should be framed as a major usefulness result that supports the framework, not as the paper's headline contribution or sole identity.
+
+### Portability positioning
+
+Portability should be framed as **potential in construction** unless a second demo actually demonstrates portability.
 
 Do not oversell portability beyond the evidence.
 
@@ -257,7 +261,8 @@ Do not oversell portability beyond the evidence.
 3. Bézier curves are attractive because they are low-dimensional, smooth, and have a convex-hull structure.
 4. Subdivision can convert continuous keep-out requirements into conservative control-point constraints.
 5. Structured derivative mappings in control-point space make the formulation cleaner and more computationally organized.
-6. The result is a reusable continuous-safety warm-start method demonstrated on an orbital-transfer problem.
+6. The result is a reusable continuous-safety trajectory framework demonstrated on an orbital-transfer problem.
+7. A fair downstream comparison then tests whether the framework also delivers practical warm-start value.
 
 ### The sentence the paper should implicitly say about the author
 
@@ -420,13 +425,13 @@ For the orbital-transfer framework paper, include:
 - smoothness metrics,
 - safety margin metrics,
 - compute time,
-- sensitivity to initialization,
+- downstream comparison against a fair naive initialization,
 - effect of subdivision count,
 - and disciplined reporting of where the `E/D` formulation helps the paper's operator structure without turning it into a separate baseline contest.
 
-### Most important extra result
+### Most important supporting result beyond the core framework evidence
 
-The single most important extra result is:
+The most important supporting result is:
 
 **evidence that the structured control-point-space formulation is practically useful, not just algebraically neat**
 
@@ -459,6 +464,7 @@ Then also include:
 - Orbital-transfer trajectory figure.
 - Safety margin versus segmentation / degree figure.
 - Compute time versus degree / segmentation figure.
+- Downstream initialization comparison table.
 - No dedicated `E/D` baseline figure unless a real measured benchmark is later completed.
 
 ### If a second demo is added
@@ -545,7 +551,8 @@ Pursue the paper as:
 with:
 
 - orbital transfer as the main demonstrated domain,
-- clear but bounded warm-start motivation,
+- framework-first contribution framing,
+- a major but bounded downstream warm-start comparison,
 - explicit attention to `E/D`-based structured computation,
 - rigorous ablation and comparison discipline,
 - and carefully bounded claims.

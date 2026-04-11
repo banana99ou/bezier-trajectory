@@ -11,6 +11,7 @@ It is intentionally claim-driven rather than figure-driven. The goal is not to b
 - Methodological claims often still require equations, definitions, or a proposition; figures can clarify them but cannot replace them.
 - Comparative claims require matched protocols and exact numbers; attractive trajectory plots are not enough.
 - If a claim is weaker than the current evidence base, the right action is to weaken or remove the claim, not to build a decorative figure around it.
+- While ablation results are still moving, captions and surrounding prose should remain provisional and should not freeze a pessimistic or sweeping interpretation too early.
 
 ## Claim 1: The method operates entirely in control-point space
 
@@ -201,7 +202,7 @@ It is intentionally claim-driven rather than figure-driven. The goal is not to b
 
 ## Claim 9: The method is useful as a warm-start generator for downstream direct collocation
 
-- Worth keeping: Yes, but only if the comparison is actually built
+- Worth keeping: Yes
 - Priority: primary
 - Claim type: comparative
 - Evidence needed: A fair downstream comparison between direct collocation from a naive initialization and direct collocation from a Bezier-based warm start, under identical solver settings and evaluation criteria.
@@ -218,9 +219,9 @@ It is intentionally claim-driven rather than figure-driven. The goal is not to b
 - Why the inputs are marked this way: The evidence map identifies this as missing, and no repository artifact currently shows the downstream comparison.
 - Production priority: must-have
 - Shared support opportunities:
-  - `T6` is the single most important table for the external-value claim.
+  - `T6` is the central table for the paper's downstream usefulness case.
   - If `T6` exists, it replaces any temptation to make a stronger unsupported superiority claim.
-- Critical note: If `T6` cannot be produced, weaken the paper's warm-start language from demonstrated usefulness to intended use.
+- Critical note: `T6` is a major paper component, but it should support the framework's practical value rather than redefine the paper's identity around direct collocation.
 
 ## Claim 10: The formulation is application-agnostic in principle
 
@@ -323,6 +324,7 @@ The paper should avoid one-figure-per-claim inflation. The better architecture i
 - `T6. Downstream direct-collocation initialization comparison`
   - Directly supports Claim 9
   - Functionally replaces any temptation to make Claim 11
+  - Supports the framework's usefulness case without changing the paper into a collocation-relative identity paper
 
 ## Claims too weak to justify dedicated visual support
 
@@ -337,7 +339,7 @@ The paper should avoid one-figure-per-claim inflation. The better architecture i
 
 - Claim 4: weaken from "efficient and organized" to "structured, reusable, and computationally organized" unless a real benchmark is added
 - Claim 8: drop from the target paper as an explicit claim
-- Claim 9: weaken to intended use if `T6` cannot be built
+- Claim 9: keep as a major must-build comparison, while keeping the overall paper identity framework-first rather than collocation-first
 - Claim 10: phrase as application-agnostic in construction, not broadly validated in practice
 - Claim 11: remove
 - Claim 12: remove

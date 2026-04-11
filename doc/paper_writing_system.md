@@ -6,6 +6,11 @@ The basic rule is simple:
 
 **Do not draft prose faster than the claim boundary and evidence boundary are defined.**
 
+Corollary:
+
+- the paper's identity should be framework-first
+- downstream warm-start usefulness remains a major paper component, but it should not become the paper's sole or primary identity
+
 ## Source documents
 
 Use these documents as the paper's control system:
@@ -40,6 +45,7 @@ Required output:
 Pass criteria:
 
 - the core claim fits in two sentences
+- the framework contribution is clearer than the comparison framing
 - the paper's scope is explicit
 - the paper's non-claims are explicit
 - no sentence implies superiority or broad validation without evidence
@@ -47,6 +53,7 @@ Pass criteria:
 Failure mode to avoid:
 
 - writing an ambitious introduction first and trying to backfill evidence later
+- making the paper sound as if it exists mainly to be compared against direct collocation
 
 ## Stage 1: Evidence lock
 
@@ -62,11 +69,12 @@ Pass criteria:
 
 - every major claim is labeled `present`, `partial`, or `missing`
 - every `missing` claim is either assigned new work or deleted from the target paper
-- the direct-collocation comparison is explicitly classified as required or out of scope
+- the downstream direct-collocation comparison is explicitly classified as a required major paper component or the paper scope is deliberately rewritten
 
 Failure mode to avoid:
 
 - letting "intended use" silently become "demonstrated capability"
+- treating the downstream comparison as optional while still writing the paper as if its usefulness case has been established
 
 ## Stage 2: Figure and table plan
 
@@ -158,10 +166,12 @@ Pass criteria:
 - each experiment answers a specific claim from `doc/paper_evidence_map.md`
 - baselines are fair and clearly defined
 - captions explain what conclusion the reader should draw
+- if results are still moving, captions and prose remain provisional and avoid locking in pessimistic or over-strong interpretations
 
 Failure mode to avoid:
 
 - comparing against a weakly tuned baseline and calling the result meaningful
+- writing ablation prose that freezes a negative or sweeping interpretation before the evidence stabilizes
 
 ## Stage 6: Introduction, abstract, title
 
@@ -177,6 +187,7 @@ Pass criteria:
 
 - title, abstract, and conclusion do not promise more than the evidence shows
 - the paper is application-agnostic in framing but honest about its demonstration base
+- the opening framing leads with the framework contribution before the downstream usefulness angle
 
 Failure mode to avoid:
 
@@ -224,12 +235,16 @@ Use this checklist every time a major section is revised.
 - Does the section make exactly one main point?
 - Is that point already authorized by `doc/paper_claim_scope_nonclaims.md`?
 - Does the point have matching support in `doc/paper_evidence_map.md`?
+- Is the framework identity clearer than the direct-collocation comparison angle?
 - Are any broad phrases hiding narrow evidence?
 - Is "application-agnostic" being used carefully, without pretending cross-domain validation exists?
 - Is "continuous safety" stated with its assumptions?
 - Is the comparison framed as warm-start value rather than full-method replacement?
+- Is any provisional ablation wording prematurely pessimistic or stronger than the still-moving evidence?
+- Is any scenario-specific or local feasibility device being mispresented as part of the reusable framework?
 - Is any baseline being weakened by bad initialization, unequal tuning, or mismatched scope?
 - Is any objective interpretation being oversold?
+- Is the prose using paper-level concepts rather than unnecessary code identifiers, mode names, or repository narration?
 - Would a skeptical reviewer call this sentence fair?
 
 If the answer to the last question is "probably not," rewrite it.
@@ -254,9 +269,12 @@ This order is deliberate. Weak papers often do the reverse.
 ## Final discipline rules
 
 - Do not claim replacement if the evidence only shows warm-start value.
+- Do not let the downstream comparison become the paper's primary identity when the framework itself is the main contribution.
 - Do not claim generality if the paper only demonstrates one domain.
 - Do not claim physical optimality if the objective is a surrogate.
 - Do not use "convexification" in a way that implies the original problem has been solved exactly.
+- Do not let scenario-specific protocol details quietly become framework claims.
+- Do not write the paper as a narrated tour of code internals unless those internals are analytically necessary.
 - Do not let convenience phrasing outrun proof or experiment.
 
 If a sentence sounds stronger than the evidence map, the sentence is wrong, not bold.

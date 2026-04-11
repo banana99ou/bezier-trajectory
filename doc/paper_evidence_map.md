@@ -20,13 +20,15 @@ Status labels:
 | Increasing subdivision count reduces conservatism and changes the cost/runtime trade-off. | Ablation over segment count with metrics such as minimum clearance, surrogate objective, feasibility, and computation time. | `partial` | The code and existing figures support the existence of a segment-count sweep, but the paper needs a clean and quantitative interpretation rather than just plots. | Add a compact ablation table and explain what "reduced conservatism" means operationally. |
 | Higher Bézier degree changes flexibility, boundary-condition accommodation, and performance. | Degree sweep with matched settings and clear interpretation. | `partial` | The repository studies multiple degrees, but the paper still needs disciplined wording. "More freedom" is plausible; "better" requires evidence and a stated criterion. | Add a degree-ablation subsection. Define exactly what improves: feasibility, surrogate cost, smoothness, or downstream usefulness. |
 | The L1 delta-v proxy and L2 control-acceleration energy surrogate are alternative objective surrogates with different optimization behavior. | Mathematical definitions, clear interpretation, and empirical comparison or at least qualitative discussion. | `partial` | Both modes exist in the code, but the repo does not yet show a careful analysis of when one behaves differently from the other. | Remove this as an explicit paper claim. At most, mention objective variants briefly as implementation context without turning them into a paper result. |
-| The method is useful as a warm-start generator for downstream direct collocation. | Direct comparison between direct collocation from a naive initial guess and direct collocation initialized by the Bézier-based result; report convergence behavior, solve success, cost, and time. | `missing` | This is the paper's most important external-value claim, and it is not supported yet. | Add this experiment. If not added, weaken all warm-start utility claims from demonstrated fact to intended use. |
+| The method is useful as a warm-start generator for downstream direct collocation. | Direct comparison between direct collocation from a naive initial guess and direct collocation initialized by the Bézier-based result; report convergence behavior, solve success, cost, and time. | `missing` | This is a major external-value claim for the paper, and it is not supported yet. It should remain an important evidence target, but it should not displace the framework itself as the paper's core identity. | Add this experiment. Without it, the paper loses one major part of its usefulness case and all warm-start utility claims must be weakened from demonstrated fact to intended use. |
 | The formulation is application-agnostic in principle. | A geometric derivation that is not orbital-specific; preferably a second demonstration or at minimum very disciplined wording. | `partial` | The formulation itself is geometric, but the evidence base is currently one orbital demonstration. That supports portability in principle, not in validated practice. | Frame as application-agnostic in construction, not broadly validated across domains. Add a second demo only if it is genuinely finishable. |
 | The method is better than direct collocation. | Broad benchmark suite, fair tuning, clear success criteria, and careful interpretation. | `missing` | This claim is not supported and should not be pursued under the current strategy. | Remove the claim. Compare warm-started vs naive direct collocation instead. |
 | The method gives a true delta-v-optimal solution. | Proper dynamics, control parameterization, time treatment, and a true fuel-optimal objective. | `missing` | The current objectives are surrogates, not exact mission delta-v optimization. | Remove the claim completely. |
 | The framework already supports dynamic obstacles through space-time extension. | Implemented 3+1 formulation, demonstrations, and evidence. | `missing` | This belongs to future work, not the present paper. | Keep only as future work. Do not blur it into the present contribution. |
 
 ## Claim-by-claim implications
+
+Framework identity should remain primary throughout the paper. The downstream warm-start comparison remains a major evidence burden, but it should function as support for the framework's practical value rather than as the paper's sole narrative center.
 
 ## Claims that are safe now
 
@@ -60,6 +62,12 @@ These are not false, but they are easy to overstate.
 2. A clean ablation on segment count and degree with quantitative interpretation.
 3. A downstream comparison: naive direct collocation versus direct collocation initialized by the Bézier-based warm start.
 4. A clearly written limitations section that states what the current paper does not prove.
+
+## Results-writing discipline for still-moving evidence
+
+- For the segment-count and degree ablations, do not lock in pessimistic, sweeping, or otherwise overconfident interpretations while the numbers are still changing.
+- Until the evidence stabilizes, the prose should stay provisional and factual rather than argumentative.
+- Once the evidence stabilizes, the interpretation should become precise and criterion-based, not rhetorical.
 
 ## If time is limited
 

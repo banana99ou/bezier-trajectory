@@ -6,7 +6,7 @@ This document fixes the paper's boundaries before further drafting. Its purpose 
 
 The paper's main claim should be:
 
-**This work presents a Bézier-curve-based trajectory-initialization framework for continuous keep-out-zone (KOZ) avoidance. The method operates entirely in control-point space, uses De Casteljau subdivision to impose conservative supporting half-space constraints on Bézier sub-arcs, and solves a sequence of convex quadratic subproblems within a successive-convexification loop to generate smooth, safety-respecting warm starts.**
+**This work presents a Bézier-curve-based framework for generating smooth, continuously KOZ-safe trajectories. The method operates entirely in control-point space, uses De Casteljau subdivision to impose conservative supporting half-space constraints on Bézier sub-arcs, and solves a sequence of convex quadratic subproblems within a successive-convexification loop. These trajectories are also intended to serve as structured warm starts for downstream solvers, but that downstream role should support the paper's usefulness case rather than define its core identity.**
 
 That claim is strong enough to be interesting and narrow enough to be defensible.
 
@@ -19,9 +19,10 @@ The actual contribution is not "solving constrained trajectory optimization in g
 - quadratic objective assembly using precomputable matrix structure, including Gram-matrix reuse;
 - conservative continuous KOZ handling through De Casteljau subdivision plus segment-wise supporting half-spaces;
 - an SCP implementation that repeatedly relinearizes the nonconvex parts while keeping each subproblem convex;
+- a reusable framework for constructing smooth continuously safe trajectories under the paper's stated assumptions;
 - a demonstration on a simplified orbital-transfer example.
 
-The paper is therefore a **framework-and-method paper with a demonstration case**, not a domain-maximal application paper and not a final optimal-control paper.
+The paper is therefore a **framework-and-method paper with a demonstration case and a major downstream-usefulness component**, not a domain-maximal application paper and not a final optimal-control paper.
 
 ## Scope
 
@@ -35,6 +36,17 @@ The paper should explicitly stay within the following scope:
 - It demonstrates the framework on a **simplified orbital-transfer case**, while keeping the conceptual framing application-agnostic.
 - It may discuss broader portability as a property of the formulation, but not as an experimentally established fact unless additional demonstrations are added.
 
+## Contribution-order rule
+
+When the paper introduces itself, the framing order should be:
+
+1. framework identity
+2. control-point-space and continuous-safety construction
+3. demonstration evidence
+4. downstream warm-start usefulness
+
+That last item is important, but it should not eclipse the framework-level contribution.
+
 ## What the paper is trying to prove
 
 The paper is trying to prove four things:
@@ -44,7 +56,7 @@ The paper is trying to prove four things:
 3. The framework can produce smooth, feasible, safety-respecting trajectories for a nontrivial demonstration problem.
 4. These trajectories are useful as **initial guesses for downstream solvers**, which should be tested by comparing downstream optimization from a naive initialization versus downstream optimization from the Bézier-based warm start.
 
-If the direct-collocation warm-start comparison is not completed, item 4 must be weakened from "useful for downstream solvers" to "intended as warm starts for downstream solvers."
+Item 4 is a major part of the paper's usefulness case, not an optional side branch. However, it should still remain downstream to the framework identity in the paper's rhetoric. If the direct-collocation warm-start comparison is not completed, item 4 can no longer be presented as demonstrated usefulness, and the paper loses one major component of its planned evidence package.
 
 ## Explicit non-claims
 
@@ -61,7 +73,7 @@ The paper should explicitly not claim any of the following:
 
 ## What the paper is and is not trying to prove
 
-The paper **is** trying to establish that the proposed formulation is mathematically coherent, computationally implementable, and useful as a conservative initialization method.
+The paper **is** trying to establish that the proposed formulation is mathematically coherent, computationally implementable, useful for generating smooth KOZ-safe trajectories under explicit assumptions, and valuable as a downstream initialization method when evaluated under a fair comparison.
 
 The paper is **not** trying to prove that Bézier methods are universally better than collocation, that the demonstration case is operationally realistic enough for deployment, or that the current surrogate objectives recover true optimal control solutions.
 

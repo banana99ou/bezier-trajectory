@@ -17,14 +17,17 @@ Score each category from `1` to `5`.
 ### 1. Claim Clarity
 
 Is the main contribution precise, easy to state, and consistent across the title, abstract, introduction, and conclusion?
+Is the paper's identity framework-first rather than sounding mainly like a comparison against direct collocation?
 
 ### 2. Scope Discipline
 
 Does the paper avoid overclaiming? Are the scope, assumptions, limitations, and non-claims stated clearly?
+Are limitations written honestly without unnecessarily self-sabotaging the paper's valid contribution?
 
 ### 3. Positioning
 
 Is it clear why this method exists, what gap it addresses, and which prior methods it should be compared against?
+Is the downstream comparison kept important without taking over the paper's main identity?
 
 ### 4. Technical Soundness
 
@@ -41,18 +44,22 @@ Are baselines appropriate, fairly framed, and evaluated under a defensible compa
 ### 7. Narrative Coherence
 
 Do the sections build a single argument, or does the paper feel fragmented or stitched together?
+Are framework claims, experiment protocol, and result interpretation kept distinct rather than casually mixed?
 
 ### 8. Reader Accessibility
 
 Can a technically literate reader who is not already familiar with Bézier methods understand why the method matters and how it works?
+Does the prose stay at paper level rather than drifting into code-internal naming or repository narration?
 
 ### 9. Reviewer Defensibility
 
 Can likely reviewer objections be anticipated and answered clearly? Are vulnerable claims, missing comparisons, or weak justifications exposed?
+Is the results writing free of prematurely pessimistic or over-interpreted ablation language while evidence is still moving?
 
 ### 10. Title and Abstract Alignment
 
 Do the title and abstract accurately reflect the actual contribution, scope, evidence, and demonstrated application?
+Do they lead with the framework contribution before the downstream usefulness angle?
 
 ## Optional Summary Table
 
@@ -74,3 +81,5 @@ Do the title and abstract accurately reflect the actual contribution, scope, evi
 - Low scores in `Claim Clarity`, `Scope Discipline`, or `Evidence Fit` usually indicate structural problems, not wording problems.
 - A paper can be technically correct but still weak if `Positioning` or `Narrative Coherence` is poor.
 - If `Comparison Fairness` or `Reviewer Defensibility` scores low, expect reviewer pushback even if the method is interesting.
+- If the paper sounds as if it exists mainly relative to direct collocation, revisit `Claim Clarity` and `Positioning` even if the comparison itself is fair.
+- If the results prose sounds prematurely negative or rhetorically overconfident before the evidence stabilizes, revisit `Reviewer Defensibility` and `Narrative Coherence`.

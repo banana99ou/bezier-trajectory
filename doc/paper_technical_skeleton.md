@@ -91,6 +91,9 @@ Important qualification:
 - Do not let Section 4 absorb experimental fairness or result interpretation.
 - Do not let Section 6 restate protocol instead of reporting findings.
 - Do not revive objective-mode comparison as a positive paper claim.
+- Do not let the paper sound as if it exists mainly relative to direct collocation.
+- Do not promote scenario-specific feasibility aids or protocol details into framework-defining claims unless they are genuinely method-essential.
+- Do not narrate the paper through code-internal names or implementation labels when paper-level language will do.
 
 ## Drafting dependency order
 
@@ -132,7 +135,7 @@ The logical dependency order is not the same as the final paper order.
 ## Section 1. Introduction
 
 - Purpose: state the paper question, gap, contribution, and comparison stance.
-- Key message: the paper presents a Bezier-based trajectory-initialization framework for continuous spherical-KOZ avoidance that operates in control-point space and is intended to generate smooth, safety-respecting warm starts.
+- Key message: the paper presents a Bezier-based framework for generating smooth, continuously KOZ-safe trajectories through a control-point-space formulation, conservative continuous-safety construction, and SCP-based optimization. Downstream warm-start usefulness is an important part of the paper's value case, but it should support rather than define the paper's identity.
 - Supports claims: `C1`, `C2`, `C3`, `C5`, narrow `C9`, narrow `C10`.
 - What must appear:
   - narrow problem statement
@@ -148,7 +151,7 @@ The logical dependency order is not the same as the final paper order.
 ## Section 2. Related work and positioning
 
 - Purpose: position the method relative to the specific comparison classes that matter for the paper's claims.
-- Key message: the paper sits at the intersection of trajectory initialization, conservative continuous-safety handling, and SCP-style constrained optimization, but it is not claiming dominance over direct collocation or a full replacement of downstream planners.
+- Key message: the paper sits at the intersection of trajectory initialization, conservative continuous-safety handling, and SCP-style constrained optimization. Direct collocation matters as an important downstream comparison class, but the paper should not be framed as existing mainly in relation to it.
 - Supports claims: mainly Section 1 framing and Section 7 boundary discipline; no new empirical claim should originate here.
 - What must appear:
   - short positioning against direct collocation/direct transcription as downstream optimizers rather than defeated baselines
@@ -182,6 +185,7 @@ The logical dependency order is not the same as the final paper order.
 - Key message: the method combines a structured control-point-space representation, conservative sub-arc half-space constraints, and iterative convex QP solves.
 - Supports claims: `C2`, `C3`, `C4`.
 - Depends on figures/tables: `T1`, `F1`, `F2`.
+- Scope rule: keep framework-essential method content here. Scenario-specific constraints, local feasibility aids, and solver-protocol choices should be explicitly labeled as such if they are included.
 
 ### Section 4.1 Derivative structure and objective assembly
 
@@ -245,6 +249,7 @@ The logical dependency order is not the same as the final paper order.
   - safety metric
   - objective-aligned effort metric
   - runtime and iteration reporting rule
+  - explicit classification of any non-core scenario-specific constraint or feasibility aid that is reported for reproducibility
 
 ### Section 5.2 Subdivision-count and degree ablation protocol
 
@@ -255,6 +260,7 @@ The logical dependency order is not the same as the final paper order.
   - degree sweep
   - fairness conditions across runs
   - declared interpretation boundary for "reduced conservatism" and "degree benefit"
+  - provisional-writing discipline while results are still moving, so the paper does not freeze pessimistic or over-strong readings too early
 
 ### Section 5.3 Downstream direct-collocation comparison protocol
 
@@ -274,7 +280,7 @@ The logical dependency order is not the same as the final paper order.
 ## Section 6. Results
 
 - Purpose: deliver evidence claim by claim, using the protocol already defined in Section 5.
-- Key message: the paper demonstrates feasible trajectories, interpretable ablations, and possibly downstream warm-start value if `T6` is actually completed.
+- Key message: the paper demonstrates feasible trajectories, interpretable ablations, and a downstream warm-start comparison as a major usefulness test. The framework identity should still remain primary in the section's rhetoric.
 - Supports claims: `C5`, `C6`, `C7`, `C9`.
 
 ### Section 6.1 Demonstration feasibility and representative trajectories
@@ -297,10 +303,10 @@ The logical dependency order is not the same as the final paper order.
 
 ### Section 6.4 Downstream warm-start comparison
 
-- Purpose: establish `C9` only if the comparison exists.
+- Purpose: establish `C9`.
 - Depends on figures/tables: `T6`.
 - Safe conclusion if `T6` exists: the Bezier-based result improves downstream initialization behavior on the tested setup.
-- Required fallback if `T6` does not exist: keep warm-start language as intended use only.
+- Discipline rule: this subsection is a major component of the paper, but it should not retroactively redefine the entire paper as a direct-collocation-relative contribution.
 
 ## Section 7. Limitations and scope
 
@@ -316,6 +322,7 @@ The logical dependency order is not the same as the final paper order.
 - What must be excluded:
   - apologetic filler
   - future-work sprawl
+  - limitation wording that unnecessarily weakens the valid contribution already established inside the paper's stated scope
 
 ## Section 8. Conclusion
 
@@ -337,7 +344,7 @@ The logical dependency order is not the same as the final paper order.
 | `C6`  | Section 6.2                          | Section 5.2 protocol                     | Good.                                                                         |
 | `C7`  | Section 6.3                          | Section 5.2 protocol                     | Secondary claim only.                                                         |
 | `C8`  | Retired                              | None                                     | Do not reuse this ID for a live claim.                                        |
-| `C9`  | Section 5.3 protocol and 6.4 results | Section 1 motivation, Section 7 boundary | Necessary two-home claim. Protocol and evidence must both exist.              |
+| `C9`  | Section 5.3 protocol and 6.4 results | Section 1 motivation, Section 7 boundary | Necessary two-home claim. Major usefulness component, but not the paper's primary identity. |
 | `C10` | Section 7                            | Section 1 narrow framing                 | Keep it narrow: application-agnostic in construction, not broadly validated.  |
 
 ## Claims that should not have a positive home
