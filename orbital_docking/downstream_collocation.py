@@ -48,6 +48,8 @@ class DirectCollocationConfig:
     gtol: float = 1e-6
     barrier_tol: float = 1e-6
     verbose: bool = False
+    enforce_segment_koz: bool = False
+    prograde_speed_floor_ratio: float = 0.0
 
 
 def _rotz(theta_rad: float) -> np.ndarray:
@@ -190,22 +192,35 @@ def build_naive_initial_guess(problem: DirectCollocationProblem) -> np.ndarray:
     return _pack_variables(r, v, u)
 
 
-def build_bezier_warm_start(
+def sample_bezier_state_profile(
     problem: DirectCollocationProblem,
     control_points: np.ndarray,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     curve = BezierCurve(control_points)
     taus = problem.tau_grid
     r = np.array([curve.point(tau) for tau in taus])
     v = np.array([curve.velocity(tau) for tau in taus]) / problem.transfer_time_s
     a = np.array([curve.acceleration(tau) for tau in taus]) / (problem.transfer_time_s**2)
+    return r, v, a
 
-    # Force exact downstream boundary states so both initializations use the
-    # same boundary information and variable blocks.
-    r[0] = problem.r0
-    r[-1] = problem.rf
-    v[0] = problem.v0
-    v[-1] = problem.vf
+
+def build_bezier_warm_start(
+    problem: DirectCollocationProblem,
+    control_points: np.ndarray,
+    *,
+    overwrite_boundaries: bool = True,
+) -> np.ndarray:
+    r, v, a = sample_bezier_state_profile(problem, control_points)
+
+    if overwrite_boundaries:
+        # Force exact downstream boundary states so both initializations use the
+        # same boundary information and variable blocks.
+        r = r.copy()
+        v = v.copy()
+        r[0] = problem.r0
+        r[-1] = problem.rf
+        v[0] = problem.v0
+        v[-1] = problem.vf
 
     u = np.array([a_i - _gravity_accel(r_i) for r_i, a_i in zip(r, a)])
     return _pack_variables(r, v, u)
@@ -232,6 +247,38 @@ def build_demo_bezier_warm_start(
         enforce_prograde=True,
         v0=None,
         v1=None,
+        use_cache=use_cache,
+        ignore_existing_cache=ignore_existing_cache,
+        verbose=False,
+        debug=False,
+    )
+
+
+def build_matched_demo_bezier_warm_start(
+    degree: int = 7,
+    n_seg: int = 16,
+    objective_mode: str = "dv",
+    max_iter: int = 500,
+    tol: float = 1e-6,
+    scp_prox_weight: float = 1e-6,
+    scp_trust_radius: float = 2000.0,
+    use_cache: bool = True,
+    ignore_existing_cache: bool = False,
+) -> tuple[np.ndarray, dict]:
+    problem = make_demo_problem()
+    p_init = generate_initial_control_points(degree, problem.r0, problem.rf)
+    return optimize_orbital_docking(
+        p_init,
+        n_seg=n_seg,
+        r_e=problem.koz_radius_km,
+        max_iter=max_iter,
+        tol=tol,
+        objective_mode=objective_mode,
+        scp_prox_weight=scp_prox_weight,
+        scp_trust_radius=scp_trust_radius,
+        enforce_prograde=True,
+        v0=problem.v0,
+        v1=problem.vf,
         use_cache=use_cache,
         ignore_existing_cache=ignore_existing_cache,
         verbose=False,
@@ -372,31 +419,122 @@ def _segment_min_radius(r0: np.ndarray, r1: np.ndarray) -> float:
     return float(np.linalg.norm(p))
 
 
+def _segment_koz_margins(x: np.ndarray, problem: DirectCollocationProblem) -> np.ndarray:
+    r, _, _ = _unpack_variables(x, problem.n_nodes)
+    return np.array(
+        [
+            _segment_min_radius(r[k], r[k + 1]) - problem.koz_radius_km
+            for k in range(problem.n_intervals)
+        ],
+        dtype=float,
+    )
+
+
+def _reference_plane_normal(problem: DirectCollocationProblem) -> np.ndarray:
+    h_vec = np.cross(problem.r0, problem.v0)
+    h_norm = float(np.linalg.norm(h_vec))
+    if h_norm <= 1e-12:
+        raise ValueError("Reference orbital plane is degenerate at the start state.")
+    return h_vec / h_norm
+
+
+def _local_frame(r_km: np.ndarray, plane_normal: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    r_norm = float(np.linalg.norm(r_km))
+    if r_norm <= 1e-12:
+        raise ValueError("Position vector norm is too small for orbital-frame diagnostics.")
+    r_hat = r_km / r_norm
+    t_hat = np.cross(plane_normal, r_hat)
+    t_norm = float(np.linalg.norm(t_hat))
+    if t_norm <= 1e-12:
+        raise ValueError("Local prograde direction is degenerate.")
+    return r_hat, t_hat / t_norm
+
+
+def _prograde_speed_floor_margins(
+    x: np.ndarray,
+    problem: DirectCollocationProblem,
+    floor_ratio: float,
+) -> np.ndarray:
+    r, v, _ = _unpack_variables(x, problem.n_nodes)
+    plane_normal = _reference_plane_normal(problem)
+    margins = []
+    for r_k, v_k in zip(r, v):
+        _r_hat, t_hat = _local_frame(r_k, plane_normal)
+        v_circ = np.sqrt(constants.EARTH_MU_SCALED / np.linalg.norm(r_k))
+        margins.append(float(v_k @ t_hat) - float(floor_ratio) * float(v_circ))
+    return np.array(margins, dtype=float)
+
+
+def _prograde_audit_summary(
+    problem: DirectCollocationProblem,
+    r: np.ndarray,
+    v: np.ndarray,
+    floor_ratio: float = 0.0,
+) -> dict:
+    plane_normal = _reference_plane_normal(problem)
+    speed_ratio = []
+    prograde_speed = []
+    margins = []
+    retrograde_count = 0
+    for r_k, v_k in zip(r, v):
+        _r_hat, t_hat = _local_frame(r_k, plane_normal)
+        v_circ = float(np.sqrt(constants.EARTH_MU_SCALED / np.linalg.norm(r_k)))
+        speed = float(np.linalg.norm(v_k))
+        v_tan = float(v_k @ t_hat)
+        speed_ratio.append(speed / v_circ)
+        prograde_speed.append(v_tan)
+        margins.append(v_tan - float(floor_ratio) * v_circ)
+        if v_tan < 0.0:
+            retrograde_count += 1
+    return {
+        "min_speed_ratio": float(np.min(speed_ratio)),
+        "min_prograde_speed_km_s": float(np.min(prograde_speed)),
+        "min_prograde_speed_margin_km_s": float(np.min(margins)),
+        "retrograde_node_count": int(retrograde_count),
+    }
+
+
 def _collect_metrics(
     x: np.ndarray,
     problem: DirectCollocationProblem,
     res,
     solve_time_s: float,
+    config: DirectCollocationConfig,
 ) -> dict:
     r, v, u = _unpack_variables(x, problem.n_nodes)
     boundary_constraint = _build_boundary_constraint(problem)
     boundary_residual = boundary_constraint.A @ x - boundary_constraint.lb
     dyn_defects = _dynamics_defects(x, problem)
     node_margins = _koz_margins(x, problem)
-    segment_min_radius = min(
-        _segment_min_radius(r[k], r[k + 1]) for k in range(problem.n_intervals)
-    )
-    segment_margin = segment_min_radius - problem.koz_radius_km
+    segment_margins = _segment_koz_margins(x, problem)
+    segment_margin = float(np.min(segment_margins))
     objective_value = _control_effort_objective(x, problem)
     max_boundary_violation = float(np.max(np.abs(boundary_residual)))
     max_dyn_defect = float(np.max(np.abs(dyn_defects)))
     min_node_margin = float(np.min(node_margins))
+    prograde_summary = _prograde_audit_summary(
+        problem,
+        r,
+        v,
+        floor_ratio=config.prograde_speed_floor_ratio,
+    )
 
-    return {
-        "success": bool(getattr(res, "success", False))
+    success = (
+        bool(getattr(res, "success", False))
         and max_boundary_violation <= 1e-4
         and max_dyn_defect <= 1e-4
-        and min_node_margin >= -1e-6,
+        and min_node_margin >= -1e-6
+    )
+    if config.enforce_segment_koz:
+        success = success and segment_margin >= -1e-6
+    if config.prograde_speed_floor_ratio > 0.0:
+        success = (
+            success
+            and prograde_summary["min_prograde_speed_margin_km_s"] >= -1e-6
+        )
+
+    return {
+        "success": success,
         "solve_time_s": float(solve_time_s),
         "iteration_count": int(getattr(res, "nit", getattr(res, "niter", -1))),
         "final_objective": float(objective_value),
@@ -406,6 +544,11 @@ def _collect_metrics(
             "max_eq_violation": float(max(max_boundary_violation, max_dyn_defect)),
             "min_node_margin_km": min_node_margin,
             "min_segment_margin_km": float(segment_margin),
+            "min_prograde_speed_margin_km_s": float(
+                prograde_summary["min_prograde_speed_margin_km_s"]
+            ),
+            "min_speed_ratio": float(prograde_summary["min_speed_ratio"]),
+            "retrograde_node_count": int(prograde_summary["retrograde_node_count"]),
         },
         "solver_status": int(getattr(res, "status", -1)),
         "solver_message": str(getattr(res, "message", "")),
@@ -439,6 +582,29 @@ def solve_direct_collocation(
         jac=lambda x: _koz_margins_jacobian(x, problem),
         hess=BFGS(),
     )
+    constraints = [boundary_constraint, dynamics_constraint, koz_constraint]
+    if config.enforce_segment_koz:
+        constraints.append(
+            NonlinearConstraint(
+                lambda x: _segment_koz_margins(x, problem),
+                0.0,
+                np.inf,
+                hess=BFGS(),
+            )
+        )
+    if config.prograde_speed_floor_ratio > 0.0:
+        constraints.append(
+            NonlinearConstraint(
+                lambda x: _prograde_speed_floor_margins(
+                    x,
+                    problem,
+                    config.prograde_speed_floor_ratio,
+                ),
+                0.0,
+                np.inf,
+                hess=BFGS(),
+            )
+        )
 
     t0 = time.time()
     res = minimize(
@@ -447,7 +613,7 @@ def solve_direct_collocation(
         method="trust-constr",
         jac=lambda x: _control_effort_gradient(x, problem),
         hess=lambda x: _control_effort_hessian(x, problem),
-        constraints=[boundary_constraint, dynamics_constraint, koz_constraint],
+        constraints=constraints,
         options={
             "maxiter": int(config.maxiter),
             "gtol": float(config.gtol),
@@ -456,7 +622,7 @@ def solve_direct_collocation(
         },
     )
     solve_time_s = time.time() - t0
-    metrics = _collect_metrics(res.x, problem, res, solve_time_s)
+    metrics = _collect_metrics(res.x, problem, res, solve_time_s, config=config)
     return res, metrics
 
 
@@ -481,6 +647,13 @@ def run_downstream_comparison(
             "koz_radius_km": float(problem.koz_radius_km),
             "n_intervals": int(problem.n_intervals),
             "n_nodes": int(problem.n_nodes),
+        },
+        "solver_config": {
+            "maxiter": int(config.maxiter),
+            "gtol": float(config.gtol),
+            "barrier_tol": float(config.barrier_tol),
+            "enforce_segment_koz": bool(config.enforce_segment_koz),
+            "prograde_speed_floor_ratio": float(config.prograde_speed_floor_ratio),
         },
         "comparison": {
             "naive": naive_metrics,
