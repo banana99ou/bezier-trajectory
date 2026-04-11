@@ -1,0 +1,20 @@
+# Introduction Draft
+
+## 1. Introduction
+
+Constrained trajectory optimization problems arise across aerospace, robotics, and autonomous systems. In many practical settings, the optimizer must generate trajectories that avoid keep-out zones continuously along the entire path, not merely at a finite set of collocation nodes. This continuous-safety requirement is difficult to enforce directly in standard direct-transcription or direct-collocation formulations, where constraint satisfaction is guaranteed only at discretization points and safety between nodes must be verified separately or accepted on faith.
+
+At the same time, many downstream trajectory-optimization solvers are sensitive to the quality of the initial guess. A poor initialization can lead to infeasible iterates, slow convergence, or convergence to low-quality local solutions. There is therefore practical value in a trajectory-generation method that can produce smooth, feasible, safety-respecting initial guesses before a more expensive downstream solve is attempted.
+
+This paper presents a Bézier-curve-based trajectory-initialization framework that addresses both of these concerns. The method operates entirely in control-point space: the decision variables are the Bézier control points, and all derivative maps, subdivision operators, keep-out-zone constraints, and boundary conditions are written directly as linear operations on those control points. Continuous avoidance of a spherical keep-out zone is enforced conservatively using De Casteljau subdivision to partition the curve into sub-arcs, followed by supporting-half-space constraints on each sub-arc's control polygon. The convex-hull property of Bézier curves then guarantees that the entire sub-arc lies outside the keep-out zone whenever its control points satisfy the half-space inequality. The resulting constrained optimization is solved as a sequence of convex quadratic subproblems within a successive-convexification loop.
+
+The contributions of this paper are:
+
+1. A control-point-space trajectory-initialization framework based on Bézier parameterization, with structured derivative operators and quadratic objective assembly through reusable matrix construction.
+2. A conservative continuous-safety mechanism for spherical keep-out zones, based on De Casteljau subdivision and segment-wise supporting half-spaces, with an explicit statement of the assumptions under which the safety guarantee holds.
+3. An SCP-based optimization algorithm that solves a sequence of convex QPs to refine the trajectory iteratively, with the nonconvex keep-out constraints relinearized at each outer iteration.
+4. A demonstration on a simplified orbital-transfer problem with ablation studies over subdivision count and Bézier degree, showing the computation-versus-approximation trade-off and the effect of curve order on reported metrics.
+
+The paper does not claim that this framework replaces direct collocation or other downstream solvers. It does not claim global optimality, true delta-v optimality, or validated cross-domain portability. The formulation is geometric and application-agnostic in construction, but the empirical evidence in this paper comes from a single orbital-transfer demonstration. The intended downstream use is as a warm-start generator: the Bézier-based trajectory provides a smooth, safety-respecting initial guess for a subsequent higher-fidelity solve. [PLACEHOLDER: If T6 is completed, add a sentence here stating that downstream warm-start value is also demonstrated.]
+
+The remainder of the paper is organized as follows. Section 2 positions the method relative to direct collocation, convexification approaches, and trajectory-initialization work. Section 3 defines the trajectory parameterization, decision variables, and notation. Section 4 presents the method: derivative structure, conservative KOZ handling, the control-effort surrogate objective, and the SCP algorithm. Section 5 defines the experimental setup. Section 6 reports results. Section 7 states limitations and scope. Section 8 concludes.
