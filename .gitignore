@@ -11,10 +11,14 @@ artifacts
 .specstory/
 .cursor/
 .claude/
+.openclaude-profile.json
 
 # Generated figures (regenerable from code)
 figures/*.png
 figures/*.mp4
+
+# Generated Dymos / OpenMDAO outputs
+*_out/
 
 # Syncthing conflict files
 *.sync-conflict-*
@@ -24,3 +28,4 @@ doc/20250902_*
 
 # Reference papers
 *.pdf
+rust_optimizer/target
