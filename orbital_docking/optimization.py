@@ -406,6 +406,7 @@ def optimize_orbital_docking(
     scp_trust_radius: float = 0.0,
     enforce_prograde: bool = False,
     prograde_n_samples: int = 16,
+    elastic_weight: float = 1e4,
     verbose=True,
     debug=False,
     use_cache=True,
@@ -425,6 +426,9 @@ def optimize_orbital_docking(
         v0, v1: Velocity boundary conditions
         a0, a1: Acceleration boundary conditions
         sample_count: Number of samples for cost evaluation
+        elastic_weight: L1 penalty on KOZ slack variables for elastic relaxation.
+            When > 0, KOZ constraints are softened with slack variables so the QP
+            is always feasible. Set to 0 to disable (original hard-constraint behavior).
         verbose: Print progress
         use_cache: Whether to use cache (default: True)
         ignore_existing_cache: If True, skip cache reads but still write cache
@@ -486,6 +490,7 @@ def optimize_orbital_docking(
         scp_trust_radius=scp_trust_radius,
         enforce_prograde=enforce_prograde,
         prograde_n_samples=prograde_n_samples,
+        elastic_weight=elastic_weight,
     )
 
     P = np.asarray(P_opt, dtype=float)
@@ -622,6 +627,7 @@ def _optimize_one_segment_count(payload: dict):
         scp_prox_weight=payload.get("scp_prox_weight", 0.0),
         scp_trust_radius=payload.get("scp_trust_radius", 0.0),
         enforce_prograde=payload.get("enforce_prograde", False),
+        elastic_weight=payload.get("elastic_weight", 1e4),
         verbose=payload["verbose"],
         debug=payload["debug"],
         use_cache=payload["use_cache"],
@@ -644,6 +650,7 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                                 scp_prox_weight: float = 0.0,
                                 scp_trust_radius: float = 0.0,
                                 enforce_prograde: bool = False,
+                                elastic_weight: float = 1e4,
                                 n_jobs: int = 1):
     """
     Run optimization for multiple segment counts and return results.
@@ -728,6 +735,7 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                 scp_prox_weight=scp_prox_weight,
                 scp_trust_radius=scp_trust_radius,
                 enforce_prograde=enforce_prograde,
+                elastic_weight=elastic_weight,
                 verbose=True,
                 debug=debug,
                 use_cache=use_cache,
@@ -771,6 +779,7 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                     "scp_prox_weight": scp_prox_weight,
                     "scp_trust_radius": scp_trust_radius,
                     "enforce_prograde": enforce_prograde,
+                    "elastic_weight": elastic_weight,
                     # Keep worker output quiet to avoid interleaved logs.
                     "verbose": False,
                     "debug": debug,

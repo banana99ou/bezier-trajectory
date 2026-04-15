@@ -442,6 +442,7 @@ pub fn optimize_orbital_docking(
     a1: Option<&[f64]>,
     enforce_prograde: bool,
     prograde_n_samples: usize,
+    elastic_weight: f64,
 ) -> OptResult {
     let consts = OrbitalConstants::default();
     let n = np1 - 1;
@@ -484,6 +485,9 @@ pub fn optimize_orbital_docking(
 
     let mut iterations = 0;
     let mut last_delta = f64::NAN;
+    let mut last_total_slack = 0.0f64;
+    let mut last_max_slack = 0.0f64;
+    let mut hard_qp_ever_succeeded = false;
 
     for it in 1..=max_iter {
         iterations = it;
@@ -532,13 +536,15 @@ pub fn optimize_orbital_docking(
             }
         }
 
-        // KOZ constraints
+        // KOZ constraints (track row range for elastic relaxation)
+        let koz_row_start = total_rows;
         for r in 0..koz.n_rows {
             all_a_rows.extend_from_slice(&koz.a[r * nvars..(r + 1) * nvars]);
             all_lb.push(koz.lb[r]);
             all_ub.push(koz.ub[r]);
             total_rows += 1;
         }
+        let n_koz = total_rows - koz_row_start;
 
         // Boundary constraints
         for bc in &bc_constraints {
@@ -611,22 +617,77 @@ pub fn optimize_orbital_docking(
             }
         }
 
-        // Solve QP
-        let x_new = match solve_qp(
-            &h_mat,
-            &f_vec,
-            &all_a_rows,
-            &all_lb,
-            &all_ub,
-            nvars,
-            total_rows,
-        ) {
-            Some(x) => x,
-            None => {
-                // Solver failed, keep current P
-                break;
+        // Solve QP -- try hard constraints first; if infeasible and elastic
+        // relaxation is enabled, retry with slack variables on KOZ rows.
+        let (x_new, iter_total_slack, iter_max_slack);
+
+        let hard_sol = solve_qp(
+            &h_mat, &f_vec, &all_a_rows, &all_lb, &all_ub, nvars, total_rows,
+        );
+
+        if let Some(x_sol) = hard_sol {
+            hard_qp_ever_succeeded = true;
+            x_new = x_sol;
+            iter_total_slack = 0.0;
+            iter_max_slack = 0.0;
+        } else if !hard_qp_ever_succeeded && elastic_weight > 0.0 && n_koz > 0 {
+            // Hard QP infeasible -- retry with elastic relaxation.
+            // Add slack s_k >= 0 to each KOZ row: A_koz x + s >= b_koz,
+            // with L1 penalty M * sum(s) in the objective.
+            let nvars_ext = nvars + n_koz;
+            let ext_nrows = total_rows + n_koz;
+
+            let mut h_ext = vec![0.0; nvars_ext * nvars_ext];
+            for i in 0..nvars {
+                for j in 0..nvars {
+                    h_ext[i * nvars_ext + j] = h_mat[i * nvars + j];
+                }
             }
-        };
+
+            let mut f_ext = vec![0.0; nvars_ext];
+            f_ext[..nvars].copy_from_slice(&f_vec);
+            for k in 0..n_koz {
+                f_ext[nvars + k] = elastic_weight;
+            }
+
+            let mut a_ext = vec![0.0; ext_nrows * nvars_ext];
+            let mut lb_ext = Vec::with_capacity(ext_nrows);
+            let mut ub_ext = Vec::with_capacity(ext_nrows);
+
+            for r in 0..total_rows {
+                let dst = r * nvars_ext;
+                let src = r * nvars;
+                a_ext[dst..dst + nvars].copy_from_slice(&all_a_rows[src..src + nvars]);
+                if r >= koz_row_start && r < koz_row_start + n_koz {
+                    a_ext[dst + nvars + (r - koz_row_start)] = 1.0;
+                }
+                lb_ext.push(all_lb[r]);
+                ub_ext.push(all_ub[r]);
+            }
+
+            for k in 0..n_koz {
+                let r = total_rows + k;
+                a_ext[r * nvars_ext + nvars + k] = 1.0;
+                lb_ext.push(0.0);
+                ub_ext.push(f64::INFINITY);
+            }
+
+            let x_full = match solve_qp(
+                &h_ext, &f_ext, &a_ext, &lb_ext, &ub_ext, nvars_ext, ext_nrows,
+            ) {
+                Some(x) => x,
+                None => break,
+            };
+
+            x_new = x_full[..nvars].to_vec();
+            iter_total_slack = x_full[nvars..].iter().sum::<f64>();
+            iter_max_slack = x_full[nvars..].iter().cloned().fold(0.0f64, f64::max);
+        } else {
+            break;
+        }
+
+        last_total_slack = iter_total_slack;
+        last_max_slack = iter_max_slack;
 
         // Trust region clipping
         let mut x_result = x_new.clone();
@@ -735,6 +796,8 @@ pub fn optimize_orbital_docking(
     info.insert("mean_control_accel_ms2".to_string(), mean_ctrl_accel);
     info.insert("dv_proxy_m_s".to_string(), dv_proxy);
     info.insert("final_delta_norm".to_string(), last_delta);
+    info.insert("total_koz_slack".to_string(), last_total_slack);
+    info.insert("max_koz_slack".to_string(), last_max_slack);
 
     OptResult {
         p_opt: p,
