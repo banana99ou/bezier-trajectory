@@ -487,7 +487,6 @@ pub fn optimize_orbital_docking(
     let mut last_delta = f64::NAN;
     let mut last_total_slack = 0.0f64;
     let mut last_max_slack = 0.0f64;
-    let mut hard_qp_ever_succeeded = false;
 
     for it in 1..=max_iter {
         iterations = it;
@@ -626,11 +625,10 @@ pub fn optimize_orbital_docking(
         );
 
         if let Some(x_sol) = hard_sol {
-            hard_qp_ever_succeeded = true;
             x_new = x_sol;
             iter_total_slack = 0.0;
             iter_max_slack = 0.0;
-        } else if !hard_qp_ever_succeeded && elastic_weight > 0.0 && n_koz > 0 {
+        } else if elastic_weight > 0.0 && n_koz > 0 {
             // Hard QP infeasible -- retry with elastic relaxation.
             // Add slack s_k >= 0 to each KOZ row: A_koz x + s >= b_koz,
             // with L1 penalty M * sum(s) in the objective.
