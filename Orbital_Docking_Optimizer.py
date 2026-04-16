@@ -6,7 +6,7 @@ It finds trajectories that minimize the difference between geometric acceleratio
 gravitational acceleration while satisfying Keep Out Zone (KOZ) constraints.
 
 Key Features:
-    - Bézier curve trajectory representation with configurable degree (current paper focus: N=5, 6, 7)
+    - Bézier curve trajectory representation with configurable degree (current paper focus: N=6, 7, 8)
     - Iterative optimization with KOZ constraint linearization using segment subdivision
     - Support for velocity and acceleration boundary conditions
     - Caching system for optimization results to speed up repeated runs (enabled by default)
@@ -110,10 +110,10 @@ def main() -> None:
         "-N",
         type=int,
         nargs="+",
-        choices=[5, 6, 7],
-        default=[5, 6, 7],
-        help="List of Bézier curve degrees N to optimize (any of 5, 6, 7). "
-        'Examples: "-N 5", "-N 5 6 7", "-N 5 7". Default: 5 6 7.',
+        choices=[6, 7, 8],
+        default=[6, 7, 8],
+        help="List of Bézier curve degrees N to optimize (any of 6, 7, 8). "
+        'Examples: "-N 6", "-N 6 7 8", "-N 6 8". Default: 6 7 8.',
     )
     parser.add_argument(
         "-v",
@@ -159,6 +159,11 @@ def main() -> None:
         help="Objective to optimize. "
         "'dv' uses an IRLS L1-style delta-v proxy; 'energy' uses the legacy L2 control-energy surrogate. "
         "Default: dv.",
+    )
+    parser.add_argument(
+        "--enforce-prograde",
+        action="store_true",
+        help="Enforce prograde motion",
     )
     parser.add_argument(
         "--scp-prox",
@@ -214,7 +219,7 @@ def main() -> None:
     INCLINATION_DEG = 51.64
     RAAN_DEG = 0.0
     ISS_U_DEG = 45.0
-    PROGRESS_LAG_DEG = 30.0
+    PROGRESS_LAG_DEG = 120.0
 
     def _rotz(theta_rad: float) -> np.ndarray:
         c = np.cos(theta_rad)
@@ -324,7 +329,7 @@ def main() -> None:
             objective=args.objective,
             scp_prox_weight=args.scp_prox,
             scp_trust_radius=args.scp_trust_radius,
-            enforce_prograde=True,
+            enforce_prograde=args.enforce_prograde,
             v0=v0,
             v1=v1,
             n_jobs=args.n_jobs,
@@ -342,26 +347,33 @@ def main() -> None:
         fig_comparison = create_trajectory_comparison_figure(
             p_init_by_order[N], KOZ_RADIUS, results, curve_order=N, v0=v0, v1=v1
         )
-        fig_comparison.savefig(FIGURE_DIR / f"comparison_N{N}.png", dpi=300)
+        comparison_html_path = FIGURE_DIR / f"comparison_N{N}.html"
+        fig_comparison.write_html(
+            str(comparison_html_path),
+            include_plotlyjs=True,
+            full_html=True,
+            auto_open=True,
+        )
+        print(f"✓ Created interactive comparison view: {comparison_html_path.name}")
 
         fig_performance = create_performance_figure(results, curve_order=N)
         fig_performance.savefig(FIGURE_DIR / f"performance_N{N}.png", dpi=300)
 
         print(f"\nCreating acceleration profiles for N={N}...")
         pos_ylim, vel_ylim, acc_ylim = compute_profile_ylims(results, segment_counts)
-        for seg_count in segment_counts:
-            fig = create_acceleration_figure(
-                results,
-                segcount=seg_count,
-                pos_ylim=pos_ylim,
-                vel_ylim=vel_ylim,
-                acc_ylim=acc_ylim,
-                curve_order=N,
-            )
-            fig.savefig(FIGURE_DIR / f"accel_profiles_N{N}_seg{seg_count}.png", dpi=300)
-            print(f"✓ Created profiles for {seg_count} segments")
+        # for seg_count in segment_counts:
+        #     fig = create_acceleration_figure(
+        #         results,
+        #         segcount=seg_count,
+        #         pos_ylim=pos_ylim,
+        #         vel_ylim=vel_ylim,
+        #         acc_ylim=acc_ylim,
+        #         curve_order=N,
+        #     )
+        #     fig.savefig(FIGURE_DIR / f"accel_profiles_N{N}_seg{seg_count}.png", dpi=300)
+        #     print(f"✓ Created profiles for {seg_count} segments")
 
-        print(f"\n✅ N={N} ({_order_label(N)}) visualizations complete!")
+        # print(f"\n✅ N={N} ({_order_label(N)}) visualizations complete!")
 
     # CALCULATION TIME VS CURVE ORDER ANALYSIS
     print("\n" + "=" * 60)

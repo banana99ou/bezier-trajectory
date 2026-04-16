@@ -8,6 +8,12 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+except ImportError:
+    go = None
+    make_subplots = None
 
 from .bezier import BezierCurve
 from .de_casteljau import segment_matrices_equal_params
@@ -581,8 +587,8 @@ def plot_segments_gradient(ax, P_opt, n_seg, cmap_name='viridis', show_seg_ctrl_
     ax.add_collection3d(lc)
 
 
-def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, window_title=None,
-                                       v0=None, v1=None):
+def create_trajectory_comparison_figure_matplotlib(P_init, r_e, results, curve_order=None, window_title=None,
+                                                  v0=None, v1=None):
     """
     Create 2×3 layout showing trajectories with different segment counts.
     Uses same aesthetics as Orbital_Docking_Optimizer.py.
@@ -852,6 +858,497 @@ def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, 
     fig.canvas.mpl_connect("button_press_event", _log_mouse_event)
     fig.canvas.mpl_connect("scroll_event", _log_mouse_event)
     fig.canvas.mpl_connect("draw_event", _log_draw_event)
+
+    return fig
+
+
+def _require_plotly() -> None:
+    """Raise a clear error if Plotly is unavailable."""
+    if go is None or make_subplots is None:
+        raise ImportError(
+            "Plotly is required for create_trajectory_comparison_figure(). "
+            "Install it with `pip install plotly`."
+        )
+
+
+def _trajectory_comparison_panel_title(n_seg: int, info: dict) -> tuple[str, str]:
+    """Build a per-panel title and semantic color."""
+    rms_control_accel_m_s2, _l2, dv_proxy_m_s = control_effort_metrics(info)
+    accel_str = "n/a" if rms_control_accel_m_s2 is None else format_number(rms_control_accel_m_s2, ".2f")
+    dv_str = "n/a" if dv_proxy_m_s is None else format_number(dv_proxy_m_s, ".1f")
+
+    feasible = bool(info.get("feasible", False))
+    status = "Feasible" if feasible else "Infeasible"
+    title_color = "#222222" if feasible else "#C0392B"
+
+    term = str(info.get("termination_reason", "") or "").strip().lower()
+    it = info.get("iterations", None)
+    if term == "converged_delta_below_tol":
+        iter_str = f"{it:>3d}" if isinstance(it, int) else "n/a"
+        term_label = f"converged (ΔP < tol) @ iter={iter_str}"
+    elif term == "stopped_max_iter":
+        term_label = "stopped (max_iter)"
+    elif term == "not_run":
+        term_label = "not run"
+    elif term:
+        term_label = term
+    else:
+        term_label = "termination: n/a"
+
+    title = (
+        f"{n_seg} Segments - {status}<br>"
+        f"Δv proxy: {dv_str} m/s | RMS u: {accel_str} m/s²<br>"
+        f"{term_label}"
+    )
+    return title, title_color
+
+
+def _plotly_sphere_surface(
+    radius: float,
+    color: str,
+    opacity: float,
+    name: str,
+    center=(0.0, 0.0, 0.0),
+    resolution_u: int = 36,
+    resolution_v: int = 18,
+    showlegend: bool = False,
+):
+    """Create a lightweight 3D sphere surface for Plotly."""
+    cx, cy, cz = center
+    u = np.linspace(0.0, 2.0 * np.pi, resolution_u)
+    v = np.linspace(0.0, np.pi, resolution_v)
+    x = cx + radius * np.outer(np.cos(u), np.sin(v))
+    y = cy + radius * np.outer(np.sin(u), np.sin(v))
+    z = cz + radius * np.outer(np.ones_like(u), np.cos(v))
+    surface_color = np.zeros_like(x)
+    return go.Surface(
+        x=x,
+        y=y,
+        z=z,
+        surfacecolor=surface_color,
+        colorscale=((0.0, color), (1.0, color)),
+        cmin=0.0,
+        cmax=1.0,
+        opacity=opacity,
+        showscale=False,
+        hoverinfo="skip",
+        name=name,
+        showlegend=showlegend,
+        legendgroup=name,
+    )
+
+
+def _rgba_string(color_row: np.ndarray, alpha_override: float | None = None) -> str:
+    """Convert a 0-1 or 0-255 RGBA row into a Plotly rgba(...) string."""
+    rgba = np.asarray(color_row, dtype=float).reshape(-1)
+    if rgba.size == 3:
+        rgba = np.concatenate([rgba, [1.0]])
+    if rgba.max() > 1.0:
+        rgba = rgba / 255.0
+    rgba = np.clip(rgba, 0.0, 1.0)
+    alpha = float(rgba[3] if alpha_override is None else alpha_override)
+    rgb255 = np.rint(rgba[:3] * 255.0).astype(int)
+    return f"rgba({rgb255[0]},{rgb255[1]},{rgb255[2]},{alpha:.3f})"
+
+
+def _plotly_earth_trace(opacity: float = 0.55):
+    """Use the cached GLB Earth mesh for Plotly when available."""
+    data = _load_earth_mesh(radius_km=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0))
+    if data is None:
+        return _plotly_sphere_surface(
+            EARTH_RADIUS_KM,
+            color="#2E86DE",
+            opacity=opacity,
+            name="Earth",
+            resolution_u=48,
+            resolution_v=28,
+            showlegend=False,
+        )
+
+    verts, faces, face_colors = data
+    mesh_kwargs = {
+        "x": verts[:, 0],
+        "y": verts[:, 1],
+        "z": verts[:, 2],
+        "i": faces[:, 0],
+        "j": faces[:, 1],
+        "k": faces[:, 2],
+        "name": "Earth",
+        "showlegend": False,
+        "hoverinfo": "skip",
+        "flatshading": True,
+        "lighting": {"ambient": 0.85, "diffuse": 0.55, "specular": 0.05, "roughness": 1.0},
+        "lightposition": {"x": 2.0e4, "y": -1.5e4, "z": 1.2e4},
+        "opacity": opacity,
+    }
+    if face_colors is not None:
+        mesh_kwargs["facecolor"] = [_rgba_string(row, alpha_override=opacity) for row in face_colors]
+    else:
+        mesh_kwargs["color"] = "#2E86DE"
+    return go.Mesh3d(**mesh_kwargs)
+
+
+def _plotly_wire_sphere_traces(
+    radius: float,
+    color: str,
+    name: str,
+    line_width: int = 3,
+    alpha: float = 0.9,
+    n_longitudes: int = 8,
+    n_latitudes: int = 5,
+):
+    """Create latitude/longitude rings for a high-visibility sphere outline."""
+    traces = []
+    u = np.linspace(0.0, 2.0 * np.pi, 180)
+    rgba = color
+    if not color.startswith("rgba("):
+        rgb = color.lstrip("#")
+        if len(rgb) == 6:
+            r = int(rgb[0:2], 16)
+            g = int(rgb[2:4], 16)
+            b = int(rgb[4:6], 16)
+            rgba = f"rgba({r},{g},{b},{alpha:.3f})"
+
+    for theta in np.linspace(0.0, np.pi, n_latitudes + 2)[1:-1]:
+        x = radius * np.cos(u) * np.sin(theta)
+        y = radius * np.sin(u) * np.sin(theta)
+        z = np.full_like(u, radius * np.cos(theta))
+        traces.append(
+            go.Scatter3d(
+                x=x,
+                y=y,
+                z=z,
+                mode="lines",
+                line={"color": rgba, "width": line_width},
+                name=name,
+                legendgroup=name,
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+
+    v = np.linspace(0.0, np.pi, 180)
+    for phi in np.linspace(0.0, 2.0 * np.pi, n_longitudes, endpoint=False):
+        x = radius * np.cos(phi) * np.sin(v)
+        y = radius * np.sin(phi) * np.sin(v)
+        z = radius * np.cos(v)
+        traces.append(
+            go.Scatter3d(
+                x=x,
+                y=y,
+                z=z,
+                mode="lines",
+                line={"color": rgba, "width": line_width},
+                name=name,
+                legendgroup=name,
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+    return traces
+
+
+def _plotly_endpoint_trace(
+    point: np.ndarray,
+    name: str,
+    color: str,
+    symbol: str,
+    showlegend: bool,
+):
+    """Create a point marker for a trajectory endpoint."""
+    point = np.asarray(point, dtype=float)
+    return go.Scatter3d(
+        x=[point[0]],
+        y=[point[1]],
+        z=[point[2]],
+        mode="markers+text",
+        name=name,
+        legendgroup=name,
+        showlegend=showlegend,
+        marker={"size": 10, "color": color, "symbol": symbol},
+        text=[name],
+        textposition="top center",
+        hovertemplate=(
+            f"{name}<br>"
+            f"x={point[0]:.1f} km<br>"
+            f"y={point[1]:.1f} km<br>"
+            f"z={point[2]:.1f} km"
+            "<extra></extra>"
+        ),
+    )
+
+
+def _plotly_vector_trace(
+    origin: np.ndarray,
+    vector: np.ndarray,
+    name: str,
+    color: str,
+    showlegend: bool,
+):
+    """Draw an endpoint velocity vector as a line segment."""
+    origin = np.asarray(origin, dtype=float)
+    tip = origin + np.asarray(vector, dtype=float)
+    return go.Scatter3d(
+        x=[origin[0], tip[0]],
+        y=[origin[1], tip[1]],
+        z=[origin[2], tip[2]],
+        mode="lines",
+        name=name,
+        legendgroup=name,
+        showlegend=showlegend,
+        line={"color": color, "width": 5},
+        hovertemplate=(
+            f"{name}<br>"
+            f"start=({origin[0]:.1f}, {origin[1]:.1f}, {origin[2]:.1f}) km<br>"
+            f"end=({tip[0]:.1f}, {tip[1]:.1f}, {tip[2]:.1f}) km"
+            "<extra></extra>"
+        ),
+    )
+
+
+def _sample_segment_paths(P_opt: np.ndarray, n_seg: int, samples_per_seg: int = 40):
+    """Sample each trajectory segment once for Plotly rendering."""
+    curve = BezierCurve(P_opt)
+    A_list = segment_matrices_equal_params(curve.degree, n_seg)
+    ts = np.linspace(0.0, 1.0, samples_per_seg)
+    base_colors = ["#E74C3C", "#3498DB", "#F39C12"]
+
+    segments = []
+    for i, Ai in enumerate(A_list):
+        Qi = Ai @ P_opt
+        seg_curve = BezierCurve(Qi)
+        seg_points = np.array([seg_curve.point(t) for t in ts])
+        segments.append(
+            {
+                "points": seg_points,
+                "control_points": np.asarray(Qi, dtype=float),
+                "color": base_colors[i % len(base_colors)],
+            }
+        )
+    return segments
+
+
+def _default_plotly_scene(view_radius: float) -> dict:
+    """Shared scene configuration for all comparison panels."""
+    axis_range = [-float(view_radius), float(view_radius)]
+    return {
+        "xaxis": {"title": "x [km]", "range": axis_range, "showbackground": False, "showspikes": False},
+        "yaxis": {"title": "y [km]", "range": axis_range, "showbackground": False, "showspikes": False},
+        "zaxis": {"title": "z [km]", "range": axis_range, "showbackground": False, "showspikes": False},
+        "aspectmode": "cube",
+        "camera": {
+            "eye": {"x": 1.45, "y": -1.45, "z": 0.72},
+        },
+    }
+
+
+def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, window_title=None,
+                                       v0=None, v1=None):
+    """
+    Create a 2x3 interactive Plotly layout showing trajectories with different segment counts.
+
+    Returns:
+        plotly.graph_objects.Figure
+    """
+    _require_plotly()
+
+    if window_title is None and curve_order is not None:
+        window_title = f"Orbital Docking - Trajectory Comparison (N={curve_order})"
+    elif window_title is None:
+        window_title = "Orbital Docking - Trajectory Comparison"
+
+    all_points = [np.asarray(P_init, dtype=float)]
+    for _, P_opt, _ in results:
+        all_points.append(np.asarray(P_opt, dtype=float))
+    all_points_array = np.vstack(all_points)
+    component_extent = float(np.max(np.abs(all_points_array)))
+    view_radius = max(component_extent, float(EARTH_RADIUS_KM), float(r_e)) * 1.08
+
+    panel_data = []
+    panel_titles = []
+    panel_title_colors = []
+    for n_seg, P_opt, info in results:
+        panel_title, panel_title_color = _trajectory_comparison_panel_title(n_seg, info)
+        panel_titles.append(panel_title)
+        panel_title_colors.append(panel_title_color)
+        panel_data.append(
+            {
+                "n_seg": int(n_seg),
+                "P_opt": np.asarray(P_opt, dtype=float),
+                "info": info,
+                "segments": _sample_segment_paths(np.asarray(P_opt, dtype=float), int(n_seg)),
+            }
+        )
+
+    fig = make_subplots(
+        rows=2,
+        cols=3,
+        specs=[
+            [{"type": "scene"}, {"type": "scene"}, {"type": "scene"}],
+            [{"type": "scene"}, {"type": "scene"}, {"type": "scene"}],
+        ],
+        subplot_titles=tuple(panel_titles),
+        horizontal_spacing=0.02,
+        vertical_spacing=0.06,
+    )
+
+    p0 = np.asarray(P_init[0], dtype=float)
+    p1 = np.asarray(P_init[-1], dtype=float)
+
+    for idx, panel in enumerate(panel_data):
+        row = idx // 3 + 1
+        col = idx % 3 + 1
+        showlegend = idx == 0
+
+        fig.add_trace(_plotly_earth_trace(opacity=0.55), row=row, col=col)
+        fig.add_trace(
+            _plotly_sphere_surface(
+                r_e,
+                color="#E74C3C",
+                opacity=0.10,
+                name="KOZ",
+                resolution_u=40,
+                resolution_v=24,
+                showlegend=False,
+            ),
+            row=row,
+            col=col,
+        )
+        for koz_trace in _plotly_wire_sphere_traces(
+            r_e,
+            color="#C0392B",
+            name="KOZ",
+            line_width=3,
+            alpha=0.85,
+        ):
+            fig.add_trace(koz_trace, row=row, col=col)
+
+        fig.add_trace(
+            go.Scatter3d(
+                x=panel["P_opt"][:, 0],
+                y=panel["P_opt"][:, 1],
+                z=panel["P_opt"][:, 2],
+                mode="lines+markers",
+                name="Control polygon",
+                legendgroup="Control polygon",
+                showlegend=showlegend,
+                line={"color": "#202020", "width": 4},
+                marker={"size": 4, "color": "#202020"},
+                hovertemplate=(
+                    "Control point<br>"
+                    "x=%{x:.1f} km<br>"
+                    "y=%{y:.1f} km<br>"
+                    "z=%{z:.1f} km"
+                    "<extra></extra>"
+                ),
+            ),
+            row=row,
+            col=col,
+        )
+
+        for seg_idx, seg in enumerate(panel["segments"], start=1):
+            fig.add_trace(
+                go.Scatter3d(
+                    x=seg["points"][:, 0],
+                    y=seg["points"][:, 1],
+                    z=seg["points"][:, 2],
+                    mode="lines",
+                    name="Trajectory",
+                    legendgroup="Trajectory",
+                    showlegend=showlegend and seg_idx == 1,
+                    line={"color": seg["color"], "width": 8},
+                    hovertemplate=(
+                        f"n_seg={panel['n_seg']}<br>"
+                        f"segment={seg_idx}<br>"
+                        "x=%{x:.1f} km<br>"
+                        "y=%{y:.1f} km<br>"
+                        "z=%{z:.1f} km"
+                        "<extra></extra>"
+                    ),
+                ),
+                row=row,
+                col=col,
+            )
+
+        fig.add_trace(
+            _plotly_endpoint_trace(
+                p0,
+                PROGRESS_LABEL,
+                color="#2ECC71",
+                symbol="circle",
+                showlegend=showlegend,
+            ),
+            row=row,
+            col=col,
+        )
+        fig.add_trace(
+            _plotly_endpoint_trace(
+                p1,
+                ISS_LABEL,
+                color="#F39C12",
+                symbol="diamond",
+                showlegend=showlegend,
+            ),
+            row=row,
+            col=col,
+        )
+
+        if v0 is not None or v1 is not None:
+            base_radius = float(np.linalg.norm(p0))
+            mags = []
+            if v0 is not None:
+                mags.append(float(np.linalg.norm(v0)))
+            if v1 is not None:
+                mags.append(float(np.linalg.norm(v1)))
+            vmax = max(mags) if mags else 0.0
+            scale = (0.3 * base_radius / vmax) if vmax > 1e-9 else 0.0
+
+            if v0 is not None and scale > 0.0:
+                fig.add_trace(
+                    _plotly_vector_trace(
+                        p0,
+                        np.asarray(v0, dtype=float) * scale,
+                        name="v0",
+                        color="#00BCD4",
+                        showlegend=showlegend,
+                    ),
+                    row=row,
+                    col=col,
+                )
+            if v1 is not None and scale > 0.0:
+                fig.add_trace(
+                    _plotly_vector_trace(
+                        p1,
+                        np.asarray(v1, dtype=float) * scale,
+                        name="v1",
+                        color="#E91E63",
+                        showlegend=showlegend,
+                    ),
+                    row=row,
+                    col=col,
+                )
+
+    fig.update_layout(
+        title={"text": window_title, "x": 0.5},
+        template="plotly_white",
+        height=1050,
+        width=1500,
+        margin={"l": 0, "r": 0, "t": 80, "b": 0},
+        uirevision="trajectory-comparison",
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.01,
+            "xanchor": "left",
+            "x": 0.0,
+        },
+    )
+    fig.update_scenes(**_default_plotly_scene(view_radius))
+
+    annotations = list(fig.layout.annotations)
+    for i, annotation in enumerate(annotations):
+        annotation.font = {"size": 10, "color": panel_title_colors[i]}
+        annotation.align = "center"
 
     return fig
 

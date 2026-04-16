@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 # Increment to invalidate old caches when the optimization formulation changes
-CACHE_VERSION = "5.0-rust-default"
+CACHE_VERSION = "6.0-elastic"
 
 
 def get_cache_key(
