@@ -5,6 +5,7 @@ Live, user-steppable Python SCP optimizer.
 from __future__ import annotations
 
 import math
+import time
 
 import numpy as np
 from scipy.optimize import minimize
@@ -165,6 +166,42 @@ class SpacetimeOptimizerStepper:
             iteration=iteration,
             payload=to_serializable(payload),
         )
+
+    def _build_stage_profile(self, frame: DebugFrame, elapsed_ms: float) -> dict:
+        payload = frame.payload if isinstance(frame.payload, dict) else {}
+        profile = {"stage_compute_ms": round(float(elapsed_ms), 3)}
+        if frame.stage == "segment-subdivision":
+            profile["segment_count"] = len(payload.get("segments", []))
+        elif frame.stage == "koz-linearization":
+            koz = payload.get("koz", {})
+            koz_segments = koz.get("segments", [])
+            profile["segment_count"] = len(payload.get("segments", []))
+            profile["koz_row_count"] = int(koz.get("row_count", 0))
+            profile["active_obstacle_count"] = int(
+                sum(len(segment.get("active_obstacles", [])) for segment in koz_segments)
+            )
+        elif frame.stage == "qp-assembly":
+            qp = payload.get("qp", {})
+            matrix = qp.get("matrix", [])
+            profile["qp_constraint_count"] = int(qp.get("constraint_count", 0))
+            profile["qp_matrix_rows"] = int(len(matrix))
+            profile["qp_matrix_cols"] = int(len(matrix[0])) if matrix else 0
+            profile["qp_variable_count"] = int(len(qp.get("gradient", [])))
+        elif frame.stage == "solver-candidate":
+            solver = payload.get("solver", {})
+            profile["solver_status"] = solver.get("status")
+            profile["solver_iterations"] = solver.get("nit")
+        elif frame.stage == "trust-region":
+            trust = payload.get("trust_region", {})
+            profile["trust_clipped"] = bool(trust.get("clipped", False))
+            profile["raw_step_norm"] = trust.get("raw_step_norm")
+            profile["used_step_norm"] = trust.get("used_step_norm")
+        elif frame.stage == "post-eval":
+            metrics = payload.get("metrics", {})
+            profile["delta"] = metrics.get("delta")
+            profile["clearance"] = metrics.get("clearance")
+            profile["updated_best_feasible"] = bool(metrics.get("updated_best_feasible", False))
+        return profile
 
     def _step_init_guess(self) -> DebugFrame:
         self._phase = "boundary-constraints"
@@ -441,30 +478,38 @@ class SpacetimeOptimizerStepper:
         if self._done and self._finalized:
             return None
         if self._phase == "init-guess":
-            return self._step_init_guess()
-        if self._phase == "boundary-constraints":
-            return self._step_boundary_constraints()
-        if self._phase == "time-monotonicity":
-            return self._step_time_monotonicity()
-        if self._phase == "box-bounds":
-            return self._step_box_bounds()
-        if self._phase == "iteration-start":
-            return self._step_iteration_start()
-        if self._phase == "segment-subdivision":
-            return self._step_segment_subdivision()
-        if self._phase == "koz-linearization":
-            return self._step_koz_linearization()
-        if self._phase == "qp-assembly":
-            return self._step_qp_assembly()
-        if self._phase == "solver-candidate":
-            return self._step_solver_candidate()
-        if self._phase == "trust-region":
-            return self._step_trust_region()
-        if self._phase == "post-eval":
-            return self._step_post_eval()
-        if self._phase == "finalize":
-            return self._step_finalize()
-        raise RuntimeError(f"Unknown optimizer debug phase: {self._phase}")
+            step_fn = self._step_init_guess
+        elif self._phase == "boundary-constraints":
+            step_fn = self._step_boundary_constraints
+        elif self._phase == "time-monotonicity":
+            step_fn = self._step_time_monotonicity
+        elif self._phase == "box-bounds":
+            step_fn = self._step_box_bounds
+        elif self._phase == "iteration-start":
+            step_fn = self._step_iteration_start
+        elif self._phase == "segment-subdivision":
+            step_fn = self._step_segment_subdivision
+        elif self._phase == "koz-linearization":
+            step_fn = self._step_koz_linearization
+        elif self._phase == "qp-assembly":
+            step_fn = self._step_qp_assembly
+        elif self._phase == "solver-candidate":
+            step_fn = self._step_solver_candidate
+        elif self._phase == "trust-region":
+            step_fn = self._step_trust_region
+        elif self._phase == "post-eval":
+            step_fn = self._step_post_eval
+        elif self._phase == "finalize":
+            step_fn = self._step_finalize
+        else:
+            raise RuntimeError(f"Unknown optimizer debug phase: {self._phase}")
+
+        started = time.perf_counter()
+        frame = step_fn()
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        if frame is not None:
+            frame.profile = self._build_stage_profile(frame, elapsed_ms)
+        return frame
 
     def run_to_completion(self, verbose: bool = False) -> tuple[np.ndarray, dict]:
         while True:

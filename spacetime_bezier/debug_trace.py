@@ -54,6 +54,7 @@ class DebugFrame:
     label: str
     iteration: int | None
     payload: dict = field(default_factory=dict)
+    profile: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -62,4 +63,5 @@ class DebugFrame:
             "label": self.label,
             "iteration": None if self.iteration is None else int(self.iteration),
             "payload": to_serializable(self.payload),
+            "profile": to_serializable(self.profile),
         }
