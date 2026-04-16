@@ -138,7 +138,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tol",
         type=float,
-        default=1e-6,
+        default=1e-12,
         help="Tolerance for optimization.",
     )
     parser.add_argument(

@@ -67,12 +67,7 @@ def scenario_diverse() -> dict:
     return {
         "name": "diverse",
         "title": "Diverse Moving Obstacles",
-        "init_curve": {
-            "mode": "quadratic_bow",
-            "bow": 3.2,
-            "side": 1.0,
-            "workspace_center": [5.0, 5.0],
-        },
+        "init_curve": {"mode": "straight"},
         "obstacles": [
             {"pos0": [1.0, 6.0], "vel": [0.8, -0.1], "r": 0.6, "color": "#e74c3c", "name": "A"},
             {"pos0": [5.0, 5.0], "vel": [0.05, -0.15], "r": 1.0, "color": "#2980b9", "name": "B"},
@@ -98,7 +93,7 @@ def scenario_wall() -> dict:
         color="#e67e22",
         name_prefix="W",
         t_start=0.0,
-        t_end=8.0,
+        t_end=5.0,
     )
     other_obs = [
         {"pos0": [7.0, 3.0], "vel": [0.0, 0.3], "r": 0.6, "color": "#2980b9", "name": "M1"},
@@ -118,5 +113,5 @@ def scenario_wall() -> dict:
 SCENARIO_MAP = {
     "original": (scenario_original, [(4, 8),  (6, 8),   (8, 8)]  ),
     "diverse":  (scenario_diverse,  [(8, 8),  (8, 16),  (10, 16)]),
-    "wall":     (scenario_wall,     [(8, 16), (10, 16), (10, 24)]),
+    "wall":     (scenario_wall,     [(8, 2), (8, 3), (8, 4), (8, 16), (10, 16), (10, 24)]),
 }
