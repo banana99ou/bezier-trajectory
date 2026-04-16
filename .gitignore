@@ -13,9 +13,15 @@ artifacts
 .claude/
 .openclaude-profile.json
 
-# Generated figures (regenerable from code)
+# Generated figures and visualizations (regenerable from code)
 figures/*.png
 figures/*.mp4
+figures/*.html
+figures/*.json
+figures/*.pkl
+
+# Root-level generated data
+*.pkl
 
 # Generated Dymos / OpenMDAO outputs
 *_out/
