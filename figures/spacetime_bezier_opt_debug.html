@@ -118,6 +118,7 @@
   <label class="toggle"><input id="chkHalfspaces" type="checkbox" checked>Half-spaces</label>
   <label class="toggle"><input id="chkCompare" type="checkbox" checked>Candidate/best overlays</label>
   <label class="toggle"><input id="chkCentroids" type="checkbox" checked>Centroids</label>
+  <label class="toggle"><input id="chkRawPayload" type="checkbox">Show raw payload text (expensive)</label>
 
   <h3>Inspect</h3>
   <label>Segment</label>
@@ -165,6 +166,15 @@ let pendingAction = null;
 let pendingStartedAt = 0;
 let pendingTimer = null;
 let lastBusyError = null;
+let lastClientDiagnostics = {
+  requestMs: null,
+  serverJsonBytes: null,
+  serverEncodeMs: null,
+  updatePanelsMs: null,
+  drawSceneMs: null,
+  drawTotalMs: null,
+  rawPayloadStringifyMs: null,
+};
 
 function resize() {
   canvas.width = window.innerWidth;
@@ -177,9 +187,18 @@ function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 function wrapAngle(deg) { return ((deg + 180) % 360 + 360) % 360 - 180; }
 
 async function fetchJson(url, options = {}) {
+  const started = performance.now();
   const response = await fetch(url, options);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.json();
+  const payload = await response.json();
+  return {
+    payload,
+    transport: {
+      requestMs: performance.now() - started,
+      serverJsonBytes: Number(response.headers.get('X-Debug-Json-Bytes') || 0),
+      serverEncodeMs: Number(response.headers.get('X-Debug-Encode-Ms') || 0),
+    },
+  };
 }
 
 async function postJson(url, payload) {
@@ -395,6 +414,7 @@ function summaryTextForState() {
   const solver = payload.solver || {};
   const lines = [
     `Scenario: ${scenario.title}`,
+    `Backend: ${payload.backend || session.config?.backend || 'unknown'}`,
     `Stage: ${frame.stage}`,
     `Label: ${frame.label}`,
     `Iteration: ${frame.iteration == null ? '-' : frame.iteration + 1}`,
@@ -409,6 +429,29 @@ function summaryTextForState() {
   if (solver.status != null) lines.push(`solver_status=${solver.status}`);
   if (solver.fun != null) lines.push(`solver_fun=${solver.fun.toFixed(6)}`);
   if (payload.final_clearance != null) lines.push(`final_clearance=${payload.final_clearance.toFixed(6)}`);
+  const frameProfile = frame.profile || {};
+  const serverDiag = session.diagnostics || {};
+  lines.push('');
+  lines.push('server diagnostics:');
+  if (frameProfile.stage_compute_ms != null) lines.push(`stage_compute_ms=${Number(frameProfile.stage_compute_ms).toFixed(3)}`);
+  if (frameProfile.koz_row_count != null) lines.push(`koz_row_count=${frameProfile.koz_row_count}`);
+  if (frameProfile.active_obstacle_count != null) lines.push(`active_obstacle_count=${frameProfile.active_obstacle_count}`);
+  if (frameProfile.qp_matrix_rows != null) lines.push(`qp_matrix=${frameProfile.qp_matrix_rows}x${frameProfile.qp_matrix_cols}`);
+  if (serverDiag.action) lines.push(`last_action=${serverDiag.action}`);
+  if (serverDiag.action_ms != null) lines.push(`action_ms=${Number(serverDiag.action_ms).toFixed(3)}`);
+  if (serverDiag.frame_compute_ms != null) lines.push(`frame_compute_ms=${Number(serverDiag.frame_compute_ms).toFixed(3)}`);
+  if (serverDiag.frame_to_dict_ms != null) lines.push(`frame_to_dict_ms=${Number(serverDiag.frame_to_dict_ms).toFixed(3)}`);
+  if (serverDiag.frame_json_measure_ms != null) lines.push(`frame_json_measure_ms=${Number(serverDiag.frame_json_measure_ms).toFixed(3)}`);
+  if (serverDiag.frame_json_bytes != null) lines.push(`frame_json_bytes=${serverDiag.frame_json_bytes}`);
+  lines.push('');
+  lines.push('client diagnostics:');
+  if (lastClientDiagnostics.requestMs != null) lines.push(`request_ms=${lastClientDiagnostics.requestMs.toFixed(3)}`);
+  if (lastClientDiagnostics.serverJsonBytes != null) lines.push(`response_bytes=${lastClientDiagnostics.serverJsonBytes}`);
+  if (lastClientDiagnostics.serverEncodeMs != null) lines.push(`server_encode_ms=${lastClientDiagnostics.serverEncodeMs.toFixed(3)}`);
+  if (lastClientDiagnostics.updatePanelsMs != null) lines.push(`update_panels_ms=${lastClientDiagnostics.updatePanelsMs.toFixed(3)}`);
+  if (lastClientDiagnostics.drawSceneMs != null) lines.push(`draw_scene_ms=${lastClientDiagnostics.drawSceneMs.toFixed(3)}`);
+  if (lastClientDiagnostics.drawTotalMs != null) lines.push(`draw_total_ms=${lastClientDiagnostics.drawTotalMs.toFixed(3)}`);
+  if (lastClientDiagnostics.rawPayloadStringifyMs != null) lines.push(`raw_payload_stringify_ms=${lastClientDiagnostics.rawPayloadStringifyMs.toFixed(3)}`);
   return lines.join('\n');
 }
 
@@ -432,16 +475,41 @@ function selectionTextForState() {
   if (selectedObstacle) {
     lines.push('');
     lines.push(`obstacle ${selectedObstacle.obstacle_name}`);
-    lines.push(`center = (${selectedObstacle.center.map(v => Number(v).toFixed(3)).join(', ')})`);
-    lines.push(`radius = ${Number(selectedObstacle.radius).toFixed(3)}`);
-    lines.push(`normal = (${selectedObstacle.normal.map(v => Number(v).toFixed(3)).join(', ')})`);
-    lines.push(`support = (${selectedObstacle.support_point.map(v => Number(v).toFixed(3)).join(', ')})`);
-    lines.push(`lb = ${Number(selectedObstacle.lower_bound).toFixed(3)}`);
-    lines.push(`rows = ${selectedObstacle.row_indices.join(', ')}`);
+    if (selectedObstacle.center) {
+      lines.push(`center = (${selectedObstacle.center.map(v => Number(v).toFixed(3)).join(', ')})`);
+    }
+    if (selectedObstacle.velocity) {
+      lines.push(`velocity = (${selectedObstacle.velocity.map(v => Number(v).toFixed(3)).join(', ')})`);
+    }
+    if (selectedObstacle.radius != null) lines.push(`radius = ${Number(selectedObstacle.radius).toFixed(3)}`);
+    if (selectedObstacle.normal) {
+      lines.push(`normal = (${selectedObstacle.normal.map(v => Number(v).toFixed(3)).join(', ')})`);
+    }
+    if (selectedObstacle.time_coefficient != null) {
+      lines.push(`time_coeff = ${Number(selectedObstacle.time_coefficient).toFixed(3)}`);
+    }
+    if (selectedObstacle.support_point) {
+      lines.push(`support = (${selectedObstacle.support_point.map(v => Number(v).toFixed(3)).join(', ')})`);
+    }
+    if (selectedObstacle.t_start != null || selectedObstacle.t_end != null) {
+      lines.push(`active_t = [${Number(selectedObstacle.t_start).toFixed(3)}, ${Number(selectedObstacle.t_end).toFixed(3)}]`);
+    }
+    if (selectedObstacle.lower_bound != null) lines.push(`lb = ${Number(selectedObstacle.lower_bound).toFixed(3)}`);
+    if (selectedObstacle.lhs_current != null) lines.push(`lhs_current = ${Number(selectedObstacle.lhs_current).toFixed(3)}`);
+    if (selectedObstacle.margin_current != null) lines.push(`margin_current = ${Number(selectedObstacle.margin_current).toFixed(3)}`);
+    lines.push(`rows = ${(selectedObstacle.row_indices || []).join(', ')}`);
   }
   lines.push('');
-  lines.push('raw data:');
-  lines.push(JSON.stringify(frame.payload, null, 2).slice(0, 3000));
+  if (document.getElementById('chkRawPayload').checked) {
+    const stringifyStarted = performance.now();
+    const rawText = JSON.stringify(frame.payload, null, 2).slice(0, 3000);
+    lastClientDiagnostics.rawPayloadStringifyMs = performance.now() - stringifyStarted;
+    lines.push('raw data:');
+    lines.push(rawText);
+  } else {
+    lastClientDiagnostics.rawPayloadStringifyMs = 0;
+    lines.push('raw data hidden. Enable "Show raw payload text (expensive)" to measure stringify cost.');
+  }
   return lines.join('\n');
 }
 
@@ -552,6 +620,43 @@ function drawPoint3D(p, radius, fill) {
   ctx.stroke();
 }
 
+function normalize3(v) {
+  const norm = Math.hypot(v[0], v[1], v[2]);
+  if (norm <= 1e-12) return null;
+  return [v[0] / norm, v[1] / norm, v[2] / norm];
+}
+
+function cross3(a, b) {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+}
+
+function halfspacePatch(active, fallbackT0, fallbackT1, halfLen) {
+  if (!active?.support_point || !active?.normal) return null;
+  const support = active.support_point;
+  const normal = active.normal;
+  if (support.length < 3 || normal.length < 3) return null;
+
+  const unitNormal = normalize3(normal);
+  if (!unitNormal) return null;
+  let tangent1 = cross3(unitNormal, [0, 0, 1]);
+  if (Math.hypot(...tangent1) <= 1e-12) tangent1 = cross3(unitNormal, [0, 1, 0]);
+  tangent1 = normalize3(tangent1);
+  if (!tangent1) return null;
+  let tangent2 = normalize3(cross3(unitNormal, tangent1));
+  if (!tangent2) return null;
+
+  const scale2 = halfLen * 0.7;
+  const p0 = support.map((v, i) => v - halfLen * tangent1[i] - scale2 * tangent2[i]);
+  const p1 = support.map((v, i) => v + halfLen * tangent1[i] - scale2 * tangent2[i]);
+  const p2 = support.map((v, i) => v + halfLen * tangent1[i] + scale2 * tangent2[i]);
+  const p3 = support.map((v, i) => v - halfLen * tangent1[i] + scale2 * tangent2[i]);
+  return { p0, p1, p2, p3 };
+}
+
 function drawPolyline(points, color, width = 1, alpha = 1) {
   for (let i = 0; i < points.length - 1; i++) drawLine3D(points[i], points[i + 1], color, width, alpha);
 }
@@ -579,6 +684,7 @@ function drawControlCurve(cp, color, alpha = 1) {
 }
 
 function drawScene() {
+  const started = performance.now();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawLine3D([0, 0, 0], [10, 0, 0], '#485472', 1, 0.5);
   drawLine3D([0, 0, 0], [0, 10, 0], '#485472', 1, 0.5);
@@ -611,31 +717,44 @@ function drawScene() {
   if (document.getElementById('chkHalfspaces').checked) {
     const selectedSegment = segmentSelect.value;
     const selectedObstacle = obstacleSelect.value;
+    const scenario = currentScenario();
+    const fallbackT0 = scenario?.start?.[2] ?? 0;
+    const fallbackT1 = scenario?.end?.[2] ?? scenario?.T ?? 10;
     halfspaceSegments(frame).forEach(segment => {
       segment.active_obstacles.forEach(active => {
         const highlight =
           (!selectedSegment || String(segment.segment_index) === selectedSegment) &&
           (!selectedObstacle || String(active.obstacle_index) === selectedObstacle);
         const color = highlight ? '#ffe66d' : '#b8c1ec';
-        const [nx, ny] = active.normal;
-        const [sx, sy] = active.support_point;
-        const t = segment.centroid_time;
         const halfLen = highlight ? 2.2 : 1.3;
-        drawLine3D([sx - ny * halfLen, sy + nx * halfLen, t], [sx + ny * halfLen, sy - nx * halfLen, t], color, highlight ? 2 : 1, 0.8);
-        drawLine3D([active.center[0], active.center[1], t], [sx, sy, t], color, 1.5, 0.9);
-        drawPoint3D([sx, sy, t], 4, color);
+        const patch = halfspacePatch(active, fallbackT0, fallbackT1, halfLen);
+        if (patch) {
+          drawLine3D(patch.p0, patch.p1, color, highlight ? 2 : 1, 0.45);
+          drawLine3D(patch.p1, patch.p2, color, 1, 0.35);
+          drawLine3D(patch.p2, patch.p3, color, highlight ? 2 : 1, 0.45);
+          drawLine3D(patch.p3, patch.p0, color, 1, 0.35);
+        }
+        drawLine3D(active.center, active.support_point, color, 1.5, 0.9);
+        drawPoint3D(active.support_point, 4, color);
       });
     });
   }
+  lastClientDiagnostics.drawSceneMs = performance.now() - started;
 }
 
 function draw() {
+  const started = performance.now();
+  const panelStarted = performance.now();
   updatePanels();
+  lastClientDiagnostics.updatePanelsMs = performance.now() - panelStarted;
   drawScene();
+  lastClientDiagnostics.drawTotalMs = performance.now() - started;
 }
 
 async function refreshState() {
-  appState = await withBusy('initial load', () => fetchJson('/api/state'));
+  const result = await withBusy('initial load', () => fetchJson('/api/state'));
+  appState = result.payload;
+  Object.assign(lastClientDiagnostics, result.transport);
   populateScenarioControls();
   updateInspectSelectors();
   draw();
@@ -644,7 +763,7 @@ async function refreshState() {
 async function startSession() {
   const cfg = selectedConfig();
   if (!cfg) return;
-  appState = await withBusy('start session', () => postJson('/api/start', {
+  const result = await withBusy('start session', () => postJson('/api/start', {
     scenario_name: scenarioSelect.value,
     N: cfg.N,
     n_seg: cfg.n_seg,
@@ -654,13 +773,17 @@ async function startSession() {
     scp_trust_radius: Number(document.getElementById('trustInput').value),
     min_dt: Number(document.getElementById('minDtInput').value),
   }));
+  appState = result.payload;
+  Object.assign(lastClientDiagnostics, result.transport);
   updateInspectSelectors();
   draw();
 }
 
 async function sessionAction(action) {
   const actionLabel = action === 'next-iteration' ? 'next iteration' : action;
-  appState = await withBusy(actionLabel, () => postJson('/api/action', { action }));
+  const result = await withBusy(actionLabel, () => postJson('/api/action', { action }));
+  appState = result.payload;
+  Object.assign(lastClientDiagnostics, result.transport);
   updateInspectSelectors();
   draw();
 }
@@ -668,7 +791,7 @@ async function sessionAction(action) {
 scenarioSelect.addEventListener('change', populateConfigControls);
 segmentSelect.addEventListener('change', () => { updateInspectSelectors(); draw(); });
 obstacleSelect.addEventListener('change', draw);
-['chkTubes', 'chkSegments', 'chkHalfspaces', 'chkCompare', 'chkCentroids'].forEach(id => {
+['chkTubes', 'chkSegments', 'chkHalfspaces', 'chkCompare', 'chkCentroids', 'chkRawPayload'].forEach(id => {
   document.getElementById(id).addEventListener('change', draw);
 });
 document.getElementById('startBtn').addEventListener('click', startSession);

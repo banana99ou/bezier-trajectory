@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 import webbrowser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -61,7 +62,7 @@ def _resolve_initial_config(args) -> SessionConfig:
         scp_prox_weight=float(args.scp_prox_weight),
         scp_trust_radius=float(args.scp_trust_radius),
         min_dt=float(args.min_dt),
-        backend="python",
+        backend="rust",
     )
 
 
@@ -74,10 +75,14 @@ def _read_json_body(handler: SimpleHTTPRequestHandler) -> dict:
 
 
 def _write_json(handler: SimpleHTTPRequestHandler, payload: dict, status: int = 200) -> None:
+    encode_started = time.perf_counter()
     encoded = json.dumps(payload).encode("utf-8")
+    encode_ms = (time.perf_counter() - encode_started) * 1000.0
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(encoded)))
+    handler.send_header("X-Debug-Json-Bytes", str(len(encoded)))
+    handler.send_header("X-Debug-Encode-Ms", f"{encode_ms:.3f}")
     handler.end_headers()
     handler.wfile.write(encoded)
 
@@ -112,7 +117,7 @@ def make_handler(session: OptimizerDebugSession):
                         scp_prox_weight=float(payload.get("scp_prox_weight", 0.3)),
                         scp_trust_radius=float(payload.get("scp_trust_radius", 0.0)),
                         min_dt=float(payload.get("min_dt", 0.1)),
-                        backend="python",
+                        backend="rust",
                     )
                     return _write_json(self, session.start(config))
                 if self.path == "/api/action":
