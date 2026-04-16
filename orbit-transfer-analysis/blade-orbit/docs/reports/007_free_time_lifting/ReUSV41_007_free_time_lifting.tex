@@ -1,0 +1,223 @@
+\documentclass[11pt]{article}
+\usepackage{reusv}
+
+\setborderthickness{0.5pt}
+\setbordermargin{1cm}
+\setbordercolor{black}
+
+\slimtitle{자유 종말시간 처리: 보조변수 승강}
+
+\begin{document}
+
+\drawborder
+\thispagestyle{firstpage}
+
+\lightertitle{자유 종말시간 처리: 보조변수 승강}
+
+{\normalsize\textit{Research Note No.~007 $|$ bezier-orbit-transfer-scp}}\par\medskip
+
+\def\lighterdate{March 12, 2026}
+\lighterauthor{Suwon Lee$^{\dagger}$}
+
+\lighteraddress{$^\dagger$}{Future Mobility Control Lab, Kookmin University, Seoul, Korea}
+\lighteremail{suwon.lee@kookmin.ac.kr}
+
+\begin{abstract}
+비행시간 $t_f$를 설계변수로 포함하면 목적함수와 동역학 제약조건에
+$t_f \cdot \mathbf{P}_u$ 형태의 이중선형(bilinear) 항이 나타나 볼록성이 깨진다.
+본 보고서는 보조변수 승강(auxiliary variable lifting) 기법을 이용하여
+이중선형 항을 새로운 변수 $\mathbf{Z} = t_f \mathbf{P}_u$로 치환함으로써
+볼록 정식화를 유지하는 방법을 유도한다.
+$t_f$는 외부 루프(outer loop)에서 업데이트하며,
+내부 루프(inner loop)에서는 $\mathbf{Z}$에 대한 QP/SOCP를 반복하여 푼다.
+\end{abstract}
+
+%% ============================================================
+\section{문제: 이중선형 항의 발생}
+%% ============================================================
+
+\cite{report006}에서 $t_f$를 고정 파라미터로 두었을 때,
+목적함수는 제어점 $\mathbf{P}_u$에 대한 볼록 이차형식이었다.
+
+\begin{equation}
+  J = t_f \sum_{k} \mathbf{p}_k^T \mathbf{G}_N \mathbf{p}_k
+  \label{eq:cost_fixed_tf}
+\end{equation}
+
+이제 $t_f > 0$도 설계변수로 포함하면, \cite{report004}의 속도 적분식에서
+
+\begin{equation}
+  \mathbf{v}(\tau) = \mathbf{v}_0
+  + t_f \int_0^\tau \mathbf{f}_0(s)\,ds
+  + t_f \cdot \mathbf{B}_{N+1}(\tau)^T \mathbf{I}_N\, \mathbf{P}_u
+  \label{eq:vel_bilinear}
+\end{equation}
+
+마지막 항 $t_f \cdot \mathbf{I}_N \mathbf{P}_u$에 이중선형 항이 나타난다.
+마찬가지로 위치 적분식의 $t_f^2 \cdot \bar{\mathbf{I}}_N \mathbf{P}_u$ 항도 비선형이다.
+목적함수 역시 $t_f \cdot \mathbf{p}_k^T \mathbf{G}_N \mathbf{p}_k$는
+$t_f$와 $\|\mathbf{p}_k\|^2$의 곱이므로 비볼록이다.
+
+%% ============================================================
+\section{보조변수 승강}
+%% ============================================================
+
+\subsection{변수 치환}
+
+핵심 아이디어는 이중선형 항을 단일 변수로 치환하는 것이다.
+
+\begin{equation}
+  \mathbf{Z} \triangleq t_f\, \mathbf{P}_u \in \mathbb{R}^{(N+1)\times 3}
+  \label{eq:lifting}
+\end{equation}
+
+이 치환을 사용하면 속도 및 위치 적분식이 $\mathbf{Z}$에 대해 선형이 된다.
+
+\begin{align}
+  \mathbf{v}(\tau) &= \mathbf{v}_0
+    + t_f \int_0^\tau \mathbf{f}_0(s)\,ds
+    + \mathbf{B}_{N+1}(\tau)^T \mathbf{I}_N\, \mathbf{Z} \label{eq:vel_lifted}\\
+  \mathbf{r}(\tau) &= \mathbf{r}_0 + t_f\,\mathbf{v}_0\,\tau
+    + t_f \int_0^\tau\!\int_0^s \mathbf{f}_0\,d\sigma\,ds
+    + t_f\,\mathbf{B}_{N+2}(\tau)^T \bar{\mathbf{I}}_N\, \mathbf{Z} \label{eq:pos_lifted}
+\end{align}
+
+식~\eqref{eq:vel_lifted}은 $\mathbf{Z}$에 대해 완전히 선형이다.
+식~\eqref{eq:pos_lifted}에는 $t_f \cdot \bar{\mathbf{I}}_N \mathbf{Z}$가 남는데,
+이는 $t_f$를 outer loop에서 고정하면 inner loop에서 선형이 된다.
+
+\subsection{목적함수의 재표현}
+
+$\mathbf{Z} = t_f \mathbf{P}_u$이므로:
+
+\begin{equation}
+  J = t_f \sum_k \mathbf{p}_k^T \mathbf{G}_N \mathbf{p}_k
+  = \frac{1}{t_f} \sum_k \mathbf{z}_k^T \mathbf{G}_N \mathbf{z}_k
+  \label{eq:cost_lifted}
+\end{equation}
+
+여기서 $\mathbf{z}_k$는 $\mathbf{Z}$의 $k$번째 열이다.
+$t_f$가 outer loop에서 고정되면 $1/t_f$는 상수이므로,
+목적함수는 $\mathbf{Z}$에 대한 볼록 이차형식이 된다.
+
+\begin{equation}
+  J \propto \sum_k \mathbf{z}_k^T \mathbf{G}_N \mathbf{z}_k
+  = \mathrm{vec}(\mathbf{Z})^T \mathbf{H}\, \mathrm{vec}(\mathbf{Z})
+  \label{eq:cost_lifted_qp}
+\end{equation}
+
+\subsection{추력 크기 제약의 변환}
+
+원래 추력 크기 제약은 다음과 같다.
+
+\begin{equation}
+  \|\mathbf{u}(\tau_j)\|
+  = \left\|\frac{1}{t_f}\mathbf{Z}^T\mathbf{B}_N(\tau_j)\right\|
+  = \frac{1}{t_f}\left\|\mathbf{Z}^T\mathbf{B}_N(\tau_j)\right\|
+  \leq u_{\max}
+\end{equation}
+
+이를 $\mathbf{Z}$에 대한 SOCP 제약으로 쓰면:
+
+\begin{equation}
+  \left\|\mathbf{Z}^T\mathbf{B}_N(\tau_j)\right\| \leq t_f\, u_{\max}
+  \label{eq:thrust_lifted}
+\end{equation}
+
+$t_f$가 outer loop에서 고정되면 우변은 상수이므로
+이 역시 $\mathbf{Z}$에 대한 표준 SOCP 제약이 된다.
+
+%% ============================================================
+\section{이중 루프 알고리즘 구조}
+%% ============================================================
+
+\subsection{전체 구조}
+
+보조변수 승강을 적용한 전체 알고리즘은 이중 루프 구조를 가진다.
+
+\begin{description}
+  \item[Outer loop] $t_f$를 업데이트한다.
+        초기에는 격자 탐색(grid search) 또는 황금분할법으로
+        $J(t_f)$를 최소화하는 $t_f^*$를 찾는다.
+
+  \item[Inner loop] $t_f$를 고정하고, $\mathbf{Z}$에 대한 SCP를 수행한다.
+        \cite{report006}의 알고리즘에서 $\mathbf{P}_u$를 $\mathbf{Z}$로,
+        $t_f$를 고정 파라미터로 치환한 동일한 구조이다.
+\end{description}
+
+\subsection{원래 제어점 복원}
+
+Inner loop에서 최적 $\mathbf{Z}^*$를 얻으면 원래 제어점은 다음으로 복원된다.
+
+\begin{equation}
+  \mathbf{P}_u^* = \frac{1}{t_f}\,\mathbf{Z}^*
+  \label{eq:recovery}
+\end{equation}
+
+수치적으로 $t_f \neq 0$이면 복원은 항상 가능하다.
+
+\subsection{$t_f$ 업데이트 전략}
+
+Outer loop에서 $t_f$를 업데이트하는 방법은 다음을 고려한다.
+
+\begin{description}
+  \item[격자 탐색] $t_f$를 사전에 정해진 격자 $\{t_{f,1}, \ldots, t_{f,M}\}$에서
+        각각 inner loop를 실행하고 최소 비용을 가지는 $t_f$를 선택한다.
+        계산 비용이 높지만 전역 최적을 보장한다.
+  \item[황금분할 탐색] $J(t_f)$가 단봉(unimodal)이면 황금분할법으로
+        1차원 탐색을 효율적으로 수행한다.
+        Inner loop 호출 수를 $O(\log(1/\varepsilon))$으로 줄일 수 있다.
+  \item[기울기 기반 업데이트] $\partial J/\partial t_f$를 수치 미분으로 계산하여
+        경사 하강법으로 $t_f$를 업데이트한다.
+\end{description}
+
+$J(t_f)$의 단봉 여부는 문제마다 다를 수 있으므로
+처음에는 격자 탐색으로 전체 형상을 파악하는 것이 안전하다.
+
+%% ============================================================
+\section{수치 동등성}
+%% ============================================================
+
+치환 $\mathbf{Z} = t_f \mathbf{P}_u$로 정식화한 문제의 해와
+원래 $\mathbf{P}_u$로 정식화한 문제의 해가 수치적으로 동등함을 확인할 수 있다.
+$t_f$를 고정하고 두 정식화를 각각 풀어 비교하면
+제어점 오차 $\|\mathbf{P}_u - \mathbf{Z}/t_f\|$는 수치 정밀도 수준으로 작다.
+이 성질은 보조변수 승강이 문제를 왜곡하지 않음을 보증한다.
+
+%% ============================================================
+\section{정규화와의 관계}
+%% ============================================================
+
+\cite{report001}의 적응형 정규화를 적용하면 $t_f^* = t_f / \mathrm{TU} = O(1)$,
+$\mathbf{P}_u^* = O(1)$이므로:
+
+\begin{equation}
+  \mathbf{Z}^* = t_f^*\, \mathbf{P}_u^* = O(1)
+  \label{eq:lifting_scale}
+\end{equation}
+
+보조변수 $\mathbf{Z}^*$도 $O(1)$ 스케일로 유지되어 수치 안정성이 보장된다.
+정규화 없이 물리 단위를 사용하면
+$t_f \sim 10^3\,\mathrm{s}$, $\mathbf{P}_u \sim 10^{-4}\,\mathrm{km/s^2}$이 되어
+$\mathbf{Z} \sim 10^{-1}$로 우연히 맞는 경우도 있지만,
+궤도 영역에 따라 스케일이 크게 달라질 수 있으므로
+정규화된 변수에서 보조변수 승강을 적용하는 것이 항상 안전하다.
+
+%% ============================================================
+\section{요약}
+%% ============================================================
+
+\begin{itemize}
+  \item $t_f$를 설계변수로 포함하면 이중선형 항 $t_f \mathbf{P}_u$가 발생하여 볼록성이 깨진다.
+  \item 보조변수 $\mathbf{Z} = t_f \mathbf{P}_u$ 치환으로 inner loop의 볼록성을 유지한다.
+  \item $t_f$를 outer loop에서 업데이트하고, inner loop에서 $\mathbf{Z}$에 대한
+        SCP(\cite{report006})를 수행하는 이중 루프 구조를 채택한다.
+  \item 목적함수와 추력 제약 모두 $\mathbf{Z}$에 대해 볼록 형태를 유지한다.
+  \item 정규화된 변수(\cite{report001})를 사용하면
+        $\mathbf{Z}^* = O(1)$이 보장된다.
+\end{itemize}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

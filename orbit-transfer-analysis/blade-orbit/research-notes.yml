@@ -1,0 +1,17 @@
+project:
+  slug: bezier-orbit-transfer-scp
+  name: 베지어 곡선 기반 궤도전이 궤적최적화 (SCP)
+  description: |
+    베지어 곡선으로 추진 가속도를 성형하고 컨벡스 최적화(SCP) 프레임워크 안에서
+    3D 궤도역학 및 섭동을 다루는 궤적최적화 연구.
+  tags:
+    - 궤도역학
+    - SCP
+    - 최적화
+    - 베지어
+  git_remote: git@gitlab.com:research-base/bezier-orbit-transfer-scp.git
+
+reports:
+  dir: docs/reports
+  pattern: "^(\\d{3,})_"
+  latex_file: auto

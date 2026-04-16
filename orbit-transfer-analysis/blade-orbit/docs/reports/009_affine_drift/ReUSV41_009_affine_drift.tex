@@ -1,0 +1,564 @@
+\documentclass[11pt]{article}
+\usepackage{reusv}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{siunitx}
+
+\setborderthickness{0.5pt}
+\setbordermargin{1cm}
+\setbordercolor{black}
+
+\slimtitle{아핀 드리프트 근사}
+
+\begin{document}
+
+\drawborder
+\thispagestyle{firstpage}
+
+\lightertitle{아핀 드리프트 근사:\\ 비선형 합성의 구간별 선형화}
+
+{\normalsize\textit{Research Note No.~009 $|$ bezier-orbit-transfer-scp}}\par\medskip
+
+\def\lighterdate{March 16, 2026}
+\lighterauthor{Suwon Lee$^{\dagger}$}
+
+\lighteraddress{$^\dagger$}{Future Mobility Control Lab, Kookmin University, Seoul, Korea}
+\lighteremail{suwon.lee@kookmin.ac.kr}
+
+\begin{abstract}
+\cite{report006}의 SCP 정식화에서 중력 드리프트 적분 $\mathbf{c}_v$, $\mathbf{c}_r$은
+참조 궤도를 수치 적분(RK4)하여 계산하며, 이것이 계산 시간의 86\%를 차지한다~\cite{report008}.
+본 노트에서는 비선형 중력장 $\mathbf{a}_\text{grav}(\mathbf{r})$와
+베지어 위치 궤적 $\mathbf{r}(\tau)$의 합성(composition)을
+구간별 1차(또는 2차) 테일러 전개로 근사하여,
+드리프트 적분을 제어점에 대한 아핀 연산으로 대체하는 방법을 유도한다.
+드 카스텔조 세분화(de~Casteljau subdivision)를 통한
+구간 분할이 자연스러운 trust-region 역할을 하며,
+RK4 전파를 완전히 제거하여 SCP 반복당 계산 비용을
+QP/SOCP 풀이 수준으로 줄일 수 있음을 보인다.
+\end{abstract}
+
+%% ============================================================
+\section{문제 설정 및 동기}
+\label{sec:motivation}
+%% ============================================================
+
+\subsection{현재 SCP 체계의 구조}
+
+\cite{report006}에서 유도한 SCP 경계조건은 다음과 같다:
+\begin{align}
+  \mathbf{v}_f &= \mathbf{v}_0 + t_f \mathbf{c}_v + t_f \mathbf{I}_N \mathbf{P}_u
+  \label{eq:bc-vel} \\
+  \mathbf{r}_f &= \mathbf{r}_0 + t_f \mathbf{v}_0 + t_f^2 \mathbf{c}_r + t_f \bar{\mathbf{I}}_N \mathbf{P}_u
+  \label{eq:bc-pos}
+\end{align}
+여기서 $\mathbf{I}_N$, $\bar{\mathbf{I}}_N$은 Bernstein 적분/이중적분 행렬~\cite{report004}이고,
+드리프트 적분은
+\begin{align}
+  \mathbf{c}_v &= \int_0^1 \mathbf{a}_\text{grav}\bigl(\mathbf{r}_\text{ref}(\tau)\bigr)\,d\tau,
+  \label{eq:cv-def} \\
+  \mathbf{c}_r &= \int_0^1 \!\int_0^s \mathbf{a}_\text{grav}\bigl(\mathbf{r}_\text{ref}(\sigma)\bigr)\,d\sigma\,ds
+  \label{eq:cr-def}
+\end{align}
+이다.
+
+\subsection{병목 분석}
+
+\cite{report008}의 프로파일링에 의하면, SCP 반복 1회당 계산 시간의 구성은
+\begin{itemize}
+  \item RK4 참조 궤도 전파: \textbf{86\%} (\SI{30}{\ms} / \SI{35}{\ms})
+  \item CVXPY QP/SOCP 풀기: 11\% (\SI{4}{\ms})
+  \item 기타: 3\%
+\end{itemize}
+이다. RK4가 지배적인 이유는, 식~\eqref{eq:cv-def}--\eqref{eq:cr-def}의
+$\mathbf{a}_\text{grav}(\mathbf{r}_\text{ref}(\tau))$를 계산하려면
+참조 궤도 $\mathbf{r}_\text{ref}(\tau)$를 전파해야 하기 때문이다.
+
+\subsection{핵심 관찰}
+
+위치 궤적 $\mathbf{r}(\tau)$는 초기조건과 적분 행렬을 통해
+제어점 $\mathbf{P}_u$의 아핀 함수로 표현된다:
+\begin{equation}
+  \mathbf{r}(\tau) = \mathbf{r}_0 + t_f \mathbf{v}_0 \tau
+    + t_f^2 \,\boldsymbol{\phi}(\tau)
+    + t_f \, \mathbf{B}_{N+2}(\tau)^T \bar{\mathbf{I}}_N \, \mathbf{P}_u
+  \label{eq:r-of-tau}
+\end{equation}
+여기서 $\boldsymbol{\phi}(\tau)$는 드리프트에 의한 이중 누적 적분(참조 궤도 의존)이다.
+$\mathbf{r}(\tau)$가 $\mathbf{P}_u$에 대해 아핀이므로,
+$\mathbf{a}_\text{grav}(\mathbf{r}(\tau))$를 $\mathbf{r}$ 주변에서
+테일러 전개하면 $\mathbf{P}_u$에 대한 아핀(1차) 또는 이차(2차) 함수가 되며,
+적분 역시 대수 연산으로 수행할 수 있다.
+
+%% ============================================================
+\section{비선형 합성의 테일러 근사}
+\label{sec:taylor}
+%% ============================================================
+
+\subsection{중력장의 1차 전개}
+
+참조 위치 $\mathbf{r}^*$ 주변에서:
+\begin{equation}
+  \mathbf{a}_\text{grav}(\mathbf{r}) \approx
+    \mathbf{a}_\text{grav}(\mathbf{r}^*)
+    + \mathbf{A}(\mathbf{r}^*)\,(\mathbf{r} - \mathbf{r}^*)
+  \label{eq:taylor1}
+\end{equation}
+여기서 $\mathbf{A} = \partial \mathbf{a}_\text{grav}/\partial \mathbf{r} \in \mathbb{R}^{3\times 3}$은
+중력 Jacobian이다.
+2체 문제에서
+\begin{equation}
+  \mathbf{A}_\text{2B}(\mathbf{r}) = -\frac{1}{r^3}\mathbf{I}_3
+    + \frac{3}{r^5}\mathbf{r}\mathbf{r}^T
+\end{equation}
+이며, J2 기여분은 \cite{report002}에서 유도한 해석적 Jacobian을 더한다.
+
+\subsection{위치의 아핀 구조 대입}
+
+식~\eqref{eq:r-of-tau}를 \eqref{eq:taylor1}에 대입하면,
+참조 궤도에서의 위치 $\mathbf{r}^*(\tau) = \mathbf{r}_\text{ref}(\tau)$에 대해:
+\begin{equation}
+  \mathbf{a}_\text{grav}\bigl(\mathbf{r}(\tau)\bigr) \approx
+    \underbrace{\mathbf{a}_\text{grav}\bigl(\mathbf{r}^*(\tau)\bigr)}_{\text{상수항 (참조 궤도)}}
+    + \underbrace{\mathbf{A}\bigl(\mathbf{r}^*(\tau)\bigr) \cdot
+      t_f \, \mathbf{B}_{N+2}(\tau)^T \bar{\mathbf{I}}_N}_{\text{$\mathbf{P}_u$에 대한 선형항}}
+    \,\Delta \mathbf{P}_u
+  \label{eq:agrav-affine}
+\end{equation}
+여기서 $\Delta\mathbf{P}_u = \mathbf{P}_u - \mathbf{P}_u^\text{ref}$이다.
+
+\subsection{드리프트 적분의 아핀 근사}
+
+식~\eqref{eq:agrav-affine}을 \eqref{eq:cv-def}에 대입하여 $\tau$에 대해 적분하면:
+\begin{equation}
+  \boxed{
+  \mathbf{c}_v \approx \mathbf{c}_v^\text{ref}
+    + \underbrace{t_f \int_0^1 \mathbf{A}\bigl(\mathbf{r}^*(\tau)\bigr)
+      \mathbf{B}_{N+2}(\tau)^T \,d\tau \;\cdot\; \bar{\mathbf{I}}_N}_{\displaystyle \mathbf{M}_v \;\in\; \mathbb{R}^{3 \times (N+1)}}
+    \;\Delta\mathbf{P}_u^{(k)}
+  }
+  \label{eq:cv-affine}
+\end{equation}
+여기서 $\mathbf{c}_v^\text{ref}$는 참조 궤도에서의 드리프트 적분(상수),
+$\mathbf{M}_v$는 Jacobian--Bernstein 커플링 행렬이다.
+마찬가지로
+\begin{equation}
+  \boxed{
+  \mathbf{c}_r \approx \mathbf{c}_r^\text{ref}
+    + \mathbf{M}_r \;\Delta\mathbf{P}_u^{(k)}
+  }
+  \label{eq:cr-affine}
+\end{equation}
+$\mathbf{M}_r$은 이중 적분에 대응하는 커플링 행렬이다.
+
+\subsection{커플링 행렬의 수치 계산}
+
+$\mathbf{M}_v$의 적분은 참조 궤도 위의 이산 점 $\{\tau_j\}_{j=0}^M$에서의
+Gauss--Legendre 또는 사다리꼴 구적으로 계산한다:
+\begin{equation}
+  \mathbf{M}_v \approx t_f \sum_{j=0}^M w_j \,
+    \mathbf{A}\bigl(\mathbf{r}^*(\tau_j)\bigr) \,
+    \mathbf{B}_{N+2}(\tau_j)^T \;\bar{\mathbf{I}}_N
+  \label{eq:Mv-quad}
+\end{equation}
+이 계산은 SCP 반복 시작 시 참조 궤도에서 \textbf{한 번만} 수행하며,
+이후 QP의 경계조건 행렬에 반영된다.
+$\mathbf{A}(\mathbf{r}^*(\tau_j))$는 해석적 Jacobian이므로 빠르게 계산 가능하다.
+
+\subsection{2차 전개 (선택적)}
+
+더 높은 근사 정확도가 필요할 경우, 2차 항을 포함할 수 있다:
+\begin{equation}
+  \mathbf{a}_\text{grav}(\mathbf{r}) \approx
+    \mathbf{a}_\text{grav}(\mathbf{r}^*)
+    + \mathbf{A}(\mathbf{r}^*)\delta\mathbf{r}
+    + \tfrac{1}{2}\,\mathbf{H}(\mathbf{r}^*)\,[\delta\mathbf{r}, \delta\mathbf{r}]
+\end{equation}
+여기서 $\mathbf{H} = \partial^2 \mathbf{a}_\text{grav}/\partial \mathbf{r}^2$는
+중력 Hessian 텐서이다.
+$\delta\mathbf{r}$이 $\mathbf{P}_u$에 아핀이므로,
+2차 항은 $\Delta\mathbf{P}_u$에 대한 이차형식이 되어 QCQP로 정식화 가능하다.
+다만, 구간 세분화로 1차 근사의 정확도를 높이는 것이 일반적으로 더 효율적이다.
+
+%% ============================================================
+\section{드 카스텔조 세분화}
+\label{sec:subdivision}
+%% ============================================================
+
+\subsection{세분화와 구간별 선형화}
+
+$N$차 베지어 곡선을 드 카스텔조 알고리즘으로 $\tau = \tau_k$에서 분할하면,
+원래 곡선과 정확히 동일한 두 개의 $N$차 베지어 곡선이 생성된다.
+이를 반복하면 $[0,1]$을 $K$개 구간 $[\tau_{k-1}, \tau_k]$으로 분할하고,
+각 구간을 별도의 $N$차 베지어 곡선 $\mathbf{q}_k(s)$, $s\in[0,1]$로 표현한다.
+
+각 구간 $k$에서의 참조점 $\mathbf{r}_k^*$(예: 구간 중점에서의 참조 위치)를 잡으면:
+\begin{equation}
+  \mathbf{a}_\text{grav}\bigl(\mathbf{r}_k(s)\bigr) \approx
+    \mathbf{a}_\text{grav}(\mathbf{r}_k^*)
+    + \mathbf{A}(\mathbf{r}_k^*)\,\bigl(\mathbf{r}_k(s) - \mathbf{r}_k^*\bigr)
+  \label{eq:piecewise-taylor}
+\end{equation}
+
+\subsection{근사 오차 제어}
+
+전체 구간에서 하나의 참조점을 사용하면 테일러 잔여항이
+$O(\|\mathbf{r} - \mathbf{r}^*\|^2)$이다.
+$K$개 구간으로 세분화하면 각 구간의 잔여항이
+$O(\|\mathbf{r}_k - \mathbf{r}_k^*\|^2)$인데,
+구간이 짧을수록 $\|\mathbf{r}_k - \mathbf{r}_k^*\|$가 작으므로
+오차가 $O(1/K^2)$로 감소한다 (1차 근사 기준).
+
+이는 SCP에서 trust-region을 외부 제약으로 부과하는 대신,
+\textbf{세분화 수준 $K$가 자연스러운 trust-region 반경을 결정}함을 의미한다:
+\begin{itemize}
+  \item $K$ 증가 $\to$ 각 구간의 선형화 유효 범위 확대 $\to$ trust-region 확장
+  \item $K$ 감소 $\to$ 계산량 감소, 단 선형화 오차 증가
+\end{itemize}
+
+\subsection{세분화된 드리프트 적분}
+
+전체 드리프트 적분을 구간별 합산으로 표현한다:
+\begin{equation}
+  \mathbf{c}_v = \sum_{k=1}^K \Delta\tau_k \int_0^1
+    \mathbf{a}_\text{grav}\bigl(\mathbf{r}_k(s)\bigr)\,ds
+  \approx \sum_{k=1}^K \Delta\tau_k \Bigl[
+    \mathbf{a}_\text{grav}(\mathbf{r}_k^*)
+    + \mathbf{A}(\mathbf{r}_k^*)\,\bigl(\overline{\mathbf{r}}_k - \mathbf{r}_k^*\bigr)
+  \Bigr]
+  \label{eq:cv-piecewise}
+\end{equation}
+여기서 $\overline{\mathbf{r}}_k = \int_0^1 \mathbf{r}_k(s)\,ds$는
+베지어 제어점의 산술평균으로 \textbf{해석적}으로 계산된다~\cite{report004}:
+\begin{equation}
+  \overline{\mathbf{r}}_k = \frac{1}{N+1}\sum_{i=0}^N \mathbf{p}_{k,i}
+\end{equation}
+
+따라서 구간별 드리프트 적분이 완전히 대수적 연산이 된다.
+
+%% ============================================================
+\section{수정된 SCP 구조}
+\label{sec:modified-scp}
+%% ============================================================
+
+\subsection{알고리즘 개요}
+
+아핀 드리프트 근사를 적용한 SCP 반복은 다음과 같다:
+
+\begin{enumerate}
+  \item \textbf{참조 궤도 평가} (반복 시작 시 1회):
+    \begin{itemize}
+      \item 현재 제어점 $\mathbf{P}_u^\text{ref}$로부터 이산 점
+            $\{\mathbf{r}^*(\tau_j)\}$를 계산
+            (식~\eqref{eq:r-of-tau}의 대수적 평가, RK4 불필요)
+      \item 각 이산 점에서 $\mathbf{a}_\text{grav}(\mathbf{r}^*)$와
+            Jacobian $\mathbf{A}(\mathbf{r}^*)$ 계산
+    \end{itemize}
+  \item \textbf{커플링 행렬 구성}: $\mathbf{M}_v$, $\mathbf{M}_r$ 계산
+        (식~\eqref{eq:Mv-quad}, 행렬 연산)
+  \item \textbf{경계조건 행렬 수정}: $\mathbf{c}_v$, $\mathbf{c}_r$의 선형 기여분을
+        $\mathbf{A}_\text{eq}$에 흡수
+  \item \textbf{QP/SOCP 풀기}: 수정된 경계조건으로 볼록 부분문제 풀기
+  \item \textbf{수렴 판정}: $\|\Delta\mathbf{P}_u\|$ 및 실제 BC 위반 확인
+\end{enumerate}
+
+\subsection{경계조건 행렬 수정}
+
+식~\eqref{eq:cv-affine}을 \eqref{eq:bc-vel}에 대입하면:
+\begin{equation}
+  \mathbf{v}_f = \mathbf{v}_0 + t_f\mathbf{c}_v^\text{ref}
+    + t_f(\mathbf{I}_N + \mathbf{M}_v)\,\mathbf{P}_u
+    - t_f \mathbf{M}_v\,\mathbf{P}_u^\text{ref}
+\end{equation}
+즉, 기존 적분 행렬 $\mathbf{I}_N$에 커플링 행렬 $\mathbf{M}_v$가 더해지고,
+상수항에 참조 제어점 기여분이 추가된다.
+보조변수 $\mathbf{Z} = t_f\mathbf{P}_u$를 사용하면:
+\begin{equation}
+  (\mathbf{I}_N + \mathbf{M}_v)\,\mathbf{Z} =
+    (\mathbf{v}_f - \mathbf{v}_0) - t_f\mathbf{c}_v^\text{ref}
+    + \mathbf{M}_v\,\mathbf{Z}^\text{ref}
+  \label{eq:bc-vel-modified}
+\end{equation}
+이는 여전히 $\mathbf{Z}$에 대한 \textbf{선형 등식 제약}이다.
+위치 제약도 동일한 구조로 수정된다.
+
+\subsection{계산 비용 비교}
+
+\begin{table}[h]
+\centering
+\caption{SCP 반복 1회당 계산 비용 비교.}
+\label{tab:cost-compare}
+\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+단계 & 현재 (0차 + RK4) & 제안 (1차 아핀) \\
+\midrule
+참조 궤도 평가 & RK4 전파 (\SI{15}{\ms}) & 행렬 곱 ($<\SI{0.1}{\ms}$) \\
+드리프트 적분   & 수치 적분 (\SI{1}{\ms}) & $\mathbf{M}_v$, $\mathbf{M}_r$ 구성 (\SI{0.5}{\ms}) \\
+QP/SOCP        & CVXPY (\SI{4}{\ms})      & CVXPY (\SI{4}{\ms}) \\
+BC 검증        & RK4 재전파 (\SI{15}{\ms}) & 대수적 평가 ($<\SI{0.1}{\ms}$) \\
+\midrule
+합계           & $\sim$\SI{35}{\ms}       & $\sim$\SI{5}{\ms} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+RK4 전파가 완전히 제거되어 \textbf{약 7배} 속도 향상이 기대된다.
+
+%% ============================================================
+\section{구현 방향}
+\label{sec:implementation}
+%% ============================================================
+
+\subsection{Phase 1: 1차 아핀 드리프트 (세분화 없음)}
+
+전체 구간에서 단일 참조점을 사용하는 가장 단순한 버전.
+기존 SCP 루프에서 RK4 전파를 대수적 평가로 교체한다.
+
+\begin{enumerate}
+  \item \texttt{bezier/basis.py}: 이산 점 $\tau_j$에서의 $\mathbf{B}_{N+2}(\tau_j)$ 일괄 평가 함수 추가
+  \item \texttt{scp/linearize.py} (신규): 커플링 행렬 $\mathbf{M}_v$, $\mathbf{M}_r$ 계산
+  \item \texttt{scp/inner\_loop.py}: \texttt{\_compute\_drift\_integrals}를 아핀 버전으로 교체
+  \item \texttt{scp/problem.py}: 수정된 경계조건 행렬 빌더
+\end{enumerate}
+
+검증: \cite{report008}의 V1--V3 시나리오에서 동일한 해를 산출하는지 확인.
+
+\subsection{Phase 2: 드 카스텔조 세분화}
+
+\begin{enumerate}
+  \item \texttt{bezier/subdivision.py} (신규): 드 카스텔조 분할 알고리즘
+    \begin{itemize}
+      \item \texttt{de\_casteljau\_split(P, tau)}: 제어점 $\mathbf{P}$를 $\tau$에서 분할
+      \item \texttt{subdivide\_uniform(P, K)}: $K$개 균등 구간 분할
+      \item \texttt{subdivide\_adaptive(P, tol)}: 곡률 기반 적응형 분할
+    \end{itemize}
+  \item \texttt{scp/linearize.py} 확장: 구간별 $\mathbf{M}_{v,k}$, $\mathbf{M}_{r,k}$ 계산 및 합산
+  \item Trust-region 제약 제거: 세분화가 자연 trust-region 역할
+\end{enumerate}
+
+\subsection{Phase 3: 적응형 세분화 및 수렴 가속}
+
+\begin{enumerate}
+  \item 적응형 $K$ 결정: 선형화 잔여항 추정으로 세분화 수준 자동 조절
+  \item 수렴 특성 분석: 0차 vs.\ 1차 + 세분화의 반복 횟수 비교
+  \item 수렴 판정 개선: 아핀 BC 잔차를 직접 사용 (전파 불필요)
+\end{enumerate}
+
+\subsection{핵심 데이터 구조}
+
+\begin{verbatim}
+@dataclass
+class AffineLinearization:
+    """구간별 1차 선형화 결과."""
+    K: int                    # 세분화 구간 수
+    tau_breaks: NDArray       # (K+1,) 구간 경계
+    a_ref: list[NDArray]      # K × (3,) 참조점 중력 가속도
+    A_ref: list[NDArray]      # K × (3,3) 참조점 Jacobian
+    r_ref: list[NDArray]      # K × (3,) 참조점 위치
+    Mv: NDArray               # (3, N+1) 속도 커플링 행렬
+    Mr: NDArray               # (3, N+1) 위치 커플링 행렬
+    cv_ref: NDArray           # (3,) 참조 드리프트 적분 (속도)
+    cr_ref: NDArray           # (3,) 참조 드리프트 적분 (위치)
+\end{verbatim}
+
+%% ============================================================
+\section{수치 예제}
+\label{sec:numerical}
+%% ============================================================
+
+구간별 테일러 근사가 RK4 기반 드리프트 적분을 얼마나 정확히
+재현하는지 검증한다.
+수렴된 SCP 해의 참조 궤도 위에서, 중력 가속도 $\mathbf{a}_\text{grav}(\mathbf{r}(\tau))$의
+적분을 $K$개 구간의 구간 중점 테일러 전개로 근사하여
+RK4 결과(201스텝 사다리꼴 구적)와 비교한다.
+
+\subsection{시나리오 및 설정}
+
+세 가지 시나리오를 사용한다:
+
+\begin{itemize}
+  \item \textbf{A}: LEO $\to 1.1a_0$ 원형 (약한 전이, $t_f=3.0$)
+  \item \textbf{B}: LEO $\to 1.2a_0$ 원형 (중간 전이, $t_f=3.62$)
+  \item \textbf{C}: LEO $\to$ LEO, $\Delta i=10^\circ$ (경사각 변경, $t_f=3.0$)
+\end{itemize}
+
+모두 $N=12$, J2 섭동 포함, 정규화 단위 기준이다.
+비교 대상은 두 가지 근사 방식이다:
+\begin{itemize}
+  \item \textbf{0차}: 각 구간 중점의 $\mathbf{a}_\text{grav}(\mathbf{r}_k^*)$ 값만 사용
+        (구간 midpoint rule)
+  \item \textbf{1차}: 중점 Jacobian 보정 포함:
+        $\mathbf{a}_\text{grav}(\mathbf{r}_k^*) + \mathbf{A}(\mathbf{r}_k^*)\,(\mathbf{r} - \mathbf{r}_k^*)$
+\end{itemize}
+
+\subsection{$\mathbf{c}_v$ 근사 정확도}
+
+\begin{table}[h]
+\centering
+\caption{$\mathbf{c}_v$ 상대 오차 (\%): $K$개 구간 근사 vs.\ RK4 기준.}
+\label{tab:cv-accuracy}
+\small
+\begin{tabular}{@{}c cc cc cc@{}}
+\toprule
+ & \multicolumn{2}{c}{시나리오 A} & \multicolumn{2}{c}{시나리오 B} & \multicolumn{2}{c}{시나리오 C} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7}
+$K$ & 0차 & 1차 & 0차 & 1차 & 0차 & 1차 \\
+\midrule
+1  & 5.34 & 6.21 & 6.77 & 8.12 & 6.74 & 7.52 \\
+2  & 4.92 & 1.88 & 6.65 & 2.25 & 5.48 & 2.25 \\
+4  & 0.52 & 1.00 & 0.88 & 1.28 & 0.52 & 1.17 \\
+8  & 0.073 & 0.31 & 0.16 & 0.41 & 0.048 & 0.36 \\
+16 & 0.017 & 0.081 & 0.037 & 0.11 & 0.009 & 0.094 \\
+32 & 0.004 & 0.021 & 0.009 & 0.028 & 0.003 & 0.025 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{$\mathbf{c}_r$ 근사 정확도}
+
+\begin{table}[h]
+\centering
+\caption{$\mathbf{c}_r$ 상대 오차 (\%): $K$개 구간 근사 vs.\ RK4 기준.}
+\label{tab:cr-accuracy}
+\small
+\begin{tabular}{@{}c cc cc cc@{}}
+\toprule
+ & \multicolumn{2}{c}{시나리오 A} & \multicolumn{2}{c}{시나리오 B} & \multicolumn{2}{c}{시나리오 C} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7}
+$K$ & 0차 & 1차 & 0차 & 1차 & 0차 & 1차 \\
+\midrule
+1  & 10.5 & 6.05 & 12.6 & 7.70 & 12.3 & 7.52 \\
+2  & 7.00 & 1.94 & 9.55 & 2.40 & 6.58 & 2.33 \\
+4  & 1.56 & 1.11 & 2.22 & 1.52 & 1.36 & 1.23 \\
+8  & 0.38 & 0.34 & 0.53 & 0.48 & 0.33 & 0.36 \\
+16 & 0.10 & 0.088 & 0.15 & 0.12 & 0.082 & 0.095 \\
+32 & 0.034 & 0.023 & 0.055 & 0.033 & 0.023 & 0.025 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{분석}
+
+\begin{enumerate}
+  \item \textbf{0차 근사의 수렴}: 구간 midpoint rule에 해당하며,
+        매끄러운 피적분 함수에 대해 $O(1/K^2)$ 수렴을 보인다.
+        수치적으로 $\approx O(1/K^{2.1\text{--}2.5})$이 관찰된다.
+  \item \textbf{1차 근사}: 동일한 고정 참조 궤도 위에서의 구적(quadrature)
+        정확도에서는 0차와 비슷하거나 약간 큰 오차를 보인다.
+        이는 midpoint rule의 최적 오차 상쇄 특성 때문이다.
+        1차의 진정한 장점은 제어점 $\mathbf{P}_u$ 변화에 대한
+        감도(sensitivity)를 반영하는 데 있으며,
+        이는 제어점 업데이트 시 드리프트를 재계산 없이 보정할 수 있게 한다.
+  \item \textbf{실용적 권장}: $K=8$이면 $\mathbf{c}_v$, $\mathbf{c}_r$ 모두
+        \textbf{0.5\% 이내} 오차로 RK4 결과를 재현한다.
+        이는 200스텝 RK4 전파를 8개 참조점의 중력 평가로 대체할 수 있음을 의미하며,
+        중력 가속도 및 Jacobian 평가 비용이 $O(K)$이므로 대폭적인 계산량 절감이 가능하다.
+  \item \textbf{이중 적분 $\mathbf{c}_r$}: 단일 적분 $\mathbf{c}_v$보다 오차가 크지만,
+        1차 보정 시 $K=4$에서도 약 1\% 수준으로 충분히 정확하다.
+\end{enumerate}
+
+\subsection{계산 시간 비교}
+
+시나리오 B에서 드리프트 적분 계산 시간을 측정한다 (50회 반복 평균).
+
+\begin{table}[h]
+\centering
+\caption{드리프트 적분 계산 시간 비교 (시나리오 B, $N=12$).}
+\label{tab:timing}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+방법 & 시간 (ms) & 속도 향상 & $\mathbf{c}_v$ 오차 & $\mathbf{c}_r$ 오차 \\
+\midrule
+RK4 전파 + 수치 적분 & 15.35 & 기준 & --- & --- \\
+\quad $\llcorner$ RK4 전파 (201 steps)  & 15.31 & & & \\
+\quad $\llcorner$ 드리프트 적분 (벡터화) & 0.04 & & & \\
+\midrule
+0차 midpoint $K=4$ & 0.042 & $365\times$ & 0.88\% & 4.4\% \\
+0차 midpoint $K=8$ & 0.042 & $370\times$ & 0.16\% & 1.2\% \\
+0차 midpoint $K=16$ & 0.043 & $347\times$ & 0.037\% & 0.29\% \\
+0차 midpoint $K=32$ & 0.044 & $348\times$ & 0.009\% & 0.071\% \\
+\midrule
+1차 Taylor $K=4$ & 0.16 & $96\times$ & 1.3\% & --- \\
+1차 Taylor $K=8$ & 0.31 & $50\times$ & 0.41\% & --- \\
+1차 Taylor $K=16$ & 0.60 & $26\times$ & 0.11\% & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+주목할 결과:
+\begin{enumerate}
+  \item \textbf{RK4의 병목은 전파 자체}: 15.35\,ms 중 15.31\,ms가 RK4 전파이며,
+        벡터화된 드리프트 적분은 0.04\,ms에 불과하다.
+        즉, RK4 전파를 제거하면 드리프트 적분 비용은 무시할 수 있다.
+  \item \textbf{0차 midpoint의 효율}: $K$에 거의 무관하게 $\sim$0.04\,ms로,
+        RK4 대비 \textbf{약 370배} 빠르다.
+        벡터화된 중력 평가($K$점 일괄 처리)가 매우 효율적이기 때문이다.
+  \item \textbf{1차 Taylor의 비용}: Jacobian 계산($3\times 3$ 행렬 $\times K$회)과
+        구적점 보간 때문에 $K$에 선형 비례한다.
+        $K=8$에서도 0.31\,ms로 RK4 대비 50배 빠르지만,
+        0차 대비 7배 느리다.
+  \item \textbf{SCP 반복당 총 효과}: 현재 반복당 $\sim$19\,ms 중 RK4 전파가
+        $\sim$15\,ms를 차지하므로,
+        이를 0차 midpoint로 대체하면 반복당 $\sim$4\,ms로 단축된다.
+\end{enumerate}
+
+%% ============================================================
+\section{이론적 고찰}
+\label{sec:theory}
+%% ============================================================
+
+\subsection{SCP 수렴 차수와의 관계}
+
+현재 0차 선형화(드리프트를 상수로 취급)에서는 SCP 반복이 고정점 반복(fixed-point iteration)의
+성격을 가지며, 수렴 속도가 선형이다~\cite{report008}.
+1차 아핀 근사를 도입하면 Newton-type 반복에 가까워져
+초선형(superlinear) 수렴이 기대된다.
+
+\subsection{볼록성 보존}
+
+식~\eqref{eq:bc-vel-modified}에서 볼 수 있듯이, 아핀 드리프트 근사 후에도
+경계조건은 $\mathbf{Z}$에 대한 선형 등식 제약을 유지한다.
+목적함수 $J = (1/t_f)\sum_k \mathbf{z}_k^T\mathbf{G}_N\mathbf{z}_k$와
+추력 SOCP 제약은 변경되지 않으므로,
+부분문제의 볼록성이 완전히 보존된다.
+
+\subsection{세분화와 정확도-효율 트레이드오프}
+
+$K$개 구간 세분화 시:
+\begin{itemize}
+  \item 선형화 오차: $O(1/K^2)$ (1차), $O(1/K^3)$ (2차)
+  \item 커플링 행렬 계산 비용: $O(K \cdot M \cdot (N+1))$
+        (각 구간 $M$개 구적점, $(N+1)$개 기저 평가)
+  \item SCP 반복 횟수: $K$ 증가에 따라 감소 (더 정확한 선형화)
+\end{itemize}
+
+실용적으로 $K = 4$--$8$ 정도면 RK4 200스텝 전파 대비
+충분한 정확도를 확보할 것으로 예상된다.
+
+%% ============================================================
+\section{결론}
+\label{sec:conclusion}
+%% ============================================================
+
+베지어 곡선으로 파라미터화된 위치 궤적 $\mathbf{r}(\tau)$가 제어점의 아핀 함수라는
+구조적 성질을 활용하여, 비선형 중력장과의 합성을 구간별 테일러 전개로 근사하는
+아핀 드리프트 기법을 유도하였다.
+
+\begin{enumerate}
+  \item 드리프트 적분 $\mathbf{c}_v$, $\mathbf{c}_r$이 제어점에 대한
+        아핀 함수로 근사되어, RK4 수치 적분이 행렬 연산으로 대체된다.
+  \item 드 카스텔조 세분화가 구간별 선형화의 정확도를 제어하며,
+        외부 trust-region 제약의 자연스러운 대안이 된다.
+  \item SCP 부분문제의 볼록성이 완전히 보존되며,
+        경계조건 행렬에 커플링 항 $\mathbf{M}_v$, $\mathbf{M}_r$만 추가된다.
+\end{enumerate}
+
+Phase~1 구현(단일 구간 1차 근사)부터 시작하여, V1--V3 검증 시나리오에서의
+정합성을 확인한 후, Phase~2 드 카스텔조 세분화로 확장하는 단계적 전략을 취한다.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

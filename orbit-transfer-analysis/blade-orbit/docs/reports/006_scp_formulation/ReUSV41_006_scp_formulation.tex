@@ -1,0 +1,224 @@
+\documentclass[11pt]{article}
+\usepackage{reusv}
+
+\setborderthickness{0.5pt}
+\setbordermargin{1cm}
+\setbordercolor{black}
+
+\slimtitle{SCP 알고리즘 정식화}
+
+\begin{document}
+
+\drawborder
+\thispagestyle{firstpage}
+
+\lightertitle{SCP 알고리즘 정식화}
+
+{\normalsize\textit{Research Note No.~006 $|$ bezier-orbit-transfer-scp}}\par\medskip
+
+\def\lighterdate{March 12, 2026}
+\lighterauthor{Suwon Lee$^{\dagger}$}
+
+\lighteraddress{$^\dagger$}{Future Mobility Control Lab, Kookmin University, Seoul, Korea}
+\lighteremail{suwon.lee@kookmin.ac.kr}
+
+\begin{abstract}
+본 보고서는 베지어 곡선 기반 궤도전이 궤적최적화를 위한
+순차 볼록 계획법(Sequential Convex Programming, SCP) 알고리즘을 정식화한다.
+비선형 동역학 제약조건을 참조 궤도 주변에서 선형화하고,
+\cite{report004}의 적분 행렬과 \cite{report005}의 제약조건 처리를 결합하여
+매 반복마다 QP 또는 SOCP를 풀어 수렴하는 구조를 제시한다.
+수렴 조건 및 알고리즘 흐름도를 함께 정리한다.
+\end{abstract}
+
+%% ============================================================
+\section{SCP 개요}
+%% ============================================================
+
+궤도전이 궤적최적화 문제는 비선형 동역학 제약조건과
+볼록 목적함수를 가지는 구조이다.
+순차 볼록 계획법(SCP)은 비선형 항을 참조 해 주변에서 순차적으로 선형화하여
+볼록 부분문제(QP/SOCP)를 반복적으로 푸는 방법이다.
+각 반복에서의 해가 이전 참조 해를 갱신하고, 수렴 시 원래 문제의 근사해를 얻는다.
+
+%% ============================================================
+\section{최적화 문제 정식화}
+%% ============================================================
+
+\subsection{원래 비선형 문제}
+
+정규화 변수에서 궤도전이 최적화 문제를 다음과 같이 정식화한다.
+
+\begin{equation}
+  \min_{\mathbf{P}_u,\, t_f}\quad
+  t_f \sum_{k=1}^{3} \mathbf{p}_k^T \mathbf{G}_N \mathbf{p}_k
+  \label{eq:nlp}
+\end{equation}
+
+제약조건:
+\begin{align}
+  &\dot{\mathbf{x}} = f(\mathbf{x}) + B\mathbf{u},
+  \quad \mathbf{x}(0) = \mathbf{x}_0,\quad \mathbf{x}(1) = \mathbf{x}_f \label{eq:dyn_constraint}\\
+  &\mathbf{u}(\tau) = \mathbf{B}_N(\tau)^T \mathbf{P}_u \label{eq:bezier_constraint}\\
+  &\|\mathbf{u}(\tau_j)\| \leq u_{\max},\quad j = 0,\ldots,M \label{eq:thrust_constraint}
+\end{align}
+
+여기서 $f(\mathbf{x})$는 중력+섭동 드리프트(\cite{report002}),
+$\mathbf{x} = [\mathbf{r}^T, \mathbf{v}^T]^T$이다.
+$t_f$가 설계변수인 경우 추가적인 처리가 필요하며, 이는 \cite{report007}에서 다룬다.
+본 보고서에서는 $t_f$를 고정된 파라미터로 두고 $\mathbf{P}_u$만 최적화한다.
+
+\subsection{참조 궤도 주변 선형화}
+
+$k$번째 SCP 반복에서 참조 궤도 $\bar{\mathbf{x}}^{(k)}(\tau)$가 주어지면,
+비선형 동역학을 다음과 같이 선형화한다.
+
+\begin{equation}
+  f(\mathbf{x}) \approx f(\bar{\mathbf{x}}^{(k)}) + A^{(k)}(\tau)\,\delta\mathbf{x}
+  \label{eq:linearization}
+\end{equation}
+
+여기서 $A^{(k)}(\tau) = \partial f/\partial \mathbf{x}|_{\bar{\mathbf{x}}^{(k)}}$이고,
+$\delta\mathbf{x} = \mathbf{x} - \bar{\mathbf{x}}^{(k)}$이다.
+J2 섭동까지 포함할 경우 Jacobian은 다음과 같다.
+
+\begin{equation}
+  A^{(k)}(\tau) =
+  \begin{bmatrix}
+    \mathbf{0} & \mathbf{I} \\
+    A_{rr}^{(k)}(\tau) & A_{rv}^{(k)}(\tau)
+  \end{bmatrix}
+  \label{eq:jacobian}
+\end{equation}
+
+2체 중력에 대한 위치 Jacobian은:
+
+\begin{equation}
+  \frac{\partial}{\partial\mathbf{r}}\!\left(-\frac{\mathbf{r}}{r^3}\right)
+  = -\frac{1}{r^3}\mathbf{I} + \frac{3}{r^5}\mathbf{r}\mathbf{r}^T
+  \label{eq:gravity_jacobian}
+\end{equation}
+
+대기항력처럼 속도에도 의존하는 섭동은 $A_{rv}^{(k)} \neq 0$이 된다.
+
+%% ============================================================
+\section{볼록 부분문제 (QP/SOCP)}
+%% ============================================================
+
+\subsection{상태 궤적의 제어점 표현}
+
+선형화된 동역학 하에서, \cite{report004}의 적분 행렬을 이용하면
+상태 궤적 $\mathbf{x}(\tau)$를 제어점 $\mathbf{P}_u$의 선형 함수로 쓸 수 있다.
+
+\begin{equation}
+  \mathbf{x}(\tau) = \boldsymbol{\phi}^{(k)}(\tau) + \mathbf{L}^{(k)}(\tau)\,\mathrm{vec}(\mathbf{P}_u)
+  \label{eq:state_linear}
+\end{equation}
+
+여기서 $\boldsymbol{\phi}^{(k)}(\tau)$는 참조 궤도 기여(상수),
+$\mathbf{L}^{(k)}(\tau)$는 적분 행렬과 Jacobian으로 구성된 선형 연산자이다.
+
+\subsection{경계조건 제약}
+
+종말 상태 조건 $\mathbf{x}(1) = \mathbf{x}_f$는 식~\eqref{eq:state_linear}에서 $\tau=1$로
+놓으면 다음의 선형 등식 제약을 얻는다.
+
+\begin{equation}
+  \mathbf{L}^{(k)}(1)\,\mathrm{vec}(\mathbf{P}_u) = \mathbf{x}_f - \boldsymbol{\phi}^{(k)}(1)
+  \label{eq:bc_linear}
+\end{equation}
+
+\subsection{$k$번째 볼록 부분문제}
+
+위를 종합하면 $k$번째 반복에서 풀어야 할 볼록 부분문제는 다음과 같다.
+
+\begin{equation}
+  \min_{\mathbf{p}}\quad \mathbf{p}^T \mathbf{H}\, \mathbf{p}
+  \label{eq:qp}
+\end{equation}
+
+제약조건:
+\begin{align}
+  &\mathbf{L}^{(k)}(1)\,\mathbf{p} = \mathbf{d}^{(k)} \label{eq:qp_eq}\\
+  &\left\|\mathbf{P}_u^T \mathbf{B}_N(\tau_j)\right\| \leq u_{\max},\quad j=0,\ldots,M \label{eq:qp_socp}\\
+  &\mathbf{C}^{(k)}\,\mathbf{p}_k \leq c_k\,\mathbf{1},\quad k \in \{x,y,z\} \label{eq:qp_ineq}
+\end{align}
+
+여기서 $\mathbf{p} = \mathrm{vec}(\mathbf{P}_u) \in \mathbb{R}^{3(N+1)}$,
+$\mathbf{H} = \mathrm{blkdiag}(\mathbf{G}_N, \mathbf{G}_N, \mathbf{G}_N)$이다.
+식~\eqref{eq:qp_socp}가 있으면 SOCP, 없으면 QP가 된다.
+
+%% ============================================================
+\section{SCP 알고리즘 절차}
+%% ============================================================
+
+전체 알고리즘은 다음의 순서로 진행된다.
+
+\begin{enumerate}
+  \item \textbf{초기화}: 참조 궤도 $\bar{\mathbf{x}}^{(0)}(\tau)$를 설정한다.
+        (예: 케플러 궤도 선형 보간, 또는 이전 풀이)
+
+  \item \textbf{선형화}: 현재 참조 궤도에서 Jacobian $A^{(k)}(\tau)$와
+        상수항 $\boldsymbol{\phi}^{(k)}$, 선형 연산자 $\mathbf{L}^{(k)}$를 계산한다.
+
+  \item \textbf{제약 구성}: \cite{report005}의 극값 정리로 제약행렬 $\mathbf{C}^{(k)}$를 갱신한다.
+
+  \item \textbf{QP/SOCP 풀기}: 식~\eqref{eq:qp}--\eqref{eq:qp_ineq}를 풀어
+        최적 제어점 $\mathbf{P}_u^{(k+1)}$을 얻는다.
+
+  \item \textbf{궤도 전파}: $\mathbf{P}_u^{(k+1)}$을 이용해 원래 비선형 동역학
+        식~\eqref{eq:dyn_constraint}을 수치 적분하여
+        새 참조 궤도 $\bar{\mathbf{x}}^{(k+1)}$을 얻는다.
+
+  \item \textbf{수렴 판정}: 다음 조건을 모두 만족하면 종료한다.
+        \begin{align}
+          \|\mathbf{P}_u^{(k+1)} - \mathbf{P}_u^{(k)}\|_F &\leq \varepsilon_p \label{eq:conv1}\\
+          \|\mathbf{x}(1) - \mathbf{x}_f\| &\leq \varepsilon_{\mathrm{bc}} \label{eq:conv2}
+        \end{align}
+        그렇지 않으면 $k \leftarrow k+1$로 하고 2번으로 돌아간다.
+\end{enumerate}
+
+%% ============================================================
+\section{수렴성 및 초기화 전략}
+%% ============================================================
+
+\subsection{수렴성}
+
+SCP의 수렴성은 선형화 오차의 크기에 의존한다.
+비선형 항의 Hessian 경계가 존재하면 각 반복에서 비용 감소가 보장된다.
+J2를 포함한 궤도 동역학의 경우 유계(bounded) Hessian이 성립하므로
+적절한 초기화 하에서 수렴이 기대된다.
+
+\subsection{초기 참조 궤도}
+
+좋은 초기 참조 궤도는 수렴 속도에 크게 영향을 준다.
+다음 전략을 순서대로 고려한다.
+
+\begin{enumerate}
+  \item 초기·종말 궤도 요소의 선형 보간 궤도
+  \item Hohmann 전이 또는 단순 Lambert 해
+  \item 이전 파라미터 조건의 풀이 결과 (warm start)
+\end{enumerate}
+
+\subsection{반복 수}
+
+실용적으로 5\,--\,15회 반복으로 수렴하는 경우가 많다.
+섭동이 강하거나 초기화가 나쁠수록 더 많은 반복이 필요하다.
+
+%% ============================================================
+\section{요약}
+%% ============================================================
+
+\begin{itemize}
+  \item SCP는 비선형 동역학을 참조 궤도 주변에서 순차 선형화하여
+        매 반복마다 볼록 부분문제(QP/SOCP)를 푼다.
+  \item 추력 제약이 없으면 QP, 있으면 SOCP로 처리된다.
+  \item 경계조건은 선형 등식 제약으로, 추력 크기 제약은 SOCP 제약으로 포함된다.
+  \item 수렴 조건은 제어점 변화량과 종말 경계조건 위반량으로 판정한다.
+  \item $t_f$를 설계변수로 포함하는 확장은 \cite{report007}에서 다룬다.
+\end{itemize}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

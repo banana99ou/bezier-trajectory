@@ -1,0 +1,273 @@
+\documentclass[11pt]{article}
+\usepackage{reusv}
+
+\setborderthickness{0.5pt}
+\setbordermargin{1cm}
+\setbordercolor{black}
+
+\slimtitle{베지어 곡선 성형 대상 선택 및 정식화 전략}
+
+\begin{document}
+
+\drawborder
+\thispagestyle{firstpage}
+
+\lightertitle{베지어 곡선 성형 대상 선택 및 정식화 전략}
+
+{\normalsize\textit{Research Note No.~003 $|$ bezier-orbit-transfer-scp}}\par\medskip
+
+\def\lighterdate{March 12, 2026}
+\lighterauthor{Suwon Lee$^{\dagger}$}
+
+\lighteraddress{$^\dagger$}{Future Mobility Control Lab, Kookmin University, Seoul, Korea}
+\lighteremail{suwon.lee@kookmin.ac.kr}
+
+\begin{abstract}
+베지어 곡선 기반 궤적최적화에서 가장 먼저 결정해야 할 사항은 어떤 물리량을 베지어 곡선으로
+성형(shape)할 것인가이다.
+본 보고서는 3차원 궤도전이 문제에서 가능한 성형 대상---위치, 속도, 추진 가속도---을
+각각 검토하고, 목적함수의 볼록성(convexity), 경계조건 처리, 동역학 제약조건 선형화 용이성을
+기준으로 비교 분석한다.
+분석 결과, \textbf{추진 가속도 벡터를 베지어 곡선으로 성형}하는 방식이
+이 프로젝트의 컨벡스 최적화 프레임워크에 가장 적합함을 보이고,
+그 수학적 정식화를 유도한다.
+\end{abstract}
+
+%% ============================================================
+\section{문제 설정}
+%% ============================================================
+
+\cite{report002}에서 정리한 정규화된 3D 궤도 동역학 방정식은 다음과 같다.
+
+\begin{equation}
+  \ddot{\mathbf{r}} = -\frac{1}{r^3}\mathbf{r} + \mathbf{a}_\mathrm{pert}(\mathbf{r}, \dot{\mathbf{r}}) + \mathbf{u}
+  \label{eq:eom}
+\end{equation}
+
+여기서 $\mathbf{r} \in \mathbb{R}^3$은 정규화된 위치, $\mathbf{u} \in \mathbb{R}^3$은 추진 가속도,
+$\mathbf{a}_\mathrm{pert}$는 섭동 가속도이다.
+목적함수는 추진 가속도의 제곱 적분이다.
+
+\begin{equation}
+  J = \int_0^{t_f} \|\mathbf{u}\|^2 \, dt = t_f \int_0^1 \|\mathbf{u}(\tau)\|^2 \, d\tau
+  \label{eq:cost}
+\end{equation}
+
+경계조건은 초기 및 최종 상태 $(\mathbf{r}_0, \mathbf{v}_0)$, $(\mathbf{r}_f, \mathbf{v}_f)$이며,
+베지어 무차원 시간 $\tau = t/t_f \in [0,1]$을 사용한다.
+
+베지어 곡선 성형의 핵심 선택은 다음 세 가지이다.
+
+\begin{description}
+  \item[방식 A] 추진 가속도 $\mathbf{u}(\tau)$를 베지어로 성형
+  \item[방식 B] 위치 $\mathbf{r}(\tau)$를 베지어로 성형
+  \item[방식 C] 속도 $\mathbf{v}(\tau)$를 베지어로 성형
+\end{description}
+
+%% ============================================================
+\section{성형 대상별 비교 분석}
+%% ============================================================
+
+\subsection{방식 B: 위치 성형}
+
+$\mathbf{r}(\tau)$를 $N$차 베지어 곡선으로 성형하면 경계조건
+$\mathbf{r}(0) = \mathbf{r}_0$, $\mathbf{r}(1) = \mathbf{r}_f$는 첫 번째와 마지막 제어점에서
+자동으로 만족된다.
+속도는 베지어 미분으로 얻어진다.
+
+\begin{equation}
+  \mathbf{v}(\tau) = \dot{\mathbf{r}} = \frac{1}{t_f}\mathbf{r}'(\tau)
+\end{equation}
+
+여기서 프라임($'$)은 $\tau$에 대한 미분이며, $\mathbf{r}'(\tau)$는 차수 $N-1$의 베지어 곡선이다.
+
+그러나 추진 가속도는 동역학 방정식을 역산하여 구해진다.
+
+\begin{equation}
+  \mathbf{u}(\tau) = \frac{1}{t_f^2}\mathbf{r}''(\tau) + \frac{\mathbf{r}(\tau)}{r(\tau)^3} - \mathbf{a}_\mathrm{pert}(\mathbf{r}, \mathbf{v})
+  \label{eq:u_from_r}
+\end{equation}
+
+목적함수는 $\mathbf{u}$가 위치 제어점의 비선형 함수이므로, 식~\eqref{eq:cost}는
+$\mathbf{r}$의 제어점에 대해 \textbf{비볼록(non-convex)}이 된다.
+중력 항 $\mathbf{r}/r^3$이 비선형이기 때문이다.
+또한 추력 크기 제약 $\|\mathbf{u}\| \leq u_\mathrm{max}$도 제어점에 대해
+비선형 제약조건이 되어 SCP 외에도 추가적인 선형화가 필요하다.
+
+\subsection{방식 C: 속도 성형}
+
+$\mathbf{v}(\tau)$를 베지어로 성형하면 위치는 적분으로,
+가속도는 미분으로 얻어진다.
+
+\begin{align}
+  \mathbf{r}(\tau) &= \mathbf{r}_0 + t_f \int_0^\tau \mathbf{v}(s)\,ds \\
+  \ddot{\mathbf{r}}(\tau) &= \frac{1}{t_f}\mathbf{v}'(\tau)
+\end{align}
+
+추진 가속도는 식~\eqref{eq:u_from_r}과 동일한 구조를 가지며,
+방식 B와 동일하게 목적함수의 볼록성이 깨진다.
+속도 경계조건 $\mathbf{v}(0) = \mathbf{v}_0$, $\mathbf{v}(1) = \mathbf{v}_f$는
+제어점에서 직접 처리되지만,
+위치 경계조건 $\mathbf{r}(1) = \mathbf{r}_f$는 적분 제약조건으로 추가되어야 한다.
+
+\subsection{방식 A: 추진 가속도 성형}
+
+$\mathbf{u}(\tau)$를 베지어로 성형하면, 목적함수는 제어점에 대한
+\textbf{순수 이차형식(quadratic form)}이 된다.
+
+$N$차 베지어 곡선으로
+
+\begin{equation}
+  \mathbf{u}(\tau) = \mathbf{B}_N(\tau)^T \mathbf{P}_u, \quad \tau \in [0,1]
+  \label{eq:u_bezier}
+\end{equation}
+
+라 하면 ($\mathbf{B}_N(\tau) \in \mathbb{R}^{N+1}$은 Bernstein 기저 벡터,
+$\mathbf{P}_u \in \mathbb{R}^{(N+1)\times 3}$은 제어점 행렬), 목적함수는 다음과 같이 전개된다.
+
+\begin{equation}
+  J = t_f \int_0^1 \|\mathbf{u}(\tau)\|^2 d\tau
+  = t_f \int_0^1 \mathbf{u}^T \mathbf{u}\, d\tau
+  = t_f \sum_{k=1}^{3} \mathbf{p}_k^T \mathbf{G}_N \mathbf{p}_k
+  \label{eq:cost_quadratic}
+\end{equation}
+
+여기서 $\mathbf{p}_k \in \mathbb{R}^{N+1}$은 $\mathbf{P}_u$의 $k$번째 열(축 성분),
+$\mathbf{G}_N \in \mathbb{R}^{(N+1)\times(N+1)}$은 Bernstein 기저의 Gram 행렬이다.
+
+\begin{equation}
+  \mathbf{G}_N \triangleq \int_0^1 \mathbf{B}_N(\tau)\mathbf{B}_N(\tau)^T \, d\tau, \quad
+  [G_N]_{ij} = \frac{\binom{N}{i}\binom{N}{j}}{\binom{2N}{i+j}(2N+1)}
+  \label{eq:gram_matrix}
+\end{equation}
+
+$\mathbf{G}_N$은 양정치(positive definite) 행렬이므로 식~\eqref{eq:cost_quadratic}은
+제어점 $\{\mathbf{p}_k\}$에 대해 \textbf{볼록 이차함수}이다.
+이는 전체 최적화 문제를 QP(이차계획법) 또는 SOCP(2차 원뿔 계획법)로
+유지하는 데 핵심적인 조건이다.
+
+%% ============================================================
+\section{성형 방식 비교 요약}
+%% ============================================================
+
+\begin{table}[h]
+  \centering
+  \caption{성형 대상별 특성 비교}
+  \label{tab:comparison}
+  \begin{tabular}{lccc}
+    \toprule
+    특성 & 방식 A ($\mathbf{u}$) & 방식 B ($\mathbf{r}$) & 방식 C ($\mathbf{v}$) \\
+    \midrule
+    목적함수 볼록성       & \textbf{볼록 (QP)} & 비볼록 & 비볼록 \\
+    위치 경계조건 처리    & 적분 제약 (선형) & 직접 (선형) & 적분 제약 (선형) \\
+    속도 경계조건 처리    & 적분 제약 (선형) & 미분 (선형) & 직접 (선형) \\
+    추력 제약 처리        & \textbf{직접 (SOCP)} & 비선형 선형화 필요 & 비선형 선형화 필요 \\
+    동역학 제약 구성      & SCP 선형화 & SCP 선형화 & SCP 선형화 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+방식 A가 목적함수 볼록성과 추력 제약 처리 모두에서 결정적인 우위를 가진다.
+따라서 본 프로젝트에서는 \textbf{방식 A: 추진 가속도 벡터의 베지어 성형}을 채택한다.
+
+%% ============================================================
+\section{채택 정식화: 추진 가속도 베지어 성형}
+%% ============================================================
+
+\subsection{3축 독립 베지어 전개}
+
+3차원 추진 가속도의 각 축 성분을 독립적으로 $N$차 베지어 곡선으로 전개한다.
+
+\begin{equation}
+  u_k(\tau) = \sum_{i=0}^{N} B_i^N(\tau)\, p_{k,i}, \quad k \in \{x, y, z\}
+  \label{eq:u_components}
+\end{equation}
+
+여기서 $B_i^N(\tau) = \binom{N}{i}(1-\tau)^{N-i}\tau^i$는 $i$번째 Bernstein 기저 함수이고,
+$p_{k,i}$는 $k$축 방향 $i$번째 제어점이다.
+최적화 설계변수는 총 $3(N+1)$개의 제어점이다.
+
+\begin{equation}
+  \mathbf{p} \triangleq \begin{bmatrix}\mathbf{p}_x \\ \mathbf{p}_y \\ \mathbf{p}_z\end{bmatrix} \in \mathbb{R}^{3(N+1)}
+  \label{eq:design_var}
+\end{equation}
+
+\subsection{속도 및 위치의 베지어 적분 표현}
+
+추진 가속도를 적분하면 속도와 위치를 얻는다.
+단, 중력 및 섭동 항이 포함되므로 SCP의 참조 궤도 $(\bar{\mathbf{r}}, \bar{\mathbf{v}})$
+주변에서 선형화된 동역학을 사용한다.
+
+선형화된 동역학을 다음과 같이 쓴다.
+
+\begin{equation}
+  \ddot{\mathbf{r}} = \underbrace{f_0(\tau)}_{\text{참조 궤도 기여}} + \underbrace{A(\tau)\,\delta\mathbf{r}}_{\text{선형화 항}} + \mathbf{u}
+  \label{eq:linearized_dynamics}
+\end{equation}
+
+여기서 $f_0(\tau) = -\bar{\mathbf{r}}/\bar{r}^3 + \mathbf{a}_\mathrm{pert}(\bar{\mathbf{r}}, \bar{\mathbf{v}})$는
+참조 궤도에서 계산된 중력+섭동 가속도,
+$A(\tau) = \partial f/\partial \mathbf{r}|_{\bar{\mathbf{r}}}$는 Jacobian 행렬,
+$\delta\mathbf{r} = \mathbf{r} - \bar{\mathbf{r}}$는 참조 궤도로부터의 편차이다.
+이 방정식을 $\tau$에 대해 두 번 적분하면 상태 $(\mathbf{r}, \mathbf{v})$를
+제어점 $\mathbf{p}$의 선형 함수로 표현할 수 있다.
+
+\subsection{목적함수의 이차형식 표현}
+
+식~\eqref{eq:cost_quadratic}을 블록 대각 형태로 쓰면:
+
+\begin{equation}
+  J = t_f\, \mathbf{p}^T \underbrace{\mathrm{blkdiag}(\mathbf{G}_N,\, \mathbf{G}_N,\, \mathbf{G}_N)}_{\mathbf{H}} \mathbf{p}
+  = t_f\, \mathbf{p}^T \mathbf{H}\, \mathbf{p}
+  \label{eq:cost_block}
+\end{equation}
+
+$\mathbf{H} \in \mathbb{R}^{3(N+1)\times 3(N+1)}$은 양정치 행렬이다.
+$t_f$가 고정되면 이 문제는 순수 QP이며,
+$t_f$가 설계변수인 경우에는 보조변수 승강(\cite{report007})을 적용하여 볼록성을 유지한다.
+
+\subsection{경계조건의 선형 제약 표현}
+
+초기 및 최종 상태 조건은 제어점에 대한 선형 등식 제약조건이다.
+
+\begin{align}
+  \mathbf{r}(0) = \mathbf{r}_0, &\quad \mathbf{v}(0) = \mathbf{v}_0 \label{eq:ic}\\
+  \mathbf{r}(1) = \mathbf{r}_f, &\quad \mathbf{v}(1) = \mathbf{v}_f \label{eq:tc}
+\end{align}
+
+SCP 선형화 하에서 이 조건들은
+$\mathbf{C}_\mathrm{bc}\,\mathbf{p} = \mathbf{d}_\mathrm{bc}$의 형태로 쓸 수 있으며,
+구체적인 $\mathbf{C}_\mathrm{bc}$ 행렬의 구성은 베지어 적분 행렬을 이용한 공식으로 유도된다.
+이는 \cite{report004}에서 상세히 다룬다.
+
+\subsection{추력 크기 제약}
+
+추진 가속도의 크기 제약은 다음과 같다.
+
+\begin{equation}
+  \|\mathbf{u}(\tau)\| \leq u_\mathrm{max}, \quad \forall\, \tau \in [0,1]
+  \label{eq:thrust_limit}
+\end{equation}
+
+이 제약은 $\mathbf{u}$가 베지어 곡선으로 성형되므로, $\tau$의 연속 집합에 대한 조건이다.
+볼록껍질 성질(convex hull property) 또는 극값 정리(extremum theorem)를 이용하여
+유한 개의 선형·이차 제약조건으로 변환하는 방법은 \cite{report005}에서 다룬다.
+
+%% ============================================================
+\section{요약}
+%% ============================================================
+
+\begin{itemize}
+  \item 세 가지 성형 대상 중 \textbf{추진 가속도 $\mathbf{u}(\tau)$ 베지어 성형}이 목적함수 볼록성,
+        추력 제약 처리, 정식화 일관성 면에서 가장 유리하다.
+  \item 목적함수는 Gram 행렬 $\mathbf{G}_N$을 통한 양정치 이차형식으로, 제어점에 대해 볼록하다.
+  \item 동역학 제약조건은 SCP 참조 궤도 기준 선형화를 통해 제어점의 선형 함수로 표현된다.
+  \item 경계조건은 선형 등식 제약으로 변환되며, 구체적 구성은 \cite{report004}에서 다룬다.
+  \item 추력 크기 제약의 볼록 처리는 \cite{report005}에서 다룬다.
+  \item $t_f$를 설계변수로 포함할 때의 볼록성 유지 방법은 \cite{report007}에서 다룬다.
+\end{itemize}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

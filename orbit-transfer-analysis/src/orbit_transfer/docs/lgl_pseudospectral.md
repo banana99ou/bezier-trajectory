@@ -1,0 +1,466 @@
+# B2. Legendre-Gauss-Lobatto Pseudospectral Method
+
+> 대응 코드: `src/orbit_transfer/collocation/lgl_nodes.py`
+
+## 1. 목적
+
+Pseudospectral method는 연속 시간 최적 제어 문제를 이산화하여 비선형 프로그래밍(NLP) 문제로 변환하는 직접법(direct method)의 한 종류이다. 이 방법은 상태 변수를 collocation 점에서의 값으로 매개변수화하고, 동역학 구속조건을 해당 점에서 만족하도록 강제한다.
+
+Legendre-Gauss-Lobatto (LGL) pseudospectral method는 collocation 점으로 LGL 점을 사용한다. LGL 점은 구간 $[-1, 1]$의 양 끝점을 포함하므로 초기조건과 종단조건을 collocation 점에서 직접 부과할 수 있다는 장점이 있다. 또한 LGL 구적법은 $2N-1$차 다항식까지 정확하게 적분하며, 매끄러운 함수에 대해 지수적(spectral) 수렴 특성을 보인다.
+
+본 모듈(`lgl_nodes.py`)은 LGL pseudospectral method에 필요한 세 가지 핵심 요소를 계산한다.
+
+1. **LGL 노드** $\{\tau_j\}_{j=0}^{N}$: 상태 변수를 이산화하는 collocation 점
+2. **LGL 가중치** $\{w_j\}_{j=0}^{N}$: 비용 함수의 구적 적분에 사용
+3. **미분 행렬** $\mathbf{D} \in \mathbb{R}^{(N+1)\times(N+1)}$: 동역학 구속조건의 이산화에 사용
+
+---
+
+## 2. 수학적 배경
+
+### 2.1 Legendre 다항식
+
+**정의 (Rodrigues 공식).** $n$차 Legendre 다항식 $P_n(x)$는 다음과 같이 정의된다.
+
+$$
+P_n(x) = \frac{1}{2^n n!} \frac{d^n}{dx^n} (x^2 - 1)^n, \quad n = 0, 1, 2, \ldots
+$$
+
+처음 몇 개의 Legendre 다항식은 다음과 같다.
+
+$$
+P_0(x) = 1, \quad P_1(x) = x, \quad P_2(x) = \frac{3x^2 - 1}{2}, \quad P_3(x) = \frac{5x^3 - 3x}{2}
+$$
+
+**Bonnet 재귀 관계.** 수치 계산에서는 Rodrigues 공식 대신 3항 재귀 관계(three-term recurrence relation)를 사용한다.
+
+$$
+(n+1) P_{n+1}(x) = (2n+1)\, x\, P_n(x) - n\, P_{n-1}(x), \quad n \geq 1
+$$
+
+초기조건은 $P_0(x) = 1$, $P_1(x) = x$이다. 이 재귀식은 $O(N)$ 연산으로 $P_N(x)$를 계산할 수 있어 수치적으로 효율적이다.
+
+**직교성.** Legendre 다항식은 구간 $[-1, 1]$에서 가중함수 $w(x) = 1$에 대해 직교한다.
+
+$$
+\int_{-1}^{1} P_m(x)\, P_n(x)\, dx = \frac{2}{2n+1}\, \delta_{mn}
+$$
+
+여기서 $\delta_{mn}$은 Kronecker delta이다. 이 직교성은 LGL 가중치의 유도와 구적법 정확도 증명의 기초가 된다.
+
+**끝점 값.** Legendre 다항식은 다음의 끝점 값을 갖는다.
+
+$$
+P_n(1) = 1, \quad P_n(-1) = (-1)^n
+$$
+
+**미분의 끝점 값.** Legendre 다항식 미분의 끝점 특수값은 다음과 같다.
+
+$$
+P'_n(1) = \frac{n(n+1)}{2}, \quad P'_n(-1) = (-1)^{n+1} \frac{n(n+1)}{2}
+$$
+
+이 값들은 재귀적으로 계산할 때 수치적 불안정성을 피하기 위해 별도로 처리한다.
+
+**미분의 재귀 계산.** Bonnet 재귀식을 $x$에 대해 미분하면 $P'_n(x)$와 $P''_n(x)$의 재귀식을 얻는다. 계수 $c_1 = (2n+1)/(n+1)$, $c_2 = n/(n+1)$로 정의하면 다음과 같다.
+
+$$
+P_{n+1}(x) = c_1\, x\, P_n(x) - c_2\, P_{n-1}(x)
+$$
+
+이를 미분하면
+
+$$
+P'_{n+1}(x) = c_1 \bigl( P_n(x) + x\, P'_n(x) \bigr) - c_2\, P'_{n-1}(x)
+$$
+
+한 번 더 미분하면
+
+$$
+P''_{n+1}(x) = c_1 \bigl( 2\, P'_n(x) + x\, P''_n(x) \bigr) - c_2\, P''_{n-1}(x)
+$$
+
+이 세 관계식을 동시에 적용하면, 단일 순방향 패스(forward pass)로 $P_N(x)$, $P'_N(x)$, $P''_N(x)$를 동시에 계산할 수 있다. 이는 LGL 노드 계산 시 Newton iteration에서 $P'_N$과 $P''_N$이 함께 필요하기 때문에 중요하다.
+
+### 2.2 LGL 점의 정의
+
+**정의.** 차수 $N$의 LGL 점 $\{\tau_j\}_{j=0}^{N}$은 다음과 같이 정의된다.
+
+- 끝점: $\tau_0 = -1$, $\tau_N = 1$
+- 내부 노드 ($j = 1, \ldots, N-1$): $P'_N(\tau_j) = 0$의 근
+
+즉, 내부 LGL 점은 $N$차 Legendre 다항식 미분의 영점이다. $P'_N(x)$는 $N-1$차 다항식이므로 내부 영점이 정확히 $N-1$개 존재하며, 따라서 총 $N+1$개의 LGL 점이 결정된다.
+
+**대칭성.** $P_N(x)$의 대칭성으로부터 다음이 성립한다.
+
+$$
+P_N(-x) = (-1)^N P_N(x)
+$$
+
+이를 미분하면 $P'_N(-x) = (-1)^{N+1} P'_N(x)$이다. 따라서 $\tau$가 $P'_N$의 영점이면 $-\tau$도 영점이다. 이로부터 LGL 점의 대칭 관계를 얻는다.
+
+$$
+\tau_{N-j} = -\tau_j, \quad j = 0, 1, \ldots, N
+$$
+
+$N$이 짝수이면 가운데 노드 $\tau_{N/2} = 0$이 존재한다. 이 대칭성을 이용하면 계산량을 절반으로 줄일 수 있다.
+
+### 2.3 Newton Iteration에 의한 LGL 노드 계산
+
+내부 LGL 노드는 $P'_N(\tau) = 0$의 근이므로, Newton-Raphson 방법으로 구한다.
+
+$$
+\tau^{(k+1)} = \tau^{(k)} - \frac{P'_N(\tau^{(k)})}{P''_N(\tau^{(k)})}
+$$
+
+**초기값 선택.** Newton iteration의 수렴을 보장하기 위해, Chebyshev-Gauss-Lobatto (CGL) 점을 초기값으로 사용한다.
+
+$$
+\tau_j^{(0)} = -\cos\!\left(\frac{\pi j}{N}\right), \quad j = 1, \ldots, N-1
+$$
+
+CGL 점은 LGL 점과 점근적으로 유사한 분포를 가지므로, 좋은 초기 근사를 제공한다. 실제로 $N$이 클수록 CGL 점과 LGL 점의 차이는 $O(N^{-2})$로 감소하므로, Newton iteration은 통상 3--5회 이내에 기계 정밀도(machine epsilon) 수준으로 수렴한다.
+
+**대칭성 활용.** 대칭 관계 $\tau_{N-j} = -\tau_j$를 이용하여 절반($j = 1, \ldots, \lfloor(N-1)/2\rfloor$)만 계산하고 나머지는 반사(reflection)로 결정한다. $N$이 짝수이면 가운데 노드 $\tau_{N/2} = 0$은 별도의 계산 없이 직접 배정한다.
+
+**수렴 판정.** 보정량 $|\delta| = |P'_N / P''_N|$이 $10^{-15}$ 미만이면 수렴으로 판단한다. 최대 반복 횟수는 200으로 설정하되, 실제로는 대부분 10회 이내에 수렴한다.
+
+### 2.4 LGL 가중치
+
+**정의.** LGL 구적법의 가중치는 다음과 같다.
+
+$$
+w_j = \frac{2}{N(N+1)\, [P_N(\tau_j)]^2}, \quad j = 0, 1, \ldots, N
+$$
+
+**유도.** 이 공식은 Lagrange 보간 다항식의 적분으로부터 유도된다. $\{\tau_j\}_{j=0}^{N}$ 위의 Lagrange 기저 함수를 다음과 같이 정의하자.
+
+$$
+L_j(\tau) = \prod_{\substack{k=0 \\ k \neq j}}^{N} \frac{\tau - \tau_k}{\tau_j - \tau_k}, \quad j = 0, 1, \ldots, N
+$$
+
+임의의 함수 $f(\tau)$를 $N$차 Lagrange 보간 다항식으로 근사하면
+
+$$
+f(\tau) \approx \sum_{j=0}^{N} f(\tau_j)\, L_j(\tau)
+$$
+
+양변을 $[-1, 1]$에서 적분하면
+
+$$
+\int_{-1}^{1} f(\tau)\, d\tau \approx \sum_{j=0}^{N} w_j\, f(\tau_j), \quad w_j = \int_{-1}^{1} L_j(\tau)\, d\tau
+$$
+
+LGL 점에서 Lagrange 기저 함수는 다음과 같이 Legendre 다항식을 이용하여 표현된다.
+
+$$
+L_j(\tau) = \frac{1}{N(N+1)\, P_N(\tau_j)} \cdot \frac{(\tau^2 - 1)\, P'_N(\tau)}{\tau - \tau_j}
+$$
+
+이 관계는 LGL 점이 $(1 - \tau^2) P'_N(\tau)$의 근이라는 사실과 $(\tau^2 - 1) P'_N(\tau) = N[\tau P_N(\tau) - P_{N-1}(\tau)]$로부터 유도되는 것이다. 실제로 $(\tau^2 - 1) P'_N(\tau)$는 $N+1$차 다항식이고, 그 $N+1$개의 근이 정확히 $\{\tau_j\}_{j=0}^N$이다. 따라서
+
+$$
+(\tau^2 - 1) P'_N(\tau) = C \prod_{j=0}^{N} (\tau - \tau_j)
+$$
+
+로 쓸 수 있으며, 최고차 계수를 비교하면 상수 $C$가 결정된다.
+
+$L_j(\tau)$를 적분하면
+
+$$
+w_j = \int_{-1}^{1} L_j(\tau)\, d\tau = \frac{2}{N(N+1)\, [P_N(\tau_j)]^2}
+$$
+
+이 결과를 얻는다. 유도 과정에서 Legendre 다항식의 직교성과 정규화 상수 $\|P_N\|^2 = 2/(2N+1)$이 사용된다.
+
+**끝점 가중치.** $P_N(\pm 1) = (\pm 1)^N$이므로 $[P_N(\pm 1)]^2 = 1$이다. 따라서
+
+$$
+w_0 = w_N = \frac{2}{N(N+1)}
+$$
+
+### 2.5 구적법 정확도
+
+**정리.** $N+1$개의 LGL 점을 사용하는 LGL 구적법은 $2N-1$차 이하의 다항식에 대해 정확하다. 즉, 임의의 다항식 $p(x)$의 차수가 $2N-1$ 이하이면
+
+$$
+\int_{-1}^{1} p(x)\, dx = \sum_{j=0}^{N} w_j\, p(\tau_j)
+$$
+
+가 정확히 성립한다.
+
+**증명 스케치.** $2N-1$차 이하의 다항식 $p(x)$를 $N$차 다항식 $q(x)$와 $N-1$차 미만의 나머지 $r(x)$에 대해 다음과 같이 나눈다.
+
+$$
+p(x) = q(x) \cdot \omega(x) + r(x)
+$$
+
+여기서 $\omega(x) = (1-x^2) P'_N(x) / c$는 노드 다항식(node polynomial)이며 $c$는 정규화 상수이다. 그런데 실제로는 다음과 같은 보다 직접적인 논증을 사용한다.
+
+$p(x)$의 차수가 $2N-1$ 이하이므로, LGL 점 위의 $N$차 Lagrange 보간 다항식 $I_N[p](x)$와의 오차 $e(x) = p(x) - I_N[p](x)$는 최대 $2N-1$차 다항식이면서, $N+1$개의 LGL 점에서 0이 된다. 한편 $e(x)$를 $(1-x^2) P'_N(x)$로 나눈 나머지를 생각하자. $(1-x^2) P'_N(x)$는 $N+1$차 다항식이고, 그 영점이 정확히 LGL 점이므로
+
+$$
+e(x) = (1 - x^2)\, P'_N(x) \cdot s(x)
+$$
+
+로 쓸 수 있다. $e(x)$의 차수가 최대 $2N-1$이고, $(1-x^2) P'_N(x)$의 차수가 $N+1$이므로, $s(x)$의 차수는 최대 $N-2$이다.
+
+이제 $e(x)$를 $[-1, 1]$에서 적분하면
+
+$$
+\int_{-1}^{1} e(x)\, dx = \int_{-1}^{1} (1-x^2) P'_N(x)\, s(x)\, dx
+$$
+
+$(1-x^2) P'_N(x)$는 Jacobi 다항식 $P_{N-1}^{(1,1)}(x)$의 상수배이며, Jacobi 다항식의 직교성에 의해 $N-2$차 이하의 다항식 $s(x)$와 직교한다. 따라서
+
+$$
+\int_{-1}^{1} e(x)\, dx = 0
+$$
+
+이것은
+
+$$
+\int_{-1}^{1} p(x)\, dx = \int_{-1}^{1} I_N[p](x)\, dx = \sum_{j=0}^{N} w_j\, p(\tau_j)
+$$
+
+을 의미한다. $\blacksquare$
+
+**주의.** $2N$차 다항식에 대해서는 일반적으로 정확하지 않다. 이는 같은 $N+1$개 점을 사용하는 Gauss 구적법(끝점 미포함)의 정확도 $2N+1$차보다 낮다. 그러나 LGL 방법은 끝점을 포함하므로 경계 조건을 직접 부과할 수 있다는 실용적 장점이 있다.
+
+### 2.6 Lagrange 보간과 미분 행렬
+
+**Lagrange 보간.** $N+1$개의 LGL 점 위에서 정의된 함수 값 $\{f_j\}_{j=0}^{N}$, $f_j = f(\tau_j)$에 대해, Lagrange 보간 다항식은 다음과 같다.
+
+$$
+f(\tau) \approx I_N f(\tau) = \sum_{j=0}^{N} f_j\, L_j(\tau)
+$$
+
+이 보간 다항식을 미분하면
+
+$$
+\frac{d}{d\tau} I_N f(\tau) = \sum_{j=0}^{N} f_j\, L'_j(\tau)
+$$
+
+이를 LGL 점 $\tau_i$에서 평가하면
+
+$$
+\left. \frac{d}{d\tau} I_N f \right|_{\tau = \tau_i} = \sum_{j=0}^{N} D_{ij}\, f_j
+$$
+
+여기서 **미분 행렬** $\mathbf{D}$의 원소는
+
+$$
+D_{ij} = L'_j(\tau_i)
+$$
+
+이다. 벡터 형태로 쓰면
+
+$$
+\dot{\mathbf{f}} = \mathbf{D} \mathbf{f}
+$$
+
+여기서 $\mathbf{f} = [f_0, f_1, \ldots, f_N]^\top$이고, $\dot{\mathbf{f}} = [\dot{f}_0, \dot{f}_1, \ldots, \dot{f}_N]^\top$은 각 collocation 점에서의 미분값 벡터이다.
+
+**Barycentric form을 이용한 미분 행렬 공식.** LGL 점에서의 Lagrange 기저 함수는 Legendre 다항식을 이용하여 닫힌 형태로 표현할 수 있다. 구체적으로, 비대각 원소는 다음과 같다.
+
+$$
+D_{ij} = \frac{P_N(\tau_i)}{P_N(\tau_j)\, (\tau_i - \tau_j)}, \quad i \neq j
+$$
+
+이 공식의 유도 과정은 다음과 같다. LGL 점의 정의에서 $\{\tau_j\}_{j=0}^{N}$은 $(1 - \tau^2) P'_N(\tau) = 0$의 근이므로, 노드 다항식을 다음과 같이 쓸 수 있다.
+
+$$
+\ell(\tau) = \prod_{k=0}^{N} (\tau - \tau_k)
+$$
+
+이때 Lagrange 기저 함수는
+
+$$
+L_j(\tau) = \frac{\ell(\tau)}{(\tau - \tau_j)\, \ell'(\tau_j)}
+$$
+
+LGL 점에서 $\ell(\tau)$는 $(1 - \tau^2) P'_N(\tau)$와 상수배 차이만 나므로, $\ell'(\tau_j)$를 $P_N(\tau_j)$의 함수로 표현할 수 있다. Legendre 미분 방정식
+
+$$
+\frac{d}{d\tau}\!\left[(1 - \tau^2) P'_N(\tau)\right] + N(N+1) P_N(\tau) = 0
+$$
+
+으로부터, $\tau = \tau_j$ (내부 점, $P'_N(\tau_j) = 0$)에서
+
+$$
+(1 - \tau_j^2) P''_N(\tau_j) = -N(N+1) P_N(\tau_j)
+$$
+
+이 관계와 $\ell'(\tau_j)$의 표현을 결합하면
+
+$$
+\ell'(\tau_j) = -\frac{N(N+1)}{2} P_N(\tau_j) \cdot \prod_{\substack{k=0 \\ k \neq j}}^{N} (\tau_j - \tau_k)^{-1} \cdot (\text{상수})
+$$
+
+이를 정리하면 다음 바리센트릭 가중치(barycentric weight) $\lambda_j$를 얻는다.
+
+$$
+\lambda_j = \frac{1}{\ell'(\tau_j)}
+$$
+
+그리고 비대각 원소는
+
+$$
+D_{ij} = L'_j(\tau_i) = \frac{\lambda_j / \lambda_i}{\tau_i - \tau_j}
+$$
+
+LGL 점에서 바리센트릭 가중치의 비는 $\lambda_j / \lambda_i = P_N(\tau_i) / P_N(\tau_j)$로 단순화된다. 따라서 최종적으로
+
+$$
+D_{ij} = \frac{P_N(\tau_i)}{P_N(\tau_j)\, (\tau_i - \tau_j)}, \quad i \neq j
+$$
+
+을 얻는다.
+
+### 2.7 대각 원소
+
+미분 행렬의 대각 원소는 두 가지 방법으로 결정한다.
+
+**끝점 대각 원소.** $i = 0$과 $i = N$에 대해서는 해석적 공식을 사용한다. 상수 함수 $f(\tau) = 1$에 대해 $\mathbf{D} \mathbf{1} = \mathbf{0}$이 성립해야 하므로 행 합이 0이라는 조건을 활용할 수도 있지만, 끝점에 대해서는 다음의 닫힌 형태가 알려져 있다.
+
+$$
+D_{00} = -\frac{N(N+1)}{4}, \quad D_{NN} = \frac{N(N+1)}{4}
+$$
+
+이 공식은 Lagrange 보간 다항식의 끝점 미분과 Legendre 다항식의 끝점 특수값으로부터 유도된다. 구체적으로,
+
+$$
+D_{00} = L'_0(-1) = \sum_{\substack{k=1}}^{N} \frac{1}{-1 - \tau_k} \cdot \prod_{\substack{m=1 \\ m \neq k}}^{N} \frac{-1 - \tau_m}{\tau_0 - \tau_m}
+$$
+
+이 합을 닫힌 형태로 정리하면 $-N(N+1)/4$를 얻고, 대칭 논증에 의해 $D_{NN} = N(N+1)/4$이 따른다.
+
+**내부 대각 원소.** 내부 노드($i = 1, \ldots, N-1$)에서는 **행 합 = 0 조건**을 이용한다.
+
+$$
+D_{ii} = -\sum_{\substack{j=0 \\ j \neq i}}^{N} D_{ij}
+$$
+
+이 조건은 $f(\tau) = 1$ (상수 함수)의 미분이 0이라는 사실에서 유래한다. 비대각 원소를 먼저 계산한 후, 이 조건으로 대각 원소를 결정하는 방식은 수치적으로 안정적이다. 비대각 원소에 이미 반올림 오차가 포함되어 있으므로, 행 합 = 0 조건을 강제함으로써 상수 함수의 미분이 정확히 0이 되도록 보장한다.
+
+### 2.8 Spectral Convergence
+
+Pseudospectral method의 핵심 장점은 매끄러운(smooth) 함수에 대한 **지수적 수렴**(exponential convergence)이다.
+
+$f(\tau)$가 구간 $[-1, 1]$에서 해석적(analytic)이면, $N+1$개의 LGL 점 위에서의 Lagrange 보간 오차는
+
+$$
+\|f - I_N f\|_\infty \leq C\, \rho^{-N}
+$$
+
+여기서 $\rho > 1$은 $f$의 복소 평면에서의 해석 영역(Bernstein ellipse)의 크기에 의해 결정되는 상수이다. 즉, 노드 수 $N$에 대해 오차가 지수적으로 감소한다. 이는 유한차분법이나 유한요소법의 대수적(algebraic) 수렴, 즉 $O(h^p)$ ($h$: 격자 간격, $p$: 방법의 차수)과 대비된다.
+
+미분 근사의 경우에도 유사한 spectral convergence가 성립한다.
+
+$$
+\|\dot{f} - \mathbf{D} \mathbf{f}\|_\infty \leq C'\, N^2\, \rho^{-N}
+$$
+
+$N^2$ 인자가 추가되지만, $\rho^{-N}$의 지수적 감쇠가 지배적이므로 전체 수렴율은 여전히 지수적이다.
+
+$f$가 $C^\infty$이지만 해석적이지 않은 경우에는 $O(N^{-k})$ 형태의 대수적이되 임의로 높은 차수의 수렴을 보인다. 반면, $f$에 불연속 점이 존재하면 Gibbs 현상으로 인해 수렴이 크게 저하된다. 궤도 최적화에서 추력 프로파일이 매끄러운 구간별로 분할(multi-phase) 처리가 필요한 이유가 여기에 있다.
+
+**구적 정확도와의 관계.** LGL 구적법은 $2N-1$차 다항식까지 정확하므로, 비용 함수가 $N$차 다항식 상태에 대해 $2N-1$차 이하의 피적분 함수를 생성하면 적분이 정확하다. Spectral convergence는 이 다항식 정확도를 넘어서는 비다항식 피적분 함수에 대해서도 급속한 수렴을 보장한다.
+
+---
+
+## 3. 구현 매핑
+
+아래 표는 수학적 구성 요소와 `lgl_nodes.py`의 Python 구현 사이의 대응 관계를 정리한 것이다.
+
+| 수학 표현 | Python 함수 | 파일 위치 | 비고 |
+|-----------|------------|-----------|------|
+| $P_N(x)$ | `legendre_poly(N, x)` | lgl_nodes.py:6--19 | Bonnet 재귀; `np.asarray`로 벡터화 |
+| $P'_N(x)$ | `legendre_poly_derivative(N, x)` | lgl_nodes.py:22--33 | 끝점 특수값 $P'_N(\pm 1)$ 별도 처리 |
+| $P_N, P'_N, P''_N$ 동시 계산 | `_legendre_recurrence(N, x)` | lgl_nodes.py:36--58 | Newton iteration용; 단일 패스로 3개 값 반환 |
+| LGL 노드 $\{\tau_j\}_{j=0}^N$ | `compute_lgl_nodes(N)` | lgl_nodes.py:61--103 | Newton iteration + 대칭 반사; CGL 초기값 |
+| LGL 가중치 $\{w_j\}_{j=0}^N$ | `compute_lgl_weights(N, tau)` | lgl_nodes.py:106--109 | $w_j = 2/(N(N+1)[P_N(\tau_j)]^2)$ 직접 적용 |
+| 미분 행렬 $D_{ij}$ | `compute_differentiation_matrix(N, tau)` | lgl_nodes.py:112--134 | 끝점 해석값 + 내부 행합=0 조건 |
+
+### 3.1 구현 세부 사항
+
+**`legendre_poly`**: Bonnet 재귀식을 $n = 1$부터 $N-1$까지 순방향으로 적용하여 $P_N(x)$를 계산한다. `np.asarray`를 통해 스칼라와 배열 입력 모두를 지원한다. 기저 조건으로 $N = 0$일 때 `np.ones_like(x)`, $N = 1$일 때 `x.copy()`를 반환한다.
+
+**`legendre_poly_derivative`**: 내부적으로 `_legendre_recurrence`를 호출하여 $P'_N(x)$를 계산한 후, $x = \pm 1$ 근방($|x \mp 1| < 10^{-14}$)에서는 해석적 특수값으로 대체한다. 이는 재귀 계산에서 끝점 근방의 수치적 불안정성을 방지하기 위함이다.
+
+**`_legendre_recurrence`**: $P_n$, $P'_n$, $P''_n$ 세 수열을 동시에 재귀적으로 갱신하여 $n = N$까지 전진한다. 각 단계에서 계수 $c_1 = (2n+1)/(n+1)$, $c_2 = n/(n+1)$을 사용하며, 6개의 배열(`P0, P1, dP0, dP1, ddP0, ddP1`)을 교대로 갱신한다.
+
+**`compute_lgl_nodes`**: 대칭성을 이용하여 $j = 1, \ldots, \lfloor(N-1)/2\rfloor$에 대해서만 Newton iteration을 수행한다. 초기값은 CGL 점 $\tau_j^{(0)} = -\cos(\pi j / N)$이다. 보정량 $\delta = P'_N(\tau) / P''_N(\tau)$의 절대값이 $10^{-15}$ 미만이 되거나, $|P''_N(\tau)| < 10^{-30}$이면 반복을 종료한다. 대칭 노드는 $\tau_{N-j} = -\tau_j$로 직접 배정한다. $N$이 짝수이면 가운데 노드 $\tau_{N/2} = 0$을 명시적으로 설정한다.
+
+**`compute_lgl_weights`**: 공식 $w_j = 2/(N(N+1)[P_N(\tau_j)]^2)$를 NumPy 벡터 연산으로 한 줄에 계산한다. `legendre_poly`를 호출하여 $P_N(\tau_j)$를 먼저 구한다.
+
+**`compute_differentiation_matrix`**: 이중 루프로 비대각 원소 $D_{ij} = P_N(\tau_i) / (P_N(\tau_j) (\tau_i - \tau_j))$를 계산한다. 끝점 대각 원소 $D_{00} = -N(N+1)/4$, $D_{NN} = N(N+1)/4$는 해석적 값을 직접 대입한다. 내부 대각 원소($i = 1, \ldots, N-1$)는 행 합 = 0 조건 $D_{ii} = -\sum_{j \neq i} D_{ij}$로 결정한다.
+
+---
+
+## 4. 수치 검증
+
+테스트 코드(`tests/test_lgl_nodes.py`)는 네 가지 범주로 구성되며, 차수 $N \in \{4, 8, 16, 32\}$에 대해 매개변수화된 테스트를 수행한다.
+
+### 4.1 Legendre 다항식 검증 (`TestLegendrePoly`)
+
+| 테스트 항목 | 검증 내용 | 허용 오차 |
+|------------|----------|-----------|
+| `test_P0` | $P_0(x) = 1$ | 기계 정밀도 |
+| `test_P1` | $P_1(x) = x$ | 기계 정밀도 |
+| `test_P2` | $P_2(x) = (3x^2 - 1)/2$ | 기계 정밀도 |
+| `test_P3` | $P_3(x) = (5x^3 - 3x)/2$ | 기계 정밀도 |
+| `test_endpoint_values` | $P_n(1) = 1$, $P_n(-1) = (-1)^n$, $n = 0, \ldots, 9$ | 기계 정밀도 |
+| `test_derivative_at_endpoints` | $P'_n(\pm 1)$ 특수값, $n = 1, \ldots, 9$ | $10^{-12}$ |
+
+### 4.2 LGL 노드 검증 (`TestLGLNodes`)
+
+| 테스트 항목 | 검증 내용 | 허용 오차 |
+|------------|----------|-----------|
+| `test_endpoint_inclusion` | $\tau_0 = -1$, $\tau_N = 1$ | $10^{-15}$ |
+| `test_node_count` | 노드 개수 = $N + 1$ | 정확 일치 |
+| `test_node_symmetry` | $\tau_j + \tau_{N-j} = 0$ | $10^{-14}$ |
+| `test_nodes_sorted` | $\tau_0 < \tau_1 < \cdots < \tau_N$ | 엄밀 부등호 |
+| `test_nodes_are_lgl_points` | $P'_N(\tau_j) = 0$, $j = 1, \ldots, N-1$ | $10^{-11}$ |
+
+노드 대칭성 테스트 `test_node_symmetry`는 대칭 반사 구현의 정확성을 직접 검증한다. `test_nodes_are_lgl_points`는 LGL 점의 정의 자체를 검증하는 가장 근본적인 테스트이다.
+
+### 4.3 LGL 가중치 검증 (`TestLGLWeights`)
+
+| 테스트 항목 | 검증 내용 | 허용 오차 |
+|------------|----------|-----------|
+| `test_weights_sum` | $\sum_{j=0}^{N} w_j = 2$ | $10^{-14}$ |
+| `test_weights_positive` | $w_j > 0$, 모든 $j$ | 엄밀 부등호 |
+| `test_polynomial_integration_exactness` | $\sum w_j \tau_j^k = \int_{-1}^{1} x^k\, dx$, $k = 0, \ldots, 2N-1$ | $10^{-12}$ |
+
+가중치 합 테스트는 $f(\tau) = 1$의 적분으로, $\sum w_j = \int_{-1}^{1} 1\, d\tau = 2$를 확인한다. 다항식 적분 정확도 테스트는 LGL 구적법이 $2N-1$차까지 정확하다는 이론적 결과를 직접 검증한다. 해석적 적분값은 다음과 같다.
+
+$$
+\int_{-1}^{1} x^k\, dx = \begin{cases} \dfrac{2}{k+1} & k \text{ 짝수} \\[6pt] 0 & k \text{ 홀수} \end{cases}
+$$
+
+### 4.4 미분 행렬 검증 (`TestDifferentiationMatrix`)
+
+| 테스트 항목 | 검증 내용 | 허용 오차 |
+|------------|----------|-----------|
+| `test_row_sum_zero` | $\sum_{j=0}^{N} D_{ij} = 0$ | $10^{-12}$ |
+| `test_matrix_shape` | $\mathbf{D} \in \mathbb{R}^{(N+1) \times (N+1)}$ | 정확 일치 |
+| `test_differentiate_linear` | $\mathbf{D}(3\boldsymbol{\tau} + 2) = 3 \cdot \mathbf{1}$ | $10^{-12}$ |
+| `test_differentiate_polynomial` | $\mathbf{D} \boldsymbol{\tau}^3 = 3\boldsymbol{\tau}^2$ | $10^{-10}$ |
+| `test_differentiate_sinusoidal` | $\mathbf{D} \sin(\pi\boldsymbol{\tau}) \approx \pi\cos(\pi\boldsymbol{\tau})$, $N = 16$ | $10^{-8}$ |
+| `test_corner_values` | $D_{00} = -N(N+1)/4$, $D_{NN} = N(N+1)/4$ | $10^{-14}$ |
+
+행 합 = 0 테스트는 상수 함수의 미분이 0임을 검증한다. 선형 함수와 3차 다항식 테스트는 미분 행렬이 다항식에 대해 정확함을 확인한다. 삼각함수 테스트(`test_differentiate_sinusoidal`)는 비다항식 함수에 대한 spectral accuracy를 검증하며, $N = 16$에서 $10^{-8}$ 이내의 오차를 달성한다. 이는 $\sin(\pi x)$가 해석적 함수이므로 지수적 수렴이 적용되기 때문이다.
+
+끝점 대각 원소 테스트(`test_corner_values`)는 $D_{00}$와 $D_{NN}$의 해석적 공식이 정확히 구현되었는지 확인한다.
+
+---
+
+## 5. 참고문헌
+
+1. Rao, A. V. (2025). *Trajectory Optimization: Using Nonlinear Programming and Pseudospectral Methods*. Cambridge University Press.
+2. Fahroo, F. and Ross, I. M. (2002). "Direct trajectory optimization by a Chebyshev pseudospectral method," *Journal of Guidance, Control, and Dynamics*, 25(1), 160--166.
+3. Herman, A. L. and Conway, B. A. (1996). "Direct optimization using collocation based on high-order Gauss-Lobatto quadrature rules," *Journal of Guidance, Control, and Dynamics*, 19(3), 592--599.
+4. Patterson, M. A. and Rao, A. V. (2014). "GPOPS-II: A MATLAB software for solving multiple-phase optimal control problems using hp-adaptive Gaussian quadrature collocation methods and sparse nonlinear programming," *ACM Transactions on Mathematical Software*, 41(1), 1--37.
+5. Canuto, C., Hussaini, M. Y., Quarteroni, A., and Zang, T. A. (2006). *Spectral Methods: Fundamentals in Single Domains*. Springer.
+6. Garg, D., Patterson, M. A., Hager, W. W., Rao, A. V., Benson, D. A., and Huntington, G. T. (2010). "A unified framework for the numerical solution of optimal control problems using pseudospectral methods," *Automatica*, 46(11), 1843--1851.

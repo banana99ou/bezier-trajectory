@@ -1,0 +1,333 @@
+\documentclass[11pt]{article}
+\usepackage{reusv}
+
+\setborderthickness{0.5pt}
+\setbordermargin{1cm}
+\setbordercolor{black}
+
+\slimtitle{3차원 궤도 동역학 및 섭동 모델}
+
+\begin{document}
+
+\drawborder
+\thispagestyle{firstpage}
+
+\lightertitle{3차원 궤도 동역학 및 섭동 모델}
+
+{\normalsize\textit{Research Note No.~002 $|$ bezier-orbit-transfer-scp}}\par\medskip
+
+\def\lighterdate{March 12, 2026}
+\lighterauthor{Suwon Lee$^{\dagger}$}
+
+\lighteraddress{$^\dagger$}{Future Mobility Control Lab, Kookmin University, Seoul, Korea}
+\lighteremail{suwon.lee@kookmin.ac.kr}
+
+\begin{abstract}
+본 보고서는 베지어 곡선 기반 궤도전이 궤적최적화의 기반이 되는 3차원 궤도 동역학 방정식을
+체계적으로 정리한다.
+지구 중심 관성 좌표계에서의 2체 문제를 출발점으로 하여,
+구면조화함수 섭동(J2--J6), 대기항력, 태양복사압, 3체 섭동을 계층적으로 기술한다.
+또한 각 섭동 항의 상대적 크기를 정량적으로 분석하여 궤도 영역별로 고려해야 할 섭동의 우선순위를 제시한다.
+\cite{report001}에서 정의한 정규화 단위를 적용하여 모든 방정식을 무차원 형태로 표현한다.
+\end{abstract}
+
+%% ============================================================
+\section{좌표계}
+%% ============================================================
+
+\subsection{지구 중심 관성 좌표계 (ECI)}
+
+본 프로젝트에서는 \textbf{지구 중심 관성 좌표계}(Earth-Centered Inertial frame, ECI)를
+기본 참조 좌표계로 사용한다.
+
+\begin{itemize}
+  \item 원점: 지구 질량 중심
+  \item $\hat{x}$축: 춘분점(vernal equinox) 방향
+  \item $\hat{z}$축: 지구 자전축 방향 (북극)
+  \item $\hat{y}$축: 오른손 좌표계 완성
+\end{itemize}
+
+우주비행체의 위치 및 속도 벡터를 각각 $\mathbf{r} = [x,\,y,\,z]^T \in \mathbb{R}^3$,
+$\mathbf{v} = [\dot{x},\,\dot{y},\,\dot{z}]^T \in \mathbb{R}^3$로 표기한다.
+$r \triangleq \|\mathbf{r}\|$은 지구 중심으로부터의 거리이다.
+
+\subsection{궤도 요소와의 관계}
+
+경계조건은 Keplerian 궤도 요소 $\{a, e, i, \Omega, \omega, \nu\}$로 주어질 수도 있다.
+여기서 $a$는 반장축, $e$는 이심률, $i$는 궤도 경사각,
+$\Omega$는 승교점 적경, $\omega$는 근지점 편각, $\nu$는 진근점 이각이다.
+ECI 직교좌표와의 상호 변환은 표준 회전행렬 $R_3(-\Omega)\,R_1(-i)\,R_3(-\omega)$를 통해
+이루어지며 해당 변환은 별도 보고서에서 다룬다.
+
+%% ============================================================
+\section{2체 문제 (중심 중력)}
+%% ============================================================
+
+\subsection{운동 방정식}
+
+지구를 질점으로 가정하면 우주비행체의 운동 방정식은 다음과 같다.
+
+\begin{equation}
+  \ddot{\mathbf{r}} = -\frac{\mu}{r^3}\mathbf{r} + \mathbf{u}
+  \label{eq:twobody}
+\end{equation}
+
+여기서 $\mu = GM_\oplus = 398{,}600.4418\ \mathrm{km}^3/\mathrm{s}^2$는 지구 중력 상수이고,
+$\mathbf{u} \in \mathbb{R}^3$는 추진 가속도 벡터이다.
+상태벡터 $\mathbf{x} = [\mathbf{r}^T,\, \mathbf{v}^T]^T \in \mathbb{R}^6$에 대해
+1차 형식으로 쓰면:
+
+\begin{equation}
+  \dot{\mathbf{x}} =
+  \begin{bmatrix} \mathbf{v} \\ -\dfrac{\mu}{r^3}\mathbf{r} \end{bmatrix}
+  + \begin{bmatrix} \mathbf{0} \\ \mathbf{u} \end{bmatrix}
+  \label{eq:state_eq}
+\end{equation}
+
+\subsection{정규화된 운동 방정식}
+
+\cite{report001}에서 정의한 적응형 정규화 ($\mathrm{DU} = a_0$, $\mathrm{TU} = \sqrt{a_0^3/\mu}$)를 적용하면
+$\mu^* = 1$이 되어 식~\eqref{eq:twobody}는 다음과 같이 단순화된다.
+
+\begin{equation}
+  \ddot{\mathbf{r}}^* = -\frac{1}{r^{*3}}\mathbf{r}^* + \mathbf{u}^*
+  \label{eq:twobody_normalized}
+\end{equation}
+
+이하 본 보고서의 모든 방정식은 정규화된 변수로 표현하며, 위첨자 $*$는 생략한다.
+
+%% ============================================================
+\section{섭동 모델}
+%% ============================================================
+
+실제 궤도 운동에는 2체 중심 중력 외에 다양한 섭동이 작용한다.
+이를 포함한 운동 방정식은 다음과 같다.
+
+\begin{equation}
+  \ddot{\mathbf{r}} = -\frac{1}{r^3}\mathbf{r} + \mathbf{a}_\mathrm{pert} + \mathbf{u}
+  \label{eq:eom_full}
+\end{equation}
+
+여기서 $\mathbf{a}_\mathrm{pert}$는 모든 섭동 가속도의 합이다.
+
+\begin{equation}
+  \mathbf{a}_\mathrm{pert} = \mathbf{a}_{J_2} + \mathbf{a}_{J_{3+}} + \mathbf{a}_\mathrm{drag} + \mathbf{a}_\mathrm{SRP} + \mathbf{a}_{3\mathrm{b}}
+  \label{eq:pert_total}
+\end{equation}
+
+\subsection{지구 비구형 섭동 (구면조화함수)}
+
+지구 중력 포텐셜을 구면조화함수로 전개하면 다음과 같다.
+
+\begin{equation}
+  U = \frac{\mu}{r}\left[1 - \sum_{n=2}^{\infty} J_n \left(\frac{R_\oplus}{r}\right)^n P_n(\sin\phi)\right]
+  \label{eq:gravity_potential}
+\end{equation}
+
+여기서 $J_n$은 대역 조화 계수, $P_n$은 르장드르 다항식, $\phi$는 지심 위도이다.
+주요 계수 값은 표~\ref{tab:Jn}과 같다.
+
+\begin{table}[h]
+  \centering
+  \caption{지구 구면조화 계수 ($J_n$)}
+  \label{tab:Jn}
+  \begin{tabular}{cc}
+    \toprule
+    계수 & 값 \\
+    \midrule
+    $J_2$ & $1.08263 \times 10^{-3}$ \\
+    $J_3$ & $-2.5324 \times 10^{-6}$ \\
+    $J_4$ & $-1.6204 \times 10^{-6}$ \\
+    $J_5$ & $-2.2730 \times 10^{-7}$ \\
+    $J_6$ & $5.4060 \times 10^{-7}$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsubsection{J2 섭동}
+
+J2 항은 지구 편평도에 의한 가장 지배적인 섭동이다 ($J_2 \approx 10^{-3}$).
+ECI 좌표에서 J2 섭동 가속도는 다음과 같다.
+
+\begin{equation}
+  \mathbf{a}_{J_2} = \frac{3J_2 R_\oplus^{*2}}{2r^5}
+  \begin{bmatrix}
+    x\!\left(5\dfrac{z^2}{r^2}-1\right)\\[6pt]
+    y\!\left(5\dfrac{z^2}{r^2}-1\right)\\[6pt]
+    z\!\left(5\dfrac{z^2}{r^2}-3\right)
+  \end{bmatrix}
+  \label{eq:J2}
+\end{equation}
+
+여기서 $R_\oplus^* = R_\oplus/\mathrm{DU}$이다.
+적응형 정규화에서 $R_\oplus^* = R_\oplus/a_0 \leq 1$이므로
+J2 섭동의 크기는 중심 중력에 비해 소량이다.
+\begin{equation}
+  |\mathbf{a}_{J_2}| \sim \frac{J_2 (R_\oplus^*)^2}{r^{*4}} = O(10^{-3})
+  \ll \frac{1}{r^{*2}} = O(a_\mathrm{grav})
+\end{equation}
+
+\subsubsection{고차 비구형 섭동 (J3 이상)}
+
+J3 이상의 항은 J2에 비해 $10^{-3}$ 이하로 작지만 정밀 궤도 예측에 영향을 준다.
+$n$차 구면조화 섭동 가속도는 포텐셜의 기울기로 계산된다.
+
+\begin{equation}
+  \mathbf{a}_{J_n} = -\nabla\!\left[\frac{\mu}{r} J_n \left(\frac{R_\oplus}{r}\right)^n P_n(\sin\phi)\right]
+  \label{eq:Jn_general}
+\end{equation}
+
+본 프로젝트에서는 J2를 기본 포함하고, J3--J6는 선택적으로 활성화할 수 있도록 구현한다.
+
+\subsection{대기항력}
+
+대기항력은 저궤도(LEO)에서 지배적인 비보존 섭동이다.
+
+\begin{equation}
+  \mathbf{a}_\mathrm{drag} = -\frac{1}{2}\frac{C_D A}{m}\rho\, v_\mathrm{rel}\, \mathbf{v}_\mathrm{rel}
+  \label{eq:drag}
+\end{equation}
+
+여기서 $C_D$는 항력 계수, $A/m$은 단위 질량당 면적, $\rho$는 대기 밀도,
+$\mathbf{v}_\mathrm{rel}$은 대기에 대한 상대 속도이다.
+대기 밀도 모델로는 지수 모델 또는 NRLMSISE-00 모델을 사용할 수 있다.
+고도 $h$ (km)에서의 지수 대기 밀도 모델은 다음과 같다.
+
+\begin{equation}
+  \rho(h) = \rho_0 \exp\!\left(-\frac{h - h_0}{H_s}\right)
+  \label{eq:atm_density}
+\end{equation}
+
+여기서 $\rho_0$, $h_0$, $H_s$는 고도 구간별 기준 밀도, 기준 고도, 스케일 높이이다.
+대기항력은 비선형·비보존 섭동이며 SCP 반복 내에서 참조 궤도 기준으로 선형화하여 처리한다.
+
+\subsection{태양복사압 (SRP)}
+
+태양복사압은 중·고궤도(MEO, GEO)에서 장기 궤도 변화에 영향을 준다.
+
+\begin{equation}
+  \mathbf{a}_\mathrm{SRP} = -\frac{P_\odot C_R A}{m}\hat{\mathbf{r}}_{\odot}
+  \label{eq:SRP}
+\end{equation}
+
+여기서 $P_\odot = 4.56 \times 10^{-6}\ \mathrm{N/m}^2$는 1 AU에서의 태양복사압,
+$C_R$은 복사압 계수, $\hat{\mathbf{r}}_{\odot}$은 태양 방향 단위벡터이다.
+지구 그림자 효과(shadow function)는 원통형 또는 원추형 그림자 모델로 처리한다.
+
+\subsection{3체 섭동}
+
+달 및 태양의 중력에 의한 3체 섭동은 고궤도에서 주요 섭동원이 된다.
+
+\begin{equation}
+  \mathbf{a}_{3\mathrm{b}} = \mu_k \left(\frac{\mathbf{r}_k - \mathbf{r}}{|\mathbf{r}_k - \mathbf{r}|^3} - \frac{\mathbf{r}_k}{r_k^3}\right)
+  \label{eq:thirdbody}
+\end{equation}
+
+여기서 $\mu_k$는 제3체(달 또는 태양)의 중력 상수,
+$\mathbf{r}_k$는 지구 중심에서 제3체까지의 위치 벡터이다.
+
+%% ============================================================
+\section{섭동 크기 분석 및 계층 설계}
+%% ============================================================
+
+각 궤도 영역에서 섭동 가속도의 크기를 중심 중력 대비 상대 비율로 정리하면
+표~\ref{tab:pert_magnitude}와 같다.
+
+\begin{table}[h]
+  \centering
+  \caption{궤도 영역별 섭동 크기 ($a_\mathrm{pert}/a_\mathrm{grav}$ 차수)}
+  \label{tab:pert_magnitude}
+  \begin{tabular}{lcccc}
+    \toprule
+    섭동 & LEO (400 km) & MEO (20,200 km) & GEO (35,786 km) & HEO \\
+    \midrule
+    J2              & $10^{-3}$ & $10^{-5}$ & $10^{-6}$ & $<10^{-6}$ \\
+    J3--J6          & $10^{-6}$ & $10^{-8}$ & $10^{-9}$ & $\ll$ \\
+    대기항력        & $10^{-7}\sim10^{-5}$ & 무시 & 무시 & 무시 \\
+    태양복사압      & $10^{-9}$ & $10^{-7}$ & $10^{-7}$ & $10^{-7}$ \\
+    달 3체          & $10^{-8}$ & $10^{-5}$ & $10^{-3}$ & $10^{-2}$ \\
+    태양 3체        & $10^{-8}$ & $10^{-6}$ & $10^{-4}$ & $10^{-3}$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+이를 바탕으로 본 프로젝트에서 채택할 섭동 계층은 다음과 같다.
+
+\begin{description}
+  \item[Level 0 (항상 포함)] J2. 모든 궤도 영역에서 지배적인 비구형 섭동.
+        동역학 방정식에 직접 포함하여 정확히 처리한다.
+  \item[Level 1 (선택적)] J3--J6, 대기항력.
+        SCP 반복 내에서 참조 궤도 주변의 선형화로 처리한다.
+  \item[Level 2 (선택적)] 태양복사압, 달·태양 3체 섭동.
+        고궤도 전이 또는 장기 전이에서 활성화한다.
+        SCP outer loop에서 반복 보정하거나 참조 궤도 갱신 시 포함한다.
+\end{description}
+
+%% ============================================================
+\section{컨벡스 최적화에서의 섭동 처리}
+%% ============================================================
+
+섭동 항 $\mathbf{a}_\mathrm{pert}$는 일반적으로 상태 $\mathbf{r}$에 비선형으로 의존한다.
+SCP 프레임워크에서 비선형 함수 $f(\mathbf{x})$는 참조 궤도
+$\bar{\mathbf{x}}(\tau)$ 주변에서 1차 테일러 전개로 선형화한다.
+
+\begin{equation}
+  \mathbf{a}_\mathrm{pert}(\mathbf{r}) \approx \mathbf{a}_\mathrm{pert}(\bar{\mathbf{r}})
+  + \left.\frac{\partial \mathbf{a}_\mathrm{pert}}{\partial \mathbf{r}}\right|_{\bar{\mathbf{r}}}
+  (\mathbf{r} - \bar{\mathbf{r}})
+  \label{eq:pert_linearize}
+\end{equation}
+
+J2의 경우 Jacobian $\partial \mathbf{a}_{J_2}/\partial \mathbf{r}$은 해석적으로
+계산할 수 있으며 $3\times3$ 행렬 형태를 가진다.
+Level 1 이상의 섭동은 SCP 각 반복에서 위 선형화를 갱신함으로써
+수렴 시 비선형 섭동이 정확히 반영된 해를 얻는다.
+
+%% ============================================================
+\section{완전한 정규화 운동 방정식}
+%% ============================================================
+
+정규화 변수에서 섭동을 모두 포함한 1차 상태 방정식은 다음과 같다.
+
+\begin{equation}
+  \dot{\mathbf{x}} = f(\mathbf{x}) + B\,\mathbf{u}
+  \label{eq:full_state}
+\end{equation}
+
+\begin{equation}
+  f(\mathbf{x}) =
+  \begin{bmatrix}
+    \mathbf{v} \\[4pt]
+    -\dfrac{1}{r^3}\mathbf{r}
+    + \mathbf{a}_{J_2}(\mathbf{r})
+    + \mathbf{a}_{J_{3+}}(\mathbf{r})
+    + \mathbf{a}_\mathrm{drag}(\mathbf{r}, \mathbf{v})
+    + \mathbf{a}_\mathrm{SRP}(\mathbf{r})
+    + \mathbf{a}_{3\mathrm{b}}(\mathbf{r})
+  \end{bmatrix},
+  \quad
+  B =
+  \begin{bmatrix} \mathbf{0}_{3\times3} \\ \mathbf{I}_{3\times3} \end{bmatrix}
+  \label{eq:f_and_B}
+\end{equation}
+
+이 구조에서 $f(\mathbf{x})$는 비선형 드리프트 항, $B\mathbf{u}$는 제어 입력이다.
+SCP에서는 $f(\mathbf{x})$를 참조 궤도 $\bar{\mathbf{x}}$에서 선형화하여
+매 반복마다 선형 동역학 제약조건을 구성한다.
+
+%% ============================================================
+\section{요약}
+%% ============================================================
+
+\begin{itemize}
+  \item ECI 좌표계에서 3차원 6자유도 상태벡터 $(\mathbf{r}, \mathbf{v}) \in \mathbb{R}^6$으로 운동 방정식을 기술한다.
+  \item \cite{report001}의 적응형 정규화 ($\mathrm{DU} = a_0$)를 적용하면 $\mu^* = 1$이 되어 방정식이 간결해진다.
+  \item 섭동은 Level 0(J2, 항상 포함), Level 1(J3--J6, 항력, 선택적 선형화), Level 2(SRP, 3체, 고궤도용)의 3계층으로 관리한다.
+  \item 비선형 섭동은 SCP 반복 내 참조 궤도 기준 1차 선형화로 처리한다.
+  \item 제어 입력 $\mathbf{u}$는 $B$ 행렬을 통해 동역학과 분리되어 있으며, 베지어 곡선 성형 전략은 \cite{report003}에서 다룬다.
+\end{itemize}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orbit-transfer-benchmark"
+version = "0.1.0"
+description = "LEO-to-LEO orbit transfer benchmark: Hohmann / Lambert / Direct Collocation"
+requires-python = ">=3.11"
+dependencies = [
+    "casadi",
+    "numpy",
+    "scipy",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

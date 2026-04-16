@@ -1,0 +1,292 @@
+\documentclass[11pt]{article}
+\usepackage{reusv}
+
+\setborderthickness{0.5pt}
+\setbordermargin{1cm}
+\setbordercolor{black}
+
+\slimtitle{궤도역학 표준 정규화 (Canonical Units)}
+
+\begin{document}
+
+\drawborder
+\thispagestyle{firstpage}
+
+\lightertitle{궤도역학 표준 정규화 (Canonical Units)}
+
+{\normalsize\textit{Research Note No.~001 $|$ bezier-orbit-transfer-scp}}\par\medskip
+
+\def\lighterdate{March 12, 2026}
+\lighterauthor{Suwon Lee$^{\dagger}$}
+
+\lighteraddress{$^\dagger$}{Future Mobility Control Lab, Kookmin University, Seoul, Korea}
+\lighteremail{suwon.lee@kookmin.ac.kr}
+
+\begin{abstract}
+본 보고서는 베지어 곡선 기반 궤도전이 궤적최적화 문제에서 수치 안정성을 확보하기 위한
+궤도역학 표준 정규화(canonical units) 이론을 정리한다.
+위치, 속도, 시간의 물리적 스케일 차이가 수십 배 이상 차이 나는 궤도역학 문제에서
+수치 최적화기(QP/SOCP solver)의 조건수(condition number)를 개선하고 수렴 안정성을 높이기 위해
+표준 정규화를 도입한다.
+LEO에서 GEO까지 모든 궤도 영역에 적용 가능한 적응형 정규화 체계를 함께 제시한다.
+\end{abstract}
+
+%% ============================================================
+\section{도입: 정규화가 필요한 이유}
+%% ============================================================
+
+궤도역학 문제에서 물리 변수들의 크기 스케일은 매우 다양하다.
+예를 들어 저궤도(LEO)에서 지구 정지궤도(GEO)에 이르는 전이 문제를 생각하면,
+위치는 $10^3 \sim 10^5$ km, 속도는 $1 \sim 10$ km/s, 비행시간은 $10^2 \sim 10^5$ s의 범위를 가진다.
+이처럼 변수 간 크기 차이가 $10^2$ 이상인 문제에서 수치 최적화를 직접 수행하면
+행렬의 조건수(condition number)가 매우 커져서 수치 오차가 증폭되고 수렴 실패 가능성이 높아진다.
+
+또한 본 프로젝트에서 채택한 보조변수 승강(auxiliary variable lifting) 기법에서는
+$\boldsymbol{\xi}_r = t_f \cdot \mathbf{P}_r$ 형태의 치환이 사용되는데,
+$t_f$와 $\mathbf{P}_r$ 각각의 스케일이 맞지 않으면 $\boldsymbol{\xi}_r$의 크기가 지나치게 커지거나
+작아져서 수치 정밀도가 저하된다.
+정규화를 통해 모든 변수를 $O(1)$ 스케일로 만들면 이 문제를 효과적으로 해소할 수 있다.
+
+%% ============================================================
+\section{표준 정규화 단위 (Canonical Units)}
+%% ============================================================
+
+\subsection{기준 스케일 정의}
+
+표준 정규화는 세 가지 기준량---거리 단위(DU), 시간 단위(TU), 속도 단위(VU)---을 정의하는 것에서 시작한다.
+가장 일반적인 선택은 지구 적도 반경과 지구 중력 상수를 기반으로 하는 것이다.
+
+\begin{align}
+  \text{DU} &\triangleq R_\oplus = 6{,}378.137 \text{ km} \label{eq:DU}\\
+  \text{TU} &\triangleq \sqrt{\frac{\text{DU}^3}{\mu}} \label{eq:TU}\\
+  \text{VU} &\triangleq \frac{\text{DU}}{\text{TU}} = \sqrt{\frac{\mu}{\text{DU}}} \label{eq:VU}
+\end{align}
+
+여기서 $\mu = GM_\oplus = 398{,}600.4418$ km$^3$/s$^2$는 지구 중력 상수이다.
+수치로 계산하면 다음과 같다.
+
+\begin{align}
+  \text{TU} &= \sqrt{\frac{(6378.137)^3}{398600.4418}} \approx 806.81 \text{ s} \approx 13.45 \text{ min}\\
+  \text{VU} &= \sqrt{\frac{398600.4418}{6378.137}} \approx 7.905 \text{ km/s}
+\end{align}
+
+\subsection{정규화 변환}
+
+물리 변수를 정규화 변수(위첨자 $*$)로 변환하는 식은 다음과 같다.
+
+\begin{align}
+  \mathbf{r}^* &= \frac{\mathbf{r}}{\text{DU}}, \quad
+  \mathbf{v}^* = \frac{\mathbf{v}}{\text{VU}}, \quad
+  t^* = \frac{t}{\text{TU}} \label{eq:transform}\\
+  \mathbf{a}^* &= \frac{\mathbf{a}}{\text{DU}/\text{TU}^2} = \frac{\mathbf{a} \cdot \text{TU}^2}{\text{DU}} \label{eq:accel_transform}\\
+  \mu^* &= \frac{\mu}{\text{DU}^3/\text{TU}^2} = 1 \label{eq:mu_star}
+\end{align}
+
+정규화된 단위계에서 지구 중력 상수는 $\mu^* = 1$이 된다는 점이 핵심이다.
+이로 인해 운동 방정식이 간결해지고 수치 계산이 안정적으로 된다.
+
+\subsection{정규화된 운동 방정식}
+
+물리 단위에서 3차원 궤도 운동 방정식은 다음과 같다.
+
+\begin{equation}
+  \ddot{\mathbf{r}} = -\frac{\mu}{r^3}\mathbf{r} + \mathbf{a}_{\text{pert}} + \mathbf{u}
+\end{equation}
+
+여기서 $\mathbf{a}_{\text{pert}}$는 섭동 가속도, $\mathbf{u}$는 추진 가속도이다.
+정규화 변수로 변환하면 ($\mu^*=1$, $\mathbf{r} = \text{DU}\cdot\mathbf{r}^*$, $t = \text{TU}\cdot t^*$):
+
+\begin{equation}
+  \ddot{\mathbf{r}}^* = -\frac{1}{r^{*3}}\mathbf{r}^* + \mathbf{a}_{\text{pert}}^* + \mathbf{u}^*
+  \label{eq:eom_normalized}
+\end{equation}
+
+형태가 동일하되 $\mu^* = 1$이 되어 수식이 단순해진다.
+
+%% ============================================================
+\section{궤도 영역별 스케일 분석}
+%% ============================================================
+
+\subsection{표준 정규화 단위 적용 시 각 궤도 영역의 정규화 값}
+
+표준 DU/TU를 기준으로 주요 궤도의 정규화 값을 정리하면 표~\ref{tab:orbit_scale}과 같다.
+
+\begin{table}[h]
+  \centering
+  \caption{주요 궤도의 정규화 값 ($\text{DU} = R_\oplus$, $\text{TU} \approx 806.8$ s)}
+  \label{tab:orbit_scale}
+  \begin{tabular}{lcccc}
+    \toprule
+    궤도 & 반장축 $a$ (km) & $a^*$ (DU) & 주기 $T$ (s) & $T^*$ (TU) \\
+    \midrule
+    LEO (고도 400 km)  & 6{,}778 & 1.063 & 5{,}557 & 6.88 \\
+    MEO (고도 20,200 km) & 26{,}578 & 4.167 & 43{,}082 & 53.4 \\
+    GEO (고도 35,786 km) & 42{,}164 & 6.610 & 86{,}164 & 106.8 \\
+    HEO (고도 100,000 km) & 106{,}378 & 16.67 & 343{,}822 & 426.1 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+표에서 볼 수 있듯이, 표준 DU를 사용할 경우 LEO의 반장축은 $a^* \approx 1$로 $O(1)$이지만,
+GEO는 $a^* \approx 6.6$, HEO는 $a^* \approx 17$로 커진다.
+LEO 근방 문제에서는 표준 DU가 충분하지만, 고궤도 전이 문제에서는 추가적인 스케일 조정이 유효하다.
+
+\subsection{적응형 정규화 (Orbit-Adaptive Normalization)}
+
+모든 궤도 영역에서 변수를 $O(1)$으로 유지하기 위해 \textbf{초기 궤도의 반장축 $a_0$를 기준 거리 단위로 사용}하는
+적응형 정규화를 도입한다.
+
+\begin{align}
+  \text{DU}_{\text{adap}} &\triangleq a_0 \label{eq:DU_adap}\\
+  \text{TU}_{\text{adap}} &\triangleq \sqrt{\frac{a_0^3}{\mu}} = T_0 / (2\pi) \label{eq:TU_adap}\\
+  \text{VU}_{\text{adap}} &\triangleq \sqrt{\frac{\mu}{a_0}} = v_c(a_0) \label{eq:VU_adap}
+\end{align}
+
+여기서 $v_c(a_0)$는 반장축 $a_0$ 원형 궤도에서의 원형 속도이다.
+이 정규화를 사용하면 초기 궤도에서 $a^* = 1$이 되고, 대부분의 물리량이 $O(1)$ 스케일에 위치한다.
+
+적응형 정규화와 표준 정규화 간의 변환 계수는 다음과 같다.
+
+\begin{equation}
+  k_r = \frac{a_0}{R_\oplus}, \quad
+  k_t = \sqrt{\frac{a_0^3}{R_\oplus^3}} = k_r^{3/2}, \quad
+  k_v = \sqrt{\frac{R_\oplus}{a_0}} = k_r^{-1/2}
+  \label{eq:conversion_factors}
+\end{equation}
+
+%% ============================================================
+\section{목적함수 및 베지어 제어점의 정규화}
+%% ============================================================
+
+\subsection{추력가속도 제곱 적분 목적함수}
+
+본 프로젝트의 목적함수는 순수 추진 가속도의 제곱 적분이다.
+
+\begin{equation}
+  J = \int_0^{t_f} \|\mathbf{u}(t)\|^2 \, dt
+\end{equation}
+
+정규화된 변수로 변환하면,
+
+\begin{equation}
+  J^* = \int_0^{t_f^*} \|\mathbf{u}^*(t^*)\|^2 \, dt^*
+  = \frac{J}{\text{VU}^2 \cdot \text{TU}} = \frac{J \cdot \text{TU}}{\text{VU}^2}
+  \label{eq:cost_normalized}
+\end{equation}
+
+\subsection{베지어 제어점의 스케일}
+
+추진 가속도 $\mathbf{u}(t)$를 $N$차 베지어 곡선으로 성형하면,
+
+\begin{equation}
+  \mathbf{u}(\tau) = \sum_{i=0}^{N} B_i^N(\tau) \mathbf{P}_{u,i}, \quad \tau = t/t_f \in [0,1]
+\end{equation}
+
+정규화된 제어점은 $\mathbf{P}_{u,i}^* = \mathbf{P}_{u,i} / (\text{DU}/\text{TU}^2)$이며,
+전형적인 추진 가속도 크기 대비 정규화 값의 기댓값이 $O(0.1) \sim O(1)$ 범위에 위치하도록 DU, TU를 선택해야 한다.
+
+\subsection{보조변수 승강 시 스케일}
+
+시간 $t_f$를 설계변수로 포함하는 보조변수 승강에서의 치환변수 $\boldsymbol{\xi}_r = t_f^* \cdot \mathbf{P}_r^*$는
+정규화된 변수끼리의 곱이므로, 물리 단위에서의 치환 $\boldsymbol{\xi}_r^{\text{phys}} = t_f \cdot \mathbf{P}_r$에 비해
+스케일이 훨씬 잘 관리된다. 구체적으로:
+
+\begin{equation}
+  \xi_r^{\text{phys}} = t_f \cdot P_r \sim \mathcal{O}(10^3) \cdot \mathcal{O}(10^{-3}) = \mathcal{O}(1) \quad (\text{우연})
+\end{equation}
+
+스케일이 맞지 않는 경우 Hessian의 조건수가 커지는 문제가 발생한다.
+정규화 후에는:
+
+\begin{equation}
+  \xi_r^* = t_f^* \cdot P_r^* \sim \mathcal{O}(1) \cdot \mathcal{O}(1) = \mathcal{O}(1) \quad (\text{보장})
+\end{equation}
+
+%% ============================================================
+\section{J2 섭동의 정규화}
+%% ============================================================
+
+J2 섭동 가속도는 물리 단위에서 다음과 같다.
+
+\begin{equation}
+  \mathbf{a}_{J2} = \frac{3\mu J_2 R_\oplus^2}{2r^5}
+  \begin{pmatrix}
+    x\left(5\frac{z^2}{r^2} - 1\right)\\
+    y\left(5\frac{z^2}{r^2} - 1\right)\\
+    z\left(5\frac{z^2}{r^2} - 3\right)
+  \end{pmatrix}
+\end{equation}
+
+여기서 $J_2 = 1.08263 \times 10^{-3}$이다.
+적응형 정규화 ($\text{DU} = a_0$)를 적용하면:
+
+\begin{equation}
+  \mathbf{a}_{J2}^* = \frac{3 J_2}{2 r^{*5}} \left(\frac{R_\oplus}{a_0}\right)^2
+  \begin{pmatrix}
+    x^*\left(5 z^{*2}/r^{*2} - 1\right)\\
+    y^*\left(5 z^{*2}/r^{*2} - 1\right)\\
+    z^*\left(5 z^{*2}/r^{*2} - 3\right)
+  \end{pmatrix}
+  \label{eq:J2_normalized}
+\end{equation}
+
+$J_2 \approx 10^{-3}$이고 $(R_\oplus/a_0)^2 \leq 1$이므로, 정규화된 J2 섭동은 항상 $O(10^{-3})$ 이하로
+중심 중력($O(1/r^{*2})$)에 비해 소량 섭동임을 수치적으로도 명확히 확인할 수 있다.
+
+%% ============================================================
+\section{구현 지침}
+%% ============================================================
+
+\subsection{코드 구현 원칙}
+
+\begin{enumerate}
+  \item 모든 내부 계산은 \textbf{정규화된 변수}로 수행한다.
+  \item 입/출력 인터페이스에서만 물리 단위 ↔ 정규화 단위 변환을 수행한다.
+  \item 정규화 기준 ($a_0$, $\mu$)은 시뮬레이션 초기에 한 번 설정하고 전역 상수로 관리한다.
+  \item DuckDB에 데이터 저장 시 정규화 기준량 (DU, TU, VU)을 함께 저장하여 역변환이 가능하게 한다.
+\end{enumerate}
+
+\subsection{정규화 파라미터 테이블}
+
+\begin{table}[h]
+  \centering
+  \caption{구현에 사용할 정규화 파라미터 (적응형 기준)}
+  \label{tab:norm_params}
+  \begin{tabular}{lll}
+    \toprule
+    파라미터 & 기호 & 값/정의 \\
+    \midrule
+    지구 중력 상수 & $\mu$ & $398{,}600.4418$ km$^3$/s$^2$ \\
+    지구 반경 & $R_\oplus$ & $6{,}378.137$ km \\
+    J2 계수 & $J_2$ & $1.08263 \times 10^{-3}$ \\
+    기준 거리 단위 & $\text{DU}$ & $a_0$ (초기 궤도 반장축) km \\
+    기준 시간 단위 & $\text{TU}$ & $\sqrt{a_0^3/\mu}$ s \\
+    기준 속도 단위 & $\text{VU}$ & $\sqrt{\mu/a_0}$ km/s \\
+    기준 가속도 단위 & $\text{AU}$ & $\text{VU}/\text{TU} = \mu/a_0^2$ km/s$^2$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\vfill
+\pagebreak
+
+%% ============================================================
+\section{요약}
+%% ============================================================
+
+본 보고서에서 정리한 정규화 체계를 요약하면 다음과 같다.
+
+\begin{itemize}
+  \item 표준 궤도역학 정규화(canonical units)는 DU, TU, VU를 정의하여 $\mu^* = 1$이 되게 한다.
+  \item 표준 DU($= R_\oplus$)는 LEO에서 효과적이며, 고궤도 전이에는 초기 반장축 $a_0$를 기준으로 하는
+        적응형 정규화가 바람직하다.
+  \item 정규화된 단위에서 모든 주요 궤도 변수는 $O(1)$ 스케일에 위치하여 QP/SOCP solver의 수치 안정성이 향상된다.
+  \item 보조변수 승강 기법의 치환변수 $\boldsymbol{\xi}_r^* = t_f^* \cdot \mathbf{P}_r^*$도 $O(1)$으로 유지된다.
+  \item J2 섭동은 정규화 후에도 $O(10^{-3})$ 수준의 소량 섭동임이 명확해진다.
+  \item 정규화된 운동 방정식 및 섭동 모델의 전체 정식화는 \cite{report002}에서 다룬다.
+\end{itemize}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

@@ -1,0 +1,20 @@
+# Phase 3a: ω 감도 스크린
+# h₀=600 고정, 이심률 조합 × ω 격자 × 3D 서브셋
+# 총 ~4,320 cases
+batch_tag: omega_screen_v1
+K: 12
+n: 2
+max_iter: 50
+tol_bc: 0.001
+l1_lambda: 0.0
+u_max_phys: 0.01
+
+grid:
+  h0: [600]
+  delta_a: [-500, 750, 2000]
+  delta_i: [0, 7.5, 15]
+  T_max_normed: [0.3, 0.6, 1.0]
+  e0: [0.05, 0.1, 0.2]
+  ef: [0, 0.05, 0.1]
+  aop_dep: [0, 90, 180, 270]
+  aop_arr: [0, 90, 180, 270]

@@ -1,0 +1,544 @@
+% ============================================================================
+% References collected from 11 technical report documents (A1--D3)
+% Deduplicated and grouped by entry type
+% ============================================================================
+
+
+% ============================================================================
+% @book
+% ============================================================================
+
+@book{Vallado2013,
+  author    = {Vallado, David A.},
+  title     = {Fundamentals of Astrodynamics and Applications},
+  edition   = {4th},
+  publisher = {Microcosm Press},
+  year      = {2013},
+  note      = {ECI coordinates, classical orbital elements, J2 perturbation, exponential atmosphere model, RAAN secular drift},
+}
+
+@book{Curtis2020,
+  author    = {Curtis, Howard D.},
+  title     = {Orbital Mechanics for Engineering Students},
+  edition   = {4th},
+  publisher = {Butterworth-Heinemann},
+  year      = {2020},
+  note      = {Perifocal frame, rotation matrices, Hohmann transfer, Universal Variable Kepler propagation},
+}
+
+@book{Battin1999,
+  author    = {Battin, Richard H.},
+  title     = {An Introduction to the Methods of Astrodynamics},
+  publisher = {AIAA Education Series},
+  year      = {1999},
+  note      = {Eccentricity vector derivation, two-body problem fundamentals, Gauss variational equations},
+}
+
+@book{Montenbruck2000,
+  author    = {Montenbruck, Oliver and Gill, Eberhard},
+  title     = {Satellite Orbits: Models, Methods and Applications},
+  publisher = {Springer-Verlag},
+  year      = {2000},
+  note      = {Spherical harmonics expansion, third-body perturbation magnitude comparison, atmospheric models},
+}
+
+@book{Schaub2018,
+  author    = {Schaub, Hanspeter and Junkins, John L.},
+  title     = {Analytical Mechanics of Space Systems},
+  edition   = {4th},
+  publisher = {AIAA Education Series},
+  year      = {2018},
+  note      = {J2 secular/long-period/short-period perturbation classification and analytical expressions},
+}
+
+@book{Lawden1963,
+  author    = {Lawden, Derek F.},
+  title     = {Optimal Trajectories for Space Navigation},
+  publisher = {Butterworths},
+  address   = {London},
+  year      = {1963},
+  note      = {Optimal tangential maneuver theory, primer vector},
+}
+
+@book{Betts2010,
+  author    = {Betts, John T.},
+  title     = {Practical Methods for Optimal Control and Estimation Using Nonlinear Programming},
+  edition   = {2nd},
+  publisher = {SIAM},
+  address   = {Philadelphia},
+  year      = {2010},
+  note      = {Direct collocation methods, NLP formulation for trajectory optimization, tolerance continuation},
+}
+
+@book{Conway2010,
+  author    = {Conway, Bruce A.},
+  title     = {Spacecraft Trajectory Optimization},
+  publisher = {Cambridge University Press},
+  year      = {2010},
+  note      = {Edited volume covering direct/indirect methods, primer vector theory},
+}
+
+@book{Stoer2002,
+  author    = {Stoer, Josef and Bulirsch, Roland},
+  title     = {Introduction to Numerical Analysis},
+  edition   = {3rd},
+  publisher = {Springer},
+  year      = {2002},
+  note      = {Hermite interpolation, Simpson quadrature, numerical integration theory},
+}
+
+@book{Nocedal2006,
+  author    = {Nocedal, Jorge and Wright, Stephen J.},
+  title     = {Numerical Optimization},
+  edition   = {2nd},
+  publisher = {Springer},
+  address   = {New York},
+  year      = {2006},
+  note      = {NLP standard form, KKT conditions, Newton methods, convergence theory},
+}
+
+@book{Fiacco1968,
+  author    = {Fiacco, Anthony V. and McCormick, Garth P.},
+  title     = {Nonlinear Programming: Sequential Unconstrained Minimization Techniques},
+  publisher = {John Wiley \& Sons},
+  year      = {1968},
+  note      = {Barrier function methods, interior-point foundations},
+}
+
+@book{Rao2025,
+  author    = {Rao, Anil V.},
+  title     = {Trajectory Optimization: Using Nonlinear Programming and Pseudospectral Methods},
+  publisher = {Cambridge University Press},
+  year      = {2025},
+  note      = {LGL pseudospectral method theory, collocation formulation},
+}
+
+@book{Canuto2006,
+  author    = {Canuto, Claudio and Hussaini, M. Yousuff and Quarteroni, Alfio and Zang, Thomas A.},
+  title     = {Spectral Methods: Fundamentals in Single Domains},
+  publisher = {Springer},
+  year      = {2006},
+  note      = {Legendre polynomials, spectral convergence, quadrature theory},
+}
+
+@book{Prussing2012,
+  author    = {Prussing, John E. and Conway, Bruce A.},
+  title     = {Orbital Mechanics},
+  edition   = {2nd},
+  publisher = {Oxford University Press},
+  year      = {2012},
+  note      = {Orbital mechanics fundamentals, plane change maneuvers},
+}
+
+@book{Rasmussen2006,
+  author    = {Rasmussen, Carl Edward and Williams, Christopher K. I.},
+  title     = {Gaussian Processes for Machine Learning},
+  publisher = {MIT Press},
+  year      = {2006},
+  note      = {GP regression and classification theory, Laplace approximation, kernel functions},
+}
+
+
+% ============================================================================
+% @techreport / @misc (NASA translations, technical reports)
+% ============================================================================
+
+@book{Hohmann1960,
+  author    = {Hohmann, Walter},
+  title     = {The Attainability of Heavenly Bodies},
+  publisher = {NASA},
+  year      = {1960},
+  note      = {NASA Technical Translation F-44. Original work published 1925},
+}
+
+@book{Oberth1972,
+  author    = {Oberth, Hermann},
+  title     = {Ways to Spaceflight},
+  publisher = {NASA},
+  year      = {1972},
+  note      = {NASA Technical Translation TT F-622. Original work published 1929},
+}
+
+@techreport{Settles2009,
+  author      = {Settles, Burr},
+  title       = {Active Learning Literature Survey},
+  institution = {University of Wisconsin-Madison},
+  number      = {Computer Sciences Technical Report 1648},
+  year        = {2009},
+  note        = {Comprehensive survey of active learning strategies},
+}
+
+
+% ============================================================================
+% @article
+% ============================================================================
+
+@article{Andersson2019,
+  author  = {Andersson, Joel A. E. and Gillis, Joris and Horn, Greg and Rawlings, James B. and Diehl, Moritz},
+  title   = {{CasADi}: A Software Framework for Nonlinear Optimization and Optimal Control},
+  journal = {Mathematical Programming Computation},
+  volume  = {11},
+  number  = {1},
+  pages   = {1--36},
+  year    = {2019},
+  doi     = {10.1007/s12532-018-0139-4},
+}
+
+@article{Graham2016,
+  author  = {Graham, Kathleen F. and Rao, Anil V.},
+  title   = {Minimum-Time Trajectory Optimization of Low-Thrust Earth-Orbit Transfers with Eclipsing},
+  journal = {Journal of Spacecraft and Rockets},
+  volume  = {53},
+  number  = {2},
+  pages   = {289--303},
+  year    = {2016},
+  doi     = {10.2514/1.A33416},
+}
+
+@article{Edelbaum1967,
+  author  = {Edelbaum, Theodore N.},
+  title   = {How Many Impulses?},
+  journal = {Astronautics \& Aeronautics},
+  volume  = {5},
+  number  = {11},
+  pages   = {64--69},
+  year    = {1967},
+}
+
+@article{Taheri2018,
+  author  = {Taheri, Ehsan and Junkins, John L.},
+  title   = {Generic Smoothing for Optimal Bang-Off-Bang Spacecraft Maneuvers},
+  journal = {Journal of Guidance, Control, and Dynamics},
+  volume  = {41},
+  number  = {11},
+  pages   = {2470--2475},
+  year    = {2018},
+  doi     = {10.2514/1.G003604},
+}
+
+@article{Hargraves1987,
+  author  = {Hargraves, Charles R. and Paris, Stephen W.},
+  title   = {Direct Trajectory Optimization Using Nonlinear Programming and Collocation},
+  journal = {Journal of Guidance, Control, and Dynamics},
+  volume  = {10},
+  number  = {4},
+  pages   = {338--342},
+  year    = {1987},
+  doi     = {10.2514/3.20223},
+}
+
+@article{Herman1996,
+  author  = {Herman, Albert L. and Conway, Bruce A.},
+  title   = {Direct Optimization Using Collocation Based on High-Order {Gauss-Lobatto} Quadrature Rules},
+  journal = {Journal of Guidance, Control, and Dynamics},
+  volume  = {19},
+  number  = {3},
+  pages   = {592--599},
+  year    = {1996},
+  doi     = {10.2514/3.21662},
+}
+
+@article{Betts1998,
+  author  = {Betts, John T.},
+  title   = {Survey of Numerical Methods for Trajectory Optimization},
+  journal = {Journal of Guidance, Control, and Dynamics},
+  volume  = {21},
+  number  = {2},
+  pages   = {193--207},
+  year    = {1998},
+  doi     = {10.2514/2.4231},
+}
+
+@article{Wachter2006,
+  author  = {W{\"a}chter, Andreas and Biegler, Lorenz T.},
+  title   = {On the Implementation of an Interior-Point Filter Line-Search Algorithm for Large-Scale Nonlinear Programming},
+  journal = {Mathematical Programming},
+  volume  = {106},
+  number  = {1},
+  pages   = {25--57},
+  year    = {2006},
+  doi     = {10.1007/s10107-004-0559-y},
+}
+
+@article{Fahroo2002,
+  author  = {Fahroo, Fariba and Ross, I. Michael},
+  title   = {Direct Trajectory Optimization by a {Chebyshev} Pseudospectral Method},
+  journal = {Journal of Guidance, Control, and Dynamics},
+  volume  = {25},
+  number  = {1},
+  pages   = {160--166},
+  year    = {2002},
+  doi     = {10.2514/2.4862},
+}
+
+@article{Patterson2014,
+  author  = {Patterson, Michael A. and Rao, Anil V.},
+  title   = {{GPOPS-II}: A {MATLAB} Software for Solving Multiple-Phase Optimal Control Problems Using hp-Adaptive {Gaussian} Quadrature Collocation Methods and Sparse Nonlinear Programming},
+  journal = {ACM Transactions on Mathematical Software},
+  volume  = {41},
+  number  = {1},
+  pages   = {1--37},
+  year    = {2014},
+  doi     = {10.1145/2558904},
+}
+
+@article{Garg2010,
+  author  = {Garg, Divya and Patterson, Michael A. and Hager, William W. and Rao, Anil V. and Benson, David A. and Huntington, Geoffrey T.},
+  title   = {A Unified Framework for the Numerical Solution of Optimal Control Problems Using Pseudospectral Methods},
+  journal = {Automatica},
+  volume  = {46},
+  number  = {11},
+  pages   = {1843--1851},
+  year    = {2010},
+  doi     = {10.1016/j.automatica.2010.06.048},
+}
+
+@article{Darby2011,
+  author  = {Darby, Christopher L. and Hager, William W. and Rao, Anil V.},
+  title   = {An hp-Adaptive Pseudospectral Method for Solving Optimal Control Problems},
+  journal = {Optimal Control Applications and Methods},
+  volume  = {32},
+  number  = {4},
+  pages   = {476--502},
+  year    = {2011},
+  doi     = {10.1002/oca.957},
+}
+
+@article{Benson2006,
+  author  = {Benson, David A. and Huntington, Geoffrey T. and Thorvaldsen, Tom P. and Rao, Anil V.},
+  title   = {Direct Trajectory Optimization and Costate Estimation via an Orthogonal Collocation Method},
+  journal = {Journal of Guidance, Control, and Dynamics},
+  volume  = {29},
+  number  = {6},
+  pages   = {1435--1440},
+  year    = {2006},
+  doi     = {10.2514/1.20478},
+}
+
+@article{Amestoy2001,
+  author  = {Amestoy, Patrick R. and Duff, Iain S. and Koster, Jacko and L'Excellent, Jean-Yves},
+  title   = {A Fully Asynchronous Multifrontal Solver Using Distributed Dynamic Scheduling},
+  journal = {SIAM Journal on Matrix Analysis and Applications},
+  volume  = {23},
+  number  = {1},
+  pages   = {15--41},
+  year    = {2001},
+  doi     = {10.1137/S0895479899358194},
+}
+
+@article{Gill2005,
+  author  = {Gill, Philip E. and Murray, Walter and Saunders, Michael A.},
+  title   = {{SNOPT}: An {SQP} Algorithm for Large-Scale Constrained Optimization},
+  journal = {SIAM Review},
+  volume  = {47},
+  number  = {1},
+  pages   = {99--131},
+  year    = {2005},
+  doi     = {10.1137/S0036144504446096},
+}
+
+@article{Williams1998,
+  author  = {Williams, Christopher K. I. and Barber, David},
+  title   = {Bayesian Classification with {Gaussian} Processes},
+  journal = {IEEE Transactions on Pattern Analysis and Machine Intelligence},
+  volume  = {20},
+  number  = {12},
+  pages   = {1342--1351},
+  year    = {1998},
+  doi     = {10.1109/34.735807},
+}
+
+@article{Nickisch2008,
+  author  = {Nickisch, Hannes and Rasmussen, Carl Edward},
+  title   = {Approximations for Binary {Gaussian} Process Classification},
+  journal = {Journal of Machine Learning Research},
+  volume  = {9},
+  pages   = {2035--2078},
+  year    = {2008},
+}
+
+@article{MacKay1992,
+  author  = {MacKay, David J. C.},
+  title   = {The Evidence Framework Applied to Classification Networks},
+  journal = {Neural Computation},
+  volume  = {4},
+  number  = {5},
+  pages   = {720--736},
+  year    = {1992},
+  doi     = {10.1162/neco.1992.4.5.720},
+}
+
+@article{Pedregosa2011,
+  author  = {Pedregosa, Fabian and Varoquaux, Ga{\"e}l and Gramfort, Alexandre and Michel, Vincent and Thirion, Bertrand and Grisel, Olivier and Blondel, Mathieu and Prettenhofer, Peter and Weiss, Ron and Dubourg, Vincent and Vanderplas, Jake and Passos, Alexandre and Cournapeau, David and Brucher, Matthieu and Perrot, Matthieu and Duchesnay, {\'E}douard},
+  title   = {Scikit-learn: Machine Learning in {Python}},
+  journal = {Journal of Machine Learning Research},
+  volume  = {12},
+  pages   = {2825--2830},
+  year    = {2011},
+}
+
+@article{Lee2023,
+  author  = {Lee, Suwon},
+  title   = {A Generative Verification Framework on Statistical Stability for Data-Driven Controllers},
+  journal = {IEEE Access},
+  volume  = {11},
+  pages   = {5267--5280},
+  year    = {2023},
+  doi     = {10.1109/ACCESS.2023.3236389},
+}
+
+@article{Shannon1948,
+  author  = {Shannon, Claude E.},
+  title   = {A Mathematical Theory of Communication},
+  journal = {Bell System Technical Journal},
+  volume  = {27},
+  number  = {3},
+  pages   = {379--423},
+  year    = {1948},
+  doi     = {10.1002/j.1538-7305.1948.tb01338.x},
+}
+
+@article{McKay1979,
+  author  = {McKay, Michael D. and Beckman, Richard J. and Conover, William J.},
+  title   = {A Comparison of Three Methods for Selecting Values of Input Variables in the Analysis of Output from a Computer Code},
+  journal = {Technometrics},
+  volume  = {21},
+  number  = {2},
+  pages   = {239--245},
+  year    = {1979},
+  doi     = {10.2307/1268522},
+}
+
+@article{Nemhauser1978,
+  author  = {Nemhauser, George L. and Wolsey, Laurence A. and Fisher, Marshall L.},
+  title   = {An Analysis of Approximations for Maximizing Submodular Set Functions---{I}},
+  journal = {Mathematical Programming},
+  volume  = {14},
+  number  = {1},
+  pages   = {265--294},
+  year    = {1978},
+  doi     = {10.1007/BF01588971},
+}
+
+@article{Krause2008,
+  author  = {Krause, Andreas and Singh, Ajit and Guestrin, Carlos},
+  title   = {Near-Optimal Sensor Placements in {Gaussian} Processes: Theory, Efficient Algorithms and Empirical Studies},
+  journal = {Journal of Machine Learning Research},
+  volume  = {9},
+  pages   = {235--284},
+  year    = {2008},
+}
+
+@article{Bichon2008,
+  author  = {Bichon, Barron J. and Eldred, Michael S. and Swiler, Laura P. and Mahadevan, Sankaran and McFarland, John M.},
+  title   = {Efficient Global Reliability Analysis for Nonlinear Implicit Performance Functions},
+  journal = {AIAA Journal},
+  volume  = {46},
+  number  = {10},
+  pages   = {2459--2468},
+  year    = {2008},
+  doi     = {10.2514/1.34321},
+}
+
+@article{Sacks1989,
+  author  = {Sacks, Jerome and Welch, William J. and Mitchell, Toby J. and Wynn, Henry P.},
+  title   = {Design and Analysis of Computer Experiments},
+  journal = {Statistical Science},
+  volume  = {4},
+  number  = {4},
+  pages   = {409--423},
+  year    = {1989},
+  doi     = {10.1214/ss/1177012413},
+}
+
+@article{Loeppky2009,
+  author  = {Loeppky, Jason L. and Sacks, Jerome and Welch, William J.},
+  title   = {Choosing the Sample Size of a Computer Experiment: A Practical Guide},
+  journal = {Technometrics},
+  volume  = {51},
+  number  = {4},
+  pages   = {366--376},
+  year    = {2009},
+  doi     = {10.1198/TECH.2009.08040},
+}
+
+
+% ============================================================================
+% @incollection / @inproceedings
+% ============================================================================
+
+@incollection{Prussing2010,
+  author    = {Prussing, John E.},
+  title     = {Primer Vector Theory and Applications},
+  booktitle = {Spacecraft Trajectory Optimization},
+  editor    = {Conway, Bruce A.},
+  publisher = {Cambridge University Press},
+  pages     = {16--36},
+  year      = {2010},
+  note      = {Relationship between impulsive and continuous-thrust solutions},
+}
+
+@incollection{Neal1998,
+  author    = {Neal, Radford M.},
+  title     = {Regression and Classification Using {Gaussian} Process Priors},
+  booktitle = {Bayesian Statistics 6},
+  publisher = {Oxford University Press},
+  pages     = {475--501},
+  year      = {1998},
+}
+
+@inproceedings{Srinivas2010,
+  author    = {Srinivas, Niranjan and Krause, Andreas and Kakade, Sham M. and Seeger, Matthias},
+  title     = {{Gaussian} Process Optimization in the Bandit Setting: No Regret and Experimental Design},
+  booktitle = {Proceedings of the 27th International Conference on Machine Learning (ICML)},
+  pages     = {1015--1022},
+  year      = {2010},
+}
+
+@inproceedings{Houlsby2011,
+  author    = {Houlsby, Neil and Husz{\'a}r, Ferenc and Ghahramani, Zoubin and Lengyel, M{\'a}t{\'e}},
+  title     = {Bayesian Active Learning for Classification and Preference Learning},
+  booktitle = {arXiv preprint arXiv:1112.5745},
+  year      = {2011},
+  note      = {BALD acquisition function for active learning},
+}
+
+
+% ============================================================================
+% D4: Peak Detection (Topological Persistence)
+% ============================================================================
+
+@book{Edelsbrunner2010,
+  author    = {Edelsbrunner, Herbert and Harer, John L.},
+  title     = {Computational Topology: An Introduction},
+  publisher = {American Mathematical Society},
+  year      = {2010},
+  note      = {Persistent homology theory, simplicial complexes, Morse theory},
+}
+
+@misc{Huber2021,
+  author       = {Huber, Stefan},
+  title        = {Topological Peak Detection},
+  howpublished = {\url{https://www.sthu.org/blog/13-perstopology-peakdetection/index.html}},
+  year         = {2021},
+  note         = {1D persistent homology based peak detection algorithm},
+}
+
+@article{Virtanen2020,
+  author  = {Virtanen, Pauli and Gommers, Ralf and Oliphant, Travis E. and Haberland, Matt and Reddy, Tyler and Cournapeau, David and Burovski, Evgeni and Peterson, Pearu and Weckesser, Warren and Bright, Jonathan and van der Walt, St{\'e}fan J. and Brett, Matthew and Wilson, Joshua and Millman, K. Jarrod and Mayorov, Nikolay and Nelson, Andrew R. J. and Jones, Eric and Kern, Robert and Larson, Eric and Carey, C J and Polat, {\.I}lhan and Feng, Yu and Moore, Eric W. and VanderPlas, Jake and Laxalde, Denis and Perktold, Josef and Cimrman, Robert and Henriksen, Ian and Quintero, E. A. and Harris, Charles R. and Archibald, Anne M. and Ribeiro, Ant{\^o}nio H. and Pedregosa, Fabian and van Mulbregt, Paul and {SciPy 1.0 Contributors}},
+  title   = {{SciPy} 1.0: Fundamental Algorithms for Scientific Computing in {Python}},
+  journal = {Nature Methods},
+  volume  = {17},
+  pages   = {261--272},
+  year    = {2020},
+  doi     = {10.1038/s41592-019-0686-2},
+}
+
+@book{deBoor2001,
+  author    = {de Boor, Carl},
+  title     = {A Practical Guide to Splines},
+  edition   = {Revised},
+  publisher = {Springer},
+  year      = {2001},
+  note      = {Cubic spline interpolation theory and implementation},
+}

@@ -1,0 +1,395 @@
+\documentclass[11pt]{article}
+\usepackage{reusv}
+\usepackage{listings}
+\usepackage{subcaption}
+\usepackage{multirow}
+\usepackage{textcomp}
+\usepackage{gensymb}
+
+% Code listing setup
+\lstset{
+    language=Python,
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{red!70!black},
+    breaklines=true,
+    frame=single,
+    backgroundcolor=\color{gray!8},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    numbersep=5pt,
+    extendedchars=false,
+    inputencoding=utf8,
+}
+
+\setborderthickness{0.5pt}
+\setbordermargin{1cm}
+\setbordercolor{black}
+
+\slimtitle{LEO 궤도전이 비교 분석 모듈 개발 보고서}
+
+\begin{document}
+
+\drawborder
+\thispagestyle{firstpage}
+
+\lightertitle{LEO 궤도전이 비교 분석 모듈 개발 보고서}
+
+\def\lighterdate{March 12, 2026}
+\lighterauthor{Suwon Lee$^{\dagger}$}
+
+\lighteraddress{$^\dagger$}{Future Mobility Control Lab (FMCL), Kookmin University, Seoul, Republic of Korea}
+\lighteremail{suwon.lee@kookmin.ac.kr}
+
+\begin{abstract}
+본 보고서는 LEO(Low Earth Orbit) 궤도전이 임무에서 호만(Hohmann) 전이, 람버트(Lambert) 문제, 직접 콜로케이션(Direct Collocation) 세 가지 기법을 통합적으로 비교·분석하는 Python 모듈의 개발 내용을 기술한다.
+본 모듈은 Acta Astronautica 투고 논문 ``Classification of Optimal Continuous Thrust Profiles for LEO Transfer Missions''의 리뷰어 대응을 위해 개발되었으며, 제안 기법인 Dual B\'{e}zier Curve Parameterization과의 비교에 사용할 기준선(baseline) 결과를 정량화하고 시각화하는 파이프라인을 제공한다.
+\textbf{본 보고서의 범위는 비교 대상 기법(Hohmann, Lambert, Collocation)의 구현 및 결과에 한정되며, 제안 기법 자체는 포함하지 않는다.}
+제안 기법은 MATLAB 기반으로 별도 구현되어 있으며, 본 모듈이 산출하는 CSV 및 그림 파일을 활용하여 추후 직접 비교가 이루어질 예정이다.
+시간 제약 시뮬레이션 결과, $T_{max}/T_0 < 0.5$인 조건에서는 임펄스 기법이 불가능한 반면 연속 추력 기법은 전이를 성공적으로 수행하였으며, 이는 제안 기법의 비교 우위를 드러낼 핵심 시나리오로 활용될 것이다.
+\end{abstract}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{서론}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{개발 배경}
+
+본 연구실에서 진행 중인 Acta Astronautica 게재 논문은 LEO 궤도전이 임무에서 직접 콜로케이션 기반으로 구축한 최적 추력 프로파일 데이터베이스를 다룬다.
+리뷰어는 제안 기법(Dual B\'{e}zier Curve Parameterization)과 기존 임펄스 기법(Lambert, Hohmann)의 비교 근거를 요청하였다.
+이에 따라 세 가지 기법을 동일한 케이스 설정 아래 자동 실행하고, 비용 지표와 궤적을 비교·내보내기하는 벤치마크 모듈을 개발하였다.
+
+\subsection{보고서 범위 및 비교 구조}
+
+본 보고서에서 구현하고 분석한 세 가지 기법은 모두 \textbf{비교 대상(baseline)} 역할을 한다.
+제안 기법인 Dual B\'{e}zier Curve Parameterization은 MATLAB으로 구현되어 있으며, 본 보고서에는 포함되지 않는다.
+향후 비교 절차는 다음과 같다:
+
+\begin{enumerate}
+  \item 본 모듈로 Hohmann, Lambert, Collocation 결과를 CSV 및 그림으로 산출한다 (\textit{본 보고서의 내용}).
+  \item MATLAB 기반 B\'{e}zier 기법을 동일 케이스에 적용하여 결과를 CSV로 내보낸다.
+  \item 두 결과를 동일한 시각화 프레임워크에서 직접 비교한다.
+\end{enumerate}
+
+\noindent 이 구조에서 각 기법의 역할은 다음과 같다.
+호만과 람버트는 \textit{임펄스 기준선}으로, 제안 기법이 개선해야 할 연료 비용의 참조값을 제공한다.
+콜로케이션은 \textit{연속 추력 최적 상한선}으로, $L^2$를 최소화하는 전역 최적 해를 제공한다.
+제안 기법은 $L^1$(연료)을 직접 최소화하는 준최적 연속 추력 해로, 호만·람버트의 임펄스 비용 대비 연속 추력의 우위를 보이고, 동시에 콜로케이션의 $L^2$ 최적 해와의 관계를 분석하는 것이 목표이다.
+
+\subsection{비교 대상 기법 요약}
+
+아래 세 기법이 본 보고서에서 구현한 비교 대상이다.
+
+\begin{itemize}
+  \item \textbf{호만 전이 (Hohmann Transfer)}: 원궤도 간 2-임펄스 최적 기동. 경사각 변화는 도착 번(burn 2)에서 최적 분리각 $\beta^*$를 적용하여 처리한다.
+  \item \textbf{람버트 전이 (Lambert Transfer)}: Curtis Algorithm 5.2 (Universal Variable) 기반 2-임펄스 기동. 임의의 두 위치 벡터를 지정 비행시간 내 연결한다. RAAN 변화를 포함한 전이를 지원한다.
+  \item \textbf{직접 콜로케이션 (Two-Pass Collocation)}: Hermite-Simpson(Pass 1) + 다단계 LGL(Pass 2) 기반 연속 추력 최적 궤적. IPOPT 솔버로 $L^2$ 비용 $J = \int_0^{T_f} \|\mathbf{u}\|^2 \, dt$를 최소화한다.
+\end{itemize}
+
+\subsection{기법별 최적화 변수 비교와 비교의 공정성}
+
+각 기법이 최적화하는 변수의 범위가 서로 다르다는 점은 비교 해석 시 반드시 고려해야 한다.
+Table~\ref{tab:opt_vars}는 기법별 최적화 변수를 정리한 것이다.
+
+\begin{table}[!ht]
+\centering
+\caption{기법별 최적화 변수 비교}
+\label{tab:opt_vars}
+\begin{tabular}{lccc}
+\toprule
+기법 & 출발 이각 $\nu_0$ & 비행시간 $T_f$ & 추력 프로파일 $\mathbf{u}(t)$ \\
+\midrule
+Hohmann    & 고정 (근지점) & 고정 ($= T_{Hoh}$) & 임펄스 (2회, 고정 구조) \\
+Lambert    & 고정 ($\nu_0 = 0$) & 고정 (사전 지정) & 임펄스 (2회, 고정 구조) \\
+Collocation & \textbf{자유변수} & \textbf{자유변수} ($\leq T_{max}$) & \textbf{자유변수} (연속) \\
+B\'{e}zier (제안) & \textbf{자유변수} & \textbf{자유변수} ($\leq T_{max}$) & B\'{e}zier 기저로 제한 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+호만과 람버트는 출발 시각과 비행시간이 사전에 고정된다.
+반면 콜로케이션과 제안 B\'{e}zier 기법은 $\nu_0$와 $T_f$를 결정변수로 두고 함께 최적화한다.
+따라서 탐색하는 \textit{해 공간의 크기 자체가 다른} 비교이며, 이를 근거로 단순히 비용 수치만으로 우열을 판단하는 것은 적절하지 않다.
+
+비교의 공정성 측면에서 두 가지 관점을 구분할 수 있다.
+
+\begin{itemize}
+  \item \textbf{관점 A — 동일 문제 정식화 비교 (Collocation vs.\ B\'{e}zier)}: 두 기법 모두 $\nu_0$, $T_f$, $\mathbf{u}(t)$를 최적화하며, $T_{max}$라는 동일한 시간 예산 제약을 공유한다. 차이는 추력 프로파일의 매개변수화 방식뿐이므로, \textbf{이 비교가 가장 공정하다.} 콜로케이션은 추력을 자유롭게 결정하는 전역 최적 해의 상한선을 제공하며, B\'{e}zier 기법은 제한된 해 공간에서의 준최적 해를 제공한다.
+
+  \item \textbf{관점 B — 서로 다른 문제 정식화의 특성 비교 (임펄스 vs.\ 연속 추력)}: 호만·람버트는 고정된 비행시간을 전제로 한 \textit{단순화된 기준선}이다. 비행시간 최적화 자유도 자체가 연속 추력 기법의 설계 특징이므로, 이 자유도를 연속 추력의 \textit{부가 이점}으로 해석하는 것이 타당하다. 단, 이 비교는 "동일 시간 예산 $T_{max}$ 하에서 각 기법이 달성할 수 있는 최선의 성능"이라는 조건을 명시한 상태에서 수행되어야 한다.
+\end{itemize}
+
+\noindent 본 보고서의 결과는 관점 B에 해당하며, 호만·람버트의 고정 비행시간 가정이 결과 해석에 미치는 영향을 감안하여 수치를 해석해야 한다.
+
+\subsection{B\'{e}zier 기법과 콜로케이션의 관계}
+
+제안 기법(Dual B\'{e}zier Curve Parameterization)은 추력 프로파일을 B\'{e}zier 기저 함수로 매개변수화하여 해 공간을 제한한다.
+이는 콜로케이션에 비해 전역 최적성은 낮을 수 있으나, 계산 효율성과 해의 해석 가능성을 높이는 설계 철학에서 비롯된 것이다.
+즉, B\'{e}zier 기법은 \textit{준최적(suboptimal)} 연속 추력 궤적을 제공하며, 본 보고서의 콜로케이션 결과는 그 $L^2$ 최적 상한선(upper bound) 역할을 한다.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{모듈 구조 및 설계}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{패키지 구성}
+
+벤치마크 모듈은 \texttt{src/orbit\_transfer/benchmark/} 아래 다음 파일로 구성된다.
+
+\begin{table}[!h]
+\centering
+\caption{벤치마크 모듈 파일 구성}
+\label{tab:module}
+\begin{tabular}{lp{9cm}}
+\toprule
+파일 & 역할 \\
+\midrule
+\texttt{result.py}    & \texttt{BenchmarkResult} 데이터클래스 (궤적, 지표, 임펄스 정보 통합) \\
+\texttt{metrics.py}   & \texttt{compute\_metrics()} — $\Delta v$, $L^1$, $L^2$, TOF 산출 \\
+\texttt{solvers.py}   & \texttt{HohmannSolver}, \texttt{LambertSolver}, \texttt{CollocationSolver} \\
+\texttt{cases.py}     & \texttt{ComparisonCase} 정의 및 케이스 레지스트리 \\
+\texttt{benchmark.py} & \texttt{TransferBenchmark} — 통합 실행·CSV·그림 내보내기 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{케이스 설정 (\texttt{TransferConfig})}
+
+모든 기법은 동일한 \texttt{TransferConfig} 입력을 받는다.
+주요 파라미터는 초기 고도 $h_0$ [km], 고도 차이 $\Delta a$ [km], 경사각 변화 $\Delta i$ [\degree], 최대 비행시간 $T_{max}/T_0$, 최대 추력 $u_{max}$ [km/s\textsuperscript{2}]이다.
+
+\subsection{CLI 파이프라인}
+
+\texttt{scripts/run\_comparison.py}는 등록된 케이스를 CLI에서 일괄 실행하고 결과를 저장한다.
+\texttt{scripts/plot\_comparison.py}는 논문 스타일(Serif 폰트, 300 dpi)의 비교 그림 6종을 자동 생성한다.
+
+\begin{lstlisting}
+# Run paper benchmark case (Hohmann + Lambert + Collocation)
+python scripts/run_comparison.py --case paper_main --outdir results/paper_comparison
+
+# Time-constrained sweep + showcase analysis
+python scripts/run_comparison.py --group time_series --showcase --outdir results/time_full
+
+# Generate all comparison figures
+python scripts/plot_comparison.py --outdir results --figdir docs/report_comparison
+\end{lstlisting}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{시뮬레이션 케이스 정의}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{기준 케이스: Seoul $\to$ Helsinki}
+
+논문의 주요 시나리오는 서울(위도 37.5°N) 상공 561\,km 원궤도에서 헬싱키(60.2°N) 상공으로 전이하는 케이스다.
+경사각 변화 $\Delta i = 22.7°$, RAAN 변화 $\Delta\Omega = 56°$, $T_{max}/T_0 = 0.7$로 설정하였다.
+콜로케이션은 현재 $\Omega = 0$ 고정 제약으로 RAAN 변화를 지원하지 않으므로, 경사각 변화만 포함한 단순화 버전(\texttt{paper\_main})과 RAAN 포함 전체 버전(\texttt{paper\_main\_full})을 분리하여 관리하였다.
+
+\subsection{비교 케이스 그룹}
+
+\begin{table}[!h]
+\centering
+\caption{시뮬레이션 케이스 그룹}
+\label{tab:cases}
+\begin{tabular}{llp{7cm}}
+\toprule
+그룹 & 케이스 수 & 설명 \\
+\midrule
+\texttt{paper}              & 3  & 논문 기준 케이스 (단순화, 전체, 추력 제약 포함) \\
+\texttt{inclination\_series}& 8  & $\Delta i = 5°{\sim}50°$, $\Delta a = 0$, $h_0 = 561$\,km \\
+\texttt{time\_series}       & 9  & $T_{max}/T_0 = 0.3{\sim}1.1$, $\Delta i = 22.7°$ \\
+\texttt{combined\_series}   & 9  & $\Delta a \in \{200, 500, 1000\}$\,km, $\Delta i \in \{5°, 10°, 15°\}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{시뮬레이션 결과}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\subsection{기준 케이스 결과 (\texttt{paper\_main})}
+
+$h_0 = 561$\,km, $\Delta i = 22.7°$, $T_{max}/T_0 = 0.7$ 조건에서 세 기법의 비교 결과는 Table~\ref{tab:paper_main}과 같다.
+
+\begin{table}[!h]
+\centering
+\caption{기준 케이스 비교 결과 ($h_0 = 561$ km, $\Delta i = 22.7°$, $T_{max}/T_0 = 0.7$)}
+\label{tab:paper_main}
+\begin{tabular}{lcccc}
+\toprule
+기법 & $\Delta v$ 또는 $L^1$ [km/s] & $L^2$ [km$^2$/s$^3$] & $T_f/T_0$ & 수렴 \\
+\midrule
+Hohmann     & 2.983  & ---    & 0.500 & \checkmark \\
+Lambert     & 6.345  & ---    & 0.700 & \checkmark \\
+Collocation & 3.598  & 0.00433 & 0.616 & \checkmark \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+호만 전이의 $\Delta v = 2.983$\,km/s는 경사각 변화를 도착 번에서 처리하는 최적 2-임펄스 해이다.
+람버트 전이는 RAAN 변화($\Delta\Omega = 56°$) 없이 $T_{max}$를 비행시간으로 사용하여 $\Delta v = 6.345$\,km/s를 산출하였다.
+콜로케이션은 $L^1 = 3.598$\,km/s로, 호만 전이보다 약 20\% 높은 연료 비용을 보인다. 이는 콜로케이션이 $L^1$이 아닌 $L^2$를 최소화하기 때문이며, $L^2$ 최적 궤적의 $L^1$ 비용이 임펄스 해보다 높아지는 것은 자연스러운 결과이다.
+
+\noindent\textbf{[해석 주의]} 위 수치를 단순 비교할 때는 Section~1.4에서 기술한 최적화 변수의 차이를 고려해야 한다.
+호만·람버트의 $\Delta v$는 고정된 $\nu_0 = 0$, 고정된 $T_f$ 조건 아래 산출된 값이다.
+콜로케이션의 $L^1$은 $\nu_0$와 $T_f$를 함께 최적화한 결과이므로, 두 값의 직접 비교는 서로 다른 문제를 푼 결과임을 전제해야 한다.
+Figure~\ref{fig:case_panel}은 세 기법의 추력 프로파일과 ECI 좌표계 3D 궤적을 비교하여 보여준다.
+
+\begin{figure}[!h]
+  \centering
+  \includegraphics[width=\linewidth]{figC_case_panel.pdf}
+  \caption{기준 케이스 비교: (a) 호만, (b) 람버트, (c) 콜로케이션 추력 프로파일 및 (d) 3D 궤적}
+  \label{fig:case_panel}
+\end{figure}
+
+\subsection{시간 제약 분석: 핵심 쇼케이스}
+
+호만 전이의 비행시간은 $T_{Hoh}/T_0 = 0.5$ (반주기)로 고정된다.
+따라서 $T_{max}/T_0 < 0.5$인 경우 호만 전이는 주어진 시간 내 완료할 수 없다.
+Table~\ref{tab:time_series}는 $T_{max}/T_0$를 변화시켰을 때 각 기법의 성능을 나타낸다.
+
+\begin{table}[!h]
+\centering
+\caption{시간 제약 스윕 결과 ($\Delta i = 22.7°$, $h_0 = 561$ km)}
+\label{tab:time_series}
+\begin{tabular}{ccccl}
+\toprule
+$T_{max}/T_0$ & Hohmann 가능 & Coll.\ $L^1$ [km/s] & Coll.\ $L^2$ & 비고 \\
+\midrule
+0.3 & $\times$ & 3.402 & $6.83 \times 10^{-3}$ & Hohmann 불가 → 연속 추력 성공 \\
+0.4 & $\times$ & 3.658 & $6.15 \times 10^{-3}$ & Hohmann 불가 → 연속 추력 성공 \\
+0.5 & \checkmark & 3.891 & $5.87 \times 10^{-3}$ & 경계 조건 \\
+0.6 & \checkmark & 3.607 & $4.47 \times 10^{-3}$ & \\
+0.7 & \checkmark & 3.598 & $4.33 \times 10^{-3}$ & 기준 케이스 \\
+0.8 & \checkmark & 3.634 & $3.28 \times 10^{-3}$ & \\
+0.9 & \checkmark & 3.744 & $3.10 \times 10^{-3}$ & \\
+1.1 & \checkmark & 3.704 & $2.62 \times 10^{-3}$ & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+$T_{max}/T_0 = 0.3$, $0.4$ 케이스에서 호만 전이는 시간 초과로 실행 불가능하지만, 콜로케이션 기반 연속 추력 전이는 성공적으로 수렴한다.
+이는 연속 추력 기법의 핵심 우위를 보여준다: \textbf{시간 제약이 엄격한 임무에서 임펄스 기법이 실행 불가능한 경우에도 연속 추력 기법은 실현 가능한 궤적을 제공한다}.
+
+Figure~\ref{fig:feasibility}은 $T_{max}/T_0 = 0.3$ (불가), $0.5$ (경계), $0.7$ (가능) 세 케이스를 나란히 비교한다.
+호만 불가 구간(빨간 음영)에서도 콜로케이션 추력 프로파일이 정상적으로 산출됨을 확인할 수 있다.
+
+\begin{figure}[!h]
+  \centering
+  \includegraphics[width=\linewidth]{figF_feasibility.pdf}
+  \caption{시간 제약 가용성 비교: $T_{max}/T_0 = 0.3$ (Hohmann 불가), $0.5$ (경계), $0.7$ (가능). 상단: 추력 프로파일, 하단: 비용 막대 그래프.}
+  \label{fig:feasibility}
+\end{figure}
+
+Figure~\ref{fig:cost_vs_T}는 $T_{max}/T_0$ 전 범위에 걸쳐 $L^1$ 및 $L^2$ 비용의 변화를 나타낸다.
+$T_{max}/T_0 \approx 0.7$ 근방에서 $L^1$ 비용이 최소화되는 경향을 보이며, 지나치게 짧거나 긴 비행시간 모두 연료 소모를 증가시킴을 알 수 있다.
+
+\begin{figure}[!h]
+  \centering
+  \includegraphics[width=\linewidth]{figD_cost_vs_T.pdf}
+  \caption{$T_{max}/T_0$에 따른 비용 변화. 왼쪽: $L^1$ 비용 (호만 $\Delta v$와 비교), 오른쪽: $L^2$ 비용. 수직 점선은 호만 전이 비행시간 경계($T_{Hoh}/T_0 = 0.5$)를 나타낸다.}
+  \label{fig:cost_vs_T}
+\end{figure}
+
+\subsection{복합 케이스 결과 ($\Delta a + \Delta i$)}
+
+고도 변화와 경사각 변화가 동시에 존재하는 복합 케이스에서 세 기법의 비교 결과를 Figure~\ref{fig:heatmap}에 나타낸다.
+
+\begin{figure}[!h]
+  \centering
+  \includegraphics[width=\linewidth]{figE_combined_heatmap.pdf}
+  \caption{복합 케이스 ($h_0 = 400$ km, $T_{max}/T_0 = 0.7$) 히트맵. 왼쪽: 호만 $\Delta v$, 중앙: 콜로케이션 $L^1$, 오른쪽: $\Delta v_{Hoh} / L^1_{Coll}$ 비율.}
+  \label{fig:heatmap}
+\end{figure}
+
+주요 관측 사항은 다음과 같다.
+\begin{itemize}
+  \item 대부분의 케이스($\Delta a \in \{200, 500, 1000\}$\,km, $\Delta i \in \{5°, 10°, 15°\}$)에서 콜로케이션이 수렴하였다.
+  \item \texttt{da1000\_di05} 케이스($\Delta a = 1000$\,km, $\Delta i = 5°$)에서 콜로케이션 수렴 실패가 발생하였다. 초기화 개선이 필요한 케이스로 파악된다.
+  \item $\Delta v_{Hoh} / L^1_{Coll}$ 비율은 전 케이스에서 1 미만으로, 콜로케이션($L^2$ 최적)의 $L^1$ 비용이 호만 $\Delta v$보다 다소 높다. 제안 기법(B\'{e}zier, $L^1$ 최적)은 이 비율을 개선할 것으로 기대된다.
+\end{itemize}
+
+\subsection{람버트 전이의 기하학적 특이점}
+
+람버트 솔버는 $\Delta a = 0$ (동일 고도) 케이스에서 비행시간을 $T_{max}$로 설정하여 180° 특이점을 회피한다.
+그러나 $\Delta a \neq 0$ 케이스에서 호만 비행시간을 사용하면 도착 위치가 출발 위치와 약 176° 각도를 이루어 근-특이점 문제가 발생한다 (Table~\ref{tab:lambert_issue}).
+이 문제는 비행시간 최적화 또는 출발 이각(anomaly) 탐색을 통해 해결할 수 있으며, 향후 개선 사항으로 남긴다.
+
+\begin{table}[!h]
+\centering
+\caption{람버트 솔버 적용 결과 (일부 케이스)}
+\label{tab:lambert_issue}
+\begin{tabular}{lccl}
+\toprule
+케이스 & 호만 $\Delta v$ & 람버트 $\Delta v$ & 비고 \\
+\midrule
+\texttt{paper\_main} ($\Delta a=0$)    & 2.98 km/s &  6.35 km/s & RAAN=56° 포함 \\
+\texttt{da200\_di05} ($\Delta a=200$)  & 0.71 km/s & 10.80 km/s & 근-180° 특이점 \\
+\texttt{da1000\_di10} ($\Delta a=1000$)& 1.51 km/s &  2.13 km/s & 특이점 회피됨 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{시각화 스크립트}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\texttt{scripts/plot\_comparison.py}는 6종의 비교 그림을 자동 생성한다 (Table~\ref{tab:figures}).
+논문과 동일한 Serif 폰트, 300\,dpi, \texttt{bbox\_inches='tight'} 설정을 적용하여 PDF·PNG·SVG 형식으로 저장한다.
+
+\begin{table}[!h]
+\centering
+\caption{자동 생성 비교 그림 목록}
+\label{tab:figures}
+\begin{tabular}{llp{7cm}}
+\toprule
+그림 & 파일명 & 내용 \\
+\midrule
+Fig.~A & \texttt{figA\_time\_sweep\_thrust.pdf} & $T_{max}/T_0$ 스윕 추력 프로파일 (1행 비교) \\
+Fig.~B & \texttt{figB\_cost\_bar.pdf}           & 호만·람버트·콜로케이션 비용 막대 그래프 \\
+Fig.~C & \texttt{figC\_case\_panel.pdf}         & 단일 케이스 추력 프로파일 + 3D 궤적 (4-패널) \\
+Fig.~D & \texttt{figD\_cost\_vs\_T.pdf}         & $T_{max}/T_0$에 따른 $L^1$/$L^2$ 비용 꺾은선 \\
+Fig.~E & \texttt{figE\_combined\_heatmap.pdf}   & $\Delta a$-$\Delta i$ 격자 히트맵 \\
+Fig.~F & \texttt{figF\_feasibility.pdf}         & 가용성 비교 (리뷰어 대응 핵심 그림) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{결론 및 향후 계획}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+본 보고서에서 개발한 벤치마크 모듈과 분석 파이프라인의 주요 성과는 다음과 같다.
+
+\begin{enumerate}
+  \item \textbf{비교 대상 기법 구현}: 호만, 람버트, 콜로케이션 세 가지 기준선 기법을 동일 입력 형식으로 실행하고 $\Delta v$, $L^1$, $L^2$, TOF를 자동 산출하는 \texttt{benchmark} 패키지를 구축하였다. 제안 기법과의 비교에 바로 활용할 수 있는 CSV 및 그림 출력을 제공한다.
+  \item \textbf{시간 제약 쇼케이스 확인}: $T_{max}/T_0 < 0.5$ 조건에서 임펄스 기법은 불가능하나 연속 추력 기법(콜로케이션)은 전이를 성공적으로 수행함을 확인하였다. 이는 제안 B\'{e}zier 기법의 유효성을 드러낼 핵심 비교 시나리오이다.
+  \item \textbf{비교 기준선 정량화}: 콜로케이션($L^2$ 최적)의 $L^1$ 비용이 호만 $\Delta v$보다 다소 높음을 확인하였다. 제안 B\'{e}zier 기법이 $L^1$을 직접 최소화하므로, 동일 케이스에서 콜로케이션 대비 낮은 $L^1$ 비용을 달성한다면 설계 목표를 달성한 것으로 해석할 수 있다.
+  \item \textbf{논문 스타일 시각화 자동화}: 6종 비교 그림 생성 스크립트를 개발하여, 향후 B\'{e}zier 결과가 추가될 때 동일한 그림 형식으로 확장 비교가 가능한 재현 가능한 시각화 환경을 구축하였다.
+\end{enumerate}
+
+\subsection*{제안 기법과의 비교 계획}
+
+본 보고서는 비교 대상 기법의 결과만을 포함한다.
+이후 단계에서 MATLAB 기반 B\'{e}zier 기법의 결과 CSV를 본 모듈에 입력하여 동일한 케이스 조건 아래 직접 비교를 수행한다.
+구체적인 비교 항목은 다음과 같다.
+
+\begin{itemize}
+  \item \textbf{$L^1$ 비용}: 제안 기법의 연료 효율을 호만 $\Delta v$ 및 콜로케이션 $L^1$과 비교한다.
+  \item \textbf{추력 프로파일 형상}: B\'{e}zier 매개변수화에 의해 결정되는 프로파일을 콜로케이션의 비구속적(free-form) 연속 추력 프로파일과 비교하여, 해 공간 제한의 영향을 시각적으로 확인한다.
+  \item \textbf{시간 제약 케이스}: $T_{max}/T_0 = 0.3$, $0.4$ 등 임펄스 기법이 불가능한 조건에서 제안 기법의 실현 가능성과 비용을 검증한다.
+\end{itemize}
+
+\noindent 모듈 측면의 향후 개선 사항은 다음과 같다.
+\begin{itemize}
+  \item \textbf{람버트 최적 비행시간 탐색 추가}: $\Delta a \neq 0$ 케이스에서 TOF를 스윕하여 최소 $\Delta v$를 찾는 기능을 추가하면, 호만·람버트도 비행시간을 일부 최적화한 상태에서 비교할 수 있다. 이는 관점 A(동일 문제 정식화) 비교에 더 가까운 기준선을 제공한다.
+  \item 콜로케이션 초기화 전략 개선 (\texttt{da1000\_di05} 수렴 실패 케이스 대응)
+  \item B\'{e}zier 기법 결과 CSV 직접 입력 및 통합 비교 그림 생성 기능 추가
+\end{itemize}
+
+\end{document}

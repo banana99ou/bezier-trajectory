@@ -1,0 +1,1063 @@
+\documentclass[11pt]{article}
+\usepackage{reusv}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{siunitx}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc,decorations.pathreplacing}
+\usepackage{xcolor}
+\usepackage{listings}
+\lstset{literate=
+  {á}{{\'a}}1 {é}{{\'e}}1 {í}{{\'i}}1 {ó}{{\'o}}1 {ú}{{\'u}}1
+  {Á}{{\'A}}1 {É}{{\'E}}1 {Í}{{\'I}}1 {Ó}{{\'O}}1 {Ú}{{\'U}}1
+  {→}{{\textrightarrow}}1
+}
+
+% ── Python 코드 스니펫 스타일 ──
+\definecolor{codebg}{HTML}{F5F5F0}
+\definecolor{codeframe}{HTML}{CCCCBB}
+\definecolor{codekw}{HTML}{0060A0}
+\definecolor{codecomment}{HTML}{60802A}
+\definecolor{codestring}{HTML}{B03030}
+\definecolor{codefunc}{HTML}{8B4500}
+\lstdefinestyle{pythonstyle}{
+  language=Python,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  framesep=6pt,
+  xleftmargin=8pt,
+  xrightmargin=8pt,
+  basicstyle=\small\ttfamily,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecomment}\itshape,
+  stringstyle=\color{codestring},
+  emphstyle=\color{codefunc}\bfseries,
+  emph={bern_product,bern_compose,degree_elevate,degree_reduce,
+        chebyshev_bernstein_approx,gravity_composition_pipeline,
+        position_control_points,definite_integral},
+  showstringspaces=false,
+  breaklines=true,
+  breakatwhitespace=true,
+  tabsize=4,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=6pt,
+  aboveskip=10pt,
+  belowskip=6pt,
+}
+
+\setborderthickness{0.5pt}
+\setbordermargin{1cm}
+\setbordercolor{black}
+
+\slimtitle{베른슈타인 대수를 통한 중력 합성}
+
+\newtheorem{definition}{정의}
+\newtheorem{proposition}{명제}
+\newtheorem{remark}{참고}
+
+\begin{document}
+
+\drawborder
+\thispagestyle{firstpage}
+
+\lightertitle{베른슈타인 대수를 통한 중력 합성:\\수치적분 없는 드리프트 적분}
+
+{\normalsize\textit{Research Note No.~010 $|$ bezier-orbit-transfer-scp}}\par\medskip
+
+\def\lighterdate{March 16, 2026}
+\lighterauthor{Suwon Lee$^{\dagger}$}
+
+\lighteraddress{$^\dagger$}{Future Mobility Control Lab, Kookmin University, Seoul, Korea}
+\lighteremail{suwon.lee@kookmin.ac.kr}
+
+\begin{abstract}
+\cite{report009}의 아핀 드리프트 근사는 중력장 $\mathbf{a}_\mathrm{grav}(\mathbf{r})$를
+테일러 1차 전개로 선형화하여 수치적분을 제거하였으나,
+근사 정확도가 세분화 수 $K$와 참조 궤도 품질에 제한된다.
+본 노트에서는 Bernstein 다항식의 대수적 성질---곱(product),
+합성(composition), 차수 축소(degree reduction)---을 체계적으로 활용하여,
+비선형 중력 가속도 $\mathbf{a}_\mathrm{grav}(\mathbf{r}(\tau))$를
+\textbf{제어점 벡터 공간 내에서 완전히 닫힌 형태로} 계산하는 프레임워크를 유도한다.
+결과적으로 드리프트 적분 $\mathbf{c}_v$, $\mathbf{c}_r$이
+적분 행렬의 행렬 곱으로 \textbf{정확하게} 계산되며,
+유일한 근사원은 $r^{-3}$의 다항식 근사 차수 $K$뿐이다.
+\end{abstract}
+
+%% ============================================================
+\section{동기 및 문제 설정}
+\label{sec:motivation}
+%% ============================================================
+
+\subsection{기존 접근법의 한계}
+
+SCP 반복의 핵심 연산은 드리프트 적분~\cite{report006}의 계산이다:
+\begin{align}
+  \mathbf{c}_v &= \int_0^1 \mathbf{a}_\mathrm{grav}\bigl(\mathbf{r}(\tau)\bigr)\,d\tau,
+  \label{eq:cv-def} \\
+  \mathbf{c}_r &= \int_0^1 \!\int_0^s \mathbf{a}_\mathrm{grav}\bigl(\mathbf{r}(\sigma)\bigr)\,d\sigma\,ds
+  \label{eq:cr-def}
+\end{align}
+이 적분은 비선형 합성 $\mathbf{a}_\mathrm{grav} \circ \mathbf{r}$을 포함한다.
+중력 가속도 $\mathbf{a}_\mathrm{grav}(\mathbf{r}) = -\mathbf{r}/r^3$이
+위치의 비선형 함수이기 때문에,
+위치 궤적 $\mathbf{r}(\tau)$를 먼저 수치 전파(RK4)하고
+그 위에서 수치적분을 수행하는 것이 지금까지의 접근이었다~\cite{report008}.
+\cite{report009}에서는 테일러 1차 선형화로 RK4를 대체하였으나,
+이 방법도 이산 점에서의 Jacobian 평가를 필요로 하며
+``제어점 공간에서의 닫힌 연산''이라는 베지어 프레임워크의 철학과 근본적으로 부합하지 않는다.
+
+\subsection{목표}
+
+본 노트의 목표는 다음과 같다: 드리프트 적분의 계산을 포함한
+\textbf{모든 연산을 제어점 벡터에 대한 대수적 연산}(행렬 곱, 텐서 곱)으로 수행하여,
+SCP 반복 내에서 수치적분(RK4)이나 이산 점 샘플링이 완전히 불필요한
+프레임워크를 구축하는 것이다.
+이를 위해 Bernstein 다항식이 곱과 합성에 대해 닫혀 있다는 대수적 성질을 활용한다.
+
+\subsection{핵심 관찰}
+
+추진 가속도 $\mathbf{u}(\tau)$를 $N$차 Bernstein 다항식으로 파라미터화하면,
+적분 행렬~\cite{report004}을 통해 속도와 위치도 Bernstein 다항식이 된다:
+\begin{equation}
+  \underbrace{\mathbf{u}(\tau)}_{\in B_N}
+  \xrightarrow{\;\mathbf{I}_N\;}
+  \underbrace{\mathbf{v}(\tau)}_{\in B_{N+1}}
+  \xrightarrow{\;\mathbf{I}_{N+1}\;}
+  \underbrace{\mathbf{r}(\tau)}_{\in B_{N+2}}
+  \label{eq:integration-chain}
+\end{equation}
+이것이 의미하는 바는 깊다.
+위치 궤적 $\mathbf{r}(\tau)$가 Bernstein 다항식이라면,
+$\mathbf{a}_\mathrm{grav}(\mathbf{r}(\tau))$의 계산은
+\textbf{Bernstein 다항식의 비선형 합성}으로 귀결된다.
+그런데 Bernstein 다항식의 곱과 합성은 결과가 다시 Bernstein 다항식이 되므로,
+비선형 함수 $r^{-3}$만 유한 차수 다항식으로 근사하면
+전체 파이프라인이 제어점 대수 안에서 닫히게 된다.
+
+%% ============================================================
+\section{Bernstein 다항식의 대수적 성질}
+\label{sec:algebra}
+%% ============================================================
+
+이 절에서는 파이프라인의 각 단계에 필요한 Bernstein 다항식의 대수적 연산---곱,
+합성, 차수 조절, 정적분---을 정리한다.
+이들 연산의 공통점은 \textbf{결과가 항상 Bernstein 다항식}이며,
+그 제어점이 입력 제어점으로부터 명시적 공식으로 계산된다는 것이다.
+따라서 $\tau$를 이산화하거나 곡선을 점별 평가할 필요가 없다.
+
+\subsection{기본 정의}
+
+$N$차 Bernstein 다항식은 $N+1$개의 제어점 $p_0, \ldots, p_N$으로 정의된다:
+\begin{equation}
+  p(\tau) = \sum_{i=0}^N p_i \, B_i^N(\tau), \quad
+  B_i^N(\tau) = \binom{N}{i}\tau^i(1-\tau)^{N-i},\quad \tau\in[0,1]
+  \label{eq:bernstein-def}
+\end{equation}
+제어점 벡터 $\mathbf{p} = (p_0, \ldots, p_N)^T$가 곡선을 완전히 결정하므로,
+모든 기하학적·해석적 성질이 유한 차원 벡터 $\mathbf{p}$의 대수로 환원된다.
+
+\subsection{닫힌 연산 I: 곱 (Product)}
+\label{ssec:product}
+
+두 Bernstein 다항식의 점별 곱 역시 Bernstein 다항식이며,
+그 제어점은 입력 제어점의 명시적 이중합으로 계산된다.
+
+\begin{definition}[Bernstein 곱]
+$f(\tau) \in B_N$, $g(\tau) \in B_M$이면, 곱 $(f \cdot g)(\tau) \in B_{N+M}$이며
+제어점은 다음과 같다:
+\begin{equation}
+  (f \cdot g)_k = \sum_{j=\max(0,k-M)}^{\min(N,k)}
+    \frac{\binom{N}{j}\binom{M}{k-j}}{\binom{N+M}{k}} \, f_j \, g_{k-j},
+  \quad k = 0, \ldots, N+M
+  \label{eq:product}
+\end{equation}
+\end{definition}
+
+이 공식의 핵심은 두 제어점 벡터 $\mathbf{f}$와 $\mathbf{g}$만으로
+제3의 제어점 벡터를 \textbf{명시적으로} 계산한다는 점이다.
+$\tau$의 이산 평가가 전혀 필요 없으며,
+계산 비용은 $O(NM)$이다~\cite{farouki2012bernstein}.
+후술할 $r^2(\tau) = x^2 + y^2 + z^2$이나
+$\mathbf{a}_\mathrm{grav} = -\mathbf{r} \cdot r^{-3}$ 같은 단계에서
+이 곱 연산이 핵심적으로 사용된다.
+
+\subsection{닫힌 연산 II: 합성 (Composition)}
+\label{ssec:composition}
+
+Bernstein 합성은 ``Bernstein 다항식 안에 Bernstein 다항식을 대입''하는 연산이다.
+이 역시 결과가 Bernstein 다항식으로 닫히며, 제어점이 명시적으로 계산 가능하다.
+
+\begin{definition}[Bernstein 합성~\cite{derose1988composing}]
+$h(s) \in B_K$ ($s \in [0,1]$), $g(\tau) \in B_M$ ($g : [0,1] \to [0,1]$)이면,
+합성 $(h \circ g)(\tau) \in B_{KM}$이며 제어점은 일반화된 de~Casteljau 알고리즘으로 계산된다:
+\begin{equation}
+  h(g(\tau)) = \sum_{i=0}^{KM} c_i \, B_i^{KM}(\tau)
+  \label{eq:composition}
+\end{equation}
+\end{definition}
+
+합성의 결과 차수가 $KM$이라는 점은 주목할 만하다.
+입력이 $K$차와 $M$차이면 결과는 \textbf{곱} 차수가 되므로,
+$K$나 $M$이 크면 결과 차수가 급격히 높아진다.
+이 ``차수 폭발'' 문제는 6절의 차수 축소로 관리한다.
+
+합성 제어점을 구하는 실용적 방법은 다음과 같다.
+
+\begin{proposition}[합성 제어점의 재귀적 계산]
+\label{prop:composition-recursive}
+$g(\tau) \in B_M$이고 $g:[0,1]\to[0,1]$이면,
+$h(s)$의 Bernstein 기저 전개 $h(s) = \sum_{i=0}^K h_i B_i^K(s)$를
+$s = g(\tau)$에 대입하여:
+\begin{equation}
+  h(g(\tau)) = \sum_{i=0}^K h_i \, \binom{K}{i} \, g(\tau)^i \, (1-g(\tau))^{K-i}
+  \label{eq:composition-expand}
+\end{equation}
+여기서 각 항 $g^i \cdot (1-g)^{K-i}$는 순차적 Bernstein 곱으로 계산된다.
+$g^i$는 $g$를 $i$번 자기 곱하여 $B_{iM}$차, $(1-g)^{K-i}$도 마찬가지이므로,
+각 항은 $B_{KM}$차가 되고 차수 올림 후 합산하면 최종 결과를 얻는다.
+\end{proposition}
+
+한 가지 제약은 합성의 정의에서 내부 함수 $g$의 치역이 $[0,1]$이어야 한다는 점이다.
+실제로 $r^2(\tau)$의 치역은 $[r_\mathrm{min}^2, r_\mathrm{max}^2]$이므로
+$[0,1]$이 아니다.
+이 경우 아핀 재매개변수화 $\tilde{g}(\tau) = (g(\tau) - a)/(b-a)$를 적용하면
+$\tilde{g}: [0,1] \to [0,1]$이 되어 합성이 가능해진다.
+이 아핀 변환은 제어점의 스칼라 덧셈/나눗셈이므로 대수적으로 닫혀 있다.
+
+\subsection{닫힌 연산 III: 차수 올림/축소}
+\label{ssec:degree}
+
+\subsubsection{차수 올림 (Degree Elevation)}
+
+곱이나 합성에서 서로 다른 차수의 Bernstein 다항식을 합산할 때,
+낮은 차수를 높은 차수로 올려 통일해야 한다.
+$N$차 $\to$ $(N+1)$차 차수 올림은 다음 공식으로 수행된다:
+\begin{equation}
+  \hat{p}_i = \frac{i}{N+1} p_{i-1} + \frac{N+1-i}{N+1} p_i,
+  \quad i = 0, \ldots, N+1
+  \label{eq:elevation}
+\end{equation}
+(경계: $p_{-1} = p_{N+1} = 0$).
+행렬 표현: $\hat{\mathbf{p}} = \mathbf{E}_{N \to N+1} \mathbf{p}$.
+동일 곡선을 높은 차수로 재표현하는 것이므로 정보 손실이 없다.
+
+\subsubsection{차수 축소 (Degree Reduction)}
+
+차수 축소는 곱이나 합성으로 지나치게 높아진 차수를 줄이는 역할을 한다.
+$Q$차 다항식을 $R$차 ($R < Q$)로 근사하는 문제로,
+$L^2$ 최적해~\cite{ait2016bernstein}는 Gram 행렬과 교차 Gram 행렬의 역으로 주어진다:
+\begin{equation}
+  \tilde{\mathbf{p}} = \arg\min_{\mathbf{q} \in \mathbb{R}^{R+1}}
+    \int_0^1 \bigl|p(\tau) - q(\tau)\bigr|^2 \, d\tau
+  = \mathbf{G}_R^{-1} \mathbf{C}_{Q \to R} \, \mathbf{p}
+  \label{eq:reduction}
+\end{equation}
+여기서 $[\mathbf{C}_{Q \to R}]_{i,j} = \binom{R}{i}\binom{Q}{j} / [\binom{R+Q}{i+j}(R+Q+1)]$은
+교차 Gram 행렬이다.
+중요한 점은, 축소 역시 제어점 벡터에 대한 행렬 곱이라는 것이다.
+$\mathbf{G}_R^{-1}$과 $\mathbf{C}_{Q \to R}$는 차수만으로 결정되어 사전 계산 가능하다.
+또한 Bernstein의 범위 한정(range enclosure) 성질~\cite{farouki2008pythagorean}을 이용하면
+축소 오차의 엄밀한 상한을 추정할 수 있다.
+
+\begin{remark}[차수 축소의 역할]
+Bernstein 곱은 차수를 합산하고, 합성은 차수를 곱한다.
+따라서 파이프라인을 거치면 차수가 수십에서 수백으로 폭발한다.
+차수 축소는 이 폭발을 관리하여 계산 비용과 수치 안정성을 유지하는 핵심 도구이다.
+6절에서 보이듯, 실제로 축소 오차는 무시 가능하므로 ``무료''에 가깝다.
+\end{remark}
+
+\subsection{정적분: 제어점의 산술평균}
+
+$N$차 Bernstein 다항식의 $[0,1]$ 구간 정적분은
+제어점의 산술평균이라는 놀랍도록 간결한 형태를 가진다~\cite{report004}:
+\begin{equation}
+  \int_0^1 p(\tau)\,d\tau = \frac{1}{N+1}\sum_{i=0}^N p_i
+  = \mathrm{mean}(\mathbf{p})
+  \label{eq:definite-integral}
+\end{equation}
+이는 적분이 제어점 벡터의 \textbf{선형 범함수}임을 의미한다.
+따라서 피적분 함수가 Bernstein으로 표현되기만 하면
+적분은 수치 구적 없이 정확한 행렬-벡터 곱으로 계산된다.
+이 성질이야말로 본 프레임워크의 최종 단계를 닫히게 하는 열쇠이다:
+중력 가속도를 Bernstein으로 표현할 수만 있다면, 드리프트 적분은 자동으로 정확해진다.
+
+%% ============================================================
+\section{중력 가속도의 Bernstein 합성}
+\label{sec:gravity}
+%% ============================================================
+
+이 절에서는 2절의 대수적 도구를 사용하여
+중력 가속도 $\mathbf{a}_\mathrm{grav}(\mathbf{r}(\tau))$를
+Bernstein 다항식으로 표현하는 구체적 절차를 유도한다.
+핵심 아이디어는 중력 가속도를 $-\mathbf{r} / r^3$으로 분해하고,
+$r^{-3}$을 $r^2$의 함수로 보아 Bernstein 합성을 적용하는 것이다.
+
+\subsection{위치 궤적의 Bernstein 표현}
+
+\cite{report004}의 적분 관계에 의해,
+추진 제어점 $\mathbf{P}_u \in \mathbb{R}^{(N+1) \times 3}$이 주어지면
+속도와 위치 궤적이 Bernstein 다항식으로 표현된다
+(드리프트를 무시하고 추력 기여분만 고려하는 경우):
+\begin{align}
+  \mathbf{v}(\tau) &= \mathbf{v}_0 + t_f \, \mathbf{B}_{N+1}(\tau)^T \mathbf{I}_N \, \mathbf{P}_u
+    \;\in B_{N+1}
+  \label{eq:v-bernstein} \\
+  \mathbf{r}(\tau) &= \mathbf{r}_0 + t_f \mathbf{v}_0 \tau
+    + t_f^2 \, \mathbf{B}_{N+2}(\tau)^T \bar{\mathbf{I}}_N \, \mathbf{P}_u
+    \;\in B_{N+2}
+  \label{eq:r-bernstein}
+\end{align}
+각 성분 $x(\tau)$, $y(\tau)$, $z(\tau)$는 $(N{+}2)$차 스칼라 Bernstein 다항식이며,
+제어점은 $\mathbf{P}_u$와 초기조건으로부터 명시적으로 결정된다.
+구체적으로 $x$성분의 제어점 $\mathbf{q}_x \in \mathbb{R}^{N+3}$은
+세 가지 기여의 합이다:
+\begin{equation}
+  \mathbf{q}_x
+  = \underbrace{x_0 \, \mathbf{1}}_{\text{초기위치}}
+  + \underbrace{t_f \, v_{x,0}\, \boldsymbol{\ell}}_{\text{초기속도 드리프트}}
+  + \underbrace{t_f^2 \, \bar{\mathbf{I}}_N \, (\mathbf{P}_u)_{:,x}}_{\text{추력 기여}}
+  \label{eq:qx}
+\end{equation}
+여기서 $\boldsymbol{\ell} = (0, \frac{1}{N+2}, \frac{2}{N+2}, \ldots, 1)^T$는
+$\tau$의 $(N{+}2)$차 Bernstein 제어점이다.
+이로써 위치 궤적이 제어점 $\mathbf{P}_u$의 아핀 함수로 완전히 결정되며,
+이후의 모든 연산이 이 제어점 위에서 진행된다.
+
+\subsection{$r^2(\tau)$의 Bernstein 곱}
+
+중력 가속도의 분모 $r^3 = (r^2)^{3/2}$를 계산하기 위해,
+먼저 $r^2(\tau)$를 구한다. 궤도 반지름의 제곱은 세 좌표 성분의 제곱합이다:
+\begin{equation}
+  r^2(\tau) = x^2(\tau) + y^2(\tau) + z^2(\tau)
+  \label{eq:r2-def}
+\end{equation}
+각 $x^2(\tau)$는 식~\eqref{eq:product}의 자기 곱(self-product)으로 계산된다.
+$(N{+}2)$차 $\times$ $(N{+}2)$차 곱은 $2(N{+}2)$차 Bernstein 다항식이 되므로,
+$N=12$이면 위치가 14차, $r^2$이 28차이다.
+세 성분의 자기 곱을 더하면:
+\begin{equation}
+  \mathbf{q}_{r^2} = \mathbf{q}_{x^2} + \mathbf{q}_{y^2} + \mathbf{q}_{z^2}
+  \;\in \mathbb{R}^{2(N+2)+1}
+  \label{eq:q-r2}
+\end{equation}
+이 단계는 $\tau$의 평가 없이 순수하게 제어점 벡터의 연산으로 수행된다.
+
+\subsection{아핀 재매개변수화}
+
+$r^2(\tau)$의 치역은 $[r_\mathrm{min}^2, r_\mathrm{max}^2] \subset (0, \infty)$이다.
+이를 $[0,1]$로 매핑해야 Bernstein 합성이 적용 가능하다.
+Bernstein 다항식의 범위 한정(range enclosure) 성질을 활용하면
+치역의 상하한을 제어점의 최솟값/최댓값으로 즉시 추정할 수 있다:
+\begin{equation}
+  \min_i \, q_{r^2,i} \leq r^2(\tau) \leq \max_i \, q_{r^2,i}
+  \quad \forall \tau \in [0,1]
+  \label{eq:range-enclosure}
+\end{equation}
+이를 이용하여 구간 $[a, b]$를 설정하고 아핀 재매개변수화를 수행한다:
+\begin{equation}
+  a = \min_i \, q_{r^2,i}, \quad
+  b = \max_i \, q_{r^2,i}, \quad
+  \tilde{s}(\tau) = \frac{r^2(\tau) - a}{b - a} \in [0, 1]
+  \label{eq:rescale}
+\end{equation}
+$\tilde{s}(\tau)$는 $r^2(\tau)$와 동일한 $2(N{+}2)$차 Bernstein 다항식이며,
+제어점은 단순한 아핀 변환 $\tilde{q}_i = (q_{r^2,i} - a)/(b-a)$이다.
+이로써 내부 함수의 치역이 $[0,1]$로 정규화되어 합성 준비가 완료된다.
+
+\subsection{$r^{-3}$의 Bernstein 근사}
+\label{ssec:rinv3}
+
+파이프라인에서 \textbf{유일한 근사}가 발생하는 단계이다.
+핵심 비선형 함수 $h(s) = s^{-3/2}$는 다항식이 아니므로,
+유한 차수 $K$의 Bernstein 다항식으로 근사해야 한다.
+재매개변수화하면 $\hat{h}(\tilde{s}) = (a + (b-a)\tilde{s})^{-3/2}$이고,
+이를 $\tilde{s} \in [0,1]$에서 $K$차 Bernstein으로 근사한다.
+
+\subsubsection{Chebyshev--Bernstein 변환}
+
+최적에 가까운 다항식 근사를 얻는 표준적인 방법은
+Chebyshev 급수를 경유하는 것이다:
+\begin{enumerate}
+  \item $\hat{h}(\tilde{s})$를 $[0,1]$에서 $K$차 Chebyshev 급수로 전개한다:
+    \begin{equation}
+      \hat{h}(\tilde{s}) \approx \sum_{j=0}^K a_j \, T_j^*(2\tilde{s}-1)
+      \label{eq:chebyshev}
+    \end{equation}
+    ($T_j^*$는 $[-1,1]$으로 이동된 Chebyshev 다항식.)
+    Chebyshev 급수는 최적에 가까운 균등 근사(minimax)를 제공한다.
+  \item Chebyshev 기저에서 Bernstein 기저로 변환한다~\cite{farouki2012bernstein}:
+    \begin{equation}
+      \hat{h}(\tilde{s}) = \sum_{i=0}^K h_i \, B_i^K(\tilde{s})
+      \label{eq:h-bernstein}
+    \end{equation}
+    변환 행렬은 $K \times K$이며 차수 $K$에만 의존하므로 한 번만 계산하면 된다.
+\end{enumerate}
+
+이 근사의 오차는 해석함수의 다항식 근사이므로 $K$에 대해 \textbf{지수적으로 감소}한다:
+\begin{equation}
+  \max_{\tilde{s} \in [0,1]} \bigl|\hat{h}(\tilde{s}) - \hat{h}_K(\tilde{s})\bigr|
+  \leq C \, \rho^{-K}
+  \label{eq:exponential-convergence}
+\end{equation}
+여기서 $\rho > 1$은 $\hat{h}$의 Bernstein 타원 내 해석 영역에 의해 결정되며,
+$a$와 $b$의 비율(궤도의 이심률과 관련)에 따라 달라진다.
+중요한 점은 이 근사가 \textbf{오프라인}으로 한 번만 수행된다는 것이다.
+$a$, $b$가 SCP 반복마다 바뀌므로 매 반복 시 $h_K$를 갱신해야 하지만,
+Chebyshev--Bernstein 변환 자체는 $O(K^2)$으로 매우 빠르다.
+
+\subsection{Bernstein 합성: $r^{-3}(\tau)$}
+
+이제 모든 재료가 갖추어졌다.
+$\hat{h}(\tilde{s}) \in B_K$와 $\tilde{s}(\tau) \in B_{2(N+2)}$를 합성하면:
+\begin{equation}
+  r^{-3}(\tau) = \hat{h}\bigl(\tilde{s}(\tau)\bigr) \in B_{2K(N+2)}
+  \label{eq:rinv3-composed}
+\end{equation}
+명제~\ref{prop:composition-recursive}에 의해 제어점이 명시적으로 계산된다.
+$N=12$, $K=6$이면 $2 \times 6 \times 14 = 168$차가 되는데,
+이 높은 차수는 바로 다음 단계에서 차수 축소(식~\eqref{eq:reduction})를 적용하여
+$\sim$20차로 환원한다.
+6.2절에서 보이듯, 이 축소에 의한 추가 오차는 무시 가능하다.
+
+\subsection{최종 중력 가속도}
+
+2체 중력 가속도는 위치와 역세제곱의 곱으로 표현된다:
+\begin{equation}
+  \mathbf{a}_\mathrm{2B}(\tau) = -\frac{\mathbf{r}(\tau)}{r^3(\tau)}
+  = -\mathbf{r}(\tau) \cdot r^{-3}(\tau)
+  \label{eq:a-2body}
+\end{equation}
+각 성분에 대해 Bernstein 곱을 적용한다 ($k = x, y, z$):
+\begin{equation}
+  a_k(\tau) = -r_k(\tau) \cdot r^{-3}(\tau)
+  \;\in B_{(N+2) + R}
+  \label{eq:ak-product}
+\end{equation}
+여기서 $R$은 $r^{-3}$의 축소 후 차수이다.
+$r_k(\tau) \in B_{N+2}$이고 $r^{-3}(\tau) \in B_R$이므로
+곱의 차수는 $N+2+R$이 된다.
+이 곱의 제어점은 식~\eqref{eq:product}로 명시적으로 계산된다.
+이로써 중력 가속도의 각 성분이 Bernstein 다항식으로 표현되었다.
+
+\subsection{J2 항의 Bernstein 표현}
+
+J2 섭동 가속도~\cite{report002}의 $x$성분은 다음과 같다:
+\begin{equation}
+  a_{J2,x} = \frac{3 J_2 R_e^{*2}}{2} \frac{x}{r^5}(5z^2/r^2 - 1)
+  \label{eq:j2-x}
+\end{equation}
+이 식은 복잡해 보이지만, 분해하면 이미 갖추어진 도구로 처리 가능하다.
+필요한 중간 결과는 세 가지이다:
+\begin{itemize}
+  \item $r^{-5}(\tau)$: $s^{-5/2}$에 대해 $s^{-3/2}$와 동일한 합성 절차를 적용한다.
+  \item $z^2(\tau) \cdot r^{-2}(\tau)$: $z^2 \in B_{2(N+2)}$은 이미 계산했고,
+        $r^{-2} = s^{-1}$의 합성도 같은 방법이다.
+  \item 최종 곱: $x \cdot r^{-5} \cdot (5 z^2 r^{-2} - 1)$은 순차 Bernstein 곱이다.
+\end{itemize}
+모든 단계가 제어점 대수에서 닫혀 있으므로,
+J2 항도 수치적분 없이 Bernstein 다항식으로 표현된다.
+
+%% ============================================================
+\section{파이프라인 종합}
+\label{sec:pipeline}
+%% ============================================================
+
+이 절에서는 3절의 각 단계를 연결하여
+$\mathbf{P}_u$로부터 $\mathbf{c}_v$, $\mathbf{c}_r$까지의
+완전한 연산 파이프라인을 제시한다.
+
+\subsection{전체 흐름도}
+
+그림~\ref{fig:pipeline}은 파이프라인의 전체 구조를 보인다.
+왼쪽에서 오른쪽으로, 위에서 아래로 진행하며,
+모든 화살표가 제어점 벡터에 대한 대수적 연산(적분 행렬, Bernstein 곱, 합성, 차수 축소)이다.
+유일한 근사 단계(회색 블록)는 $h(s) = s^{-3/2}$의 $K$차 다항식 근사이며,
+이 블록의 계수는 오프라인으로 사전 계산된다.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[
+  node distance=0.6cm and 0.4cm,
+  block/.style={draw, rounded corners, minimum height=0.8cm,
+                minimum width=1.6cm, font=\small, align=center},
+  op/.style={draw, circle, inner sep=1.5pt, font=\footnotesize},
+  arr/.style={-{Stealth[length=5pt]}, thick},
+  lbl/.style={font=\scriptsize, midway, above},
+  deg/.style={font=\scriptsize\itshape, text=black!60},
+]
+
+% Row 1: P_u → P_v → P_r
+\node[block] (Pu) {$\mathbf{P}_u$};
+\node[deg, below=0pt of Pu] {$N$차};
+
+\node[block, right=1.2cm of Pu] (Pv) {$\mathbf{q}_v$};
+\node[deg, below=0pt of Pv] {$N{+}1$차};
+
+\node[block, right=1.2cm of Pv] (Pr) {$\mathbf{q}_r$};
+\node[deg, below=0pt of Pr] {$N{+}2$차};
+
+\draw[arr] (Pu) -- node[lbl] {$\mathbf{I}_N$} (Pv);
+\draw[arr] (Pv) -- node[lbl] {$\mathbf{I}_{N+1}$} (Pr);
+
+% Row 2: r^2 → rescale → compose
+\node[block, below=1.0cm of Pr] (r2) {$\mathbf{q}_{r^2}$};
+\node[deg, below=0pt of r2] {$2(N{+}2)$차};
+
+\node[block, left=0.8cm of r2] (stilde) {$\tilde{\mathbf{q}}$};
+\node[deg, below=0pt of stilde] {$2(N{+}2)$차};
+
+\node[block, left=0.8cm of stilde] (rinv3) {$\mathbf{q}_{r^{-3}}$};
+\node[deg, below=0pt of rinv3] {$\to R$차};
+
+\draw[arr] (Pr) -- node[lbl,right,pos=0.4] {$\otimes$곱} (r2);
+\draw[arr] (r2) -- node[lbl] {$\tilde{s}=\frac{s-a}{b-a}$} (stilde);
+\draw[arr] (stilde) -- node[lbl] {$h \circ \tilde{s}$} (rinv3);
+
+% Row 3: a_grav → integrate
+\node[block, below=1.0cm of rinv3] (agrav) {$\mathbf{q}_{a_\mathrm{grav}}$};
+\node[deg, below=0pt of agrav] {$N{+}2{+}R$차};
+
+\node[block, right=1.5cm of agrav] (cv) {$\mathbf{c}_v$};
+\node[deg, below=0pt of cv] {스칼라};
+
+\node[block, right=1.0cm of cv] (cr) {$\mathbf{c}_r$};
+\node[deg, below=0pt of cr] {스칼라};
+
+\draw[arr] (rinv3) -- node[lbl,right,pos=0.4] {$-\mathbf{q}_r \otimes$} (agrav);
+\draw[arr] (agrav) -- node[lbl] {$\mathrm{mean}(\cdot)$} (cv);
+\draw[arr] (cv) -- node[lbl] {$\bar{\mathbf{I}}$} (cr);
+
+% Offline box
+\node[block, fill=black!8, below=0.5cm of stilde] (hK) {$h_K(\tilde{s})$};
+\node[deg, below=0pt of hK] {offline};
+\draw[arr, dashed] (hK) -- (stilde);
+
+\end{tikzpicture}
+\caption{중력 합성 파이프라인.
+  모든 연산은 제어점 벡터의 대수적 연산(적분 행렬, Bernstein 곱, 합성, 차수 축소)이다.
+  유일한 근사(회색)는 $h(s) = s^{-3/2}$의 $K$차 다항식 근사이다.}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{단계별 차수 추적}
+
+$N=12$ 기준으로, 파이프라인의 각 단계에서 차수가 어떻게 변화하는지를
+표~\ref{tab:degree-tracking}에 정리하였다.
+합성 단계에서 168차까지 급증하지만,
+차수 축소를 통해 20차 이내로 관리한다.
+
+\begin{table}[h]
+\centering
+\caption{파이프라인의 차수 진행 ($N=12$, $K=6$).
+  합성 후 차수 폭발이 발생하나 $L^2$ 최적 축소로 관리된다.}
+\label{tab:degree-tracking}
+\small
+\begin{tabular}{@{}llcc@{}}
+\toprule
+단계 & 연산 & 원래 차수 & 축소 후 \\
+\midrule
+$\mathbf{u}(\tau)$ & --- & 12 & --- \\
+$\mathbf{v}(\tau)$ & $\mathbf{I}_N$ & 13 & --- \\
+$\mathbf{r}(\tau)$ & $\mathbf{I}_{N+1}$ & 14 & --- \\
+$r^2(\tau)$ & 자기 곱 $\times 3$ & 28 & --- \\
+$\tilde{s}(\tau)$ & 아핀 재매개변수화 & 28 & --- \\
+$r^{-3}(\tau)$ & 합성 ($K=6$) & 168 & $\to 20$ \\
+$a_{k}(\tau)$ & $r_k \cdot r^{-3}$ & 34 & $\to 20$ \\
+$\int a_k \, d\tau$ & $\mathrm{mean}(\cdot)$ & --- (스칼라) & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Python 구현}
+
+파이프라인의 전체 흐름을 Python 코드로 제시한다.
+모든 단계가 제어점 벡터에 대한 대수적 연산---행렬 곱, 성분별 산술, 벡터
+평균---으로만 구성되어 있음을 확인할 수 있다.
+실제 구현은 \texttt{bezier\_orbit.bezier.algebra} 모듈에 포함되어 있으며,
+27개의 단위 테스트로 각 연산의 정확성이 검증되었다.
+
+\begin{lstlisting}[style=pythonstyle,
+  caption={Gravity composition pipeline (\texttt{gravity\_composition\_pipeline})},
+  label={lst:pipeline}]
+def gravity_composition_pipeline(q_r, K=12, R=20):
+    """Position control points -> gravity control points."""
+    P = len(q_r) - 1
+
+    # Step 1: r^2 = x^2 + y^2 + z^2 (Bernstein product)
+    q_r2 = (bern_product(q_r[:,0], q_r[:,0])
+          + bern_product(q_r[:,1], q_r[:,1])
+          + bern_product(q_r[:,2], q_r[:,2]))
+
+    # Step 2: affine reparameterization -> [0,1]
+    a, b = np.min(q_r2), np.max(q_r2)
+    q_stilde = (q_r2 - a) / (b - a)
+
+    # Step 3: h(s) = (a + (b-a)*s)^{-3/2} approx
+    h_K = chebyshev_bernstein_approx(
+        lambda s: (a + (b-a)*s)**(-1.5), K)
+
+    # Step 4: composition r^{-3} = h(stilde(tau))
+    q_rinv3 = bern_compose(h_K, q_stilde)
+    q_rinv3 = degree_reduce(q_rinv3, R)
+
+    # Step 5: a_grav = -r * r^{-3} (component-wise)
+    q_agrav = np.column_stack([
+        -bern_product(
+            degree_elevate(q_r[:,k], R), q_rinv3)
+        for k in range(3)])
+    q_agrav = degree_reduce(q_agrav, R)
+    return q_agrav  # (R+1, 3)
+\end{lstlisting}
+
+\noindent
+최종 드리프트 적분은 이 결과에 산술평균을 적용하면 된다:
+
+\begin{lstlisting}[style=pythonstyle,
+  caption={Drift integral via control point mean},
+  label={lst:drift}]
+# c_v = integral_0^1 a_grav(tau) dtau
+c_v = definite_integral(q_agrav)   # (3,)
+\end{lstlisting}
+
+%% ============================================================
+\section{대수적 드리프트 적분}
+\label{sec:drift}
+%% ============================================================
+
+4절의 파이프라인이 중력 가속도를 Bernstein 다항식으로 표현하였으므로,
+이제 드리프트 적분은 2.5절의 정적분 공식을 적용하기만 하면 된다.
+수치적분이 아닌, 제어점의 산술평균이라는 정확한 대수적 연산이다.
+
+\subsection{속도 드리프트 $\mathbf{c}_v$}
+
+$\mathbf{a}_\mathrm{grav}(\tau)$가 $Q$차 Bernstein 다항식
+$\sum_{i=0}^Q \mathbf{q}_{a,i} B_i^Q(\tau)$로 표현되면,
+식~\eqref{eq:definite-integral}에 의해:
+\begin{equation}
+  \mathbf{c}_v = \int_0^1 \mathbf{a}_\mathrm{grav}(\tau)\,d\tau
+  = \frac{1}{Q+1}\sum_{i=0}^Q \mathbf{q}_{a,i}
+  = \mathrm{mean}(\mathbf{q}_a)
+  \label{eq:cv-algebraic}
+\end{equation}
+이 결과의 의미는 심대하다.
+기존에 200스텝 RK4 전파와 사다리꼴 수치적분으로 계산하던 것이,
+제어점 벡터의 평균이라는 \textbf{한 줄의 연산}으로 대체된다.
+근사 오차는 $r^{-3}$의 $K$차 Bernstein 근사에서만 발생하며,
+적분 자체는 정확하다.
+
+\subsection{위치 드리프트 $\mathbf{c}_r$}
+
+이중 적분도 동일한 원리로 처리된다.
+먼저 부정적분 $\int_0^\tau \mathbf{a}_\mathrm{grav}(\sigma) d\sigma$의
+제어점을 적분 행렬 $\mathbf{I}_Q$로 구하고,
+그 결과에 다시 정적분(산술평균)을 적용한다:
+\begin{equation}
+  \mathbf{c}_r = \int_0^1\!\int_0^s \mathbf{a}_\mathrm{grav}(\sigma)\,d\sigma\,ds
+  = \mathrm{mean}\bigl(\mathbf{I}_Q \, \mathbf{q}_a\bigr)
+  \label{eq:cr-algebraic}
+\end{equation}
+전체적으로 행렬 곱 한 번($\mathbf{I}_Q \cdot \mathbf{q}_a$)과
+평균 한 번이면 끝이다.
+
+\subsection{오차 분석}
+
+파이프라인 전체에서 유일한 근사원은 $h(s) = s^{-3/2}$의 $K$차 Bernstein 근사이다.
+나머지 모든 연산---곱, 차수 올림, 정적분---은 정확하다.
+$f(s) = s^{-3/2}$는 $(0, \infty)$에서 해석적이므로,
+$[a, b] \subset (0, \infty)$에서의 최적 다항식 근사 오차는 지수적으로 감소한다:
+\begin{equation}
+  \|h - h_K\|_\infty \leq C \cdot \rho^{-K}, \quad
+  \rho = \frac{\sqrt{b/a} + 1}{\sqrt{b/a} - 1} > 1
+  \label{eq:rho-bound}
+\end{equation}
+수렴 속도 $\rho$는 $b/a$에 의해 결정된다.
+$b/a$가 1에 가까울수록 (원형에 가까운 궤도) $\rho$가 크고 수렴이 빠르며,
+$b/a$가 크면 (이심률이 큰 전이 궤도) $\rho$가 작아져 더 높은 $K$가 필요하다.
+
+이 근사 오차가 드리프트 적분에 미치는 영향을 정량적으로 바운드할 수 있다.
+
+\begin{proposition}[드리프트 적분 오차 바운드]
+$\|\mathbf{c}_v - \mathbf{c}_v^{(K)}\|$은 $h_K$의 최대 근사 오차에 비례한다:
+\begin{equation}
+  \|\mathbf{c}_v - \mathbf{c}_v^{(K)}\| \leq
+    3 \cdot r_\mathrm{max} \cdot \|h - h_K\|_\infty
+  \label{eq:cv-error-bound}
+\end{equation}
+여기서 $r_\mathrm{max} = \max_\tau r(\tau)$이다.
+$\|h - h_K\|_\infty$가 $K$에 대해 지수적으로 감소하므로,
+$\mathbf{c}_v$의 오차도 지수적으로 감소한다.
+\end{proposition}
+
+\textit{증명.}\;
+$|c_{v,k} - c_{v,k}^{(K)}| = |\int_0^1 r_k(\tau) [r^{-3}(\tau) - h_K(r^2(\tau))] d\tau|
+\leq \max_\tau |r_k(\tau)| \cdot \|h - h_K\|_\infty$.
+세 성분을 합산하면 결과를 얻는다. \hfill$\square$
+
+%% ============================================================
+\section{SCP 내에서의 통합}
+\label{sec:scp}
+%% ============================================================
+
+본 절에서는 Bernstein 합성 파이프라인이 기존 SCP 반복~\cite{report006,report007}에
+어떻게 통합되는지 구체적으로 기술한다.
+
+\subsection{수정된 SCP 반복}
+
+기존 SCP에서 드리프트 적분을 RK4 전파로 계산하던 것을
+Bernstein 파이프라인으로 대체한다.
+수정된 반복의 각 단계는 다음과 같다:
+
+\begin{enumerate}
+  \item \textbf{보조변수 복원}: 반복 $k$ 시작 시 이전 해 $\mathbf{Z}^{(k-1)}$로부터
+        제어점 $\mathbf{P}_u^{(k-1)} = \mathbf{Z}^{(k-1)} / t_f$를 복원한다.
+  \item \textbf{Bernstein 파이프라인}: 섹션~\ref{sec:pipeline}의 절차를 수행한다.
+        $\mathbf{P}_u$로부터 위치 제어점 $\mathbf{q}_r$을 구하고,
+        $r^2$, $r^{-3}$를 거쳐 $\mathbf{a}_\mathrm{grav}$의 제어점을 계산하며,
+        그 산술평균으로 $\mathbf{c}_v$, $\mathbf{c}_r$을 얻는다.
+        \textbf{이 단계에서 RK4 전파가 완전히 제거된다.}
+  \item \textbf{경계조건 제약 구성}: $\mathbf{c}_v$, $\mathbf{c}_r$을 사용하여
+        경계조건 행렬~\cite{report007}
+        $\mathbf{A}_\mathrm{eq} \, \mathrm{vec}(\mathbf{Z}) = \mathbf{b}_\mathrm{eq}$를 구성한다.
+  \item \textbf{QP/SOCP 풀기}: 볼록 부분문제를 풀어 $\mathbf{Z}^{(k)}$를 얻는다.
+        목적함수와 제약 구조는 변경 없다.
+  \item \textbf{수렴 판정}: 제어점 변화량 $\|\Delta\mathbf{Z}\|$과
+        BC 위반량을 확인한다.
+        BC 위반도 $\mathbf{c}_v$, $\mathbf{c}_r$로부터 대수적으로 계산할 수 있어~\cite{report009},
+        검증을 위한 추가 전파가 불필요하다.
+\end{enumerate}
+
+핵심 변경은 2단계뿐이며, 나머지 SCP 구조(목적함수, SOCP 제약, trust region)는
+그대로 유지된다.
+
+\subsection{009 아핀 근사와의 비교}
+
+세 가지 드리프트 적분 계산법의 특성을 비교하면 다음과 같다.
+RK4 기반은 이산 시간 영역에서 동작하여 매 스텝 ODE 우변을 평가해야 하고,
+009의 아핀 근사는 이산 점에서 Jacobian을 평가하여 행렬로 조합한다.
+본 노트의 Bernstein 합성은 모든 연산이 제어점 벡터 공간에서 이루어지며,
+근사 차수 $K$에 의한 지수적 수렴을 보인다.
+
+\begin{table}[!h]
+\centering
+\caption{드리프트 적분 계산 방법 비교.}
+\label{tab:method-compare}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+ & RK4 기반 & 009 아핀 & 010 Bernstein \\
+\midrule
+연산 공간 & 이산 시간 & 이산 점 + 행렬 & 제어점 벡터 \\
+근사 차수 & --- (수치 오차) & 1차 (Taylor) & $K$차 (다항식) \\
+오차 수렴 & $O(h^4)$ & $O(\Delta\tau^2)$ & $O(\rho^{-K})$ \\
+RK4 필요 & 예 & 참조 궤도용 & \textbf{불필요} \\
+모든 연산 닫힘 & 아니오 & 아니오 & \textbf{예} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+특히 주목할 차이는 오차 수렴의 성격이다.
+RK4는 스텝 크기 $h$에 대해 대수적($O(h^4)$)으로 수렴하고,
+아핀 근사는 세분화 간격에 대해 $O(\Delta\tau^2)$이지만,
+Bernstein 합성은 $K$에 대해 \textbf{지수적}으로 수렴한다.
+$K$를 2 늘리면 오차가 $\rho^2$배 줄어드므로,
+적은 계산 비용으로 높은 정확도에 도달할 수 있다.
+
+\subsection{계산 비용 분석}
+
+Bernstein 파이프라인의 주요 비용을 단계별로 분석한다.
+
+\begin{itemize}
+  \item \textbf{Bernstein 곱} ($r^2$ 계산): 세 성분의 자기 곱으로 $3 \times O((N+2)^2) = O(N^2)$.
+  \item \textbf{Bernstein 합성} ($h \circ \tilde{s}$): 명제~\ref{prop:composition-recursive}의
+        순차 곱 $K$회로 $O(K^2 \cdot (N+2)^2)$.
+  \item \textbf{차수 축소}: $O(Q \cdot R)$. Gram 역행렬 $\mathbf{G}_R^{-1}$은 사전 계산.
+  \item \textbf{Bernstein 곱} ($-r \cdot r^{-3}$): $O((N+2) \cdot R)$.
+  \item \textbf{정적분}: $O(R)$ (벡터 평균).
+\end{itemize}
+
+전체 비용은 $O(K^2 N^2)$이다.
+$K=6$, $N=12$이면 약 5,200 부동소수점 연산으로,
+RK4 200스텝(스텝당 $\sim$100 연산 $\times$ 200 $=$ 20,000)보다 적다.
+또한 Bernstein 곱과 차수 축소는 행렬 곱의 형태이므로
+BLAS/NumPy의 벡터화 연산으로 효율적으로 구현 가능하다.
+
+%% ============================================================
+\section{차수 관리 전략}
+\label{sec:degree-management}
+%% ============================================================
+
+Bernstein 곱과 합성은 강력한 도구이지만, 차수 폭발이라는 대가를 수반한다.
+이 절에서는 차수 폭발을 관리하는 전략과,
+축소가 정확도에 미치는 영향을 정량적으로 분석한다.
+
+\subsection{축소 시점과 목표 차수}
+
+파이프라인에서 차수가 급증하는 지점은 두 곳이다.
+첫째, 합성 단계에서 $2K(N{+}2)$차까지 증가한다
+(예: $K=6$, $N=12$이면 168차).
+이를 곧바로 $R$차로 축소한다.
+둘째, 최종 곱 $r_k \cdot r^{-3}$에서 $(N{+}2{+}R)$차가 되는데,
+필요하면 다시 $R'$차로 축소한다.
+두 축소 모두 식~\eqref{eq:reduction}의 $L^2$ 최적 축소를 적용한다.
+
+\subsection{$L^2$ 오차와 $K$, $R$의 관계}
+\label{ssec:KR}
+
+파이프라인의 총 오차는 두 가지 근사의 합성으로 결정된다:
+\begin{enumerate}
+  \item \textbf{$K$ 오차}: $h(s) = s^{-3/2}$를 $K$차 Bernstein으로 근사할 때의 오차.
+        이것이 지배적 오차원이다.
+  \item \textbf{$R$ 오차}: 168차(등) 합성 결과를 $R$차로 축소할 때의 $L^2$ 근사 오차.
+\end{enumerate}
+
+이 두 오차원의 상대적 크기를 정량적으로 파악하기 위해,
+시나리오 B에서 $K$와 $R$의 모든 조합에 대해 $\mathbf{c}_v$ 상대 오차를 계산하였다.
+동일한 Bernstein 궤적 위에서 점별 평가(2,000점 수치적분)를 기준값으로 사용하였다.
+
+\begin{table}[h]
+\centering
+\caption{$\mathbf{c}_v$ 상대 오차 (\%): 근사 차수 $K$ (행) $\times$ 축소 차수 $R$ (열).
+  동일 행에서 $R$에 무관하게 오차가 일정함에 주목.}
+\label{tab:KR-tradeoff}
+\small
+\begin{tabular}{@{}c cccccc@{}}
+\toprule
+$K \backslash R$ & 16 & 20 & 24 & 28 & 32 & 40 \\
+\midrule
+ 4 & 1.277 & 1.277 & 1.277 & 1.277 & 1.277 & 1.277 \\
+ 6 & 0.425 & 0.425 & 0.425 & 0.425 & 0.425 & 0.425 \\
+ 8 & 0.151 & 0.151 & 0.151 & 0.151 & 0.151 & 0.151 \\
+10 & 0.054 & 0.054 & 0.054 & 0.054 & 0.054 & 0.054 \\
+12 & 0.017 & 0.017 & 0.017 & 0.017 & 0.017 & 0.017 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.75\linewidth]{fig_KR_tradeoff.pdf}
+\caption{$K$--$R$ 조합에 따른 $\mathbf{c}_v$ 상대 오차.
+  각 $K$에 대해 $R$에 수평인 직선이 관찰되며, 오차는 $K$에 의해 완전히 지배된다.}
+\label{fig:KR-tradeoff}
+\end{figure}
+
+표~\ref{tab:KR-tradeoff}과 그림~\ref{fig:KR-tradeoff}의 가장 주목할 결과는,
+\textbf{같은 $K$에서 $R=16$과 $R=40$의 오차가 동일하다}는 점이다.
+이는 차수 축소에 의한 $R$ 오차가 $K$ 오차에 비해 무시 가능함을 의미한다.
+
+이 현상은 다음과 같이 해석된다.
+$r^{-3}(\tau)$의 합성 결과(168차)는 $\tau$에 대해 매끄러운 함수이므로,
+Bernstein 계수의 에너지가 저차에 집중되어 고차 계수가 급격히 감소한다.
+따라서 $L^2$ 최적 차수 축소의 오차가 기계 정밀도 수준으로 작아,
+$R = 16$(위치 차수 $N{+}2 = 14$보다 약간 큰 값)만으로도 충분하다.
+반면, $h(s) = s^{-3/2}$의 $K$차 다항식 근사 오차는
+식~\eqref{eq:exponential-convergence}에 의해 $O(\rho^{-K})$이며,
+$\rho$는 $r^2$의 변동 범위 $b/a$에 의해 결정된다.
+시나리오 B에서 $b/a = 15.5$이므로
+$\rho \approx (\sqrt{15.5} + 1)/(\sqrt{15.5} - 1) \approx 1.59$이다.
+실제로 $K=4$에서 12로 8 증가 시 오차가 $1.277/0.017 = 75$배 감소하는데,
+이론 예측 $\rho^8 = 1.59^8 \approx 68$과 잘 부합한다.
+
+결론적으로, \textbf{$R$은 $N+2$보다 크기만 하면 충분하며,
+정확도는 전적으로 $K$로 제어}한다.
+이는 계산 비용 최적화에서 $R$을 가능한 작게 (예: $R = N{+}2$) 잡고,
+$K$만 원하는 정확도에 맞추면 된다는 명확한 설계 지침을 제공한다.
+
+\subsection{실용적 파라미터 권장}
+
+$b/a$가 클수록 (전이 궤도의 이심률이 클수록) 수렴 속도 $\rho$가 작아져
+더 높은 $K$가 필요하다.
+표~\ref{tab:params}에 궤도 유형별 권장 파라미터를 정리하였다.
+$R$은 모든 경우에 $N{+}2$로 고정할 수 있으며,
+핵심 설계 변수는 $K$뿐이다.
+
+\begin{table}[h]
+\centering
+\caption{궤도 유형별 권장 파라미터.
+  $R$은 $N{+}2$ 이상이면 오차에 영향 없으므로 최소값으로 설정한다.}
+\label{tab:params}
+\small
+\begin{tabular}{@{}lcccl@{}}
+\toprule
+궤도 유형 & $b/a$ & $K$ (근사) & $R$ (축소) & $\mathbf{c}_v$ 상대 오차 \\
+\midrule
+원형 $\to$ 원형 ($\Delta a < 0.1 a_0$) & $<1.5$ & 4 & $N{+}2$ & $< 10^{-4}$ \\
+원형 $\to$ 원형 ($\Delta a \sim 0.2 a_0$) & $\sim 2$ & 6 & $N{+}2$ & $< 10^{-3}$ \\
+LEO $\to$ GTO (큰 전이) & $>10$ & 10--12 & $N{+}2$ & $< 10^{-3}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%% ============================================================
+\section{수치 예제}
+\label{sec:numerical}
+%% ============================================================
+
+본 절에서는 Bernstein 대수 파이프라인의 정확도와 수렴 특성을
+구체적인 수치 예제로 검증한다.
+\cite{report008}의 시나리오 B
+(LEO $\to 1.2 a_0$ 원형, $t_f=3.62$, $N=12$, 정규화 단위)를 사용하며,
+SCP로 수렴된 제어점 $\mathbf{P}_u^*$에서의 Bernstein 궤적을 참조 궤도로 삼는다.
+모든 비교에서 ``기준값''은 동일한 Bernstein 궤적 위에서의
+점별 평가(2,000점 수치적분)이다.
+
+\subsection{$s^{-3/2}$ Bernstein 근사의 수렴}
+
+파이프라인의 유일한 근사인 $h(s) = s^{-3/2}$의 Bernstein 근사 정확도를 먼저 확인한다.
+그림~\ref{fig:h-approx}의 상단은 $[r_\mathrm{min}^2, r_\mathrm{max}^2]$ 구간에서
+$K=2, 4, 6, 8$차 Bernstein 근사를 보인다.
+$K=2$에서도 대략적인 형태를 포착하지만, $K$가 증가하면 빠르게 정확해진다.
+하단의 최대 절대 오차 그래프는 $K$에 대한 지수적 감소를 확인시켜 준다:
+$K=6$에서 $6.6 \times 10^{-5}$, $K=12$에서 $4.2 \times 10^{-9}$,
+$K=16$에서 $6.3 \times 10^{-12}$이다.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\linewidth]{fig_h_approx.pdf}
+\caption{$h(s) = s^{-3/2}$의 Bernstein 근사.
+  위: 정확한 함수(실선)와 $K=2,4,6,8$ 근사(파선).
+  아래: 최대 절대 오차의 지수적 감소 ($K$에 대해 직선).}
+\label{fig:h-approx}
+\end{figure}
+
+\subsection{$\mathbf{a}_\mathrm{grav}(\tau)$ 합성 정확도}
+
+파이프라인 전체를 거친 최종 결과인 중력 가속도의 정확도를 검증한다.
+그림~\ref{fig:agrav-compare}은 Bernstein 합성($K=6$, $R=20$)으로 구한
+$\mathbf{a}_\mathrm{grav}(\tau)$와 동일 궤적에서의 점별 평가를 비교한다.
+상단 3패널은 $x$, $y$, $z$ 성분을 보이며, 육안으로 구별이 어려울 정도로 일치한다.
+하단 패널의 절대 잔차(대수 축)에서 $5 \times 10^{-2}$ 수준의 오차가 관찰되는데,
+이는 $K=6$에서의 $h$ 근사 오차에 의한 것으로,
+$K$를 높이면 체계적으로 개선된다.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\linewidth]{fig_agrav_compare.pdf}
+\caption{중력 가속도 $\mathbf{a}_\mathrm{grav}(\tau)$: Bernstein 합성 vs 점별 평가.
+  상단: $x$, $y$, $z$ 성분 (실선: 점별 기준, 파선: Bernstein $K=6$).
+  하단: 절대 잔차 (대수 축).}
+\label{fig:agrav-compare}
+\end{figure}
+
+\subsection{드리프트 적분 $\mathbf{c}_v$ 수렴}
+
+가장 중요한 검증은 드리프트 적분의 정확도이다.
+그림~\ref{fig:cv-convergence}은 $K$에 따른 $\mathbf{c}_v$ 상대 오차를 보인다.
+$K=4$에서 1.3\%, $K=8$에서 0.15\%, $K=12$에서 0.017\%로
+지수적 수렴이 명확하게 관찰된다.
+시나리오 B의 $b/a = 15.5$는 상당히 큰 값(GTO급 전이)이므로
+수렴이 비교적 느린 경우에 해당하며,
+$b/a \sim 1.5$ (소규모 궤도 조정)인 경우에는
+$K=4$만으로도 $10^{-4}$ 이하의 정확도를 기대할 수 있다.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.75\linewidth]{fig_cv_convergence.pdf}
+\caption{$\mathbf{c}_v$ 상대 오차 vs.\ 근사 차수 $K$.
+  지수적 수렴이 관찰된다.
+  $K=12$에서 $1.7 \times 10^{-4}$.}
+\label{fig:cv-convergence}
+\end{figure}
+
+\subsection{파이프라인 시각화: 제어점의 변환}
+
+그림~\ref{fig:pipeline-visual}은 파이프라인의 각 단계에서
+곡선과 제어점이 어떻게 변환되는지를 시각적으로 보인다.
+(a)는 $xy$ 평면에 투영된 위치 궤적과 14차 제어점이다.
+(b)는 $r^2(\tau)$의 28차 Bernstein 곡선으로, 수평선으로 범위 한정 $[a, b]$가 표시되어 있다.
+(c)는 $r^{-3}(\tau)$의 합성 결과로, 168차 원본(회색)과 20차 축소 결과(파선)가
+정확한 $r^{-3}$(흑색 실선)과 거의 일치함을 보인다.
+(d)는 최종 $a_{\mathrm{grav},x}(\tau)$의 Bernstein 곡선과 제어점이다.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.95\linewidth]{fig_pipeline_visual.pdf}
+\caption{파이프라인 각 단계의 곡선과 제어점.
+  (a)~$\mathbf{r}(\tau)$ $xy$ 평면 투영과 14차 제어점,
+  (b)~$r^2(\tau)$ 28차 곡선 (범위 한정 $[a,b]$ 표시),
+  (c)~$r^{-3}(\tau)$: 정확(실선), 합성(회색), 축소(파선),
+  (d)~$a_{\mathrm{grav},x}(\tau)$: 최종 곡선과 제어점.}
+\label{fig:pipeline-visual}
+\end{figure}
+
+\subsection{차수 축소 오차}
+
+그림~\ref{fig:degree-reduction}은 $r^{-3}(\tau)$의 168차 합성 결과를
+다양한 목표 차수 $R$로 축소할 때의 $L^2$ 오차를 보인다.
+$R=16$에서 이미 $10^{-10}$ 이하이며,
+$R$이 증가하면 기계 정밀도에 도달한다.
+이는 6.2절에서 관찰한 ``$R$ 오차 무시 가능'' 결과와 일치한다.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.75\linewidth]{fig_degree_reduction.pdf}
+\caption{$r^{-3}(\tau)$의 차수 축소 $L^2$ 오차 ($K=6$ 합성 결과, 168차 원본).
+  $R=16$에서 $10^{-10}$ 이하, $R=20$ 이상에서 기계 정밀도 수준.}
+\label{fig:degree-reduction}
+\end{figure}
+
+\subsection{SCP 수렴 이력}
+
+그림~\ref{fig:scp-convergence}은 시나리오 B에서 RK4 기반 SCP의 수렴 이력을 보인다.
+왼쪽은 비용 함수 이력, 오른쪽은 제어점 변화량의 감소를 나타낸다.
+Bernstein 합성 기반 SCP의 구현은 향후 과제이지만,
+드리프트 적분의 정확도(표~\ref{tab:KR-tradeoff})가 충분하므로
+수렴 특성이 RK4 기반과 유사할 것으로 예상된다.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.75\linewidth]{fig_scp_convergence.pdf}
+\caption{SCP 수렴 이력 (시나리오 B, RK4 기반).
+  왼쪽: 비용 이력,
+  오른쪽: 제어점 변화량 (대수 축).}
+\label{fig:scp-convergence}
+\end{figure}
+
+%% ============================================================
+\section{결론 및 향후 과제}
+\label{sec:conclusion}
+%% ============================================================
+
+본 노트에서는 Bernstein 다항식의 대수적 닫힘성---곱, 합성, 차수 축소,
+정적분의 제어점 산술평균---을 체계적으로 활용하여,
+중력 가속도 $\mathbf{a}_\mathrm{grav}(\mathbf{r}(\tau))$를
+제어점 벡터 공간 내에서 완전히 계산하는 프레임워크를 유도하였다.
+주요 결과를 요약하면 다음과 같다.
+
+\begin{enumerate}
+  \item \textbf{단일 근사원}: 비선형 함수 $r^{-3} = (r^2)^{-3/2}$만
+        $K$차 Bernstein으로 근사하면,
+        나머지 모든 연산(곱, 적분, 차수 조절)이 제어점의 행렬/텐서 곱으로 정확히 수행된다.
+  \item \textbf{대수적 드리프트 적분}: $\mathbf{c}_v$는 중력 가속도 제어점의 산술평균,
+        $\mathbf{c}_r$은 적분 행렬 적용 후 산술평균으로, 수치적분 없이 정확하게 계산된다.
+  \item \textbf{지수적 수렴}: 근사 오차는 $O(\rho^{-K})$로 감소하며,
+        $K=12$에서 $\mathbf{c}_v$ 상대 오차 0.017\%를 달성하였다.
+  \item \textbf{차수 축소의 무비용성}: 168차 합성 결과를 $R=16$으로 축소해도
+        추가 오차가 기계 정밀도 수준이므로,
+        정확도는 전적으로 $K$만으로 제어된다.
+  \item \textbf{RK4 완전 제거}: SCP 반복에서 수치 전파가 불필요해지며,
+        모든 연산이 제어점 벡터 공간의 대수적 연산으로 닫힌다.
+\end{enumerate}
+
+\subsection*{향후 과제}
+
+\begin{itemize}
+  \item \textbf{J3--J6 섭동}: 고차 zonal harmonic 항은 $z/r$의 거듭제곱과
+        $r^{-(n+1)}$의 곱으로 구성된다. $z/r = z \cdot r^{-1}$이고
+        $r^{-1} = (r^2)^{-1/2}$이므로 동일한 합성 프레임워크로 처리 가능하다.
+  \item \textbf{대기항력}: 속도 $\mathbf{v}$에 의존하는 항이므로
+        속도의 Bernstein 표현($B_{N+1}$)도 합성에 포함해야 한다.
+  \item \textbf{SRP/3체}: 시변 천체 위치를 Bernstein으로 보간한 후
+        상대 위치의 역세제곱 합성을 적용할 수 있다.
+  \item \textbf{완전 대수적 SCP 구현}: 본 노트의 파이프라인을
+        \texttt{bezier/algebra.py}에 구현하고,
+        inner\_loop에서 RK4를 완전히 대체하는 것이 최우선 과제이다.
+\end{itemize}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

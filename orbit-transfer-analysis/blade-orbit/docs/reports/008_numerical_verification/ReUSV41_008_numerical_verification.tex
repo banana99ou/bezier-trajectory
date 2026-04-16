@@ -1,0 +1,395 @@
+\documentclass[11pt]{article}
+\usepackage{reusv}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{siunitx}
+
+\setborderthickness{0.5pt}
+\setbordermargin{1cm}
+\setbordercolor{black}
+
+\slimtitle{수치 검증 및 연구 시나리오}
+
+\begin{document}
+
+\drawborder
+\thispagestyle{firstpage}
+
+\lightertitle{수치 검증 및 연구 시나리오}
+
+{\normalsize\textit{Research Note No.~008 $|$ bezier-orbit-transfer-scp}}\par\medskip
+
+\def\lighterdate{March 13, 2026}
+\lighterauthor{Suwon Lee$^{\dagger}$}
+
+\lighteraddress{$^\dagger$}{Future Mobility Control Lab, Kookmin University, Seoul, Korea}
+\lighteremail{suwon.lee@kookmin.ac.kr}
+
+\begin{abstract}
+\cite{report001}--\cite{report007}에서 유도한 베지어--SCP 궤적최적화 체계를 Python으로
+구현하고, 세 가지 검증 시나리오(V1--V3)를 통해 수치적 타당성을 확인한다.
+V1은 Hohmann 전이와의 $\Delta V$ 비교, V2는 SCP 수렴 특성 분석,
+V3은 베지어 차수 $N$이 해의 정밀도에 미치는 영향을 다룬다.
+또한 구현 과정에서 발견된 위치 경계조건의 $t_f^2$ 계수 오류와
+SCP 완화(relaxation) 기법의 필요성을 보고한다.
+\end{abstract}
+
+%% ============================================================
+\section{검증 체계 개요}
+%% ============================================================
+
+구현된 \texttt{bezier\_orbit} 패키지(95개 단위 테스트 통과)에 대해
+다음 세 가지 수치 실험을 수행하였다.
+
+\begin{enumerate}
+  \item \textbf{V1}: Hohmann 전이 대비 연속추력 $\Delta V$ 비교
+  \item \textbf{V2}: SCP 수렴 특성 (모드, 차수, 비행시간 의존성)
+  \item \textbf{V3}: 베지어 차수 $N$ 연구 --- 정밀도 대 조건수 트레이드오프
+\end{enumerate}
+
+모든 계산은 \cite{report001}의 정규화 단위($\text{DU}=a_0$, $\mu^*=1$)로 수행한다.
+초기 궤도는 원형($a=1$, $e=0$), 종말 궤도는 원형($a=a_f$, $e=0$, $\nu_f=\pi$)이며,
+동일 궤도면 전이를 기본으로 한다.
+
+%% ============================================================
+\section{구현 과정에서의 버그 수정}
+\label{sec:bugfix}
+%% ============================================================
+
+\subsection{위치 경계조건 계수 오류}
+
+\cite{report007}의 경계조건 유도에서, 위치 적분식은
+\begin{equation}
+  \mathbf{r}_f = \mathbf{r}_0 + t_f \mathbf{v}_0
+  + t_f^2 \mathbf{c}_r + t_f \bar{\mathbf{I}}_N \mathbf{Z}
+  \label{eq:pos_bc}
+\end{equation}
+이며, $\mathbf{c}_r = \int_0^1\!\int_0^s \mathbf{a}_{\text{grav}}(\mathbf{r}_{\text{ref}}(\sigma))\,d\sigma\,ds$이다.
+초기 구현에서 $t_f \mathbf{c}_r$로 잘못 코딩되어 있었으며,
+정확한 계수 $t_f^2 \mathbf{c}_r$로 수정하였다.
+이 오류는 경계조건 우변의 위치항에만 영향을 미치며,
+수정 전에는 SCP가 전혀 수렴하지 않았다.
+
+\subsection{SCP 완화 (Step Damping)}
+
+경계조건 수정 후에도 SCP 반복이 발산하는 현상이 관찰되었다.
+이는 0차 선형화의 한계로, 제어 입력 변화가 클 때
+참조 궤도와 실제 궤도의 괴리가 커지기 때문이다.
+이를 해결하기 위해 완화 계수 $\alpha$를 도입하였다:
+\begin{equation}
+  \mathbf{Z}^{(k+1)} = (1-\alpha)\,\mathbf{Z}^{(k)} + \alpha\,\mathbf{Z}_{\text{QP}}^{(k)}, \quad \alpha = 0.4
+  \label{eq:relaxation}
+\end{equation}
+첫 반복은 $\alpha=1$ (full step), 이후 $\alpha=0.4$로 완화한다.
+이 기법으로 BC 위반이 $O(1)$에서 $O(10^{-4})$로 감소하였다.
+
+%% ============================================================
+\section{V1: Hohmann 전이 비교}
+\label{sec:v1}
+%% ============================================================
+
+Hohmann 전이는 2-임펄스 최적 전이의 해석해이다.
+연속추력 SCP 해의 $\Delta V$를 Hohmann과 비교하여
+알고리즘의 물리적 타당성을 검증한다.
+
+\subsection{시나리오 설정}
+
+\begin{itemize}
+  \item 초기 궤도: 원형, $a_0 = 1.0$ (LEO, $\approx 6778$ km)
+  \item 종말 궤도: 원형, $a_f \in \{1.1,\, 1.2,\, 1.5\}$
+  \item 비행시간: $t_f/t_{f,H} \in \{0.8,\, 0.9,\, 1.0,\, 1.1,\, 1.2,\, 1.5\}$
+  \item 베지어 차수: $N=12$, 추력 무제약 (QP)
+  \item SCP: $\text{max\_iter}=60$, $\text{tol\_bc}=10^{-2}$
+\end{itemize}
+
+\subsection{결과}
+
+Table~\ref{tab:v1}에 주요 결과를 정리한다.
+
+\begin{table}[h]
+\centering
+\caption{V1: Hohmann 전이 대비 SCP 연속추력 $\Delta V$ 비교. $t_{f,H}$는 Hohmann 비행시간.}
+\label{tab:v1}
+\small
+\begin{tabular}{@{}cccccc@{}}
+\toprule
+$a_f$ & $t_f/t_{f,H}$ & $\Delta V_H$ & $\Delta V_{\text{SCP}}$ & $\Delta V$ 비율 & $J^*$ \\
+\midrule
+\multirow{6}{*}{1.1}
+  & 0.80 & \multirow{6}{*}{0.0465} & 0.6516 & 14.01 & 0.2035 \\
+  & 0.90 &  & 0.2989 & 6.43 & 0.0382 \\
+  & \textbf{1.00} &  & \textbf{0.0723} & \textbf{1.55} & \textbf{0.0020} \\
+  & 1.10 &  & 0.2701 & 5.81 & 0.0251 \\
+  & 1.20 &  & 0.4884 & 10.50 & 0.0744 \\
+  & 1.50 &  & 1.0162 & 21.85 & 0.2529 \\
+\midrule
+\multirow{3}{*}{1.2}
+  & 0.90 & \multirow{3}{*}{0.0869} & 0.3026 & 3.48 & 0.0372 \\
+  & \textbf{1.00} &  & \textbf{0.1357} & \textbf{1.56} & \textbf{0.0065} \\
+  & 1.20 &  & 0.4985 & 5.73 & 0.0728 \\
+\midrule
+\multirow{3}{*}{1.5}
+  & 0.90 & \multirow{3}{*}{0.1817} & 0.3520 & 1.94 & 0.0414 \\
+  & \textbf{1.00} &  & \textbf{0.2918} & \textbf{1.61} & \textbf{0.0252} \\
+  & 1.20 &  & 0.5703 & 3.14 & 0.0802 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{분석}
+
+\begin{enumerate}
+  \item \textbf{$t_f = t_{f,H}$에서 최소 비용}: 모든 시나리오에서 $\Delta V_{\text{SCP}}/\Delta V_H \approx 1.55$--$1.61$.
+        연속추력은 임펄스보다 약 55--60\% 높은 $\Delta V$를 소모하며,
+        이는 추력이 전 비행구간에 분산되어 비최적 방향으로도 작용하기 때문이다.
+  \item \textbf{U자형 비용 곡선}: Hohmann 비행시간 전후로 비용이 급증하며,
+        이는 비행시간이 최적값에서 벗어날수록 추가 교정 추력이 필요함을 의미한다.
+  \item \textbf{$a_f$ 의존성}: $a_f$가 클수록 비용비 $\Delta V_{\text{SCP}}/\Delta V_H$가
+        1에 가까워지며, 대규모 전이에서 연속추력의 상대적 효율이 개선된다.
+\end{enumerate}
+
+%% ============================================================
+\section{V2: SCP 수렴 특성}
+\label{sec:v2}
+%% ============================================================
+
+$a_0=1 \to a_f=1.2$ 전이에 대해 QP/SOCP 모드, 베지어 차수 $N$,
+비행시간 $t_f$에 따른 SCP 수렴 특성을 분석한다.
+
+\subsection{결과}
+
+\begin{table}[h]
+\centering
+\caption{V2: SCP 수렴 특성 ($a_f=1.2$). CONV: 수렴, FEAS: 유한 비용이나 tol 미달.
+BC 위반은 모든 경우 $O(10^{-4})$.}
+\label{tab:v2}
+\small
+\begin{tabular}{@{}cccccc@{}}
+\toprule
+모드 & $N$ & $t_f$ & $J^*$ & 반복 & BC 위반 \\
+\midrule
+QP & 6 & 3.38 & 0.0186 & 40 (CONV) & $1.4\times 10^{-4}$ \\
+QP & 8 & 3.38 & 0.0186 & 40 (CONV) & $1.4\times 10^{-4}$ \\
+QP & 12 & 3.38 & 0.0186 & 41 (CONV) & $1.5\times 10^{-4}$ \\
+QP & 16 & 3.38 & 0.0186 & 41 (CONV) & $1.5\times 10^{-4}$ \\
+\midrule
+SOCP ($u_{\max}=5$) & 6 & 3.00 & 0.1247 & 41 (CONV) & $1.1\times 10^{-4}$ \\
+SOCP ($u_{\max}=5$) & 8 & 4.00 & 0.0295 & 52 (CONV) & $2.3\times 10^{-4}$ \\
+\midrule
+QP & 12 & 3.00 & 0.1247 & 60 (FEAS) & $1.1\times 10^{-4}$ \\
+QP & 12 & 4.00 & 0.0295 & 60 (FEAS) & $2.3\times 10^{-4}$ \\
+QP & 12 & 5.00 & 0.1693 & 60 (FEAS) & $4.2\times 10^{-4}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{분석}
+
+\begin{enumerate}
+  \item \textbf{$N$에 대한 무의존성}: 같은 $t_f$에서 비용이 $N$에 무관하게 동일하다.
+        이는 최적 추력 프로파일이 저차 다항식으로 충분히 표현됨을 의미한다.
+  \item \textbf{QP vs SOCP}: $u_{\max}=5$ (정규화 단위)일 때
+        SOCP 비용은 QP와 거의 동일하며, 추력 제약이 활성화되지 않음을 확인하였다.
+  \item \textbf{수렴 속도}: $t_f \approx t_{f,H}$에서 40--50회 반복으로 수렴.
+        Hohmann 비행시간에서 멀어질수록 수렴이 느려지며,
+        이는 참조 궤도와 최적 궤도의 괴리가 커지기 때문이다.
+  \item \textbf{BC 위반}: 모든 유한 비용 케이스에서 $O(10^{-4})$ 수준으로,
+        이는 정규화 단위에서 약 $O(1\,\text{m})$ 정밀도에 해당한다.
+\end{enumerate}
+
+%% ============================================================
+\section{V3: 베지어 차수 연구}
+\label{sec:v3}
+%% ============================================================
+
+$a_0=1 \to a_f=1.2$, $t_f=3.62$ ($\approx t_{f,H}$) 조건에서
+$N=4$--$20$의 베지어 차수가 해의 품질에 미치는 영향을 분석한다.
+
+\subsection{결과}
+
+\begin{table}[h]
+\centering
+\caption{V3: 베지어 차수 $N$에 따른 비용, $\Delta V$, Gram 행렬 조건수.}
+\label{tab:v3}
+\small
+\begin{tabular}{@{}ccccccc@{}}
+\toprule
+$N$ & $J^*$ & $\Delta V$ & 반복 & BC 위반 & $\kappa(\mathbf{G}_N)$ & 시간 (s) \\
+\midrule
+4  & 0.00650 & 0.1355 & 42 (CONV) & $1.9\times 10^{-4}$ & $1.3\times 10^{2}$ & 1.4 \\
+6  & 0.00650 & 0.1355 & 60 & $1.8\times 10^{-4}$ & $1.7\times 10^{3}$ & 2.1 \\
+8  & 0.00650 & 0.1355 & 60 & $1.8\times 10^{-4}$ & $2.4\times 10^{4}$ & 2.1 \\
+12 & 0.00650 & 0.1355 & 60 & $1.8\times 10^{-4}$ & $5.2\times 10^{6}$ & 2.2 \\
+16 & 0.00650 & 0.1355 & 60 & $1.8\times 10^{-4}$ & $1.2\times 10^{9}$ & 2.4 \\
+20 & 0.00650 & 0.1355 & 60 & $1.8\times 10^{-4}$ & $2.7\times 10^{11}$ & 2.6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{분석}
+
+\begin{enumerate}
+  \item \textbf{비용/ΔV 불변}: $N=4$에서 이미 최적값에 도달하며,
+        $N$을 늘려도 비용이 개선되지 않는다.
+        이는 최적 추력 프로파일이 저차(3--4차) 다항식으로 충분히
+        표현되는 매끄러운 함수임을 시사한다.
+  \item \textbf{조건수 기하 증가}: $\kappa(\mathbf{G}_N)$은
+        $N$에 대해 지수적으로 증가($\approx 15^N$)하지만,
+        정규화된 변수에서 계산하므로 $N=20$까지 수치 불안정은 관찰되지 않는다.
+  \item \textbf{계산 시간}: $N$에 거의 선형 비례 ($N=4$: 1.4s, $N=20$: 2.6s).
+  \item \textbf{권장 차수}: 비용 개선 없이 조건수만 증가하므로,
+        $N=8$--$12$를 기본값으로 권장한다.
+        추력 제약이 활성화되는 SOCP 문제에서는 높은 $N$이 필요할 수 있다.
+\end{enumerate}
+
+%% ============================================================
+\section{S1: 3차원 궤도 전이}
+\label{sec:s1}
+%% ============================================================
+
+동일 궤도면 전이(V1--V3)를 넘어, 경사각 변화($\Delta i$)를 포함하는
+3차원 전이에서의 SCP 성능을 검증한다.
+Outer loop 격자 탐색($t_f \in \{3, 4, 5, 6, 8\}$)으로 최적 비행시간을 선정한다.
+
+\subsection{S1a: 순수 경사각 변경}
+
+고도 변화 없이 경사각만 변경하는 경우.
+
+\begin{table}[h]
+\centering
+\caption{S1a: 순수 경사각 변경 ($a=1.0 \to 1.0$, $N=12$).}
+\label{tab:s1a}
+\small
+\begin{tabular}{@{}cccc@{}}
+\toprule
+$\Delta i$ (deg) & $t_f^*$ & $J^*$ & $\Delta V$ \\
+\midrule
+5   & 3.0 & 0.0122 & 0.167 \\
+10  & 3.0 & 0.0277 & 0.250 \\
+15  & 3.0 & 0.0534 & 0.347 \\
+20  & 3.0 & 0.0893 & 0.449 \\
+28.5 & 3.0 & 0.1729 & 0.627 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+경사각 변경에 필요한 $\Delta V$는 $\Delta i$에 거의 선형 비례하며,
+ISS 궤도 경사각(51.6$^\circ$)에서 적도 궤도(0$^\circ$)로의 전이가
+$\Delta i = 28.5^\circ$ 케이스에 해당한다.
+
+\subsection{S1b: 고도 + 경사각 동시 변경}
+
+\begin{table}[h]
+\centering
+\caption{S1b: 고도 + 경사각 동시 변경 ($N=12$).}
+\label{tab:s1b}
+\small
+\begin{tabular}{@{}ccccc@{}}
+\toprule
+$a_f$ & $\Delta i$ (deg) & $t_f^*$ & $J^*$ & $\Delta V$ \\
+\midrule
+1.1 & 5  & 3.0 & 0.0546 & 0.355 \\
+1.1 & 10 & 3.0 & 0.0695 & 0.399 \\
+1.2 & 5  & 3.0 & 0.1294 & 0.545 \\
+1.2 & 10 & 3.0 & 0.1436 & 0.573 \\
+1.3 & 10 & 3.0 & 0.2436 & 0.745 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+고도와 경사각을 동시에 변경하면 비용이 급격히 증가한다.
+$a_f=1.3$, $\Delta i=10^\circ$ 전이의 $\Delta V = 0.745$는
+정규화 단위에서 궤도 속도($v_c = 1$)의 약 75\%에 해당하며,
+이는 상당한 추진 요구량이다.
+
+%% ============================================================
+\section{계산 성능 분석}
+\label{sec:performance}
+%% ============================================================
+
+SCP 반복 1회당 계산 시간을 프로파일링하여 병목을 분석하고
+최적화를 수행하였다. 측정 환경은 Apple M-series CPU, Python 3.12이다.
+
+\subsection{병목 분석}
+
+최적화 전 반복당 소요시간 약 \SI{34}{\ms}의 구성:
+
+\begin{table}[h]
+\centering
+\caption{SCP 반복 1회당 계산 시간 구성 (최적화 전).}
+\label{tab:perf-before}
+\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+단계 & 시간 (ms) & 비중 \\
+\midrule
+참조 궤도 전파 (RK4)    & 15.1 & 43\% \\
+BC 위반 검사 (RK4 재호출) & 15.0 & 43\% \\
+CVXPY QP/SOCP 풀기       & 3.7  & 11\% \\
+드리프트 적분 + 기타      & 1.1  & 3\% \\
+\midrule
+합계                      & 34.9 & 100\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+RK4 전파가 전체의 86\%를 차지하며, 이는 Python \texttt{for}-loop로
+200+ 스텝을 순차 적분하는 데 기인한다.
+
+\subsection{최적화}
+
+두 가지 최적화를 적용하였다:
+\begin{enumerate}
+  \item \textbf{전파 결과 캐싱}: BC 위반 계산에 사용한 전파 결과를
+        다음 반복의 참조 궤도로 재활용하여 전파 호출 횟수를
+        반복당 2회 $\to$ 1회로 감소.
+  \item \textbf{드리프트 적분 벡터화}: 중력+J2 가속도 계산의 Python
+        \texttt{for}-loop를 NumPy 배열 연산으로 대체.
+\end{enumerate}
+
+최적화 후 반복당 소요시간은 약 \SI{19}{\ms}로, \textbf{44\%} 단축되었다.
+50회 반복 기준 전체 실행 시간이 약 \SI{1.7}{\s} $\to$ \SI{1.0}{\s}로 개선된다.
+
+추가 개선 방안으로 RK4 전파의 C/Cython 구현, 또는 \texttt{scipy.integrate}의
+DOP853 적응 적분기 활용을 고려할 수 있다.
+
+%% ============================================================
+\section{구현 요약 및 향후 과제}
+\label{sec:summary}
+%% ============================================================
+
+\subsection{구현 현황}
+
+\texttt{bezier\_orbit} 패키지의 전체 구현이 완료되었으며, 95개 단위 테스트가 통과한다.
+주요 모듈:
+\begin{itemize}
+  \item \texttt{normalize.py}: 적응형 정규화 (DU/TU/VU)
+  \item \texttt{orbit/}: Keplerian $\leftrightarrow$ Cartesian 변환, 2체+J2 동역학, J3--J6/항력/SRP/3체 섭동
+  \item \texttt{bezier/}: $N$차 Bernstein 기저, $\mathbf{D}_N$, $\mathbf{I}_N$, $\bar{\mathbf{I}}_N$, $\mathbf{G}_N$, 제약조건
+  \item \texttt{scp/}: Inner loop (QP/SOCP), Outer loop ($t_f$ 탐색), 보조변수 승강
+  \item \texttt{db/}: DuckDB 저장/로드
+\end{itemize}
+
+\subsection{발견된 이슈 및 수정}
+
+\begin{enumerate}
+  \item 위치 경계조건 계수 오류 ($t_f \to t_f^2$): Section~\ref{sec:bugfix}
+  \item SCP 완화(relaxation) 필요성: $\alpha=0.4$ 도입으로 수렴 확보
+  \item Bernstein 기저의 subnormal 값 처리: $B < 10^{-300}$을 0으로 클램핑
+\end{enumerate}
+
+\subsection{향후 연구 과제}
+
+\begin{enumerate}
+  \item \textbf{섭동 효과}: J2 포함/미포함 비용 차이, Level~1--2 섭동이 해에 미치는 영향
+  \item \textbf{자유시간 최적화}: Outer loop 황금분할 탐색으로 최적 $t_f$ 정밀 결정
+  \item \textbf{AST-2025 비교}: EUCASS 2025 발표 shape-based 기법과의 체계적 비교
+  \item \textbf{1차 선형화 도입}: 상태 천이 행렬 기반 SCP로 수렴 속도 개선
+        (현재 0차 선형화 + 완화 기법, 40--60회 반복 필요)
+  \item \textbf{추력 제약 활성화}: $u_{\max}$가 충분히 작은 경우의 SOCP 해 분석
+\end{enumerate}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

@@ -1,0 +1,201 @@
+\documentclass[11pt]{article}
+\usepackage{reusv}
+
+\setborderthickness{0.5pt}
+\setbordermargin{1cm}
+\setbordercolor{black}
+
+\slimtitle{베지어 제약조건과 컨벡스화}
+
+\begin{document}
+
+\drawborder
+\thispagestyle{firstpage}
+
+\lightertitle{베지어 제약조건과 컨벡스화}
+
+{\normalsize\textit{Research Note No.~005 $|$ bezier-orbit-transfer-scp}}\par\medskip
+
+\def\lighterdate{March 12, 2026}
+\lighterauthor{Suwon Lee$^{\dagger}$}
+
+\lighteraddress{$^\dagger$}{Future Mobility Control Lab, Kookmin University, Seoul, Korea}
+\lighteremail{suwon.lee@kookmin.ac.kr}
+
+\begin{abstract}
+본 보고서는 베지어 곡선으로 성형된 추진 가속도에 부과되는 제약조건을
+컨벡스 최적화 프레임워크 안에서 처리하는 방법을 정리한다.
+볼록껍질 성질(convex hull property)을 이용한 보수적 제약 처리와,
+극값 정리(extremum theorem)를 이용한 무손실 컨벡스화(lossless convexification)를
+비교하여 제시한다.
+또한 추력 크기 제약 $\|\mathbf{u}(\tau)\| \leq u_{\max}$를
+2차 원뿔 계획법(SOCP) 제약으로 변환하는 절차를 유도한다.
+\end{abstract}
+
+%% ============================================================
+\section{문제 설정}
+%% ============================================================
+
+\cite{report003}에서 채택한 추진 가속도 베지어 성형에서
+설계변수는 제어점 행렬 $\mathbf{P}_u \in \mathbb{R}^{(N+1)\times 3}$이다.
+물리적 제약조건은 연속 시간 $\tau \in [0,1]$ 전체에 걸쳐 만족되어야 하므로,
+유한 개의 최적화 제약조건으로 변환하는 것이 필요하다.
+
+다루는 주요 제약조건은 두 종류이다.
+
+\begin{description}
+  \item[추력 크기 제약] $\|\mathbf{u}(\tau)\| \leq u_{\max}$,\quad $\forall\tau\in[0,1]$
+  \item[축별 부등식 제약] $u_k(\tau) \leq c_k$,\quad $\forall\tau\in[0,1]$,\quad $k \in \{x,y,z\}$
+\end{description}
+
+%% ============================================================
+\section{볼록껍질 성질을 이용한 보수적 제약}
+%% ============================================================
+
+\subsection{볼록껍질 성질}
+
+Bernstein 기저의 분할 단위 성질과 비음성으로부터,
+베지어 곡선은 제어점들의 볼록껍질(convex hull) 안에 항상 존재한다.
+
+\begin{equation}
+  q(\tau) \in \mathrm{conv}\{p_0, p_1, \ldots, p_N\}, \quad \forall\tau\in[0,1]
+  \label{eq:convex_hull}
+\end{equation}
+
+\subsection{보수적 제약 처리}
+
+스칼라 상한 제약 $q(\tau) \leq c$에 대해 볼록껍질 성질을 적용하면:
+
+\begin{equation}
+  p_i \leq c,\quad \forall\, i = 0, 1, \ldots, N
+  \quad \Rightarrow \quad q(\tau) \leq c,\quad \forall\tau\in[0,1]
+  \label{eq:conservative}
+\end{equation}
+
+모든 제어점이 상한 이하면 곡선 전체도 상한 이하가 됨이 보장된다.
+이 조건은 제어점에 대한 선형 부등식이므로 LP/QP에 직접 포함할 수 있다.
+
+단, 이 조건은 충분조건이지 필요충분조건이 아니다.
+제어점이 경계를 넘더라도 곡선 자체는 경계 안에 있을 수 있으므로,
+볼록껍질 조건은 실제 허용 영역보다 작은 영역만 탐색하는
+\textbf{보수적(conservative)} 접근이다.
+
+%% ============================================================
+\section{극값 정리를 이용한 무손실 컨벡스화}
+%% ============================================================
+
+\subsection{극값 정리 적용}
+
+연속 함수 $q(\tau)$가 $[0,1]$에서 상한 $c$를 넘지 않을 조건은
+다음과 동치이다.
+
+\begin{equation}
+  q(\tau) \leq c,\;\forall\tau\in[0,1]
+  \;\Longleftrightarrow\;
+  q(\tau^*) \leq c,\;\forall\tau^* \in \mathcal{T}^*
+  \label{eq:extremum}
+\end{equation}
+
+여기서 $\mathcal{T}^* = \{0,\,1\} \cup \{\tau : q'(\tau) = 0\}$는
+끝점과 내부 극값점의 집합이다.
+즉, 연속 제약을 극값점에서의 유한 개 제약으로 정확히 대체할 수 있다.
+
+\subsection{극값점 계산}
+
+$q'(\tau) = \mathbf{B}_{N-1}(\tau)^T (\mathbf{D}_N \mathbf{p}) = 0$의 근을 구해야 한다.
+$\mathbf{D}_N \mathbf{p} \in \mathbb{R}^N$을 계수로 하는 차수 $N-1$ 다항식의 근이므로,
+\textbf{동반 행렬(companion matrix)}의 고유값으로 안정적으로 계산할 수 있다.
+실수 근이면서 $\tau^* \in (0,1)$인 것만 $\mathcal{T}^*$에 포함한다.
+
+\subsection{SCP에서의 적용}
+
+SCP 반복에서 참조 제어점 $\bar{\mathbf{p}}$가 주어지면:
+\begin{enumerate}
+  \item $\mathbf{D}_N \bar{\mathbf{p}}$의 근 $\{\bar{\tau}_j^*\}$를 계산한다.
+  \item $\mathcal{T}^* = \{0, 1, \bar{\tau}_1^*, \ldots, \bar{\tau}_m^*\}$에서
+        Bernstein 기저를 평가한다.
+  \item 제약행렬 $\mathbf{C} = [\mathbf{B}_N(\bar{\tau}^*_j)^T]_j \in \mathbb{R}^{|\mathcal{T}^*|\times(N+1)}$을 구성한다.
+  \item 선형 제약 $\mathbf{C}\,\mathbf{p} \leq c\,\mathbf{1}$을 QP/SOCP에 추가한다.
+\end{enumerate}
+
+이 방법은 참조 궤도에서의 극값점을 기준으로 구성하므로 SCP와 자연스럽게 결합되며,
+볼록껍질 조건과 달리 보수성이 없다.
+
+%% ============================================================
+\section{추력 크기 제약의 SOCP 변환}
+%% ============================================================
+
+\subsection{연속 제약의 이산화 필요성}
+
+추력 크기 제약은 노름 제약이므로 각 축 제약의 단순 조합으로 표현되지 않는다.
+
+\begin{equation}
+  \|\mathbf{u}(\tau)\|^2 = u_x(\tau)^2 + u_y(\tau)^2 + u_z(\tau)^2 \leq u_{\max}^2
+  \label{eq:thrust_norm}
+\end{equation}
+
+이를 $\tau \in [0,1]$에서 연속적으로 만족하려면, 극값 정리를 3차원으로 확장하거나
+충분히 촘촘한 이산 격자점 $\{\tau_j\}$에서 제약을 부과하는 방법을 쓴다.
+
+\subsection{이산 격자에서의 SOCP 제약}
+
+이산화된 각 시점 $\tau_j$에서 추력 크기 제약은 2차 원뿔 제약이다.
+
+\begin{equation}
+  \|\mathbf{u}(\tau_j)\| \leq u_{\max}
+  \;\Longleftrightarrow\;
+  \left\|\mathbf{P}_u^T \mathbf{B}_N(\tau_j)\right\| \leq u_{\max}
+  \label{eq:socp_constraint}
+\end{equation}
+
+이는 제어점 행렬 $\mathbf{P}_u$에 대한 2차 원뿔 제약이므로 SOCP로 처리된다.
+격자 간격이 충분히 작으면 연속 제약에 대한 근사 정확도가 보장된다.
+실용적으로는 $\tau_j = j/M$, $j = 0, 1, \ldots, M$으로 균등 이산화하며
+$M = 2N \sim 4N$ 정도가 적절하다.
+
+\subsection{추력 하한 제약 (최소 추력)}
+
+추력 하한 $\|\mathbf{u}(\tau)\| \geq u_{\min}$은 비볼록 제약이다.
+Lossless convexification 기법~\cite{report007}에서 이를 등식 제약으로 완화하거나
+SCP 외부 루프에서 검증하는 방식을 사용할 수 있다.
+본 프로젝트 기본 설정에서는 추력 하한을 고려하지 않는다.
+
+%% ============================================================
+\section{두 방법의 비교}
+%% ============================================================
+
+\begin{table}[h]
+  \centering
+  \caption{제약조건 처리 방법 비교}
+  \label{tab:constraint_comparison}
+  \begin{tabular}{p{3.0cm}p{4.5cm}p{4.5cm}}
+    \toprule
+    & 볼록껍질 (보수적) & 극값 정리 (무손실) \\
+    \midrule
+    제약 형태    & 선형 ($N+1$개) & 선형 (극값점 수만큼) \\
+    보수성       & 있음 & 없음 \\
+    계산 비용    & 없음 (사전 고정) & 극값점 계산 필요 \\
+    SCP 의존성   & 독립 & 참조 궤도에 의존 \\
+    추천 용도    & 초기 guess, 빠른 계산 & 최종 해 품질 향상 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+%% ============================================================
+\section{요약}
+%% ============================================================
+
+\begin{itemize}
+  \item 볼록껍질 성질은 제어점의 선형 부등식으로 연속 제약을 보수적으로 처리한다.
+  \item 극값 정리는 연속 제약을 극값점에서의 유한 조건으로 정확히 대체하여
+        보수성 없이 컨벡스 처리를 가능하게 한다.
+  \item 추력 크기 제약은 이산화된 격자점에서 SOCP 제약으로 처리한다.
+  \item SCP 반복마다 참조 궤도 기준으로 극값점을 갱신하여 정확도를 높인다.
+  \item 구체적인 SCP 알고리즘 구조 안에서 이 제약들이 어떻게 조합되는지는
+        \cite{report006}에서 다룬다.
+\end{itemize}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

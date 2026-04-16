@@ -1,0 +1,469 @@
+\documentclass[11pt]{article}
+\usepackage{reusv}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{tabularx}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  frame=single,
+  breaklines=true,
+  language=Python,
+  showstringspaces=false,
+  commentstyle=\color{gray},
+  keywordstyle=\color{blue},
+  stringstyle=\color{red}
+}
+\setborderthickness{0.5pt}
+\setbordermargin{1cm}
+\setbordercolor{black}
+
+\slimtitle{D4. 위상적 지속성 기반 피크 탐지 알고리즘}
+
+\begin{document}
+\drawborder
+\thispagestyle{firstpage}
+
+\lightertitle{D4. 위상적 지속성 기반 피크 탐지 알고리즘}
+\def\lighterdate{February 15, 2026}
+\lighterauthor{Suwon Lee}
+\lighteraddress{}{Future Mobility Control Lab, Department of Future Mobility, Kookmin University, Seoul, Republic of Korea}
+\lighteremail{suwon@kookmin.ac.kr}
+
+\begin{abstract}
+본 보고서는 연속 추력 궤도전이 최적화 결과에서 추력 크기 프로파일 $\|\mathbf{u}(t)\|$의 피크를 자동으로 탐지하고 정량화하는 알고리즘의 수학적 배경과 구현 상세를 기술한다.
+추력 프로파일의 피크 개수는 궤적 분류의 기초로, 피크가 1개면 unimodal (class~0), 2개면 bimodal (class~1), 3개 이상이면 multimodal (class~2)로 분류하며, 이 결과는 Multi-Phase collocation의 phase 구조 결정에 직접 사용된다.
+본 구현은 \textbf{위상적 지속성(Topological Persistence)} 기반의 0차 persistent homology 알고리즘을 사용한다.
+이 방법은 기존의 scipy \texttt{find\_peaks} 기반 접근법에 비해 (i)~파라미터가 하나뿐이며, (ii)~경계 피크를 별도 로직 없이 자연스럽게 처리하고, (iii)~보간 아티팩트에 강건하다는 장점이 있다.
+\end{abstract}
+
+\noindent 대응 코드: \texttt{src/orbit\_transfer/classification/peak\_detection.py}
+
+
+%=============================================================================
+\section{목적}
+%=============================================================================
+
+연속 추력 궤도전이의 최적 추력 프로파일은 시간에 따른 추력 크기 $\|\mathbf{u}(t)\|$를 나타내며, 그 형상에 따라 궤적의 물리적 특성이 결정된다.
+피크 탐지(peak detection)는 이 프로파일에서 유의미한 극대점의 개수를 식별하는 과정으로, 전체 분류 파이프라인의 첫 번째 단계이다.
+
+피크 탐지의 정확성은 다음 두 가지 측면에서 전체 시스템의 신뢰성을 좌우한다:
+\begin{enumerate}[nosep]
+\item \textbf{분류 정확성}: 피크 수가 잘못 탐지되면 궤적의 클래스가 잘못 할당된다.
+\item \textbf{Phase 구조 결정}: Multi-Phase LGL collocation에서 각 phase의 시간 경계는 피크 위치와 반치폭(FWHM)으로 결정된다. 피크가 누락되면 phase 분할이 부정확해진다.
+\end{enumerate}
+
+기존의 \texttt{scipy.signal.find\_peaks} 기반 접근법은 세 가지 한계를 가진다:
+\begin{itemize}[nosep]
+\item \textbf{다중 파라미터}: prominence, distance, width 등 여러 임계값을 조율해야 하며, 최적값이 데이터에 따라 달라진다.
+\item \textbf{경계 피크 미탐지}: 시간 구간의 시작 또는 끝에서의 피크를 탐지하려면 별도의 보정 로직이 필요하다.
+\item \textbf{보간 아티팩트 취약}: CubicSpline 보간 시 발생하는 미세 진동에 민감하다.
+\end{itemize}
+
+본 구현은 이러한 한계를 극복하기 위해 \textbf{위상적 지속성(Topological Persistence)} 기반의 피크 탐지 알고리즘을 도입하였다.
+
+
+%=============================================================================
+\section{수학적 배경}
+%=============================================================================
+
+%-----------------------------------------------------------------------------
+\subsection{피크 탐지 문제의 정의}
+%-----------------------------------------------------------------------------
+
+이산 시계열 $f = (f_0, f_1, \ldots, f_{N-1})$이 주어질 때, \textbf{피크}란 극대점(local maximum), 즉 $f_i > f_{i-1}$이고 $f_i > f_{i+1}$인 인덱스 $i$를 의미한다.
+경계점($i = 0$ 또는 $i = N-1$)은 한쪽만 비교한다.
+
+실제 데이터에서 모든 극대점을 피크로 간주하면 수치 노이즈에 의한 위양성(false positive)이 발생한다.
+핵심 과제는 \textbf{유의미한 피크와 노이즈 피크를 구분하는 임계값}을 체계적으로 결정하는 것이다.
+
+%-----------------------------------------------------------------------------
+\subsection{위상적 지속성 (Topological Persistence)}
+%-----------------------------------------------------------------------------
+
+\subsubsection{0차 호몰로지의 직관}
+
+함수 $f: [a, b] \to \mathbb{R}$의 그래프 위에 수평선 $y = c$를 놓고 $c$를 위에서 아래로 내려 보자.
+처음에 수평선은 함수 그래프와 만나지 않다가, 전역 최대점에서 처음 접촉한다.
+이때 하나의 \textbf{연결 성분(connected component)}, 즉 ``섬''이 \textbf{탄생(birth)}한다.
+수평선을 더 내리면 새로운 극대점에서 추가 섬이 탄생하고, 두 섬 사이의 극소점을 지날 때 두 섬이 \textbf{합병(merge)}한다.
+
+합병 시 더 낮은 극대점을 가진 섬이 \textbf{사망(death)}한다.
+이를 \textbf{Elder rule}이라 하며, 더 높은 피크에 우선권을 부여한다~\cite{Edelsbrunner2010}.
+각 피크의 \textbf{지속성(persistence)}은 다음과 같이 정의된다:
+\begin{equation}
+  \mathrm{pers}(p) = f(\mathrm{birth}_p) - f(\mathrm{death}_p)
+  \label{eq:persistence}
+\end{equation}
+전역 최대점의 경우 사망하지 않으므로 $\mathrm{pers} = \infty$이다.
+
+\subsubsection{1D 수열에 대한 알고리즘}
+
+이산 수열 $f = (f_0, \ldots, f_{N-1})$에 대해 0차 persistent homology를 계산하는 알고리즘은 Algorithm~\ref{alg:persistence}에 기술한다~\cite{Huber2021}.
+
+\begin{algorithm}[h]
+\caption{0th Persistent Homology for 1D Sequence}
+\label{alg:persistence}
+\begin{algorithmic}[1]
+\REQUIRE 길이 $N$의 수열 $f$
+\ENSURE 피크 리스트, 각 피크는 $(b, d, \ell, r)$을 가짐
+\STATE $\sigma \leftarrow \mathrm{argsort}(-f)$ \COMMENT{$f$ 값의 내림차순 인덱스}
+\STATE $\mathrm{owner}[0 \ldots N-1] \leftarrow \mathrm{None}$
+\FOR{$k = 0, 1, \ldots, N-1$}
+  \STATE $i \leftarrow \sigma_k$
+  \STATE $L \leftarrow \mathrm{owner}[i-1]$ if $i > 0$ and visited, else $\mathrm{None}$
+  \STATE $R \leftarrow \mathrm{owner}[i+1]$ if $i < N-1$ and visited, else $\mathrm{None}$
+  \IF{$L = \mathrm{None}$ \AND $R = \mathrm{None}$}
+    \STATE 새 섬 탄생: $\mathrm{peak} \leftarrow (b=i,\, d=\mathrm{None},\, \ell=i,\, r=i)$
+  \ELSIF{$L \neq \mathrm{None}$ \AND $R = \mathrm{None}$}
+    \STATE 기존 섬 $L$에 흡수: $r_L \leftarrow i$
+  \ELSIF{$L = \mathrm{None}$ \AND $R \neq \mathrm{None}$}
+    \STATE 기존 섬 $R$에 흡수: $\ell_R \leftarrow i$
+  \ELSE
+    \STATE \textbf{Elder rule}: $f[b_L] > f[b_R]$이면 $R$ 사망 ($d_R \leftarrow i$), 아니면 $L$ 사망
+  \ENDIF
+  \STATE $\mathrm{owner}[i] \leftarrow$ 해당 섬 인덱스
+\ENDFOR
+\end{algorithmic}
+\end{algorithm}
+
+\textbf{시간 복잡도}: $O(N \log N)$ (Step~1의 정렬이 지배적. Step~3의 루프는 $O(N)$.)
+
+\textbf{공간 복잡도}: $O(N)$
+
+\subsubsection{지속성 다이어그램}
+
+각 피크를 $(b_p, d_p)$ 좌표의 점으로 표현하면 \textbf{지속성 다이어그램(persistence diagram)}을 얻는다.
+대각선 $b = d$에서 먼 점일수록 지속성이 크고 유의미한 피크이다.
+유의미한 피크의 선택은 단일 임계값 $\tau$로 결정된다:
+\begin{equation}
+  \mathcal{S} = \{p \mid \mathrm{pers}(p) \geq \tau\}
+  \label{eq:significant}
+\end{equation}
+본 구현에서는 $\tau = \alpha \cdot f_{\max}$으로 설정하며, $\alpha = 0.10$ (10\%)를 기본값으로 사용한다.
+
+%-----------------------------------------------------------------------------
+\subsection{경계 피크의 처리}
+%-----------------------------------------------------------------------------
+
+전통적인 \texttt{find\_peaks} 기반 방법은 경계점($i = 0$ 또는 $i = N-1$)에서의 피크를 별도 로직으로 탐지해야 한다.
+위상적 지속성에서는 경계 피크가 자연스럽게 처리된다.
+수열의 첫 번째 또는 마지막 원소가 극대점이면, 해당 위치에서 섬이 탄생하고 그 지속성이 계산된다.
+별도 경계 탐지 로직이 필요 없으므로 구현이 간결하고 일관된다.
+
+%-----------------------------------------------------------------------------
+\subsection{CubicSpline 보간과 Phase-Aware 전처리}
+%-----------------------------------------------------------------------------
+
+\subsubsection{보간의 필요성}
+
+Pseudospectral collocation 해법은 15--30개의 비균일 노드에서만 정의된다.
+이 소수의 이산점에 직접 피크 탐지를 적용하면 해상도 부족으로 피크 위치와 개수가 부정확해진다.
+CubicSpline 보간~\cite{deBoor2001}으로 $N_{\mathrm{interp}} = 200$개의 균일 격자로 업샘플링하여 해결한다.
+
+\subsubsection{Phase-Aware 보간}
+
+Multi-Phase LGL collocation은 각 phase별로 독립적인 LGL 노드를 사용한다.
+Phase 경계에서 노드 간격이 급격히 변하므로, 전체 시간 구간에 글로벌 CubicSpline을 적용하면 Runge 현상과 유사한 대형 진동이 발생한다~\cite{Stoer2002}.
+이를 방지하기 위해 각 phase 내부에서 독립적으로 CubicSpline 보간을 수행한다.
+
+Phase $k$의 시간 구간이 $[t_k^{\mathrm{start}}, t_k^{\mathrm{end}}]$이고 전체 구간이 $[0, T]$일 때, phase $k$에 배정되는 보간 점 수는:
+\begin{equation}
+  N_k = \max\!\left(10,\; \left\lfloor N_{\mathrm{interp}} \cdot \frac{t_k^{\mathrm{end}} - t_k^{\mathrm{start}}}{T} \right\rfloor\right)
+  \label{eq:phase_interp}
+\end{equation}
+각 phase별 보간 결과를 연결할 때, 경계점 중복을 방지하기 위해 $k > 0$인 phase에서는 첫 번째 보간점을 제거한다.
+
+%-----------------------------------------------------------------------------
+\subsection{피크 반치폭 (FWHM) 추정}
+%-----------------------------------------------------------------------------
+
+각 피크의 반치폭(Full Width at Half Maximum, FWHM)은 Multi-Phase 구조에서 peak/coast phase의 경계를 결정하는 데 사용된다.
+
+내부 피크(경계가 아닌 피크)에 대해서는 scipy~\cite{Virtanen2020}의 \texttt{peak\_widths} 함수를 사용하여 반높이에서의 폭을 샘플 단위로 계산한 뒤 시간 단위로 변환한다:
+\begin{equation}
+  \mathrm{FWHM}_{\mathrm{time}} = \mathrm{FWHM}_{\mathrm{samples}} \cdot \Delta t_{\mathrm{mean}}
+  \label{eq:fwhm}
+\end{equation}
+여기서 $\Delta t_{\mathrm{mean}} = (t_{N-1} - t_0) / (N - 1)$이다.
+
+경계 피크($i = 0$ 또는 $i = N-1$)에 대해서는 반높이 $f_i / 2$에 도달하는 지점까지의 거리를 측정하고, 대칭을 가정하여 2배로 추정한다:
+\begin{equation}
+  \mathrm{FWHM}_{\mathrm{boundary}} = 2 \cdot d_{\mathrm{half}} \cdot \Delta t_{\mathrm{mean}}
+  \label{eq:fwhm_boundary}
+\end{equation}
+
+
+%=============================================================================
+\section{대안 알고리즘과의 비교}
+%=============================================================================
+
+본 구현을 선정하기 위해 4가지 피크 탐지 방법을 체계적으로 비교하였다.
+
+\begin{table}[h]
+\centering
+\caption{피크 탐지 방법 비교}
+\label{tab:methods}
+\begin{tabular}{lcccc}
+\toprule
+방법 & 원리 & 파라미터 수 & 경계 피크 & LGL 희소 데이터 \\
+\midrule
+\texttt{find\_peaks} + smoothing & prominence/distance & 3+ & 별도 로직 필요 & 아티팩트 발생 \\
+\textbf{Topological Persistence} & 0차 persistent homology & \textbf{1} & \textbf{자동 처리} & \textbf{강건} \\
+Savitzky-Golay 영교차 & S-G 1차 미분 부호 변환 & 3+ & 불완전 & 불안정 \\
+CWT (\texttt{find\_peaks\_cwt}) & 연속 웨이블릿 변환 & 2+ & 불완전 & 과다 검출 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+8개 테스트 케이스(합성 가우시안 3종, 실제 LGL 해 5종)에 대한 방법 간 일치율을 Table~\ref{tab:agreement}에 정리하였다.
+
+\begin{table}[h]
+\centering
+\caption{방법 쌍별 피크 수 일치율 (8개 테스트 케이스)}
+\label{tab:agreement}
+\begin{tabular}{lc}
+\toprule
+방법 쌍 & 일치율 \\
+\midrule
+\texttt{find\_peaks} vs Persistence & 88\% (7/8) \\
+\texttt{find\_peaks} vs Savitzky-Golay & 62\% (5/8) \\
+\texttt{find\_peaks} vs CWT & 50\% (4/8) \\
+Persistence vs Savitzky-Golay & 62\% (5/8) \\
+Persistence vs CWT & 50\% (4/8) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Topological Persistence는 baseline(\texttt{find\_peaks})과 가장 높은 일치율을 보였으며, 불일치하는 모든 케이스에서 Persistence가 시각적으로 올바른 결과를 제시하였다.
+구체적 관찰:
+\begin{itemize}[nosep]
+\item \textbf{CWT}: 희소 LGL 노드(15--30점)에서 과다 검출(7--9개 피크)이 심각하였다.
+\item \textbf{Savitzky-Golay}: 윈도우 크기에 민감하여 동일 데이터에서도 결과가 불안정하였다.
+\item \textbf{\texttt{find\_peaks}}: 과도한 스무딩으로 인접 피크를 병합하는 경향이 있었다.
+\end{itemize}
+
+
+%=============================================================================
+\section{구현 매핑}
+%=============================================================================
+
+\begin{table}[h]
+\centering
+\caption{수학적 정의와 Python 코드의 대응 관계}
+\label{tab:mapping}
+\small
+\begin{tabularx}{\textwidth}{lll>{\raggedright\arraybackslash}X}
+\toprule
+수학 표현 & Python 함수/클래스 & 파일 & 비고 \\
+\midrule
+피크 객체 $(b, d, \ell, r)$ & \texttt{\_Peak} & \texttt{peak\_detection.py} & \texttt{\_\_slots\_\_} 최적화 \\
+$\mathrm{pers}(p) = f[b] - f[d]$ & \texttt{\_Peak.persistence()} & \texttt{peak\_detection.py} & $d = \mathrm{None}$이면 $\infty$ \\
+0차 persistent homology & \texttt{\_persistent\_homology()} & \texttt{peak\_detection.py} & $O(N \log N)$ 정렬 지배적 \\
+전체 파이프라인 & \texttt{detect\_peaks()} & \texttt{peak\_detection.py} & 전처리 + 지속성 + FWHM \\
+Phase-aware 보간 & \texttt{\_interpolate\_phased()} & \texttt{peak\_detection.py} & Phase별 독립 CubicSpline \\
+글로벌 보간 & \texttt{\_interpolate\_for\_detection()} & \texttt{peak\_detection.py} & \texttt{phase\_boundaries=None} 시 \\
+FWHM 추정 & \texttt{estimate\_peak\_widths()} & \texttt{peak\_detection.py} & scipy + 경계 피크 보정 \\
+임계값 $\alpha$ & \texttt{PEAK\_PERSISTENCE\_RATIO} & \texttt{config.py} & 기본값 0.10 \\
+보간 점 수 $N_{\mathrm{interp}}$ & \texttt{PEAK\_INTERP\_POINTS} & \texttt{config.py} & 기본값 200 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+
+\subsection{핵심 코드}
+
+\textbf{0차 Persistent Homology 계산}:
+
+\begin{lstlisting}
+def _persistent_homology(seq):
+    n = len(seq)
+    peaks = []
+    idx_to_peak = [None] * n
+    indices = sorted(range(n), key=lambda i: seq[i],
+                     reverse=True)
+    for idx in indices:
+        lft = idx_to_peak[idx - 1] \
+              if idx > 0 and idx_to_peak[idx - 1] is not None \
+              else None
+        rgt = idx_to_peak[idx + 1] \
+              if idx < n - 1 and idx_to_peak[idx + 1] is not None \
+              else None
+        if lft is None and rgt is None:
+            peaks.append(_Peak(idx))
+            idx_to_peak[idx] = len(peaks) - 1
+        elif lft is not None and rgt is None:
+            peaks[lft].right += 1
+            idx_to_peak[idx] = lft
+        elif lft is None and rgt is not None:
+            peaks[rgt].left -= 1
+            idx_to_peak[idx] = rgt
+        else:
+            # Elder rule
+            if seq[peaks[lft].born] > seq[peaks[rgt].born]:
+                peaks[rgt].died = idx
+                peaks[lft].right = peaks[rgt].right
+                for j in range(peaks[rgt].left,
+                               peaks[rgt].right + 1):
+                    idx_to_peak[j] = lft
+            else:
+                peaks[lft].died = idx
+                peaks[rgt].left = peaks[lft].left
+                for j in range(peaks[lft].left,
+                               peaks[lft].right + 1):
+                    idx_to_peak[j] = rgt
+        idx_to_peak[idx] = ...  # assign to surviving island
+    return sorted(peaks,
+                  key=lambda p: p.persistence(seq),
+                  reverse=True)
+\end{lstlisting}
+
+\textbf{유의미한 피크 필터링}:
+
+\begin{lstlisting}
+threshold = PEAK_PERSISTENCE_RATIO * np.max(u_work)
+significant = [p for p in peaks
+               if p.persistence(u_work) >= threshold]
+\end{lstlisting}
+
+
+%=============================================================================
+\section{수치 검증}
+%=============================================================================
+
+%-----------------------------------------------------------------------------
+\subsection{합성 가우시안 프로파일 테스트}
+%-----------------------------------------------------------------------------
+
+가우시안 함수의 합으로 정의된 합성 추력 프로파일을 사용하여 검증한다:
+\begin{equation}
+  u(t) = \sum_{k=1}^{K} A_k \exp\!\left(-\frac{(t - c_k)^2}{2\sigma_k^2}\right)
+  \label{eq:synthetic}
+\end{equation}
+
+\begin{table}[h]
+\centering
+\caption{합성 가우시안 프로파일 테스트 결과}
+\label{tab:synthetic}
+\begin{tabular}{ccccc}
+\toprule
+테스트 케이스 & $K$ & 기대 피크 수 & 검출 결과 & 위치 오차 \\
+\midrule
+단봉 ($c = T/2$) & 1 & 1 & 1 & $< 0.05T$ \\
+쌍봉 ($c = T/4,\, 3T/4$) & 2 & 2 & 2 & $< 0.05T$ \\
+삼봉 ($c = T/6,\, T/2,\, 5T/6$) & 3 & 3 & 3 & $< 0.05T$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%-----------------------------------------------------------------------------
+\subsection{엣지 케이스 검증}
+%-----------------------------------------------------------------------------
+
+\begin{table}[h]
+\centering
+\caption{엣지 케이스 검증 결과}
+\label{tab:edge}
+\begin{tabular}{llcc}
+\toprule
+케이스 & 입력 & 기대 결과 & 실제 결과 \\
+\midrule
+영 신호 & $u(t) = 0$ & 0 피크 & 0 피크 \\
+상수 신호 & $u(t) = c > 0$ & 0 피크 & 0 피크 \\
+경계 피크 (시작) & $u(t) = e^{-3t/T}$ & 1 피크 ($t \approx 0$) & 1 피크 \\
+경계 피크 (끝) & $u(t) = e^{-3(T-t)/T}$ & 1 피크 ($t \approx T$) & 1 피크 \\
+양쪽 경계 + 내부 & 복합 & 3 피크 & 3 피크 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%-----------------------------------------------------------------------------
+\subsection{노이즈 강건성 테스트}
+%-----------------------------------------------------------------------------
+
+NLP 솔버의 해는 다항식/스플라인이므로 Gaussian 노이즈가 아닌 미세 수치 오차 수준의 섭동이 현실적이다.
+$\sigma = 10^{-3}$ 수준의 섭동을 추가하여 검증한다:
+\begin{equation}
+  u_{\mathrm{noisy}}(t) = \max\!\left(u_{\mathrm{clean}}(t) + \varepsilon(t),\; 0\right), \quad \varepsilon \sim \mathcal{N}(0, 10^{-3})
+  \label{eq:noise}
+\end{equation}
+모든 테스트 케이스에서 섭동 유무에 관계없이 동일한 분류 결과를 반환하였다.
+
+%-----------------------------------------------------------------------------
+\subsection{저해상도 보간 테스트}
+%-----------------------------------------------------------------------------
+
+\begin{table}[h]
+\centering
+\caption{저해상도 보간 테스트 결과}
+\label{tab:lowres}
+\begin{tabular}{cccc}
+\toprule
+입력 노드 수 & 프로파일 & 기대 & 결과 \\
+\midrule
+$N = 20$ & 쌍봉 & 2 피크 & 2 피크 \\
+$N = 30$ & 삼봉 & 3 피크 & 3 피크 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+CubicSpline 보간이 15--30개 LGL 노드에서도 충분한 해상도를 제공함을 확인하였다.
+
+%-----------------------------------------------------------------------------
+\subsection{기존 데이터베이스 재분류 결과}
+%-----------------------------------------------------------------------------
+
+Topological Persistence 피크 탐지기로 기존 데이터베이스 전체(4개 고도, 1763건 수렴 궤적)를 재분류한 결과를 Table~\ref{tab:reclassify}에 정리하였다.
+
+\begin{table}[h]
+\centering
+\caption{데이터베이스 재분류 결과 (class 0/1/2)}
+\label{tab:reclassify}
+\begin{tabular}{ccccc}
+\toprule
+고도 [km] & 기존 분포 & 신규 분포 & 변경 건수 & 변경율 \\
+\midrule
+400 & 266 / 61 / 4 & 25 / 219 / 87 & 273/331 & 82.5\% \\
+600 & 233 / 113 / 77 & 12 / 167 / 244 & 336/423 & 79.4\% \\
+800 & 214 / 74 / 1 & 12 / 217 / 60 & 222/289 & 76.8\% \\
+1000 & 431 / 273 / 16 & 23 / 405 / 292 & 515/720 & 71.5\% \\
+\midrule
+\textbf{합계} & \textbf{1144 / 521 / 98} & \textbf{72 / 1008 / 683} & \textbf{1346/1763} & \textbf{76.3\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+기존 \texttt{find\_peaks} 기반 탐지기는 과도한 스무딩으로 인접 피크를 병합하여 unimodal을 과대 추정하고 있었다.
+신규 탐지기에서는 bimodal과 multimodal의 비율이 크게 증가하여 실제 추력 프로파일의 복잡성을 더 정확히 반영한다.
+
+%-----------------------------------------------------------------------------
+\subsection{테스트 코드}
+%-----------------------------------------------------------------------------
+
+총 26개 테스트가 \texttt{tests/test\_peak\_detection.py}에 구현되어 있으며, 모두 통과한다:
+
+\begin{itemize}[nosep]
+\item \texttt{TestUnimodal}: 단봉 탐지 및 분류 (2 tests)
+\item \texttt{TestBimodal}: 쌍봉 탐지 및 분류 (2 tests)
+\item \texttt{TestMultimodal}: 삼봉 탐지 및 분류 (2 tests)
+\item \texttt{TestNoiseRobustness}: 미세 섭동 강건성 (3 tests)
+\item \texttt{TestPhaseStructure}: Phase 구조 결정 (5 tests)
+\item \texttt{TestEdgeCases}: 영 신호, 상수 신호 (2 tests)
+\item \texttt{TestEdgePeaks}: 경계 피크 탐지 (4 tests)
+\item \texttt{TestNonMonotonicTime}: 비단조 시간 처리 (2 tests)
+\item \texttt{TestInterpolation}: 저해상도 보간 (3 tests)
+\end{itemize}
+
+벤치마크 스크립트: \texttt{scripts/compare\_peak\_detectors.py}
+
+
+%=============================================================================
+\section{참고문헌}
+%=============================================================================
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

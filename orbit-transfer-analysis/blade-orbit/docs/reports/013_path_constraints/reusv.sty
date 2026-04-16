@@ -1,0 +1,150 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{reusv}[2024/12/07 v1.0 Simple LaTeX style for research papers]
+
+% Essential packages
+\RequirePackage{times}
+\RequirePackage{graphicx}
+\RequirePackage{fancyhdr}
+\RequirePackage{xcolor}
+\RequirePackage{hyperref}
+\RequirePackage{url}
+\RequirePackage[a4paper,left=1.5cm,right=1.5cm,top=3cm,bottom=3cm]{geometry}
+% Border related packages
+\RequirePackage{tikz}
+\RequirePackage{eso-pic}
+\usetikzlibrary{calc}
+
+% Math and formatting packages
+\RequirePackage{amsmath}
+\RequirePackage{amssymb}
+\RequirePackage{mathtools}
+\RequirePackage{booktabs}
+
+% Language support
+\RequirePackage{kotex}
+
+% Bibliography support
+\RequirePackage{cite}
+\RequirePackage{IEEEtrantools}
+
+% Border parameters with default values
+\newlength{\borderthickness}
+\newlength{\bordermargin}
+\definecolor{bordercolor}{rgb}{0,0,0}  % Default: black
+
+% Default values
+\setlength{\borderthickness}{1pt}
+\setlength{\bordermargin}{1cm}
+
+% Commands to set border parameters
+\newcommand{\setborderthickness}[1]{\setlength{\borderthickness}{#1}}
+\newcommand{\setbordermargin}[1]{\setlength{\bordermargin}{#1}}
+\newcommand{\setbordercolor}[1]{\definecolor{bordercolor}{named}{#1}}
+
+% Command to draw the border
+\newcommand{\drawborder}{%
+  \AddToShipoutPictureBG{%
+    \begin{tikzpicture}[remember picture,overlay]
+      \draw[bordercolor,line width=\borderthickness]
+        ($(current page.north west)+(\bordermargin,-\bordermargin)$)
+        rectangle
+        ($(current page.south east)+(-\bordermargin,\bordermargin)$);
+    \end{tikzpicture}%
+  }%
+}
+
+% Hyperref setup
+\definecolor{mydarkblue}{rgb}{0,0.08,0.45}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=mydarkblue,
+    citecolor=mydarkblue,
+    urlcolor=mydarkblue,
+    pdfborder=0 0 0,
+    pdfpagemode=UseNone
+}
+
+% Header and footer setup
+\pagestyle{fancy}
+\fancyhf{}
+\cfoot{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\baselinestretch}{1.2}
+
+% Logo placeholder dimensions
+\newlength{\leftlogoheight}
+\newlength{\rightlogowidth}
+\setlength{\leftlogoheight}{2cm}
+\setlength{\rightlogowidth}{2cm}
+
+% First page header with logo placeholders
+\fancypagestyle{firstpage}{%
+  \fancyhf{}
+  \fancyhead[L]{%
+      \includegraphics[height=\leftlogoheight]{left-logo.png}%
+  }
+  \fancyhead[R]{%
+      \includegraphics[width=\rightlogowidth]{right-logo-A.png}%
+      \includegraphics[width=\rightlogowidth]{right-logo-B.png}%
+  }
+  \renewcommand{\headrulewidth}{0pt}
+}
+
+% Title and author commands
+\newcommand{\slimtitle}[1]{
+  \let\oldhead\@oddhead
+  \def\@oddhead{%
+    \ifnum\value{page}=1\else
+      \oldhead
+    \fi
+  }
+  \fancyhead[C]{\textit{#1}}
+}
+
+\newcommand{\lightertitle}[1]{
+  \vspace*{0.7cm}  % Space after logos
+  {\baselineskip 25pt \bf{\fontsize{20}{30} \selectfont #1}\vskip .08in}
+}
+
+\newcommand{\lighterauthor}[1]{
+  \vskip .05in
+  {\hspace{1pt} \bf{\fontsize{12}{20}\selectfont #1}
+    \hfill Date: \lighterdate
+    \vskip .12in
+    {\hrule height1pt}
+    \vskip 0.1cm}
+}
+
+% Address and email commands
+\newcommand\blfootnote[1]{%
+  \begingroup
+  \renewcommand\thefootnote{}\footnote{#1}%
+  \addtocounter{footnote}{-1}%
+  \endgroup
+}
+
+\newcommand{\lighteraddress}[2]{%
+    \blfootnote{\hspace*{-6.0mm}#1\,#2.}
+}
+
+\newcommand{\lighteremail}[1]{%
+    \blfootnote{\hspace*{-4.0mm}Email: \texttt{#1}.}
+}
+
+% Section formatting
+\renewcommand{\section}{\@startsection{section}{1}{\z@}{-0.12in}{0.02in}
+             {\large\bf\raggedright}}
+\renewcommand{\subsection}{\@startsection{subsection}{2}{\z@}{-0.10in}{0.01in}
+                {\normalsize\bf\raggedright}}
+
+% Abstract environment
+\renewenvironment{abstract}{
+\vspace{-0.1in}
+\begingroup
+\baselineskip 14pt
+\addtolength\leftmargini{-0.24in}
+\begin{quote}
+{\large\bf Abstract.}}
+{\par\end{quote}\endgroup}
+
+\endinput

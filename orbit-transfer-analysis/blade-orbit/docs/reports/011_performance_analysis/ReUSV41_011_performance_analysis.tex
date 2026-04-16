@@ -1,0 +1,486 @@
+\documentclass[11pt]{article}
+\usepackage{reusv}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{siunitx}
+\usepackage{graphicx}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{listings}
+
+% ── Python 코드 스타일 ──
+\definecolor{codebg}{HTML}{F5F5F0}
+\definecolor{codeframe}{HTML}{CCCCBB}
+\definecolor{codekw}{HTML}{0060A0}
+\definecolor{codecomment}{HTML}{60802A}
+\definecolor{codestring}{HTML}{B03030}
+\lstdefinestyle{pythonstyle}{
+  language=Python,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  framesep=6pt,
+  xleftmargin=8pt,
+  xrightmargin=8pt,
+  basicstyle=\small\ttfamily,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecomment}\itshape,
+  stringstyle=\color{codestring},
+  showstringspaces=false,
+  breaklines=true,
+  tabsize=4,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=6pt,
+  aboveskip=10pt,
+  belowskip=6pt,
+}
+
+\setborderthickness{0.5pt}
+\setbordermargin{1cm}
+\setbordercolor{black}
+
+\slimtitle{드리프트 적분의 솔버 통합과 성능 최적화}
+
+\begin{document}
+
+\drawborder
+\thispagestyle{firstpage}
+
+\lightertitle{드리프트 적분의 솔버 통합과 성능 최적화}
+
+{\normalsize\textit{Research Note No.~011 $|$ bezier-orbit-transfer-scp}}\par\medskip
+
+\def\lighterdate{March 28, 2026}
+\lighterauthor{Suwon Lee$^{\dagger}$}
+
+\lighteraddress{$^\dagger$}{Future Mobility Control Lab, Kookmin University, Seoul, Korea}
+\lighteremail{suwon.lee@kookmin.ac.kr}
+
+%% ── 초록 ─────────────────────────────────────────────────────
+\begin{abstract}
+보고서 009(아핀 근사)\cite{report009}와 010(Bernstein 대수)\cite{report010}에서
+제안한 드리프트 적분 가속 방법론을 SCP 솔버에 통합하고, 구현 과정에서 발견된
+자기일관 중력 보정 문제를 해결한다.
+\texttt{bern\_product}/\texttt{bern\_compose}의 벡터화, 가중치 행렬 캐싱,
+워밍스타트, 적응적 조기 종료, 보정용 $K$ 분리를 적용하여
+초기 Python 구현 대비 \textbf{180배} 속도 향상을 달성하였다.
+최종 벤치마크에서 아핀 방법(수치 보정)은 RK4 대비 \textbf{1.97배},
+아핀 방법(대수 보정)은 \textbf{1.33배} 빠르면서 유사한 비용과 수렴을 보인다.
+마지막으로, 대수적 보정이 연산 속도보다는 \textbf{제어점 최적화 구조의 보존}에
+본질적 가치를 가짐을 논의한다.
+\end{abstract}
+
+%% ══════════════════════════════════════════════════════════════
+\section{도입}
+%% ══════════════════════════════════════════════════════════════
+
+SCP 기반 궤도전이 최적화에서, 매 반복마다 비선형 중력의 드리프트 적분
+\begin{align}
+  \mathbf{c}_v &= \int_0^1 \mathbf{a}_{\mathrm{grav}}\!\bigl(\mathbf{r}_{\mathrm{ref}}(\tau)\bigr)\,d\tau, \label{eq:cv}\\
+  \mathbf{c}_r &= \int_0^1\!\int_0^s \mathbf{a}_{\mathrm{grav}}\!\bigl(\mathbf{r}_{\mathrm{ref}}(\sigma)\bigr)\,d\sigma\,ds \label{eq:cr}
+\end{align}
+을 계산해야 한다\cite{report006}.
+기존 구현은 RK4 수치 전파로 참조 궤적을 얻은 뒤 사다리꼴 적분을 사용하며,
+보고서~008\cite{report008}의 프로파일링에 따르면 이 과정이 SCP 반복 비용의
+86\%를 차지한다.
+
+보고서~009\cite{report009}는 구간별 Taylor 선형화(아핀 근사)로,
+보고서~010\cite{report010}은 Bernstein 대수 파이프라인으로
+RK4를 대체하는 이론을 제시하였으나, 두 방법 모두 솔버에 통합되지 않은
+상태였다.
+본 보고서에서는 (1) 세 방법을 SCP 솔버에 통합하고,
+(2) 구현 과정에서 발견된 자기일관 중력 보정 문제를 해결하며,
+(3) Python 레벨 최적화를 통해 대수적 방법의 실용적 속도를 달성하고,
+(4) 대수적 방법이 갖는 최적화 구조적 함의를 논의한다.
+
+
+%% ══════════════════════════════════════════════════════════════
+\section{솔버 통합 설계}
+%% ══════════════════════════════════════════════════════════════
+
+\subsection{2축 분류: 드리프트 방법 $\times$ 중력 보정 모드}
+
+드리프트 적분 계산을 두 가지 직교 축으로 분류한다.
+
+\paragraph{축 1: 드리프트 적분 방법 (\texttt{method})}
+보정된 참조 위치에서 $\mathbf{c}_v$, $\mathbf{c}_r$을
+\emph{어떻게 계산하느냐}의 차이이다.
+
+\begin{itemize}
+  \item \textbf{RK4} — 기존 방식. RK4 전파 + 사다리꼴 적분.
+  \item \textbf{아핀 근사} — $[0,1]$을 $K$개 구간으로 분할,
+        구간 중점에서 중력 평가, midpoint rule\cite{report009}.
+  \item \textbf{Bernstein 대수} — \texttt{gravity\_composition\_pipeline}으로
+        중력 가속도 제어점을 구한 뒤, 정적분 성질
+        $\int_0^1 p(\tau)\,d\tau = \text{mean}(\mathbf{p})$를 사용\cite{report010}.
+\end{itemize}
+
+\paragraph{축 2: 중력 보정 모드 (\texttt{gravity\_correction})}
+참조 위치 곡선 자체를 \emph{어떻게 구성하느냐}의 차이이다.
+둘 다 ``제어 전용 위치에 중력 이중 적분 $\Phi(\tau)$를 더한다''는
+목적은 같다 (\S\ref{sec:selfconsistent} 참조).
+
+\begin{itemize}
+  \item \textbf{대수적 (\texttt{algebraic})} — Bernstein 파이프라인으로
+        중력 가속도 제어점을 구한 뒤, 적분 행렬 곱으로 이중 적분.
+        수치적분 불사용.
+  \item \textbf{수치적 (\texttt{numerical})} — 이산 점에서 중력 평가,
+        사다리꼴 이중 적분, 최소자승 Bernstein 적합.
+\end{itemize}
+
+두 축이 독립적이므로 $3 \times 2 = 6$가지 조합이 가능하다
+(RK4는 자체 전파를 사용하므로 보정 모드 불필요, 실질 5가지).
+
+\subsection{\texttt{DriftConfig} 데이터클래스}
+
+선택은 \texttt{DriftConfig}로 캡슐화된다:
+
+\begin{lstlisting}[style=pythonstyle]
+DriftConfig(
+    method="bernstein",       # "rk4"|"affine"|"bernstein"
+    gravity_correction="algebraic", # "algebraic"|"numerical"
+    bernstein_K=8,            # pipeline approx degree
+    bernstein_R=20,           # degree reduction target
+    affine_K=8,               # affine segment count
+    gravity_correction_K=4,   # correction pipeline K
+    n_gravity_iter=8,         # max self-consistent iter
+    gravity_tol=1e-6,         # early-stop tolerance
+)
+\end{lstlisting}
+
+\subsection{Inner loop 분기 로직}
+
+SCP 반복 루프 내에서 \texttt{compute\_drift} 디스패처가 방법에 따라 분기한다.
+비RK4 방법에서는 반복 중 RK4 전파를 완전히 건너뛰어 비용을 절감하되,
+\textbf{수렴 후 최종 검증은 항상 고해상도 RK4}로 수행하여 BC 위반을
+정확히 측정한다.
+
+
+%% ══════════════════════════════════════════════════════════════
+\section{자기일관 중력 보정}
+\label{sec:selfconsistent}
+%% ══════════════════════════════════════════════════════════════
+
+\subsection{문제: 제어 전용 위치의 한계}
+
+아핀·Bernstein 방법에서 참조 위치는 적분 체인으로 구성된다:
+\begin{equation}
+  \mathbf{q}_r = \mathbf{r}_0 + t_f \mathbf{v}_0 \boldsymbol{\ell}
+               + t_f^2 \bar{I}_N \mathbf{P}_u
+  \label{eq:qr_control}
+\end{equation}
+여기서 $\boldsymbol{\ell} = [0, \frac{1}{N+2}, \ldots, 1]^T$이다.
+이 위치에는 \textbf{중력의 위치 기여}가 포함되어 있지 않다.
+
+LEO 궤도에서 $t_f \approx 4\,\text{TU}$ 비행 시, 위성은 중력에 의해
+궤도를 거의 한 바퀴 선회한다.
+식~\eqref{eq:qr_control}의 위치는 이를 반영하지 못하여
+실제 궤적과 크게 괴리되며, 이 위치에서 중력을 평가하면
+SCP가 발산한다.
+
+수치 실험에서, 중력 보정 없이 Bernstein/아핀 방법을 적용하면
+$\tau = 0.5$에서의 위치 오차가 $\sim1.7$ (정규화 단위)에 달하고,
+BC 위반이 $\sim5.5$로 수렴하지 못함을 확인하였다.
+
+\subsection{해법: 자기일관 반복}
+
+중력의 이중 적분
+\begin{equation}
+  \Phi(\tau) = \int_0^\tau\!\int_0^s
+    \mathbf{a}_{\mathrm{grav}}\!\bigl(\mathbf{r}(\sigma)\bigr)\,d\sigma\,ds
+  \label{eq:phi}
+\end{equation}
+를 반복적으로 위치에 더하여 실제 궤적에 가까운 참조를 구성한다:
+\begin{equation}
+  \mathbf{q}_r^{(j+1)} = \mathbf{q}_{r,\mathrm{control}}
+    + t_f^2 \, \Phi^{(j)}
+  \label{eq:selfconsistent}
+\end{equation}
+
+\paragraph{대수적 보정.}
+\texttt{gravity\_composition\_pipeline}으로 중력 가속도 제어점
+$\mathbf{q}_a \in B_R$을 구한 뒤, 적분 행렬 곱으로 이중 적분 제어점을 얻는다:
+\begin{equation}
+  \mathbf{q}_\Phi = I_{R+1} \cdot I_R \cdot \mathbf{q}_a
+  \quad \in B_{R+2}
+  \label{eq:phi_algebraic}
+\end{equation}
+이후 $L^2$ 최적 차수 축소로 $B_{N+2}$에 사영하여 위치에 더한다.
+모든 연산이 제어점 공간의 행렬 곱으로 수행된다.
+
+\paragraph{수치적 보정.}
+$n_{\mathrm{pts}}$개 점에서 중력을 평가하고, 사다리꼴 이중 적분으로
+$\Phi(\tau)$를 구한 뒤, 최소자승으로 Bernstein 제어점에 적합한다.
+
+\paragraph{보정 결과.}
+8회 반복 후 $\tau = 0.5$에서의 위치 오차가 $1.69 \to 0.015$
+(100배 이상 개선)으로 줄어, SCP가 정상 수렴하게 된다.
+
+
+%% ══════════════════════════════════════════════════════════════
+\section{벡터화 최적화}
+\label{sec:vectorization}
+%% ══════════════════════════════════════════════════════════════
+
+초기 구현에서 대수적 보정은 RK4 대비 100배 이상 느렸다.
+원인 분석과 최적화 과정을 기술한다.
+
+\subsection{병목 진단: Python 루프 오버헤드}
+
+\texttt{bern\_product}의 초기 구현은 이중 Python 루프였다:
+\begin{lstlisting}[style=pythonstyle]
+for k in range(N + M + 1):
+    for j in range(j_min, j_max + 1):
+        r[k] += C(N,j)*C(M,k-j)/C(N+M,k) * p[j] * q[k-j]
+\end{lstlisting}
+$N = M = 28$일 때 $\sim$588회의 Python 루프 반복이 발생하며,
+반복당 함수 호출·인덱싱 오버헤드가 $\sim$1--5\,$\mu$s이므로
+총 $\sim$3\,ms가 소요된다.
+\texttt{bern\_compose} ($K=8$)는 이를 $\sim$24회 호출하므로 $\sim$100\,ms이다.
+
+실제 부동소수점 연산(FLOP) 수는 $\sim$25,000으로, numpy 벡터 연산으로는
+$\sim$0.003\,ms에 처리 가능하다.
+즉 \textbf{40,000배}의 오버헤드가 Python 루프에서 발생하고 있었다.
+
+\subsection{적용된 최적화}
+
+\begin{enumerate}
+  \item \textbf{가중치 행렬 캐싱}:
+    $W_{N,M}[k,j] = C(N,j) C(M,k\!-\!j) / C(N\!+\!M,k)$를
+    \texttt{@lru\_cache}로 $(N,M)$ 쌍별로 사전 계산.
+    Toeplitz 인덱스 구조도 동일하게 캐싱.
+
+  \item \textbf{\texttt{bern\_product} 벡터화}:
+    이중 루프를 단일 numpy 연산으로 대체:
+\begin{lstlisting}[style=pythonstyle]
+r = np.sum(W * p[np.newaxis, :] * Q_shifted, axis=1)
+\end{lstlisting}
+
+  \item \textbf{\texttt{degree\_elevate} 벡터화}:
+    내부 루프를 배열 슬라이스 연산으로 대체.
+
+  \item \textbf{\texttt{bern\_compose} 개선}:
+    $g^i \cdot (1\!-\!g)^{K-i}$의 차수가 항상 $KM$이므로
+    불필요한 \texttt{degree\_elevate} 호출 제거.
+
+  \item \textbf{\texttt{degree\_reduce} 벡터화}:
+    교차 Gram 행렬 $C_{Q \to R}$을 \texttt{@lru\_cache}로 캐싱.
+    2D 배열 입력 시 한 번의 \texttt{np.linalg.solve}로 처리.
+
+  \item \textbf{Chebyshev 근사 캐싱}:
+    $h(s) = s^{-3/2}$의 $K$차 Bernstein 근사를
+    반올림된 $[a,b]$ 구간 키로 캐싱.
+
+  \item \textbf{보정용 $K$ 분리}:
+    자기일관 보정에는 \texttt{gravity\_correction\_K}$=4$를 사용하여
+    \texttt{bern\_compose} 비용을 절반으로 줄임.
+    최종 드리프트 계산은 \texttt{bernstein\_K}$=8$로 정확도 유지.
+
+  \item \textbf{워밍스타트 + 적응적 조기 종료}:
+    이전 SCP 반복의 $\Phi$ 제어점을 재사용하여 초기값으로 제공.
+    $\|\Phi^{(j+1)} - \Phi^{(j)}\| < \texttt{gravity\_tol}$ 시 조기 종료.
+    SCP 수렴 근방에서 보정 반복이 8회 $\to$ 1--2회로 감소.
+\end{enumerate}
+
+\subsection{최적화 단계별 성능 변화}
+
+표~\ref{tab:optim_stages}에 시나리오~B (LEO$\to$1.2$a_0$)에서의
+SCP 전체 풀이 시간 변화를 정리한다.
+
+\begin{table}[h]
+\centering
+\caption{최적화 단계별 SCP 전체 풀이 시간 (Affine, 대수적 보정)}
+\label{tab:optim_stages}
+\begin{tabular}{lrrr}
+\toprule
+단계 & 시간 [ms] & RK4 대비 & 누적 배속 \\
+\midrule
+초기 (Python 루프)    & 25,564 & 0.01$\times$ & 1$\times$ \\
+벡터화 적용 후        & 392    & 0.48$\times$ & 65$\times$ \\
++ 워밍스타트/조기종료  &        &              & \\
+\quad + $K_\mathrm{corr}=4$ &   &              & \\
+\quad + Chebyshev 캐싱 & 142   & 1.33$\times$ & 180$\times$ \\
+\midrule
+RK4 (비교)            & 189   & 1.00$\times$ & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+%% ══════════════════════════════════════════════════════════════
+\section{성능 벤치마크}
+%% ══════════════════════════════════════════════════════════════
+
+\subsection{SCP 전체 풀이}
+
+표~\ref{tab:scp_final}은 최종 최적화 후의 SCP 전체 풀이 결과이다.
+시나리오~B (LEO$\to$1.2$a_0$, $N=12$, $t_f^* = 3.62$),
+$\texttt{tol\_ctrl} = 10^{-3}$, $\texttt{tol\_bc} = 0.05$.
+
+\begin{table}[h]
+\centering
+\caption{SCP 전체 풀이 최종 벤치마크 (시나리오 B)}
+\label{tab:scp_final}
+\begin{tabular}{lrrrcrr}
+\toprule
+방법 & 시간 & 배속 & 비용 $J$ & 수렴 & 반복 & BC 위반 \\
+\midrule
+RK4              & 189\,ms  & 1.00$\times$ & 0.00665 & $\checkmark$ & 24 & $3.3 \!\times\! 10^{-3}$ \\
+Affine(num)      & 96\,ms   & 1.97$\times$ & 0.00653 & $\checkmark$ & 23 & $2.4 \!\times\! 10^{-2}$ \\
+Affine(alg)      & 142\,ms  & 1.33$\times$ & 0.00621 & $\checkmark$ & 23 & $3.1 \!\times\! 10^{-2}$ \\
+Bern(num)        & 150\,ms  & 1.26$\times$ & 0.00635 & $\checkmark$ & 29 & $3.3 \!\times\! 10^{-3}$ \\
+Bern(alg)        & 180\,ms  & 1.05$\times$ & 0.00609 & $\checkmark$ & 24 & $1.5 \!\times\! 10^{-2}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{주요 관측}:
+\begin{itemize}
+  \item 모든 방법이 수렴하며 비용 함수 $J$가 $0.006$--$0.007$ 범위로 일치한다.
+  \item Affine(num)이 96\,ms로 최고속이며, RK4 대비 \textbf{1.97배} 빠르다.
+  \item 대수적 보정도 RK4와 동등하거나 빠른 속도를 달성하였다
+        (Affine: 1.33$\times$, Bern: 1.05$\times$).
+  \item Bern(num)과 Bern(alg)의 BC 위반 차이
+        ($3.3 \!\times\! 10^{-3}$ vs $1.5 \!\times\! 10^{-2}$)는
+        보정 모드에 따른 참조 위치 정확도 차이를 반영한다.
+\end{itemize}
+
+\subsection{비용 구조 분석}
+
+표~\ref{tab:cost_breakdown}은 SCP 1회 반복당 추정 비용 구성이다.
+
+\begin{table}[h]
+\centering
+\caption{SCP 1회 반복당 비용 구성 (시나리오 B, 추정)}
+\label{tab:cost_breakdown}
+\begin{tabular}{lrrrr}
+\toprule
+구성요소 & RK4 & Affine(num) & Affine(alg) & Bern(alg) \\
+\midrule
+참조 궤적/중력 보정 & 4.0  & 2.4 & 2.5 & 3.5 \\
+드리프트 적분       & 0.04 & 0.5 & 0.5 & 0.4 \\
+QP/SOCP (CVXPY)     & 3.5  & 3.5 & 3.5 & 3.5 \\
+\midrule
+\textbf{반복당 합계 [ms]} & \textbf{7.5} & \textbf{6.4} & \textbf{6.5} & \textbf{7.4} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+워밍스타트 + 적응적 조기 종료 덕에 중력 보정 반복이
+SCP 초기에는 3--4회, 수렴 근방에서는 1회로 줄어
+전체 비용에서 보정이 차지하는 비중이 작아졌다.
+
+\subsection{Numerical이 Algebraic보다 빠른 이유}
+
+대수적 보정의 1회 반복은 \texttt{gravity\_composition\_pipeline}을 호출하여
+\texttt{bern\_product}를 $\sim$20회 순차 실행한다.
+각 호출은 벡터화되어 빠르지만, Python 함수 호출 + 배열 생성 오버헤드가
+호출당 $\sim$0.02\,ms씩 누적되어 $\sim$0.4\,ms/반복이다.
+
+반면 수치적 보정은 행렬곱 + 벡터 중력평가 + 누적합 + lstsq =
+\textbf{5회}의 bulk numpy 호출로 $\sim$0.08\,ms/반복이다.
+
+즉 연산량(FLOP)은 대수적이 적지만, \textbf{Python 레벨 함수 호출 횟수}에서
+$\sim$4배 차이가 발생한다.
+
+
+%% ══════════════════════════════════════════════════════════════
+\section{최적화 구조적 함의}
+\label{sec:structure}
+%% ══════════════════════════════════════════════════════════════
+
+연산 속도만으로는 수치적 보정이 우위이나,
+제어점에 대한 볼록 최적화의 관점에서는 대수적 보정이
+본질적으로 다른 가치를 제공한다.
+
+\subsection{수치적 보정: $\mathbf{c}_v$는 불투명한 상수}
+
+수치적 보정에서 드리프트 적분은 이산 점에서의 중력 평가와 수치적분을
+거쳐 산출된다.
+결과 $\mathbf{c}_v$, $\mathbf{c}_r$은 제어점 $\mathbf{P}_u$에 대한
+함수적 관계가 소실된 ``불투명한 상수''로서 QP/SOCP에 투입된다.
+따라서 매 SCP 반복마다 $\mathbf{c}_v$, $\mathbf{c}_r$을 새로 계산해야 하며,
+이들의 제어점 감도 $\partial \mathbf{c}_v / \partial \mathbf{P}_u$를
+구하려면 $3(N+1)$회의 유한차분이 필요하다.
+
+\subsection{대수적 보정: $\mathbf{c}_v$는 $\mathbf{P}_u$의 명시적 함수}
+
+대수적 보정에서는 전체 계산 체인이 제어점 공간의 대수적 연산으로 구성된다:
+\[
+  \mathbf{P}_u \;\xrightarrow{\text{선형}}\;
+  \mathbf{q}_r \;\xrightarrow{\text{Bernstein 대수}}\;
+  \mathbf{q}_{a} \;\xrightarrow{\text{선형 (mean)}}\;
+  \mathbf{c}_v
+\]
+
+이 구조는 두 가지를 가능하게 한다.
+
+\paragraph{(a) 커플링 행렬의 해석적 계산.}
+보고서~009\cite{report009}의 커플링 행렬
+\begin{equation}
+  \mathbf{c}_v \approx \mathbf{c}_{v,\mathrm{ref}} + M_v \, \Delta\mathbf{P}_u
+  \label{eq:coupling}
+\end{equation}
+을 해석적으로 산출할 수 있다.
+이를 경계조건에 반영하면 $\mathbf{P}_u$에 대해 여전히 선형이면서도
+더 정확한 선형화가 가능하여 SCP 수렴이 가속된다.
+
+\paragraph{(b) 단일 볼록 정식화 가능성.}
+모든 비선형성이 Bernstein 대수 (곱, 합성, 차수 축소)로 표현되면,
+중력의 제어점 의존성을 경계조건에 명시적으로 포함하여
+반복 선형화 없이 \textbf{단일 볼록 최적화}로 풀 수 있는 구조가 열린다.
+이는 보고서~010\cite{report010}이 제시한 ``수치적분 없는 드리프트 적분''의
+궁극적 활용 방향이다.
+
+\subsection{요약: 속도 vs 구조}
+
+\begin{table}[h]
+\centering
+\caption{수치적 vs 대수적 보정의 특성 비교}
+\label{tab:num_vs_alg}
+\begin{tabular}{lcc}
+\toprule
+특성 & Numerical & Algebraic \\
+\midrule
+SCP 1회 반복 비용        & 빠름 (5회 호출) & 느림 (20회 호출) \\
+$\mathbf{c}_v$와 $\mathbf{P}_u$의 관계 & 불투명 (상수) & \textbf{명시적 함수} \\
+커플링 행렬 $M_v$        & 유한차분 필요    & \textbf{해석적 계산 가능} \\
+단일 볼록 정식화          & 불가능          & \textbf{가능성 있음} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+대수적 보정의 본질적 가치는 연산 속도가 아니라,
+\textbf{제어점 최적화 구조를 보존한다}는 점에 있다.
+
+
+%% ══════════════════════════════════════════════════════════════
+\section{결론}
+%% ══════════════════════════════════════════════════════════════
+
+\begin{enumerate}
+  \item 보고서 009, 010의 드리프트 적분 방법을 SCP 솔버에 통합하고,
+        제어 전용 위치에 빠진 중력 기여를 자기일관 반복으로 보정하는
+        방법을 제안·구현하였다.
+
+  \item Python 루프의 벡터화, 가중치 행렬 캐싱, 워밍스타트, 적응적 조기 종료,
+        보정용 $K$ 분리를 적용하여
+        초기 구현 대비 \textbf{180배} 속도 향상을 달성하였다.
+
+  \item 최종 벤치마크에서 Affine(numerical)은 RK4 대비 \textbf{1.97배},
+        Affine(algebraic)은 \textbf{1.33배} 빠르면서
+        모든 방법이 유사한 비용과 수렴을 보였다.
+
+  \item 대수적 보정은 연산 속도에서는 수치적 보정에 뒤지지만,
+        드리프트 적분의 제어점 의존성을 명시적으로 보존하여
+        커플링 행렬 산출 및 단일 볼록 정식화로의 확장이 가능하다.
+        이는 Bernstein 대수 프레임워크의 구조적 우위이다.
+\end{enumerate}
+
+
+%% ── 참고문헌 ─────────────────────────────────────────────────
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

@@ -1,0 +1,323 @@
+\documentclass[11pt]{article}
+\usepackage{reusv}
+
+\setborderthickness{0.5pt}
+\setbordermargin{1cm}
+\setbordercolor{black}
+
+\slimtitle{베지어 기저 및 적분 행렬}
+
+\begin{document}
+
+\drawborder
+\thispagestyle{firstpage}
+
+\lightertitle{베지어 기저 및 적분 행렬}
+
+{\normalsize\textit{Research Note No.~004 $|$ bezier-orbit-transfer-scp}}\par\medskip
+
+\def\lighterdate{March 12, 2026}
+\lighterauthor{Suwon Lee$^{\dagger}$}
+
+\lighteraddress{$^\dagger$}{Future Mobility Control Lab, Kookmin University, Seoul, Korea}
+\lighteremail{suwon.lee@kookmin.ac.kr}
+
+\begin{abstract}
+본 보고서는 베지어 곡선 기반 궤적최적화의 핵심 수학적 도구인
+Bernstein 기저함수, 미분 행렬, 적분 행렬, Gram 행렬을 체계적으로 유도하고 정리한다.
+특히 \cite{report003}에서 채택한 추진 가속도 베지어 성형 방식에서
+위치·속도가 제어점의 선형 함수로 표현되는 구조를 행렬 형식으로 명시적으로 도출한다.
+이 결과는 이후 경계조건 인코딩, 제약조건 처리, SCP 정식화의 기반이 된다.
+\end{abstract}
+
+%% ============================================================
+\section{Bernstein 기저함수}
+%% ============================================================
+
+\subsection{정의}
+
+$N$차 Bernstein 기저함수는 다음과 같이 정의된다.
+
+\begin{equation}
+  B_i^N(\tau) = \binom{N}{i}(1-\tau)^{N-i}\tau^i, \quad i = 0, 1, \ldots, N,\quad \tau \in [0,1]
+  \label{eq:bernstein}
+\end{equation}
+
+벡터 형태로 $\mathbf{B}_N(\tau) = [B_0^N(\tau),\, B_1^N(\tau),\, \ldots,\, B_N^N(\tau)]^T \in \mathbb{R}^{N+1}$로 쓴다.
+
+\subsection{주요 성질}
+
+\begin{description}
+  \item[비음성] $B_i^N(\tau) \geq 0$ for all $\tau \in [0,1]$
+  \item[분할 단위] $\sum_{i=0}^N B_i^N(\tau) = 1$, 즉 $\mathbf{1}^T \mathbf{B}_N(\tau) = 1$
+  \item[끝점 보간] $B_i^N(0) = \delta_{i0}$,\quad $B_i^N(1) = \delta_{iN}$
+        (즉, $\mathbf{B}_N(0) = \mathbf{e}_0$, $\mathbf{B}_N(1) = \mathbf{e}_N$)
+  \item[대칭성] $B_i^N(\tau) = B_{N-i}^N(1-\tau)$
+  \item[재귀 관계] $B_i^N(\tau) = (1-\tau)B_i^{N-1}(\tau) + \tau B_{i-1}^{N-1}(\tau)$
+\end{description}
+
+끝점 보간 성질은 베지어 곡선의 첫 번째 및 마지막 제어점이 곡선의 끝점이 됨을 의미하며,
+경계조건 처리에서 핵심적으로 활용된다.
+
+\subsection{스칼라 베지어 곡선}
+
+제어점 벡터 $\mathbf{p} = [p_0, p_1, \ldots, p_N]^T \in \mathbb{R}^{N+1}$에 대해
+$N$차 스칼라 베지어 곡선은 다음과 같다.
+
+\begin{equation}
+  q(\tau) = \mathbf{B}_N(\tau)^T \mathbf{p} = \sum_{i=0}^{N} B_i^N(\tau)\, p_i
+  \label{eq:bezier_scalar}
+\end{equation}
+
+끝점 조건: $q(0) = p_0$,\quad $q(1) = p_N$.
+
+%% ============================================================
+\section{미분 행렬}
+%% ============================================================
+
+\subsection{Bernstein 기저의 미분}
+
+$B_i^N(\tau)$의 $\tau$에 대한 미분은 차수가 하나 낮은 기저함수의 선형결합이다.
+
+\begin{equation}
+  \frac{d}{d\tau}B_i^N(\tau) = N\left[B_{i-1}^{N-1}(\tau) - B_i^{N-1}(\tau)\right]
+  \label{eq:bernstein_deriv}
+\end{equation}
+
+여기서 $B_{-1}^{N-1} \equiv 0$, $B_N^{N-1} \equiv 0$으로 정의한다.
+
+\subsection{미분 행렬 $\mathbf{D}_N$}
+
+베지어 곡선의 미분은 다음과 같이 행렬로 표현된다.
+
+\begin{equation}
+  \frac{d}{d\tau} q(\tau) = \mathbf{B}_{N-1}(\tau)^T \underbrace{N\,\boldsymbol{\Delta}_N}_{\mathbf{D}_N} \mathbf{p}
+  \label{eq:bezier_deriv}
+\end{equation}
+
+여기서 $\boldsymbol{\Delta}_N \in \mathbb{R}^{N \times (N+1)}$은 전향 차분 행렬이다.
+
+\begin{equation}
+  \boldsymbol{\Delta}_N =
+  \begin{bmatrix}
+    -1 &  1 &  0 & \cdots & 0 \\
+     0 & -1 &  1 & \cdots & 0 \\
+     \vdots & & \ddots & \ddots & \vdots \\
+     0 & 0 & \cdots & -1 & 1
+  \end{bmatrix}, \quad
+  \mathbf{D}_N = N\,\boldsymbol{\Delta}_N \in \mathbb{R}^{N \times (N+1)}
+  \label{eq:diff_matrix}
+\end{equation}
+
+따라서 $q'(\tau) = \mathbf{B}_{N-1}(\tau)^T (\mathbf{D}_N \mathbf{p})$이며,
+미분된 곡선도 차수 $N-1$의 베지어 곡선이 된다.
+물리 시간 $t$에 대한 미분은 $dq/dt = (1/t_f)\, dq/d\tau$이다.
+
+%% ============================================================
+\section{적분 행렬}
+%% ============================================================
+
+\subsection{Bernstein 기저의 부정적분}
+
+$B_i^N(\tau)$의 부정적분은 다음과 같다.
+
+\begin{equation}
+  \int_0^\tau B_i^N(s)\,ds = \frac{1}{N+1}\sum_{k=i+1}^{N+1} B_k^{N+1}(\tau)
+  \label{eq:bernstein_integral}
+\end{equation}
+
+\subsection{적분 행렬 $\mathbf{I}_N$}
+
+베지어 곡선의 적분은 다음과 같이 표현된다.
+
+\begin{equation}
+  \int_0^\tau q(s)\,ds = \mathbf{B}_{N+1}(\tau)^T \mathbf{I}_N\, \mathbf{p}
+  \label{eq:bezier_integral}
+\end{equation}
+
+여기서 $\mathbf{I}_N \in \mathbb{R}^{(N+2)\times(N+1)}$은 적분 행렬로,
+식~\eqref{eq:bernstein_integral}으로부터 그 원소는 다음과 같이 결정된다.
+
+\begin{equation}
+  [\mathbf{I}_N]_{k,\,i} =
+  \begin{cases}
+    \dfrac{1}{N+1} & k > i \\[4pt]
+    0              & k \leq i
+  \end{cases},
+  \quad k = 0,\ldots,N+1,\quad i = 0,\ldots,N
+  \label{eq:IN_elements}
+\end{equation}
+
+구체적으로 $N=2$일 때 $\mathbf{I}_2$는 다음과 같다.
+
+\begin{equation}
+  \mathbf{I}_2 = \frac{1}{3}
+  \begin{bmatrix}
+    0 & 0 & 0 \\
+    1 & 0 & 0 \\
+    1 & 1 & 0 \\
+    1 & 1 & 1
+  \end{bmatrix}
+  \label{eq:I2_example}
+\end{equation}
+
+일반적으로 $\mathbf{I}_N$은 하삼각 Toeplitz 구조를 가지며 구성이 간단하다.
+중요한 성질로, $\tau=1$일 때 $\mathbf{B}_{N+1}(1) = \mathbf{e}_{N+1}$이므로:
+
+\begin{equation}
+  \int_0^1 q(\tau)\,d\tau = \mathbf{e}_{N+1}^T \mathbf{I}_N\, \mathbf{p}
+  = \frac{1}{N+1}\sum_{i=0}^{N} p_i = \frac{\mathbf{1}^T \mathbf{p}}{N+1}
+  \label{eq:definite_integral}
+\end{equation}
+
+즉, 베지어 곡선의 정적분은 제어점의 산술평균이다.
+
+\subsection{이중 적분 행렬 $\bar{\mathbf{I}}_N$}
+
+가속도를 두 번 적분하면 위치가 된다.
+$q(\tau)$의 이중 적분은 적분 행렬을 연속 적용하여 얻는다.
+
+\begin{equation}
+  \int_0^\tau\!\int_0^s q(\sigma)\,d\sigma\,ds
+  = \mathbf{B}_{N+2}(\tau)^T \underbrace{\mathbf{I}_{N+1}\,\mathbf{I}_N}_{\bar{\mathbf{I}}_N}\, \mathbf{p}
+  \label{eq:double_integral}
+\end{equation}
+
+여기서 $\bar{\mathbf{I}}_N = \mathbf{I}_{N+1}\mathbf{I}_N \in \mathbb{R}^{(N+3)\times(N+1)}$이다.
+이 행렬은 추진 가속도 제어점으로부터 위치 궤적을 직접 연결하는 핵심 행렬이다.
+
+%% ============================================================
+\section{Gram 행렬}
+%% ============================================================
+
+\subsection{정의 및 해석적 표현}
+
+Bernstein 기저의 Gram 행렬 $\mathbf{G}_N \in \mathbb{R}^{(N+1)\times(N+1)}$은 다음과 같이 정의된다.
+
+\begin{equation}
+  \mathbf{G}_N \triangleq \int_0^1 \mathbf{B}_N(\tau)\mathbf{B}_N(\tau)^T\,d\tau
+  \label{eq:gram}
+\end{equation}
+
+원소는 베타 함수를 이용하여 해석적으로 계산된다.
+
+\begin{equation}
+  [\mathbf{G}_N]_{i,j} = \int_0^1 B_i^N(\tau)B_j^N(\tau)\,d\tau
+  = \binom{N}{i}\binom{N}{j}\frac{(i+j)!(2N-i-j)!}{(2N+1)!}
+  = \frac{\binom{N}{i}\binom{N}{j}}{\binom{2N}{i+j}(2N+1)}
+  \label{eq:gram_elements}
+\end{equation}
+
+$\mathbf{G}_N$은 대칭 양정치 행렬이며, \cite{report003}에서 제시한 목적함수의 이차형식 표현
+$J = t_f\,\mathbf{p}^T \mathbf{H}\,\mathbf{p}$에서 $\mathbf{H}$의 구성 블록이다.
+\begin{equation}
+  \mathbf{H} = \mathrm{blkdiag}(\mathbf{G}_N,\, \mathbf{G}_N,\, \mathbf{G}_N)
+\end{equation}
+
+%% ============================================================
+\section{제어점을 통한 상태 궤적 표현}
+%% ============================================================
+
+\subsection{SCP 선형화 구조}
+
+\cite{report002}의 운동 방정식을 참조 궤도 $(\bar{\mathbf{r}}(\tau), \bar{\mathbf{v}}(\tau))$ 주변에서
+선형화하면 다음과 같다.
+
+\begin{equation}
+  \ddot{\mathbf{r}} = \underbrace{\mathbf{f}_0(\tau)}_{\text{참조 기여}} + \underbrace{\mathbf{A}(\tau)\delta\mathbf{r}}_{\text{선형화 항}} + \mathbf{u}
+  \label{eq:linearized}
+\end{equation}
+
+여기서 $\mathbf{f}_0(\tau)$는 참조 궤도에서의 중력+섭동, $\mathbf{A}(\tau)$는 Jacobian,
+$\delta\mathbf{r} = \mathbf{r} - \bar{\mathbf{r}}$이다.
+$\mathbf{A}(\tau)\delta\mathbf{r}$ 항이 작다는 가정 하에 (SCP 각 반복에서 갱신)
+$\mathbf{u}$의 기여만 먼저 추출하면 다음의 적분 관계를 얻는다.
+
+\subsection{속도에 대한 적분 관계}
+
+$\mathbf{u}(\tau) = \mathbf{B}_N(\tau)^T \mathbf{P}_u$로 놓으면 ($\mathbf{P}_u \in \mathbb{R}^{(N+1)\times 3}$),
+물리 시간 $t = t_f \tau$에서의 속도 변화는:
+
+\begin{equation}
+  \mathbf{v}(\tau) = \mathbf{v}_0 + t_f \int_0^\tau \bigl[\mathbf{f}_0(s) + \mathbf{A}(s)\delta\mathbf{r}(s)\bigr]\,ds
+  + t_f\,\mathbf{B}_{N+1}(\tau)^T \mathbf{I}_N\, \mathbf{P}_u
+  \label{eq:velocity_integral}
+\end{equation}
+
+$\mathbf{u}$에 의한 속도 기여는 $\mathbf{I}_N$을 통해 $\mathbf{P}_u$의 \textbf{선형 함수}이다.
+
+\subsection{위치에 대한 이중 적분 관계}
+
+위치는 속도를 다시 적분하여:
+
+\begin{equation}
+  \mathbf{r}(\tau) = \mathbf{r}_0 + t_f \mathbf{v}_0 \tau
+  + t_f \int_0^\tau\!\int_0^s \bigl[\mathbf{f}_0 + \mathbf{A}\delta\mathbf{r}\bigr]\,d\sigma\,ds
+  + t_f^2\,\mathbf{B}_{N+2}(\tau)^T \bar{\mathbf{I}}_N\, \mathbf{P}_u
+  \label{eq:position_integral}
+\end{equation}
+
+$\mathbf{u}$에 의한 위치 기여는 이중 적분 행렬 $\bar{\mathbf{I}}_N = \mathbf{I}_{N+1}\mathbf{I}_N$을 통해
+$\mathbf{P}_u$의 선형 함수이다.
+
+\subsection{경계조건의 선형 제약 표현}
+
+종말 위치 조건 $\mathbf{r}(1) = \mathbf{r}_f$와 속도 조건 $\mathbf{v}(1) = \mathbf{v}_f$에서
+$\mathbf{B}_{N+1}(1) = \mathbf{e}_{N+1}$, $\mathbf{B}_{N+2}(1) = \mathbf{e}_{N+2}$이므로:
+
+\begin{align}
+  \mathbf{v}_f &= \mathbf{v}_0 + t_f\,\mathbf{c}_v + t_f\,\mathbf{e}_{N+1}^T \mathbf{I}_N\, \mathbf{P}_u \label{eq:bc_v}\\
+  \mathbf{r}_f &= \mathbf{r}_0 + t_f\,\mathbf{v}_0 + t_f\,\mathbf{c}_r + t_f^2\,\mathbf{e}_{N+2}^T \bar{\mathbf{I}}_N\, \mathbf{P}_u \label{eq:bc_r}
+\end{align}
+
+여기서 $\mathbf{c}_v$, $\mathbf{c}_r$는 참조 궤도 기여(SCP 반복마다 갱신되는 상수)이다.
+$\mathbf{e}_{N+1}^T \mathbf{I}_N$과 $\mathbf{e}_{N+2}^T \bar{\mathbf{I}}_N$은 상수 행 벡터이므로,
+식~\eqref{eq:bc_v}, \eqref{eq:bc_r}은 $\mathbf{P}_u$에 대한 \textbf{선형 등식 제약조건}이다.
+
+초기 조건 $\mathbf{r}(0) = \mathbf{r}_0$, $\mathbf{v}(0) = \mathbf{v}_0$는
+식~\eqref{eq:velocity_integral}, \eqref{eq:position_integral}에서 $\tau=0$으로 놓으면
+$\mathbf{B}_{N+1}(0) = \mathbf{e}_0$, $\mathbf{B}_{N+2}(0) = \mathbf{e}_0$이고
+$[\mathbf{I}_N]_{0,:} = \mathbf{0}$이므로 자동으로 만족된다.
+
+%% ============================================================
+\section{행렬 크기 및 수치 성질 요약}
+%% ============================================================
+
+\begin{table}[h]
+  \centering
+  \caption{베지어 기저 관련 행렬 요약}
+  \label{tab:matrices}
+  \begin{tabular}{llll}
+    \toprule
+    행렬 & 크기 & 성질 & 역할 \\
+    \midrule
+    $\mathbf{B}_N(\tau)$   & $(N+1)\times 1$ & 비음성, 합 = 1 & 기저 벡터 \\
+    $\mathbf{D}_N$         & $N\times(N+1)$ & 전향 차분 & 미분 (차수 감소) \\
+    $\mathbf{I}_N$         & $(N+2)\times(N+1)$ & 하삼각, Toeplitz & 1회 적분 \\
+    $\bar{\mathbf{I}}_N = \mathbf{I}_{N+1}\mathbf{I}_N$ & $(N+3)\times(N+1)$ & 하삼각 & 2회 적분 \\
+    $\mathbf{G}_N$         & $(N+1)\times(N+1)$ & 대칭 양정치 & 목적함수 이차형식 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Bernstein 기저의 조건수는 차수 $N$이 증가할수록 커진다.
+프로젝트에서 검토하는 $N = 8 \sim 20$ 범위에서 정규화된 변수를 사용하면
+Gram 행렬의 조건수가 수치적으로 허용 가능한 수준에 유지됨을 별도로 검증할 필요가 있다.
+
+%% ============================================================
+\section{요약}
+%% ============================================================
+
+\begin{itemize}
+  \item Bernstein 기저 $\mathbf{B}_N(\tau)$의 끝점 보간 성질로 인해 초기 제어점이 자동으로 초기 경계조건을 만족한다.
+  \item 미분 행렬 $\mathbf{D}_N$은 베지어 곡선 미분을 차수 $N-1$ 베지어 곡선으로 변환한다.
+  \item 적분 행렬 $\mathbf{I}_N$은 가속도 → 속도, 이중 적분 $\bar{\mathbf{I}}_N = \mathbf{I}_{N+1}\mathbf{I}_N$은 가속도 → 위치의 선형 변환을 제공한다.
+  \item 종말 경계조건은 $\mathbf{e}_{N+1}^T\mathbf{I}_N$, $\mathbf{e}_{N+2}^T\bar{\mathbf{I}}_N$을 통해 제어점의 선형 등식 제약조건으로 인코딩된다.
+  \item Gram 행렬 $\mathbf{G}_N$은 양정치이므로 목적함수가 볼록 이차형식임이 보장된다.
+  \item 이들 행렬은 모두 해석적으로 계산 가능하며, SCP 반복과 무관하게 사전에 구성할 수 있다.
+\end{itemize}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

@@ -1,0 +1,15 @@
+name: orbit-transfer
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - matplotlib
+  - pytest
+  - pip
+  - pip:
+    - casadi
+    - scikit-learn
+    - duckdb

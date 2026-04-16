@@ -1,0 +1,723 @@
+\documentclass[11pt]{article}
+\usepackage{reusv}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{bm}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, decorations.pathreplacing, calc, patterns}
+
+\newtheorem{definition}{정의}
+\newtheorem{proposition}{명제}
+\newtheorem{remark}{비고}
+
+\setborderthickness{0.5pt}
+\setbordermargin{1cm}
+\setbordercolor{black}
+
+\begin{document}
+\drawborder
+\thispagestyle{firstpage}
+
+%% ============================================================
+%%  TITLE BLOCK
+%% ============================================================
+\slimtitle{코스팅을 위한 함수 공간 설계}
+\lightertitle{코스팅 구간을 위한 함수 공간 설계: 직합에서 BLADE로}
+
+{\normalsize\textit{Research Note No.~015 $|$ bezier-orbit-transfer-scp}}\par\medskip
+
+\def\lighterdate{March 29, 2026}
+\lighterauthor{Suwon Lee$^{\dagger}$}
+
+\lighteraddress{$^\dagger$}{Future Mobility Control Lab, Kookmin University, Seoul, Korea}
+\lighteremail{suwon.lee@kookmin.ac.kr}
+
+%% ============================================================
+%%  ABSTRACT
+%% ============================================================
+\begin{abstract}
+\cite{report003,report004}에서 추진 가속도를 Bernstein 기저로 전개하는 베지어 궤적 성형을
+정식화하였으나, Bernstein 다항식은 유한 구간에서 항등적으로 0이 될 수 없으므로
+\textbf{코스팅(추력\,=\,0) 구간}을 구조적으로 표현할 수 없다.
+\cite{efc001}의 GCF 함수족과 \cite{efc003}의 베지어--GCF 직합 공간은
+코스팅 구간의 부분적 해결을 시도하지만,
+전역 베지어의 전역 지지에 의해 구간 내 잔차 $O(\Delta)$가 남아 정확한 코스팅이 불가능하다.
+
+본 보고서는 이 한계를 분석한 뒤,
+\cite{efc005}의 \textbf{BLADE}(Bernstein Local Adaptive Degree Elements) 프레임워크가
+이를 근본적으로 해결함을 보인다.
+BLADE는 각 세그먼트에 국소 Bernstein 기저를 배치하여
+$\mathbf{p}_k = \mathbf{0}$으로 \textbf{정확한 코스팅}을 달성하며,
+블록 대각 Gram 행렬, perspective 변환에 의한 시간배분 SOCP(Second-Order Cone Programming)
+볼록화, $\ell_1$ 정규화에 의한 코스팅 자동 결정을 제공한다.
+GCF($n{=}0$)와 전역 베지어($K{=}1$)가 $(K, n)$ 매개변수의 양 극단으로
+정확히 포함되는 통합 프레임워크이며,
+궤도전이 SCP로의 자연스러운 확장 방안을 제시한다.
+\end{abstract}
+
+%% ============================================================
+\section{서론: 코스팅 구간의 필요성과 현행 한계}
+\label{sec:intro}
+%% ============================================================
+
+\subsection{궤도전이에서 코스팅의 물리적 의미}
+
+실제 우주 임무에서 추력기는 항상 작동하지 않는다.
+추력을 끄고 천체의 중력만으로 비행하는 구간을 \textbf{코스팅(coasting) 구간}이라 한다.
+
+\paragraph{에너지 효율.}
+고전적 Hohmann 전이는 본질적으로 ``추력--코스팅--추력'' 구조이다.
+저추력 다회전 전이에서도 유사한 구조가 반복되며,
+추력 인가 구간과 코스팅 구간의 최적 배치가 총 연료 소모량을 결정한다.
+
+\paragraph{물리적 제약.}
+태양 전지판을 전력원으로 사용하는 전기추진 위성은
+지구의 그림자(식, eclipse) 구간에서 추력을 인가할 수 없다.
+이 구간은 궤도 역학적으로 결정되며, 최적화 문제에서 강제 코스팅 제약으로 부과된다.
+
+\paragraph{최적제어 이론에서의 위치.}
+Pontryagin의 최대원리에 따르면,
+추력 크기 제약 $\|\mathbf{u}\| \le u_{\max}$이 있을 때
+최적 추력 프로파일은 일반적으로
+\textbf{bang-off-bang} (추력--코스팅--추력) 구조를 가진다.
+따라서, 코스팅 구간을 자연스럽게 표현할 수 있는 함수 공간은
+최적해의 구조와 일치하는 장점이 있다.
+
+
+\subsection{현행 베지어 프레임워크의 구조적 한계}
+
+현재 프로젝트에서 추진 가속도는 $N$차 Bernstein 다항식으로 성형된다~\cite{report003}:
+$\mathbf{u}(\tau) = \mathbf{B}_N(\tau)^T \mathbf{P}_u$.
+이 표현은 볼록 QP 구조~\cite{report004}, 볼록껍질 제약~\cite{report005},
+선형 경계조건~\cite{report006} 등 강력한 장점을 가진다.
+
+그러나 $N$차 다항식이 열린 구간 $(a,b) \subset [0,1]$에서
+항등적으로 0이 되려면 $[0,1]$ 전체에서 0이어야 한다.
+따라서 \textbf{베지어 궤적 성형은 코스팅 구간을 구조적으로 표현할 수 없다.}
+\cite{efc002}에서 수치적으로 확인한 바와 같이,
+이는 제약 처리 기법이 아니라 \textbf{함수족 자체의 표현력} 한계이다.
+
+
+\subsection{본 보고서의 목적과 범위}
+
+본 보고서는 코스팅 구간을 표현하기 위한 함수 공간 설계의 발전 과정을 추적한다:
+\begin{enumerate}
+\item GCF 함수족의 핵심 구조와 코스팅 표현 능력 (\S\ref{sec:gcf})
+\item 베지어--GCF 직합 공간의 시도와 구조적 한계 (\S\ref{sec:direct_sum}--\ref{sec:ds_limit})
+\item BLADE 프레임워크에 의한 근본적 해결 (\S\ref{sec:blade})
+\item 궤도전이 SCP로의 확장 방안 (\S\ref{sec:scp_extension})
+\end{enumerate}
+
+
+%% ============================================================
+\section{GCF 함수족 요약}
+\label{sec:gcf}
+%% ============================================================
+
+\cite{efc001}의 핵심 결과를 자기완결적으로 재정리한다.
+
+\subsection{GCF 기저의 정의}
+
+\begin{definition}[GCF 기저함수]
+구간 $[0,1]$을 $K$등분하여 $\Delta = 1/K$,
+$\phi_k(\tau) = \mathbf{1}_{[t_{k-1},\, t_k)}(\tau)$로 정의한다.
+\end{definition}
+
+핵심 성질: (1) 분할 단위, (2) 비음성, (3) \textbf{지지 분리}
+$\phi_j \cdot \phi_k = 0$ ($j \ne k$).
+세 번째 성질이 Bernstein 기저와의 핵심 차이이다.
+GCF 원소: $u(\tau) = \boldsymbol{\phi}(\tau)^T \mathbf{q}$, $\mathbf{q} \in \mathbb{R}^K$
+--- 각 구간에서 상수값 $q_k$.
+
+\subsection{적분 행렬과 Gram 행렬}
+
+속도: $v(\tau) = v_0 + t_f \Delta\, [\mathbf{L}_K \mathbf{q}](\tau)$,
+$\mathbf{L}_K \in \mathbb{R}^{(K{+}1)\times K}$ (하삼각 누적합, 희소).
+위치: $r(\tau) = r_0 + v_0 \tau + t_f^2 \Delta^2\, [\mathbf{S}_K \mathbf{q}](\tau)$.
+Gram 행렬: $\mathbf{G}_K^{\mathcal{F}} = \Delta\, \mathbf{I}_K$ (\textbf{대각}).
+
+\subsection{무손실 상자 제약과 코스팅}
+
+지지 분리에 의해
+$|q_k| \le u_{\max} \Leftrightarrow |u(\tau)| \le u_{\max}$
+(보수성 없음).
+\textbf{코스팅}: $q_k = 0 \Leftrightarrow u(\tau) = 0$, $\forall \tau \in [t_{k-1}, t_k]$
+--- 단순 등식 제약으로 정확한 코스팅이 가능하다.
+그러나 GCF 단독으로는 부드러운 추력 프로파일을 표현할 수 없다 (piecewise constant 한계).
+
+\subsection{함수족 위계}
+
+GCF를 반복 적분하면: $\mathcal{F}_K^{(0)}$ (P.C., 추력)
+$\xrightarrow{\mathbf{L}_K}$ $\mathcal{F}_K^{(1)}$ ($C^0$, 속도)
+$\xrightarrow{\tilde{\mathbf{L}}_K}$ $\mathcal{F}_K^{(2)}$ ($C^1$, 위치).
+적분 사상이 선형이므로 볼록성 보존.
+
+
+%% ============================================================
+\section{베지어--GCF 직합 공간}
+\label{sec:direct_sum}
+%% ============================================================
+
+\cite{efc003}의 핵심 결과를 재정리한다.
+
+\subsection{직합 공간의 정의}
+
+부드러운 성분과 불연속 보정의 합:
+\begin{equation}\label{eq:direct_sum}
+  u(\tau) = \underbrace{\mathbf{B}_N(\tau)^T \mathbf{p}}_{\text{베지어}}
+  + \underbrace{\boldsymbol{\phi}(\tau)^T \mathbf{q}}_{\text{GCF}},
+  \qquad
+  \mathbf{z} = \begin{bmatrix} \mathbf{p} \\ \mathbf{q} \end{bmatrix}
+  \in \mathbb{R}^{(N{+}1)+K}.
+\end{equation}
+
+\subsection{통합 Gram 행렬}
+
+\begin{equation}\label{eq:Gz}
+  \mathbf{G}_z = \begin{bmatrix}
+    \mathbf{G}_N & \mathbf{M} \\
+    \mathbf{M}^T & \Delta\, \mathbf{I}_K
+  \end{bmatrix},
+  \qquad
+  M_{i,k} = \int_{t_{k-1}}^{t_k} B_i^N(\tau)\, d\tau.
+\end{equation}
+$\mathbf{G}_z$는 양반정치이므로 비용함수 $J = t_f\, \mathbf{z}^T \mathbf{G}_z\, \mathbf{z}$는 볼록 QP.
+\textbf{교차 Gram 행렬 $\mathbf{M}$}이 두 부분공간의 결합 구조를 결정한다.
+
+\subsection{궤적 사상의 핵(kernel)}
+
+분할점 속도로의 사상 $\mathcal{T}(\mathbf{z}) = \mathbf{H}_v \mathbf{p} + \Delta\, \mathbf{L}_K^{(\mathrm{eff})} \mathbf{q}$의
+핵 차원은 $N+1$이다~\cite{efc003}.
+핵의 원소 $[\mathbf{p};\, -\Phi_{B \to G} \mathbf{p}]$는
+``베지어와 GCF가 속도 수준에서 상쇄하는'' 벡터들이다.
+
+기하학적으로, $(N{+}1{+}K)$차원 직합 공간에서
+$K$개의 독립 제약(분할점 속도 일치)을 가하면
+$N{+}1$차원의 자유도가 남으며,
+이 핵 방향을 따라 \textbf{궤적을 바꾸지 않으면서} 비용을 줄일 수 있다.
+그 결과 $J_{\mathrm{ds}} \le \min(J_{\mathcal{B}}, J_{\mathcal{F}})$.
+
+
+%% ============================================================
+\section{직합 공간의 코스팅 한계}
+\label{sec:ds_limit}
+%% ============================================================
+
+직합 공간은 매력적이지만, 코스팅에는 구조적 한계가 있다.
+
+\subsection{코스팅 조건의 분석}
+
+코스팅 구간 $k$에서 $u(\tau) = 0$을 요구하면:
+\begin{equation}\label{eq:coast_pointwise}
+  u(\tau) = \underbrace{\mathbf{B}_N(\tau)^T \mathbf{p}}_{\tau\text{에 따라 변함}}
+  + \underbrace{q_k}_{\text{상수}} = 0,
+  \qquad \forall \tau \in [t_{k-1}, t_k].
+\end{equation}
+$\mathbf{B}_N(\tau)^T \mathbf{p}$는 구간 내에서 변하지만
+$q_k$는 상수이므로, GCF는 구간 평균만 상쇄할 수 있다.
+$q_k = -\mathbf{M}_{:,k}^T \mathbf{p} / \Delta$ 설정 시
+잔차는 구간 내 변동이다:
+\begin{equation}\label{eq:residual}
+  \mathrm{residual}(\tau)
+  = \mathbf{B}_N(\tau)^T \mathbf{p}
+  - \frac{1}{\Delta}\int_{t_{k-1}}^{t_k} \mathbf{B}_N(s)^T \mathbf{p}\, ds.
+\end{equation}
+
+\subsection{잔차의 정량적 분석}
+
+$N = 12$, $\|\mathbf{p}\| = O(1)$에서의 수치 분석 결과를
+표~\ref{tab:residual}에 정리하였다.
+
+\begin{table}[htb]
+\centering
+\caption{코스팅 구간 잔차의 정량적 분석 ($N = 12$).}
+\label{tab:residual}
+\begin{tabular}{rcccc}
+\toprule
+$K$ & $\Delta$ & 최악 잔차 & $\max|u|$ 대비 & 에너지 비율 \\
+\midrule
+10 & 0.100 & 0.137 & 50.2\% & 0.37\% \\
+20 & 0.050 & 0.086 & 31.7\% & 0.14\% \\
+40 & 0.025 & 0.048 & 17.7\% & 0.04\% \\
+80 & 0.013 & 0.025 & 9.3\%  & 0.01\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+수렴 차수는 $O(\Delta) = O(1/K)$이다.
+\textbf{에너지 관점}에서 잔차 기여는 미미하지만 (0.14\% at $K{=}20$),
+\textbf{순간 추력 크기 관점}에서는 $K{=}20$에서 최대 추력의 31.7\%에 달하므로
+``사실상 코스팅''이라 주장하기 어렵다.
+
+\subsection{근본 원인: 전역 지지의 한계}
+
+문제의 근본 원인은 베지어 제어점 $\mathbf{p}$가
+\textbf{모든 구간에서 공유}된다는 것이다.
+Bernstein 기저 $B_i^N(\tau)$는 $[0,1]$ 전체에서 양의 값을 가지므로,
+$\mathbf{p}$를 변경하면 모든 구간의 추력이 동시에 영향받는다.
+특정 구간의 추력을 독립적으로 ``끄는'' 것이 구조적으로 불가능하다.
+
+이는 다음 질문을 제기한다:
+\textit{``베지어의 부드러움과 GCF의 국소 독립성을 동시에 가지는
+함수 공간이 존재하는가?''}
+다음 섹션에서 이 질문에 대한 답을 제시한다.
+
+
+%% ============================================================
+\section{BLADE: Bernstein Local Adaptive Degree Elements}
+\label{sec:blade}
+%% ============================================================
+
+직합 공간의 한계를 근본적으로 해결하는 BLADE 프레임워크~\cite{efc005}를 소개한다.
+핵심 아이디어는 단순하다:
+\textbf{GCF의 국소 지지 구조를 베지어에 적용}하는 것이다.
+
+\subsection{핵심 아이디어와 정의}
+
+$[0,1]$을 $K$개의 세그먼트로 분할하고,
+각 세그먼트 $k$에 \textbf{국소 Bernstein 기저}를 배치한다:
+\begin{equation}\label{eq:local_bernstein}
+  B_{i,k}^{n_k}(\tau) = \binom{n_k}{i}\, \tau_k^{\,i}\, (1-\tau_k)^{n_k-i}\, \phi_k(\tau),
+  \quad \tau_k = \frac{\tau - t_{k-1}}{\Delta_k}.
+\end{equation}
+여기서 $n_k$는 세그먼트 $k$의 차수, $\phi_k(\tau)$는 세그먼트 지시함수이다.
+각 기저함수는 \textbf{세그먼트 $k$ 안에서만 지지}를 가진다.
+
+BLADE 원소:
+\begin{equation}\label{eq:blade_element}
+  \boxed{
+  u(\tau)\big|_{[t_{k-1}, t_k)} = \mathbf{B}_{n_k}(\tau_k)^T \mathbf{p}_k,
+  \qquad \mathbf{p}_k \in \mathbb{R}^{n_k+1}.
+  }
+\end{equation}
+전체 좌표벡터: $\mathbf{z} = [\mathbf{p}_1;\, \mathbf{p}_2;\, \ldots;\, \mathbf{p}_K]$,
+차원 $d = \sum_{k=1}^{K}(n_k + 1)$.
+
+\paragraph{직합 공간과의 결정적 차이.}
+직합에서는 전역 $\mathbf{p}$가 \textbf{모든 구간에 공유}되었으나,
+BLADE에서는 각 세그먼트가 \textbf{독립적인 $\mathbf{p}_k$}를 가진다.
+이것이 코스팅을 자명하게 만드는 핵심이다.
+
+\paragraph{GCF와 전역 베지어의 통합.}
+BLADE는 $(K, n)$ 매개변수 공간에서 기존 함수족을 특수 경우로 포함한다
+(표~\ref{tab:special}, 그림~\ref{fig:kn_space}).
+
+\begin{table}[htb]
+\centering
+\caption{BLADE의 특수 경우.}
+\label{tab:special}
+\begin{tabular}{lcrl}
+\toprule
+설정 & 함수족 & 차원 & 참고 \\
+\midrule
+$n_k = 0$, $\forall k$ & GCF $\mathcal{F}_K^{(0)}$ & $K$ & \cite{efc001} \\
+$n_k = 1$, $\forall k$, $C^0$ & PWL $\mathcal{F}_K^{(1)}$ & $K+1$ & \\
+$K = 1$, $n_1 = N$ & 전역 B\'{e}zier $\mathcal{B}_N$ & $N+1$ & \cite{report004} \\
+일반 $(K, n)$ & \textbf{BLADE} & $(n{+}1)K$ & \cite{efc005} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htb]
+\centering
+\begin{tikzpicture}[>=Stealth, scale=0.9]
+  % BLADE region: entire first quadrant (K>=1, n>=0)
+  \fill[green!8] (0.5,0) -- (6.8,0) -- (6.8,4.7) -- (0.5,4.7) -- cycle;
+  \draw[green!50!black, thick] (0.5,0) -- (6.8,0) -- (6.8,4.7) -- (0.5,4.7) -- (0.5,0);
+  \node[green!50!black, font=\large\bfseries, opacity=0.5] at (3.8,2.3) {BLADE};
+  % Axes
+  \draw[->] (0,0) -- (7,0) node[right] {$K$ (세그먼트 수)};
+  \draw[->] (0,0) -- (0,5) node[above] {$n$ (차수)};
+  % GCF line (n=0 edge)
+  \draw[very thick, red!70!black] (0.5,0) -- (6.8,0);
+  \node[red!70!black, below] at (3.5,-0.15) {\small GCF ($n=0$)};
+  % Global Bezier line (K=1 edge)
+  \draw[very thick, blue!70!black] (0.5,0) -- (0.5,4.7);
+  \node[blue!70!black, left, font=\small, text width=1.8cm, align=right]
+    at (0.4,2.5) {전역 베지어\\($K{=}1$)};
+  % Special points
+  \fill[red!70!black] (0.5,0) circle (3pt);
+  \node[below left, font=\scriptsize] at (0.5,0) {$(1,0)$};
+  \fill[blue!70!black] (0.5,4) circle (3pt);
+  \node[left, font=\scriptsize] at (0.4,4) {$(1,N)$};
+  % Example points
+  \fill[black] (4,2) circle (2pt) node[right, font=\small] {$(K{=}8, n{=}3)$};
+  \fill[black] (6,1) circle (2pt) node[right, font=\small] {$(K{=}20, n{=}1)$};
+  % Axes ticks
+  \foreach \x in {1,...,6} \draw (\x,0.05) -- (\x,-0.05);
+  \foreach \y in {1,...,4} \draw (0.05,\y) -- (-0.05,\y);
+  % Direct sum annotation
+  \node[gray, font=\small, text width=3cm, align=center] at (5.5,4.2)
+    {직합: 이 공간 밖\\(전역+국소 혼합)};
+\end{tikzpicture}
+\caption{$(K, n)$ 매개변수 공간. GCF($n{=}0$)와 전역 베지어($K{=}1$)가
+양 극단에 위치하며, BLADE는 이 공간 전체를 커버한다.
+직합 공간은 전역+국소를 혼합하므로 이 공간에 직접 대응하지 않는다.}
+\label{fig:kn_space}
+\end{figure}
+
+
+\subsection{대수적 구조}
+\label{sec:blade_algebra}
+
+\paragraph{블록 대각 Gram 행렬.}
+국소 지지에 의해 세그먼트 간 교차항이 없으므로:
+\begin{equation}\label{eq:blade_gram}
+  \boxed{
+  \mathbf{G}_{\text{BLADE}} = \mathrm{blkdiag}\!\left(
+    \Delta_1 \mathbf{G}_{n_1},\;
+    \Delta_2 \mathbf{G}_{n_2},\; \ldots,\;
+    \Delta_K \mathbf{G}_{n_K}
+  \right).
+  }
+\end{equation}
+직합 공간의 교차 Gram 행렬 $\mathbf{M}$이 불필요하다.
+$n_k = 0$인 블록은 스칼라 $\Delta_k$로 축소되어 GCF와 일치한다.
+
+\paragraph{세그먼트 순차 적분.}
+이중 적분기 $\ddot{r} = t_f^2 u$에서,
+세그먼트 $k$ 내의 속도·위치 변화:
+\begin{align}
+  \Delta v_k &= t_f \Delta_k\, \mathbf{e}_{n_k+1}^T \mathbf{I}_{n_k}\, \mathbf{p}_k,
+  \label{eq:dv_k} \\
+  \Delta r_k &= v(t_{k-1})\, \Delta_k
+  + t_f^2 \Delta_k^2\, \mathbf{e}_{n_k+2}^T \bar{\mathbf{I}}_{n_k}\, \mathbf{p}_k.
+  \label{eq:dr_k}
+\end{align}
+여기서 $\mathbf{I}_{n_k}$, $\bar{\mathbf{I}}_{n_k}$는 차수 $n_k$의
+표준 Bernstein 적분 행렬~\cite{report004}이다.
+전체 궤적은 세그먼트를 순차 누적하여 구성한다:
+$v(t_k) = v_0 + \sum_{j=1}^{k} \Delta v_j$,
+$r(t_k) = r_0 + \sum_{j=1}^{k} \Delta r_j$.
+
+\paragraph{선택적 연속성 제약.}
+세그먼트 경계에서 $C^0$, $C^1$ 등의 연속성을 선택적으로 부과한다:
+\begin{align}
+  C^0\!: &\quad p_{k,n_k} = p_{k+1,0}, \label{eq:C0} \\
+  C^1\!: &\quad \frac{n_k}{\Delta_k}(p_{k,n_k} - p_{k,n_k-1})
+  = \frac{n_{k+1}}{\Delta_{k+1}}(p_{k+1,1} - p_{k+1,0}). \label{eq:C1}
+\end{align}
+모두 $\mathbf{z}$에 대한 \textbf{선형 등식 제약}이다.
+코스팅 구간에서는 연속성을 부과하지 않으면 ($C^{-1}$),
+해당 세그먼트의 자유도가 완전히 독립이 된다.
+
+\paragraph{자유도.}
+모든 세그먼트 차수 $n$, 모든 경계 $C^r$ 연속일 때:
+\begin{equation}\label{eq:dof}
+  d_{\mathrm{free}} = (n - r)K + (r + 1).
+\end{equation}
+
+
+\subsection{코스팅의 자명한 정식화}
+\label{sec:blade_coast}
+
+BLADE에서 코스팅은 별도의 on/off 변수가 필요 없다:
+\begin{equation}\label{eq:blade_coast}
+  \boxed{
+  \mathbf{p}_k = \mathbf{0}
+  \quad\Longrightarrow\quad
+  u(\tau) \equiv 0,\ \forall \tau \in [t_{k-1}, t_k].
+  \quad\text{(정확, 잔차 없음)}
+  }
+\end{equation}
+직합 공간과의 비교:
+\begin{itemize}
+\item \textbf{직합}: 전역 $\mathbf{p}$ 공유 $\to$ 코스팅 구간에서도
+  $\mathbf{B}_N^T \mathbf{p} \ne 0$ $\to$ 잔차 $O(\Delta)$.
+\item \textbf{BLADE}: 국소 $\mathbf{p}_k$ 독립 $\to$
+  $\mathbf{p}_k = \mathbf{0}$으로 정확한 코스팅. 다른 세그먼트에 영향 없음.
+\end{itemize}
+
+그림~\ref{fig:comparison}에 세 프레임워크의 코스팅 처리를 비교하였다.
+
+\begin{figure}[htb]
+\centering
+\begin{tikzpicture}[>=Stealth, scale=0.75,
+  every node/.style={font=\small}]
+
+% --- Global Bezier ---
+\begin{scope}[xshift=0cm]
+  \node[above, font=\small\bfseries] at (2,3.3) {전역 베지어};
+  \draw[->] (0,0) -- (4.3,0) node[right] {\tiny $\tau$};
+  \draw[->] (0,-0.5) -- (0,3) node[above] {\tiny $u$};
+  \draw[thick, blue!70, smooth] plot[domain=0:4, samples=40]
+    (\x, {1.5 + 0.8*sin(90*\x)});
+  \draw[dashed, gray] (0,0) -- (4,0);
+  \draw[decorate, decoration={brace, amplitude=3pt, mirror}]
+    (1.6,-0.7) -- (2.4,-0.7) node[midway, below=3pt, font=\scriptsize] {코스팅?};
+  \node[red, font=\scriptsize] at (2,2.5) {$\boldsymbol{\times}$ 불가능};
+\end{scope}
+
+% --- Direct Sum ---
+\begin{scope}[xshift=5.5cm]
+  \node[above, font=\small\bfseries] at (2,3.3) {직합 (B\'{e}zier + GCF)};
+  \draw[->] (0,0) -- (4.3,0) node[right] {\tiny $\tau$};
+  \draw[->] (0,-0.5) -- (0,3) node[above] {\tiny $u$};
+  % Combined with near-zero in coast
+  \draw[thick, black!60!green, smooth] plot[domain=0:1.6, samples=20]
+    (\x, {1.8 + 0.5*sin(90*\x)});
+  \draw[thick, black!60!green, smooth] plot[domain=1.6:2.4, samples=15]
+    (\x, {0.15*sin(180*\x)});
+  \draw[thick, black!60!green, smooth] plot[domain=2.4:4, samples=20]
+    (\x, {1.2 + 0.6*sin(90*\x)});
+  \draw[dashed, gray] (0,0) -- (4,0);
+  \draw[decorate, decoration={brace, amplitude=3pt, mirror}]
+    (1.6,-0.7) -- (2.4,-0.7) node[midway, below=3pt, font=\scriptsize] {근사 코스팅};
+  \draw[<-, thin] (2.0,0.12) -- (3.2,1.0)
+    node[right, font=\scriptsize, orange!80!black] {잔차 $O(\Delta)$};
+\end{scope}
+
+% --- BLADE ---
+\begin{scope}[xshift=11cm]
+  \node[above, font=\small\bfseries] at (2,3.3) {BLADE};
+  \draw[->] (0,0) -- (4.3,0) node[right] {\tiny $\tau$};
+  \draw[->] (0,-0.5) -- (0,3) node[above] {\tiny $u$};
+  % Segment 1
+  \draw[very thick, black!60!green, smooth] plot[domain=0:1.6, samples=20]
+    (\x, {1.8 + 0.5*sin(90*\x)});
+  % Segment 2 (coast): exactly zero
+  \draw[very thick, black!60!green] (1.6,0) -- (2.4,0);
+  % Segment 3
+  \draw[very thick, black!60!green, smooth] plot[domain=2.4:4, samples=20]
+    (\x, {1.2 + 0.6*sin(90*\x)});
+  \draw[dashed, gray] (0,0) -- (4,0);
+  \draw[decorate, decoration={brace, amplitude=3pt, mirror}]
+    (1.6,-0.7) -- (2.4,-0.7)
+    node[midway, below=3pt, font=\scriptsize, green!50!black] {\textbf{정확한 코스팅}};
+  \node[green!50!black, font=\scriptsize] at (2.0,0.5) {$\mathbf{p}_2 = \mathbf{0}$};
+  % Dotted segment boundaries
+  \foreach \x in {1.6, 2.4} {
+    \draw[dotted, gray] (\x,-0.3) -- (\x,2.8);
+  }
+\end{scope}
+\end{tikzpicture}
+\caption{코스팅 구간 처리의 비교.
+전역 베지어: 구조적으로 불가능.
+직합: 잔차 $O(\Delta)$ (근사 코스팅).
+BLADE: $\mathbf{p}_k = \mathbf{0}$으로 정확한 코스팅.}
+\label{fig:comparison}
+\end{figure}
+
+
+\subsection{Perspective 변환과 시간배분 최적화}
+\label{sec:perspective}
+
+BLADE의 추가적 장점은 세그먼트 시간 $\Delta_k$를
+결정변수로 포함할 수 있다는 것이다.
+$\Delta_k$와 $\mathbf{p}_k$가 동시에 변수이면 비용이 쌍선형이 되지만,
+\textbf{perspective 치환}~\cite{efc005}으로 대부분 볼록화된다.
+
+\paragraph{치환.}
+$\mathbf{q}_k = \Delta_k\, \mathbf{p}_k$ (보조변수 승강~\cite{report007}과 유사).
+비용함수:
+\begin{equation}\label{eq:perspective_cost}
+  J_k = \Delta_k\, \mathbf{p}_k^T \mathbf{G}_{n_k} \mathbf{p}_k
+  = \frac{1}{\Delta_k}\, \mathbf{q}_k^T \mathbf{G}_{n_k}\, \mathbf{q}_k.
+\end{equation}
+이는 perspective 함수 $g(\mathbf{q}, t) = \mathbf{q}^T \mathbf{G}\, \mathbf{q}/t$ ($t > 0$)로,
+\textbf{공동 볼록(jointly convex)}이다.
+SOCP 표현:
+$\|\mathbf{G}^{1/2} \mathbf{q}_k\|^2 \le \eta_k \cdot \Delta_k$.
+
+\paragraph{속도 경계.}
+$\Delta v_k = t_f\, \mathbf{e}^T \mathbf{I}_{n_k}\, \mathbf{q}_k$
+--- $(\mathbf{q}_k, \Delta_k)$에 대해 \textbf{선형} (볼록).
+
+\paragraph{위치 경계 (유일한 비볼록 항).}
+$\Delta r_k = v(t_{k-1}) \cdot \Delta_k + t_f^2 \Delta_k \cdot \mathbf{b}_k^T \mathbf{q}_k$.
+$v(t_{k-1}) \cdot \Delta_k$는 이전 세그먼트의 변수와 현재 $\Delta_k$의 곱으로
+\textbf{쌍선형(bilinear)} --- 본질적 비볼록성.
+SCP 반복에서 $v^{(\ell-1)}(t_{k-1})$과 $\Delta_k^{(\ell-1)}$을
+참조값으로 고정하면 선형화되어 내부 문제가 SOCP가 된다.
+
+\begin{remark}
+비용, 속도, 제어 제약은 perspective 치환만으로 볼록이므로,
+\textbf{위치 항만 SCP로 처리}하면 전체 문제가 수렴한다.
+이는 기존 SCP~\cite{report006}에서 드리프트만 선형화하는 것과 유사한 구조이다.
+\end{remark}
+
+
+\subsection{$\ell_1$ 정규화에 의한 코스팅 자동 결정}
+\label{sec:l1}
+
+코스팅 구간을 사전에 지정하는 대신,
+$\ell_1$ 정규화로 \textbf{희소성을 유도}하여 자동 결정한다:
+\begin{equation}\label{eq:l1}
+  \boxed{
+  \min_{\mathbf{z},\, \boldsymbol{\Delta}} \;
+  \sum_{k=1}^{K} \frac{1}{\Delta_k} \mathbf{q}_k^T \mathbf{G}_{n_k} \mathbf{q}_k
+  + \lambda \sum_{k=1}^{K} \|\mathbf{p}_k\|.
+  }
+\end{equation}
+$\ell_1$ 페널티는 볼록이며,
+compressed sensing의 원리에 의해
+충분히 큰 $\lambda$에서 일부 세그먼트의 $\mathbf{p}_k$가
+자동으로 $\mathbf{0}$에 수렴한다 --- 즉, 코스팅이 자동 출현한다.
+
+\cite{efc005}의 수치 결과 ($K = 20$, $n = 1$, $u_{\max} = 5$):
+
+\begin{table}[htb]
+\centering
+\caption{$\ell_1$ 정규화 강도에 따른 코스팅 자동 결정 \cite{efc005}.}
+\label{tab:l1}
+\begin{tabular}{rccc}
+\toprule
+$\lambda$ & 에너지 $J_E$ & 코스팅 세그먼트 & bang 활성 제어점 \\
+\midrule
+0   & 12.09 & 0 / 20  & 10 / 40 \\
+0.5 & 13.16 & 6 / 20  & 18 / 40 \\
+2.0 & 13.37 & 6 / 20  & 22 / 40 \\
+5.0 & 13.37 & 6 / 20  & 22 / 40 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+$\lambda = 0$에서는 모든 세그먼트가 활성이지만,
+$\lambda = 0.5$부터 6개 세그먼트가 코스팅으로 전환되며
+나머지 활성 세그먼트에서는 bang 제어점 비율이 증가한다.
+에너지 비용의 증가(12.09 $\to$ 13.37, 약 10\%)는 코스팅 도입의 대가이며,
+$\lambda$로 \textbf{에너지--희소성 트레이드오프}를 단일 매개변수로 제어할 수 있다.
+
+
+%% ============================================================
+\section{궤도전이 SCP로의 확장}
+\label{sec:scp_extension}
+%% ============================================================
+
+BLADE를 비선형 궤도 동역학과 SCP에 적용하는 방안을 논의한다.
+
+\subsection{보조변수 승강과의 관계}
+
+\cite{report007}의 보조변수 승강 $\mathbf{Z} = t_f \mathbf{P}_u$는
+BLADE의 perspective 치환 $\mathbf{q}_k = \Delta_k \mathbf{p}_k$와
+\textbf{동일한 구조}이다.
+기존 outer loop에서 $t_f$를 고정한 것처럼,
+BLADE에서는 $\Delta_k$를 고정(또는 SCP로 갱신)하면
+inner loop이 볼록 QP/SOCP가 된다.
+
+\subsection{비용함수}
+
+\begin{equation}
+  J = \frac{1}{t_f} \sum_{k=1}^{K}
+  \frac{1}{\Delta_k}\, \mathbf{q}_k^T \mathbf{G}_{n_k}\, \mathbf{q}_k.
+\end{equation}
+$t_f$와 $\Delta_k$를 고정하면 $\mathbf{q}_k$에 대한 볼록 이차형식.
+기존 $\mathbf{G}_N$ 하나 대신 블록 대각 $\mathrm{blkdiag}(\mathbf{G}_{n_k}/\Delta_k)$ 사용.
+
+\subsection{경계조건}
+
+세그먼트 순차 누적~\eqref{eq:dv_k}--\eqref{eq:dr_k}에 드리프트~\cite{report009}를 추가:
+\begin{align}
+  v(t_k) &= v_0 + \sum_{j=1}^{k} \left[
+    t_f\, \mathbf{e}^T \mathbf{I}_{n_j}\, \mathbf{q}_j + t_f \Delta_j\, \mathbf{c}_{v,j}
+  \right], \\
+  r(t_k) &= r_0 + \sum_{j=1}^{k} \left[
+    v(t_{j-1}) \Delta_j + t_f^2 \Delta_j\, \mathbf{b}_j^T \mathbf{q}_j
+    + t_f^2 \Delta_j^2\, \mathbf{c}_{r,j}
+  \right].
+\end{align}
+경계조건 $v(1) = v_f$, $r(1) = r_f$는 $\mathbf{q}_k$에 대한 선형 등식.
+
+\subsection{추력 크기 제약}
+
+세그먼트 $k$의 격자점 $\tau_j$에서:
+$\|\mathbf{B}_{n_k}(\tau_j)^T \mathbf{p}_k\| \le u_{\max}$
+$\Leftrightarrow$
+$\|(1/\Delta_k)\, \mathbf{B}_{n_k}(\tau_j)^T \mathbf{q}_k\| \le u_{\max}$.
+$\Delta_k$ 고정 시 $\mathbf{q}_k$에 대한 SOCP 제약.
+세그먼트별 \textbf{독립 적용} 가능.
+
+\subsection{경로 제약}
+
+각 세그먼트 내 위치 곡선은 차수 $n_k + 2$의 국소 베지어 곡선이므로,
+\cite{report013}의 드 카스텔조 세분화를 \textbf{세그먼트별로 독립 적용}한다.
+국소 지지 구조에 의해 한 세그먼트의 경로 제약이 다른 세그먼트에 영향을 주지 않는다.
+
+\subsection{다중 회전 궤도전이}
+
+$M$회전 전이: $K = M \times K_{\mathrm{rev}}$ 세그먼트.
+각 궤도 회전마다 $K_{\mathrm{rev}}$개의 BLADE 세그먼트를 배정하여,
+추력--코스팅--추력 시퀀스를 자연스럽게 표현한다.
+$\ell_1$ 정규화가 최적 코스팅 패턴을 자동 결정한다.
+
+
+%% ============================================================
+\section{Direct Collocation과의 비교}
+\label{sec:collocation}
+%% ============================================================
+
+BLADE는 구간별 다항식이라는 점에서 direct collocation과 유사하지만,
+본질적 차이가 있다~\cite{efc005}:
+
+\begin{enumerate}
+\item \textbf{상태 비독립.}
+  Collocation은 제어와 상태를 모두 독립 변수로 이산화하고
+  defect constraint로 동역학을 근사한다.
+  BLADE는 \textbf{제어만 매개변수화}하고,
+  상태는 적분 행렬 $\mathbf{I}_{n_k}$, $\bar{\mathbf{I}}_{n_k}$로 정확히 유도한다.
+  최적화 변수가 절반이며 defect이 없다.
+
+\item \textbf{대수적 구조.}
+  BLADE의 비용함수는 블록 대각 Gram 행렬에 의한 이차형식이며,
+  Bernstein 기저의 볼록껍질/극값 정리가 세그먼트별로 적용된다.
+  Collocation에는 이러한 대수적 구조가 없으며 일반 NLP가 된다.
+
+\item \textbf{코스팅 및 시간배분.}
+  BLADE에서 코스팅은 $\mathbf{p}_k = \mathbf{0}$으로 자연 출현하며,
+  시간배분 $\Delta_k$는 perspective 변환으로 SOCP 볼록화된다.
+  Collocation에서 코스팅은 이산 변수를 요구하며,
+  세그먼트 길이 최적화를 위한 체계적 도구가 없다.
+\end{enumerate}
+
+
+%% ============================================================
+\section{구현 로드맵}
+\label{sec:roadmap}
+%% ============================================================
+
+\paragraph{Phase 1: BLADE 기초 모듈.}
+국소 Gram 행렬, 세그먼트 순차 적분, 연속성 제약 행렬을 구현하고,
+\cite{efc005}의 이중 적분기 결과를 재현한다.
+
+\paragraph{Phase 2: 궤도 동역학 통합 (BLADE-SCP).}
+세그먼트별 드리프트 적분, 블록 희소 커플링 행렬,
+perspective 치환에 의한 시간배분 최적화를 구현한다.
+
+\paragraph{Phase 3: 코스팅 + 다중 회전.}
+$\ell_1$ 정규화, 코스팅 구간 자동 결정,
+다중 회전 파라미터화와 수치 검증 시나리오를 구성한다.
+
+
+%% ============================================================
+\section{결론}
+\label{sec:conclusion}
+%% ============================================================
+
+코스팅 구간 통합을 위한 함수 공간 설계의 발전 과정을 추적하였다.
+
+\begin{enumerate}
+\item \textbf{전역 베지어의 한계}: 다항식은 유한 구간에서 $u \equiv 0$이 불가능하다.
+
+\item \textbf{직합 공간의 시도와 한계}:
+  베지어--GCF 직합~\cite{efc003}은 추가 자유도와 비용 절감을 제공하지만,
+  전역 $\mathbf{p}$의 공유로 인해 코스팅 잔차 $O(\Delta)$가 남는다.
+  $K{=}20$에서 최대 추력의 31.7\%에 달하는 잔차는
+  ``사실상 코스팅''이라 주장하기 어렵다.
+
+\item \textbf{BLADE의 근본적 해결}~\cite{efc005}:
+  국소 Bernstein 기저에 의한 세그먼트별 독립 제어점 $\mathbf{p}_k$가
+  $\mathbf{p}_k = \mathbf{0}$으로 \textbf{정확한 코스팅}을 달성한다.
+  블록 대각 Gram, perspective 볼록화, $\ell_1$ 자동 결정이
+  GCF와 전역 베지어를 $(K, n)$의 특수 경우로 포함하는
+  통합 프레임워크를 제공한다.
+\end{enumerate}
+
+후속 연구에서는 Phase 1--3의 구현과 수치 검증을 수행하여,
+BLADE 기반 궤도전이 최적화에서 코스팅 구간을 포함하는
+다중 회전 저추력 전이를 실현할 예정이다.
+
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}
