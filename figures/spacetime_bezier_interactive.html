@@ -1092,6 +1092,35 @@ function drawTube(obs, color) {
   if (obs.t_end != null) drawCircle3D([obs.pos0[0]+obs.vel[0]*tEnd, obs.pos0[1]+obs.vel[1]*tEnd], obs.r, tEnd, color, 0.4);
 }
 
+function drawLiftedHalfspace(obs, supportPoint, normal, color, halfLen = 3) {
+  const nx = normal[0];
+  const ny = normal[1];
+  const normXY = Math.hypot(nx, ny);
+  if (normXY <= 1e-12) return;
+
+  const perpX = -ny / normXY;
+  const perpY = nx / normXY;
+  const t0 = obs.t_start != null ? obs.t_start : 0;
+  const t1 = obs.t_end != null ? obs.t_end : T_TOTAL;
+
+  const edgeAt = (tVal) => {
+    const dt = tVal - supportPoint[2];
+    const sx = supportPoint[0] + obs.vel[0] * dt;
+    const sy = supportPoint[1] + obs.vel[1] * dt;
+    return [
+      [sx - perpX * halfLen, sy - perpY * halfLen, tVal],
+      [sx + perpX * halfLen, sy + perpY * halfLen, tVal],
+    ];
+  };
+
+  const [p0, p1] = edgeAt(t0);
+  const [p2, p3] = edgeAt(t1);
+  drawLine3D(p0, p1, color, 1, 0.35);
+  drawLine3D(p2, p3, color, 1, 0.35);
+  drawLine3D(p0, p2, color, 0.8, 0.25);
+  drawLine3D(p1, p3, color, 0.8, 0.25);
+}
+
 function drawHullFaces(pts3d, color, alpha) {
   const sp = pts3d.map(p => toScreen(...p));
   const hull = convexHull2D(sp);
@@ -1174,10 +1203,11 @@ function draw() {
         const ox=obs.pos0[0]+obs.vel[0]*tSeg, oy=obs.pos0[1]+obs.vel[1]*tSeg;
         const dx=centroid[0]-ox, dy=centroid[1]-oy, dist=Math.sqrt(dx*dx+dy*dy);
         if(dist<0.01)continue;
-        const nx=dx/dist, ny=dy/dist, sx=ox+obs.r*nx, sy=oy+obs.r*ny;
-        const hLen=3;
-        drawLine3D([sx-ny*hLen,sy+nx*hLen,tSeg],[sx+ny*hLen,sy-nx*hLen,tSeg],'#ff0',1,0.4);
-        drawLine3D([sx,sy,tSeg],[sx+nx*0.8,sy+ny*0.8,tSeg],'#ff0',1.5,0.6);
+        const nx=dx/dist, ny=dy/dist, beta=-(nx*obs.vel[0] + ny*obs.vel[1]);
+        const support=[ox+obs.r*nx, oy+obs.r*ny, tSeg];
+        const center=[ox, oy, tSeg];
+        drawLiftedHalfspace(obs, support, [nx, ny, beta], '#ff0', 3);
+        drawLine3D(center, support, '#ff0', 1.2, 0.55);
       }
     });
   }
