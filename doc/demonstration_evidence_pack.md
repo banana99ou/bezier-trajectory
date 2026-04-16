@@ -17,6 +17,7 @@ The demonstration claim is evaluated under one fixed scenario:
 
 - simplified orbital-transfer case from `Orbital_Docking_Optimizer.py`
 - same start/end geometry used in the current cached orbital summary dataset
+- current phase-lag setting: `120 deg`
 - same KOZ radius and transfer time as recorded in `doc/paper_execution_state.md`
 
 The demonstration table must report:
@@ -38,9 +39,9 @@ Failure policy:
 
 The current representative settings are:
 
-- `demo_N5_seg16`
 - `demo_N6_seg16`
 - `demo_N7_seg16`
+- `demo_N8_seg16`
 
 Why these settings were selected:
 
@@ -57,17 +58,19 @@ Source: `artifacts/paper_artifacts/orbital_results_summary.csv`
 
 | Setting        | Degree | `n_seg` | Solve success | Safety margin (km) | Objective-aligned effort `dv_proxy` (m/s) | Runtime (s) | Outer iterations |
 | -------------- | ------ | ------- | ------------- | ------------------ | ----------------------------------------- | ----------- | ---------------- |
-| `demo_N5_seg16` | 5      | 16      | True          | 145.000            | 17814.989                                 | 5.211       | 500              |
-| `demo_N6_seg16` | 6      | 16      | True          | 145.000            | 17905.937                                 | 5.063       | 500              |
-| `demo_N7_seg16` | 7      | 16      | True          | 145.000            | 17752.065                                 | 17.768      | 500              |
+| `demo_N6_seg16` | 6      | 16      | True          | 14.452             | 6693.886                                  | 34.418      | 10000            |
+| `demo_N7_seg16` | 7      | 16      | True          | 13.613             | 6411.942                                  | 49.868      | 10000            |
+| `demo_N8_seg16` | 8      | 16      | True          | 13.035             | 6286.886                                  | 59.891      | 10000            |
 
 
 ## T2 interpretation boundary
 
 Safe reading:
 
-- the current framework can produce feasible trajectories for the demonstrated setting across the active `N = 5, 6, 7` range with velocity boundary conditions enforced under the refreshed Rust-backed run
+- the current framework can produce feasible trajectories for the demonstrated setting across the active `N = 6, 7, 8` range with velocity boundary conditions enforced under the refreshed Rust-backed run at 120-deg phase lag
 - the current dataset supports quantitative reporting of feasibility, effort, runtime, and iteration count rather than relying on pictures alone
+- safety margins of ~13–14.5 km confirm the KOZ constraint is active and respected in all three cases
+- all three degrees reach the 10000-iteration cap; `dv_proxy` monotonically decreases with degree while runtime monotonically increases
 
 Unsafe reading:
 
@@ -83,9 +86,9 @@ Every `F3` panel must map directly to one `T2` row.
 
 Current panel mapping:
 
-- panel A -> `demo_N5_seg16`
-- panel B -> `demo_N6_seg16`
-- panel C -> `demo_N7_seg16`
+- panel A -> `demo_N6_seg16`
+- panel B -> `demo_N7_seg16`
+- panel C -> `demo_N8_seg16`
 
 ### Preferred source assets
 
@@ -95,9 +98,9 @@ The current paper-facing draft asset is:
 
 It should be composed from the dedicated representative exports:
 
-- `figures/demo_N5_seg16.png`
 - `figures/demo_N6_seg16.png`
 - `figures/demo_N7_seg16.png`
+- `figures/demo_N8_seg16.png`
 
 If the panel composition is regenerated later, it should either:
 

@@ -143,6 +143,7 @@ Results-section discipline rules:
 - Required interpretation discipline:
   - "Reduced conservatism" must not mean only that a path looks tighter.
   - The safe operational reading is: whether comparable certified clearance can be maintained with lower objective-aligned effort, or whether both quantities improve, under matched settings as the approximation is refined.
+  - If the coarsest subdivision setting is infeasible but feasibility is recovered at larger `n_seg`, the text may report that threshold effect directly instead of pretending the sweep is smooth from the first point.
   - If the data do not support a clean monotone trend, the text must report that instead of forcing a story.
 - Likely failure modes or reviewer attacks:
   - "Conservatism is undefined."
@@ -152,6 +153,7 @@ Results-section discipline rules:
 - Safe conclusions:
   - Increasing subdivision count changes the approximation quality and computation burden.
   - If supported by the actual runs, one may say that larger subdivision counts can improve effective conservatism by maintaining comparable certified clearance at lower cost, but only under the stated metric set.
+  - If supported, one may also say that overly coarse subdivision can fail to maintain feasibility on the tested scenario.
   - The conclusion should remain tied to the tested scenario and metric definitions.
 - Overclaims:
   - Higher subdivision is always better.
@@ -171,7 +173,7 @@ Results-section discipline rules:
   - Test the secondary claim that degree changes expressiveness, boundary-condition accommodation, and performance, while preventing vague "higher degree is better" rhetoric.
 - Exact comparison being made:
   - A matched sweep over degree using the planned range:
-    - `N = 5, 6, 7`
+    - `N = 6, 7, 8`
   - The comparison must explicitly state the regime being compared:
     - fixed scenario and boundary-condition protocol,
     - fixed subdivision protocol,
@@ -306,7 +308,7 @@ This section covers only the results figures/tables. Method-support figures such
 ### T4. Degree ablation under matched settings
 
 - Working caption:
-  - `Degree ablation under matched settings. The table reports solve success, safety, effort, runtime, and a selected smoothness indicator for fifth-, sixth-, and seventh-degree Bézier parameterizations under a common protocol.`
+  - `Degree ablation under matched settings. The table reports solve success, safety, effort, runtime, and a selected smoothness indicator for sixth-, seventh-, and eighth-degree Bézier parameterizations under a common protocol.`
 - What the reader should conclude:
   - Degree changes performance characteristics, but any advantage must be tied to a named metric.
   - The paper is not claiming blanket superiority of higher order.
@@ -367,31 +369,23 @@ This section covers only the results figures/tables. Method-support figures such
 - Required fallback wording:
   - the method is intended as a warm-start generator for downstream solvers
 
-### Gap 2: Subdivision ablation remains only partially supported without a disciplined interpretation
+### Gap 2: ~~Subdivision ablation remains only partially supported without a disciplined interpretation~~ RESOLVED
 
-- `C6` is not publishable as a strong claim if the paper only shows plots without a clear operational definition of conservatism reduction.
-- What is still needed:
-  - a stable reporting table
-  - a stated definition of how the reported metrics reflect effective conservatism / computation trade-off
-  - explicit reporting of the current flat-margin, nearly flat-effort outcome rather than forcing a stronger story
+- `C6` is now supported by a clear monotone conservatism-reduction trend under the 120-deg phase-lag scenario.
+- The refreshed data show safety margin decreasing from ~145 km to ~1 km and dv_proxy improving ~4x as n_seg increases, with all sweep points feasible.
+- Remaining work: regenerate `F4` figure from updated cache; keep interpretation tied to the tested scenario.
 
-### Gap 3: Degree ablation remains weak unless the comparison regime is declared
+### Gap 3: ~~Degree ablation remains weak unless the comparison regime is declared~~ RESOLVED
 
-- `C7` is easy to overstate because different degrees alter representation freedom and problem size at the same time.
-- What is still needed:
-  - a manuscript-level declaration of the fixed-`n_seg = 16` comparison regime for `T4`
-  - matched reporting across degree values
-  - a named criterion for any claimed improvement
-- Without this, degree should remain a secondary result with restrained wording.
+- `C7` is now supported by the refreshed data at `n_seg = 16`: N=8 best on effort, N=7 fastest to converge, all three feasible with comparable safety margins.
+- The comparison regime (fixed n_seg=16, matched settings) is declared.
+- Remaining work: regenerate `F5` figure; keep interpretation metric-specific and avoid blanket higher-degree-is-better claims.
 
-### Gap 4: Demonstration evidence needs paper-ready aggregation
+### Gap 4: ~~Demonstration evidence needs paper-ready aggregation~~ RESOLVED
 
-- `C5` is marked `present`, but it is not yet publication-ready if the paper only has code outputs and informal plots.
-- What is still needed:
-  - curated representative trajectories
-  - a paper-ready summary table
-  - locked metric definitions
-  - a consistent policy for reporting success and failure
+- `C5` is now supported by T2 with three feasible representative cases at n_seg=16, all with safety margins of ~14–15 km.
+- Metric definitions are locked.
+- Remaining work: regenerate `F3` figure from updated cache to reflect the 120-deg scenario geometry.
 
 ### Claims that remain unsupported and should not be rehabilitated in Stage 5
 

@@ -4,6 +4,10 @@ This document is the Stage 2 evidence-design plan derived from `doc/paper_eviden
 
 It is intentionally claim-driven rather than figure-driven. The goal is not to brainstorm visuals. The goal is to decide which figures and tables are worth building because they defend specific claims, and which claims should instead be weakened or removed.
 
+Figure and table IDs in this document are the canonical short references for discussion.
+Use this file to decode labels like `F1`, `F4`, `T3`, or `T6`.
+ID gaps are allowed if an earlier planned artifact was removed or deferred; do not renumber surviving IDs just to fill gaps.
+
 ## Operating rules
 
 - A script existing in the repository is not the same thing as paper-ready evidence.
@@ -12,6 +16,28 @@ It is intentionally claim-driven rather than figure-driven. The goal is not to b
 - Comparative claims require matched protocols and exact numbers; attractive trajectory plots are not enough.
 - If a claim is weaker than the current evidence base, the right action is to weaken or remove the claim, not to build a decorative figure around it.
 - While ablation results are still moving, captions and surrounding prose should remain provisional and should not freeze a pessimistic or sweeping interpretation too early.
+
+## Figure/Table ID Index
+
+### Figure IDs
+
+- `F1`: Representative KOZ linearization on one sub-arc
+- `F2`: SCP pipeline in control-point space
+- `F3`: Representative optimized trajectories for selected settings
+- `F4`: Runtime and outcome trends versus subdivision count
+- `F5`: Multi-order performance trends
+
+### Table IDs
+
+- `T1`: Control-point-space objects and linear maps
+- `T2`: Demonstration outcome summary
+- `T3`: Subdivision-count ablation
+- `T4`: Degree ablation under matched settings
+- `T6`: Downstream direct-collocation initialization comparison
+
+### Current intentional gap
+
+- `T5`: no active table is assigned this ID in the current plan
 
 ## Claim 1: The method operates entirely in control-point space
 
@@ -27,8 +53,8 @@ It is intentionally claim-driven rather than figure-driven. The goal is not to b
   - Definitions of subdivision matrices
   - Definitions of derivative maps and objective matrices
   - Definitions of boundary and KOZ constraint rows
-- Input status: partially present
-- Why the inputs are marked this way: The code structure exists in `orbital_docking/bezier.py`, `orbital_docking/de_casteljau.py`, `orbital_docking/constraints.py`, and `orbital_docking/optimization.py`, but the paper-ready operator table and notation lock do not yet exist.
+- Input status: present
+- Why the inputs are marked this way: The paper-ready operator table and notation lock now exist in `doc/method_artifact_pack.md`, and the same `T1` content has been lifted into `doc/paper_draft_korean.md`.
 - Production priority: must-have
 - Shared support opportunities:
   - `T1` also supports Claim 3.
@@ -52,8 +78,8 @@ It is intentionally claim-driven rather than figure-driven. The goal is not to b
   - KOZ center and radius
   - Support point and normal construction
   - Formal assumption list for what the geometric statement does and does not guarantee
-- Input status: partially present
-- Why the inputs are marked this way: There is an illustration script in `figures/legacy/constraint_linearization_figures.py`, but there is no paper-ready exported figure and no formal proposition-level statement yet.
+- Input status: present
+- Why the inputs are marked this way: A paper-ready exported figure now exists at `figures/f1_koz_linearization.png`, and the formal proposition-level statement with explicit assumptions is frozen in `doc/method_artifact_pack.md` and lifted into `doc/paper_draft_korean.md`.
 - Production priority: must-have
 - Shared support opportunities:
   - `F1` also helps Claim 1 by making the control-point-space KOZ handling concrete.
@@ -79,8 +105,8 @@ It is intentionally claim-driven rather than figure-driven. The goal is not to b
   - Final naming of the optimization variables and operators
   - Clear separation between convex components and relinearized components
   - Final algorithm step order for the paper
-- Input status: partially present
-- Why the inputs are marked this way: The logic is implemented in code and described in broad terms, but no paper-specific schematic currently exists.
+- Input status: present
+- Why the inputs are marked this way: A paper-specific schematic now exists at `figures/f2_scp_pipeline.png`, and the locked step order / caption boundary are documented in `doc/method_artifact_pack.md` and referenced in `doc/paper_draft_korean.md`.
 - Production priority: must-have
 - Shared support opportunities:
   - `F2` also supports Claim 1.
@@ -126,8 +152,8 @@ It is intentionally claim-driven rather than figure-driven. The goal is not to b
   - Feasibility metric
   - Objective-aligned effort metric
   - Runtime and convergence metadata
-- Input status: partially present
-- Why the inputs are marked this way: The optimizer and visualization code exist, and metric alignment has already been addressed in `orbital_docking/visualization.py`, but there are no paper-ready generated outputs or distilled tables in the repository.
+- Input status: present
+- Why the inputs are marked this way: T2 now has three feasible representative cases under the 120-deg phase-lag scenario with safety margins of ~14–15 km. Figures need regeneration from the updated cache.
 - Production priority: must-have
 - Shared support opportunities:
   - `F3` and `T2` can share data with Claims 6 and 7.
@@ -150,8 +176,8 @@ It is intentionally claim-driven rather than figure-driven. The goal is not to b
   - Consistent metric definitions across runs
   - A precise interpretation of "reduced conservatism"
   - Runtime metadata
-- Input status: partially present
-- Why the inputs are marked this way: The code already sweeps segment counts and reports times and costs, but there is no paper-ready aggregation, no explicit definition of conservatism reduction, and no final table/figure pair.
+- Input status: present
+- Why the inputs are marked this way: The current orbital dataset now supports both `T3` and `F4`, with the figure exported at `figures/f4_subdivision_tradeoff_N7.png` and the paired table / interpretation integrated into `doc/paper_draft_korean.md`. The interpretation boundary still matters, but the required artifact inputs are now in place.
 - Production priority: must-have
 - Shared support opportunities:
   - `T3` and `F4` also support Claim 5.
@@ -170,11 +196,11 @@ It is intentionally claim-driven rather than figure-driven. The goal is not to b
   - `T4. Degree ablation under matched settings.` Suggested columns: degree, number of control points, solve success, safety metric, objective-aligned effort metric, runtime, and selected smoothness indicator.
   - `F5. Multi-order performance trends.` Use degree-coded series over subdivision count for one or two carefully chosen metrics.
 - Required data, experiment, or analysis inputs:
-  - Runs for `N = 5, 6, 7` under matched settings
+  - Runs for `N = 6, 7, 8` under matched settings
   - Common boundary-condition protocol
   - Clearly defined comparison metrics
-- Input status: partially present
-- Why the inputs are marked this way: Multi-order optimization and plotting support already exist, but there is no distilled paper-ready ablation and no disciplined final interpretation.
+- Input status: present
+- Why the inputs are marked this way: The multi-order study now has a distilled paper-ready table/figure pair through `T4` and `figures/f5_multi_order_tradeoff_N678.png`, and the current draft integrates both while keeping the interpretation bounded as a tradeoff rather than a blanket superiority claim.
 - Production priority: should-have
 - Shared support opportunities:
   - `T4` and `F5` can reuse the same run matrix as Claim 6.

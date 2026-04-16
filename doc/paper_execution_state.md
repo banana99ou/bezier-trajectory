@@ -2,7 +2,7 @@
 
 This document is the mutable source of truth for the artifact-build phase. It exists to preserve shared context across parallel workstreams and to stop notation, metric, and scope drift.
 
-Last updated: 2026-04-07
+Last updated: 2026-04-15
 
 ## Workflow source of truth
 
@@ -25,32 +25,37 @@ The current orbital summary dataset is generated from the existing optimizer and
 The configuration represented by that dataset is:
 
 - objective: `dv`
-- degrees: `N = 5, 6, 7`
+- degrees: `N = 6, 7, 8`
 - subdivision sweep target: `n_seg = [2, 4, 8, 16, 32, 64]`
-- completed refreshed subdivision rows: `n_seg = [2, 4, 8, 16, 32, 64]` for the current `N=6` baseline
-- max iterations for the refreshed higher-order paper pass: `500`
-- tolerance: `1e-6`
+- completed refreshed subdivision rows: `n_seg = [2, 4, 8, 16, 32, 64]` for the current `N=7` baseline
+- max iterations for the refreshed higher-order paper pass: `10000`
+- tolerance: `1e-12`
 - proximal weight: `1e-6`
 - trust radius: `2000.0`
-- prograde preservation: enabled
+- prograde preservation: disabled (removed due to premature-termination bug)
 - endpoint velocity constraints: enforced
 - transfer time: `1500.0 s`
 - KOZ radius: `6471.0 km`
+- Progress lag behind ISS: `120.0 deg`
 - solver backend: `rust`
+
+Note: the phase lag was increased from `70 deg` to `120 deg` to produce a geometry where the trajectory approaches the KOZ boundary, making the subdivision ablation (C6) informative. At the previous `70 deg` setting, the KOZ constraint was never active and all `n_seg >= 4` converged to identical solutions.
 
 Generated figure assets from the refreshed higher-order pass currently include:
 
-- `figures/comparison_N5.png`
-- `figures/comparison_N6.png`
-- `figures/comparison_N7.png`
-- `figures/demo_N5_seg16.png`
+- `figures/f1_koz_linearization.png`
+- `figures/f2_scp_pipeline.png`
+- `figures/comparison_N6.html`
+- `figures/comparison_N7.html`
+- `figures/comparison_N8.html`
 - `figures/demo_N6_seg16.png`
 - `figures/demo_N7_seg16.png`
+- `figures/demo_N8_seg16.png`
 - `figures/f3_representative_settings.png`
-- `figures/f4_subdivision_tradeoff_N6.png`
-- `figures/performance_N5.png`
+- `figures/f4_subdivision_tradeoff_N7.png`
 - `figures/performance_N6.png`
 - `figures/performance_N7.png`
+- `figures/performance_N8.png`
 - `figures/time_vs_order.png`
 
 ## Frozen claim boundary
@@ -156,9 +161,9 @@ Operational definition of reduced conservatism:
 
 Representative demonstration settings selected for `T2` and `F3`:
 
-- `demo_N5_seg16`: degree `5`, `n_seg = 16`
 - `demo_N6_seg16`: degree `6`, `n_seg = 16`
 - `demo_N7_seg16`: degree `7`, `n_seg = 16`
+- `demo_N8_seg16`: degree `8`, `n_seg = 16`
 
 Rationale:
 
@@ -168,27 +173,27 @@ Rationale:
 
 Baseline setting for `T3` and `F4`:
 
-- `ablation_N6_all_seg`: degree `6` with target `n_seg = [2, 4, 8, 16, 32, 64]`
+- `ablation_N7_all_seg`: degree `7` with target `n_seg = [2, 4, 8, 16, 32, 64]`
 
 Rationale:
 
-- degree `6` is the middle order in the active `5, 6, 7` study
-- this choice is a workflow baseline, not a scientific claim that sixth degree is privileged
+- degree `7` is the middle order in the active `6, 7, 8` study
+- this choice is a workflow baseline, not a scientific claim that seventh degree is privileged
 
 ## Artifact registry
 
 | Artifact | Role | Current state | Primary input |
 |---|---|---|---|
-| `Formal safety statement` | method proof boundary | draft-ready | `doc/method_section_build.md` |
-| `T1` | notation/operator table | draft-ready | implementation operators |
-| `F1` | KOZ geometry figure | spec-ready | legacy KOZ illustration logic plus centroid-based assumptions |
-| `F2` | SCP pipeline figure | spec-ready | current SCP loop in `orbital_docking/optimization.py` |
+| `Formal safety statement` | method proof boundary | draft-ready | `doc/method_artifact_pack.md` |
+| `T1` | notation/operator table | draft-ready | `doc/method_artifact_pack.md` |
+| `F1` | KOZ geometry figure | draft-ready | `figures/f1_koz_linearization.png` plus `doc/method_artifact_pack.md` |
+| `F2` | SCP pipeline figure | draft-ready | `figures/f2_scp_pipeline.png` plus `doc/method_artifact_pack.md` |
 | `T2` | demonstration summary table | data-ready | `artifacts/paper_artifacts/orbital_results_summary.csv` |
 | `F3` | representative trajectory panel | draft-ready | `figures/f3_representative_settings.png` |
 | `T3` | subdivision ablation table | data-ready | `artifacts/paper_artifacts/orbital_results_summary.csv` |
-| `F4` | subdivision trade-off figure | draft-ready | `figures/f4_subdivision_tradeoff_N6.png` |
+| `F4` | subdivision trade-off figure | draft-ready | `figures/f4_subdivision_tradeoff_N7.png` |
 | `T4` | degree ablation table | draft-ready | `doc/degree_ablation_pack.md` |
-| `F5` | multi-order trend figure | draft-ready | `figures/f5_multi_order_tradeoff_N567.png` |
+| `F5` | multi-order trend figure | draft-ready | `figures/f5_multi_order_tradeoff_N678.png` |
 | `T6` | downstream comparison table | placeholder-only | placeholder text only |
 
 ## Resolved conditional decisions
@@ -201,17 +206,20 @@ Rationale:
 
 ### Degree-range decision
 
-- Resolved range for `T4` and `F5`: `N = 5, 6, 7`
+- Resolved range for `T4` and `F5`: `N = 6, 7, 8`
 - Reason: this range is the active boundary-conditioned study regime and matches the refreshed optimizer CLI and results packaging
 
 ### C6 interpretation decision
 
-- The refreshed higher-order dataset still does not show a meaningful change in `safety_margin_km`; it remains effectively constant at about `145 km`
-- The refreshed `N=6` sweep also keeps `dv_proxy_m_s` nearly flat across `n_seg = 2 ... 64`
-- Therefore the present evidence still supports runtime-growth claims much more clearly than strong effective-conservatism claims
-- Any final C6 wording must say this plainly unless a different metric or a stronger dataset is added
+- Under the refreshed `120 deg` phase-lag scenario, the `N=7` sweep now shows a clear and monotone conservatism-reduction trend
+- `safety_margin_km` drops steadily from `144.1` (n_seg=4) through `57.0`, `13.6`, `3.6` to `0.9` (n_seg=64) — the trajectory approaches the KOZ boundary as subdivision refines the half-space approximation
+- `n_seg = 2` is infeasible (negative safety margin); the remaining five counts are feasible
+- `dv_proxy_m_s` decreases from `9,288` (n_seg=4) to `6,292` (n_seg=64), a ~1.5x improvement, with the steepest gains between n_seg=4 and n_seg=16
+- All runs reach the 10000-iteration cap; runtime ranges from ~34 s to ~145 s
+- The present evidence therefore supports C6 as a clear conservatism-reduction claim for `n_seg >= 4`: finer subdivision produces tighter (less conservative) KOZ approximation, improving objective at the cost of computation time
 
 ## Remaining open work
 
-- integrate the new `T4` / `F5` degree-ablation pack into manuscript prose
-- decide after manuscript integration whether `F5` is clean enough to justify main-text space relative to the table
+- keep `C6` wording tied to the tested 120-deg scenario; the monotone trend is real but scenario-specific
+- keep `C7` wording disciplined so the integrated `F5` figure is read as tradeoff evidence rather than blanket higher-degree superiority
+- complete `T6` only when the downstream direct-collocation comparison protocol and results are stable enough to defend

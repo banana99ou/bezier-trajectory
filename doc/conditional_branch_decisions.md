@@ -32,7 +32,7 @@ Do not use the stronger demonstrated-value wording unless `T6` is actually built
 
 ### Resolved degree range
 
-- The active degree range is `N = 5, 6, 7`.
+- The active degree range is `N = 6, 7, 8`.
 
 ### Why this range is frozen
 
@@ -43,7 +43,7 @@ It is the only range that is simultaneously consistent with:
 - the boundary-condition motivation for moving away from the lower-order cases
 - the current optimizer CLI after refocusing it on the higher-order study
 
-The paper package is now being re-centered on `N = 5, 6, 7`.
+The paper package is now being re-centered on `N = 6, 7, 8`.
 
 ### Placement decision
 
@@ -56,7 +56,7 @@ The paper package is now being re-centered on `N = 5, 6, 7`.
 
 - `C7` remains a live, though secondary, claim in the technical skeleton
 - the higher-order regime is the one actually motivated by the boundary-condition issue
-- the remaining gap is disciplined aggregation and interpretation for `N = 5, 6, 7`
+- the remaining gap is disciplined aggregation and interpretation for `N = 6, 7, 8`
 
 ### Why they are not promoted to the critical path
 
@@ -69,5 +69,5 @@ The paper package is now being re-centered on `N = 5, 6, 7`.
 | Branch | Current status | Current action |
 |---|---|---|
 | `T6` | placeholder only | keep `C9` at intended-use wording |
-| `T4` | secondary but on main-paper path | keep in the main text and interpret with metric-specific caution |
-| `F5` | draft-ready supporting figure | use the current draft asset and keep it only if it adds a clean tradeoff view beyond `T4` |
+| `T4` | data-ready, on main-paper path | table populated with refreshed 120-deg data; interpret metric-specific tradeoff (N=8 best effort, N=7 fastest convergence) |
+| `F5` | needs regeneration | regenerate from updated 120-deg cache; the figure now has clear differentiation across degrees |

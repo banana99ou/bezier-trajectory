@@ -30,4 +30,4 @@ The present formulation uses a fixed transfer time. It does not optimize free fi
 
 ### Solver and convergence behavior
 
-All reported runs use a maximum of 500 outer SCP iterations. Runs that reach this limit without meeting the convergence tolerance are reported with their terminal iterate rather than excluded. The convergence behavior of the outer SCP loop is empirically adequate for the tested scenarios but is not supported by a formal convergence proof.
+All reported runs use a maximum of 10000 outer SCP iterations. All runs in the current dataset reach this cap and are reported with their terminal iterate. The convergence behavior of the outer SCP loop is empirically useful for the tested scenarios but is not supported by a formal convergence proof. The subdivision-count ablation trend (monotone conservatism reduction) is observed under the specific 120-deg phase-lag geometry that produces a trajectory approaching the KOZ boundary; different orbital geometries may produce qualitatively different trade-off shapes.
