@@ -1,5 +1,7 @@
 """
 Optimization entrypoints for space-time Bezier trajectories.
+
+All optimization runs through the Rust backend (Clarabel QP solver).
 """
 
 from __future__ import annotations
@@ -8,11 +10,7 @@ import math
 
 import numpy as np
 
-from .debug_stepper import (
-    clip_trust_region,
-    create_debug_stepper,
-    create_debug_stepper_from_control_points,
-)
+from .debug_stepper import clip_trust_region
 from .geometry import bezier_curve, obstacle_array_bundle
 from .objective import build_initial_guess
 from .rust_debug_stepper import RustOptimizerStepper
@@ -53,47 +51,6 @@ def compute_min_clearance(P, obstacles: list[dict], dim: int, n_eval: int = 1500
         worst = min(worst, float(dists.min()))
 
     return float(worst)
-
-
-def _optimize_spacetime_python(
-    P_init: np.ndarray,
-    obstacles: list[dict],
-    n_seg: int = 8,
-    max_iter: int = 30,
-    tol: float = 1e-6,
-    scp_prox_weight: float = 0.5,
-    scp_trust_radius: float = 0.0,
-    min_dt: float = 0.1,
-    coord_lb: float = -20.0,
-    coord_ub: float = 20.0,
-    time_lb: float = 0.0,
-    time_ub_scale: float = 1.5,
-    verbose: bool = True,
-) -> np.ndarray:
-    """Successive convexification solver using SciPy trust-constr."""
-    stepper = create_debug_stepper_from_control_points(
-        np.asarray(P_init, dtype=float),
-        obstacles,
-        clearance_fn=compute_min_clearance,
-        n_seg=n_seg,
-        max_iter=max_iter,
-        tol=tol,
-        scp_prox_weight=scp_prox_weight,
-        scp_trust_radius=scp_trust_radius,
-        min_dt=min_dt,
-        coord_lb=coord_lb,
-        coord_ub=coord_ub,
-        time_lb=time_lb,
-        time_ub_scale=time_ub_scale,
-    )
-
-    if verbose:
-        print(
-            f"SCP: N={stepper.N}, dim={stepper.dim}, n_seg={n_seg}, n_cp={stepper.n_cp}, "
-            f"n_obs={len(obstacles)}, backend=rust"
-        )
-    final_control_points, _info = stepper.run_to_completion(verbose=verbose)
-    return final_control_points
 
 
 def _optimize_spacetime_rust(
@@ -146,10 +103,21 @@ def _optimize_spacetime_rust(
     if verbose:
         iterations = int(info.get("iterations", -1))
         clearance = float(info.get("min_clearance", math.nan))
+        feasible = bool(info.get("feasible", 0.0))
+        delta = float(info.get("final_delta_norm", math.nan))
+        total_slack = float(info.get("total_koz_slack", 0.0))
         print(
             f"SCP: N={n_cp - 1}, dim={dim}, n_seg={n_seg}, n_cp={n_cp}, n_obs={len(obstacles)}, backend=rust"
         )
-        print(f"  rust result: iterations={iterations}, clearance={clearance:.4f}")
+        # Determine termination reason
+        if delta < tol and total_slack < 1e-10:
+            reason = "converged"
+        elif iterations >= max_iter:
+            reason = "max_iter_reached"
+        else:
+            reason = "solver_failure"
+        print(f"  rust result: iterations={iterations}/{max_iter}, clearance={clearance:.4f}")
+        print(f"  termination: {reason}, feasible={feasible}, delta={delta:.2e}, koz_slack={total_slack:.2e}")
 
     return P_opt, info
 
@@ -168,41 +136,13 @@ def optimize_spacetime_from_control_points(
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
     verbose: bool = True,
-    backend: str = "rust",
-) -> np.ndarray:
-    """Optimize a space-time Bezier curve from an initial control polygon."""
-    backend = str(backend).lower().strip()
-    if backend not in {"auto", "python", "rust"}:
-        raise ValueError(f"Unsupported backend={backend!r}")
+) -> tuple[np.ndarray, dict]:
+    """Optimize a space-time Bezier curve from an initial control polygon.
 
-    P_init = np.asarray(P_init, dtype=float)
-
-    if backend in {"auto", "rust"}:
-        try:
-            P_rust, _ = _optimize_spacetime_rust(
-                P_init,
-                obstacles,
-                n_seg=n_seg,
-                max_iter=max_iter,
-                tol=tol,
-                scp_prox_weight=scp_prox_weight,
-                scp_trust_radius=scp_trust_radius,
-                min_dt=min_dt,
-                coord_lb=coord_lb,
-                coord_ub=coord_ub,
-                time_lb=time_lb,
-                time_ub_scale=time_ub_scale,
-                verbose=verbose,
-            )
-            return P_rust
-        except RuntimeError:
-            if backend == "python":
-                raise
-            if verbose:
-                print("Rust space-time optimizer unavailable, falling back to Python.")
-
-    return _optimize_spacetime_python(
-        P_init,
+    Returns (control_points, info) where info always contains 'backend'.
+    """
+    return _optimize_spacetime_rust(
+        np.asarray(P_init, dtype=float),
         obstacles,
         n_seg=n_seg,
         max_iter=max_iter,
@@ -236,9 +176,11 @@ def optimize_spacetime(
     time_ub_scale: float = 1.5,
     verbose: bool = True,
     init_curve: dict | None = None,
-    backend: str = "rust",
-) -> np.ndarray:
-    """Public optimizer entrypoint using either the Rust or Python backend."""
+) -> tuple[np.ndarray, dict]:
+    """Public optimizer entrypoint.
+
+    Returns (control_points, info) where info always contains 'backend'.
+    """
     n_cp = int(N) + 1
     P_init = build_initial_guess(p_start, p_end, n_cp, init_curve=init_curve)
     if dim != P_init.shape[1]:
@@ -257,7 +199,6 @@ def optimize_spacetime(
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
         verbose=verbose,
-        backend=backend,
     )
 
 
@@ -274,27 +215,7 @@ def create_spacetime_debug_stepper_from_control_points(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
-    backend: str = "rust",
 ):
-    backend = str(backend).lower().strip()
-    if backend == "python":
-        return create_debug_stepper_from_control_points(
-            np.asarray(P_init, dtype=float),
-            obstacles,
-            clearance_fn=compute_min_clearance,
-            n_seg=n_seg,
-            max_iter=max_iter,
-            tol=tol,
-            scp_prox_weight=scp_prox_weight,
-            scp_trust_radius=scp_trust_radius,
-            min_dt=min_dt,
-            coord_lb=coord_lb,
-            coord_ub=coord_ub,
-            time_lb=time_lb,
-            time_ub_scale=time_ub_scale,
-        )
-    if backend != "rust":
-        raise ValueError(f"Unsupported debug backend={backend!r}")
     return RustOptimizerStepper(
         p_init=np.asarray(P_init, dtype=float),
         obstacles=obstacles,
@@ -330,31 +251,7 @@ def create_spacetime_debug_stepper(
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
     init_curve: dict | None = None,
-    backend: str = "rust",
 ):
-    backend = str(backend).lower().strip()
-    if backend == "python":
-        return create_debug_stepper(
-            N=N,
-            dim=dim,
-            p_start=p_start,
-            p_end=p_end,
-            obstacles=obstacles,
-            clearance_fn=compute_min_clearance,
-            n_seg=n_seg,
-            max_iter=max_iter,
-            tol=tol,
-            scp_prox_weight=scp_prox_weight,
-            scp_trust_radius=scp_trust_radius,
-            min_dt=min_dt,
-            coord_lb=coord_lb,
-            coord_ub=coord_ub,
-            time_lb=time_lb,
-            time_ub_scale=time_ub_scale,
-            init_curve=init_curve,
-        )
-    if backend != "rust":
-        raise ValueError(f"Unsupported debug backend={backend!r}")
     n_cp = int(N) + 1
     p_init = build_initial_guess(p_start, p_end, n_cp, init_curve=init_curve)
     if dim != p_init.shape[1]:
@@ -372,14 +269,12 @@ def create_spacetime_debug_stepper(
         coord_ub=coord_ub,
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
-        backend=backend,
     )
 
 
 def optimize_scenario(
     scenario: dict,
     configs: list[tuple[int, int]],
-    backend: str = "rust",
     max_iter: int = 200,
     tol: float = 1e-6,
     scp_prox_weight: float = 0.3,
@@ -400,7 +295,7 @@ def optimize_scenario(
             print(f"[{scenario['name']}] degree={N}, segments={n_seg}")
             print(f"{'=' * 60}")
 
-        P_opt = optimize_spacetime(
+        P_opt, opt_info = optimize_spacetime(
             N=N,
             dim=len(p_start),
             p_start=p_start,
@@ -414,8 +309,8 @@ def optimize_scenario(
             min_dt=min_dt,
             verbose=verbose,
             init_curve=init_curve,
-            backend=backend,
         )
+        backend_used = opt_info["backend"]
 
         clearance = compute_min_clearance(P_opt, obstacles, dim=len(p_start), n_eval=3000)
         if verbose:
@@ -428,6 +323,7 @@ def optimize_scenario(
             "control_points": np.asarray(P_opt, dtype=float).tolist(),
             "min_clearance": float(clearance),
             "feasible": bool(clearance > 0.0),
+            "backend": backend_used,
         }
 
     feasible = {key: value for key, value in results.items() if value["feasible"]}
@@ -458,7 +354,6 @@ def optimize_scenarios(
     scenario_names: list[str],
     scenario_map: dict,
     existing_outputs: dict | None = None,
-    backend: str = "rust",
     max_iter: int = 200,
     tol: float = 1e-6,
     scp_prox_weight: float = 0.3,
@@ -473,7 +368,6 @@ def optimize_scenarios(
         all_outputs[name] = optimize_scenario(
             scenario_fn(),
             configs,
-            backend=backend,
             max_iter=max_iter,
             tol=tol,
             scp_prox_weight=scp_prox_weight,

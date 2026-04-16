@@ -148,12 +148,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Maximum number of iterations for optimization.",
     )
     parser.add_argument(
-        "--backend",
-        choices=["auto", "python", "rust"],
-        default="rust",
-        help="Optimization backend to use.",
-    )
-    parser.add_argument(
         "--output",
         default=str(DEFAULT_OUTPUT_PATH),
         help="Path to the scenario JSON consumed by the interactive demo.",
@@ -203,9 +197,8 @@ def main(argv: list[str] | None = None) -> None:
         scenario_names=args.scenarios,
         scenario_map=scenario_map,
         existing_outputs=existing_outputs,
-        backend=args.backend,
         max_iter=args.max_iter,
-        tol=args.tol
+        tol=args.tol,
     )
     saved_path = save_outputs(all_outputs, output_path)
     print(f"\nSaved: {saved_path}")

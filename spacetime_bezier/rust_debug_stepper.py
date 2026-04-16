@@ -134,7 +134,10 @@ class RustOptimizerStepper:
             line = line.strip()
             if not line:
                 continue
-            entries.append(json.loads(line))
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
         return entries
 
     def _koz_payload_from_summary(self, summary: dict, control_points: np.ndarray | None) -> dict:

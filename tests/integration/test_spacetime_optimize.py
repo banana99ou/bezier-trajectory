@@ -40,9 +40,16 @@ def _toy_scenario() -> dict:
     }
 
 
-def test_optimize_spacetime_python_keeps_time_monotone():
+@pytest.fixture(autouse=True)
+def _require_rust():
+    bezier_opt = pytest.importorskip("bezier_opt")
+    if not hasattr(bezier_opt, "optimize_spacetime_bezier"):
+        pytest.skip("Rust spacetime optimizer is not installed")
+
+
+def test_optimize_spacetime_keeps_time_monotone():
     obstacles = [{"pos0": [20.0, 20.0], "vel": [0.0, 0.0], "r": 1.0}]
-    P_opt = optimize_spacetime(
+    P_opt, info = optimize_spacetime(
         N=4,
         dim=3,
         p_start=[0.5, 1.0, 0.0],
@@ -54,20 +61,19 @@ def test_optimize_spacetime_python_keeps_time_monotone():
         scp_prox_weight=0.3,
         min_dt=0.1,
         verbose=False,
-        backend="python",
         init_curve={"mode": "quadratic_bow", "bow": 2.0, "side": 1.0, "workspace_center": [5.0, 5.0]},
     )
 
+    assert info["backend"] == "rust"
     assert P_opt.shape == (5, 3)
     assert np.all(np.diff(P_opt[:, -1]) >= 0.1 - 1e-9)
     assert compute_min_clearance(P_opt, obstacles, dim=3, n_eval=400) > 0.0
 
 
-def test_toy_scenario_small_config_is_feasible_with_python_backend():
+def test_toy_scenario_small_config_is_feasible():
     output = optimize_scenario(
         _toy_scenario(),
         configs=[(4, 4)],
-        backend="python",
         max_iter=8,
         scp_prox_weight=0.3,
         verbose=False,
@@ -77,31 +83,11 @@ def test_toy_scenario_small_config_is_feasible_with_python_backend():
     best = output["results"][output["best"]]
     assert best["feasible"] is True
     assert best["min_clearance"] > 0.0
+    assert best["backend"] == "rust"
     control_points = np.array(best["control_points"], dtype=float)
     assert np.all(np.diff(control_points[:, -1]) >= 0.1 - 1e-9)
     assert output["name"] == "toy"
     assert set(output.keys()) == {"name", "title", "best", "obstacles", "start", "end", "T", "init_curve", "results"}
-
-
-def test_toy_scenario_small_config_is_feasible_with_rust_backend():
-    bezier_opt = pytest.importorskip("bezier_opt")
-    if not hasattr(bezier_opt, "optimize_spacetime_bezier"):
-        pytest.skip("Rust spacetime optimizer is not installed")
-
-    output = optimize_scenario(
-        _toy_scenario(),
-        configs=[(4, 4)],
-        backend="rust",
-        max_iter=8,
-        scp_prox_weight=0.3,
-        verbose=False,
-    )
-
-    best = output["results"][output["best"]]
-    assert best["feasible"] is True
-    assert best["min_clearance"] > 0.0
-    control_points = np.array(best["control_points"], dtype=float)
-    assert np.all(np.diff(control_points[:, -1]) >= 0.1 - 1e-9)
 
 
 def test_spacetime_output_json_round_trip(tmp_path: Path):
@@ -145,7 +131,6 @@ def test_main_with_degree_override_runs_fixed_segment_sweep(tmp_path: Path, monk
         scenario_names,
         scenario_map,
         existing_outputs=None,
-        backend="auto",
         max_iter=200,
         tol=1e-6,
         scp_prox_weight=0.3,
@@ -213,102 +198,7 @@ def test_degree_override_parser_requires_positive_integer():
         spacetime_io._normalize_degree_args(["original", "-N", "-3", "--no-open"])
 
 
-def test_debug_stepper_matches_python_optimizer_result():
-    scenario = _toy_scenario()
-    kwargs = dict(
-        N=4,
-        dim=3,
-        p_start=scenario["start"],
-        p_end=scenario["end"],
-        obstacles=scenario["obstacles"],
-        n_seg=4,
-        max_iter=8,
-        tol=1e-6,
-        scp_prox_weight=0.3,
-        scp_trust_radius=0.0,
-        min_dt=0.1,
-        init_curve=scenario["init_curve"],
-        backend="python",
-    )
-    direct = optimize_spacetime(verbose=False, **kwargs)
-    stepper = create_spacetime_debug_stepper(**kwargs)
-    stepped, info = stepper.run_to_completion(verbose=False)
-
-    np.testing.assert_allclose(stepped, direct, atol=1e-8)
-    assert info["iterations"] >= 1
-    assert np.all(np.diff(stepped[:, -1]) >= 0.1 - 1e-9)
-
-
-def test_debug_stepper_trust_region_frame_matches_clip_function():
-    scenario = _toy_scenario()
-    stepper = create_spacetime_debug_stepper(
-        N=4,
-        dim=3,
-        p_start=scenario["start"],
-        p_end=scenario["end"],
-        obstacles=scenario["obstacles"],
-        n_seg=4,
-        max_iter=2,
-        tol=1e-6,
-        scp_prox_weight=0.3,
-        scp_trust_radius=0.25,
-        min_dt=0.1,
-        init_curve=scenario["init_curve"],
-        backend="python",
-    )
-
-    frames = []
-    while True:
-        frame = stepper.next_frame()
-        if frame is None:
-            break
-        frames.append(frame.to_dict())
-        if frame.stage == "trust-region":
-            break
-
-    trust_frame = frames[-1]
-    assert trust_frame["stage"] == "trust-region"
-    payload = trust_frame["payload"]
-    x_ref = np.array(frames[4]["payload"]["control_points"], dtype=float).reshape(-1)
-    raw = np.array(payload["candidate_control_points"], dtype=float).reshape(-1)
-    accepted = np.array(payload["accepted_control_points"], dtype=float).reshape(-1)
-    expected = _clip_trust_region(raw, x_ref, 0.25)
-    np.testing.assert_allclose(accepted, expected)
-
-
-def test_debug_session_next_prev_reset_are_history_based():
-    session = OptimizerDebugSession(
-        {
-            "toy": (
-                _toy_scenario,
-                [(4, 4)],
-            )
-        }
-    )
-    state = session.start(SessionConfig(scenario_name="toy", N=4, n_seg=4, max_iter=8, backend="python"))
-    assert state["current_frame"] is None
-
-    state = session.next()
-    first_frame = state["current_frame"]
-    assert first_frame["stage"] == "init-guess"
-
-    state = session.next()
-    second_frame = state["current_frame"]
-    assert second_frame["stage"] == "boundary-constraints"
-
-    state = session.prev()
-    assert state["current_frame"]["frame_id"] == first_frame["frame_id"]
-
-    state = session.reset()
-    assert state["current_frame"] is None
-    assert state["session"]["frame_count"] == 0
-
-
 def test_rust_debug_stepper_reports_rust_backend_truthfully():
-    bezier_opt = pytest.importorskip("bezier_opt")
-    if not hasattr(bezier_opt, "optimize_spacetime_bezier"):
-        pytest.skip("Rust spacetime optimizer is not installed")
-
     scenario = _toy_scenario()
     stepper = create_spacetime_debug_stepper(
         N=4,
@@ -323,7 +213,6 @@ def test_rust_debug_stepper_reports_rust_backend_truthfully():
         scp_trust_radius=0.0,
         min_dt=0.1,
         init_curve=scenario["init_curve"],
-        backend="rust",
     )
 
     frames = []
@@ -340,39 +229,28 @@ def test_rust_debug_stepper_reports_rust_backend_truthfully():
     assert "scipy" not in json.dumps(frames).lower()
 
 
-def test_debug_stepper_emits_expected_stage_order_prefix():
-    scenario = _toy_scenario()
-    stepper = create_spacetime_debug_stepper(
-        N=4,
-        dim=3,
-        p_start=scenario["start"],
-        p_end=scenario["end"],
-        obstacles=scenario["obstacles"],
-        n_seg=4,
-        max_iter=1,
-        tol=1e-6,
-        scp_prox_weight=0.3,
-        scp_trust_radius=0.0,
-        min_dt=0.1,
-        init_curve=scenario["init_curve"],
-        backend="python",
+def test_debug_session_next_prev_reset_are_history_based():
+    session = OptimizerDebugSession(
+        {
+            "toy": (
+                _toy_scenario,
+                [(4, 4)],
+            )
+        }
     )
-    stages = []
-    while True:
-        frame = stepper.next_frame()
-        if frame is None:
-            break
-        stages.append(frame.stage)
+    state = session.start(SessionConfig(scenario_name="toy", N=4, n_seg=4, max_iter=8))
+    assert state["current_frame"] is None
 
-    assert stages[:9] == [
-        "init-guess",
-        "boundary-constraints",
-        "time-monotonicity",
-        "box-bounds",
-        "iteration-start",
-        "segment-subdivision",
-        "koz-linearization",
-        "qp-assembly",
-        "solver-candidate",
-    ]
-    assert stages[-2:] == ["post-eval", "finalize"]
+    state = session.next()
+    first_frame = state["current_frame"]
+    assert first_frame["stage"] == "init-guess"
+
+    state = session.next()
+    second_frame = state["current_frame"]
+
+    state = session.prev()
+    assert state["current_frame"]["frame_id"] == first_frame["frame_id"]
+
+    state = session.reset()
+    assert state["current_frame"] is None
+    assert state["session"]["frame_count"] == 0

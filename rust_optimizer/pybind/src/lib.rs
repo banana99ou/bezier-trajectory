@@ -114,6 +114,7 @@ fn optimize_orbital_docking<'py>(
     coord_ub = 20.0,
     time_lb = 0.0,
     time_ub = 15.0,
+    elastic_weight = 100.0,
 ))]
 fn optimize_spacetime_bezier<'py>(
     py: Python<'py>,
@@ -133,6 +134,7 @@ fn optimize_spacetime_bezier<'py>(
     coord_ub: f64,
     time_lb: f64,
     time_ub: f64,
+    elastic_weight: f64,
 ) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyDict>)> {
     let p_arr = p_init.as_array();
     let np1 = p_arr.shape()[0];
@@ -230,6 +232,7 @@ fn optimize_spacetime_bezier<'py>(
         time_lb,
         time_ub,
         &obstacles,
+        elastic_weight,
     );
 
     let p_opt = PyArray2::from_vec2(py, &{

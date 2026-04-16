@@ -22,7 +22,6 @@ class SessionConfig:
     scp_prox_weight: float = 0.3
     scp_trust_radius: float = 0.0
     min_dt: float = 0.1
-    backend: str = "rust"
 
 
 class OptimizerDebugSession:
@@ -79,7 +78,6 @@ class OptimizerDebugSession:
             scp_trust_radius=config.scp_trust_radius,
             min_dt=config.min_dt,
             init_curve=self._scenario.get("init_curve"),
-            backend=config.backend,
         )
         self._history = []
         self._current_index = -1

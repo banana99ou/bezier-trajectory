@@ -62,7 +62,6 @@ def _resolve_initial_config(args) -> SessionConfig:
         scp_prox_weight=float(args.scp_prox_weight),
         scp_trust_radius=float(args.scp_trust_radius),
         min_dt=float(args.min_dt),
-        backend="rust",
     )
 
 
@@ -117,7 +116,6 @@ def make_handler(session: OptimizerDebugSession):
                         scp_prox_weight=float(payload.get("scp_prox_weight", 0.3)),
                         scp_trust_radius=float(payload.get("scp_trust_radius", 0.0)),
                         min_dt=float(payload.get("min_dt", 0.1)),
-                        backend="rust",
                     )
                     return _write_json(self, session.start(config))
                 if self.path == "/api/action":

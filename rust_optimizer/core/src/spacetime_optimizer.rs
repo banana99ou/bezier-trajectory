@@ -146,6 +146,7 @@ pub fn optimize_spacetime(
     time_lb: f64,
     time_ub: f64,
     obstacles: &SpacetimeObstacleData<'_>,
+    elastic_weight: f64,
 ) -> OptResult {
     let n = np1 - 1;
     let nvars = np1 * dim;
@@ -173,6 +174,8 @@ pub fn optimize_spacetime(
     let mut best_clearance = compute_min_clearance(&best_p, np1, dim, obstacles, 1500);
     let mut iterations = 0usize;
     let mut last_delta = f64::NAN;
+    let mut last_total_slack = 0.0f64;
+    let mut last_max_slack = 0.0f64;
     let debug_run_id = format!(
         "scp-np{}_dim{}_seg{}_obs{}_max{}",
         np1, dim, n_seg, obstacles.n_obs, max_iter
@@ -230,6 +233,7 @@ pub fn optimize_spacetime(
             &mut all_ub,
             &mut total_rows,
         );
+        let koz_row_start = total_rows;
         if let Some(koz_constraint) = &koz {
             append_constraint(
                 koz_constraint,
@@ -239,6 +243,7 @@ pub fn optimize_spacetime(
                 &mut total_rows,
             );
         }
+        let n_koz = total_rows - koz_row_start;
 
         // #region agent log
         debug_log(
@@ -257,35 +262,100 @@ pub fn optimize_spacetime(
         );
         // #endregion
 
-        let x_new = match solve_qp(
-            &h,
-            &f,
-            &all_a_rows,
-            &all_lb,
-            &all_ub,
-            nvars,
-            total_rows,
-        ) {
-            Some(x) => x,
-            None => {
-                // #region agent log
-                debug_log(
-                    &debug_run_id,
-                    "H1",
-                    "rust_optimizer/core/src/spacetime_optimizer.rs:optimize_spacetime:solve_failure",
-                    "qp solve returned none",
-                    serde_json::json!({
-                        "iteration": it,
-                        "koz_present": koz.is_some(),
-                        "koz_rows": koz.as_ref().map(|constraint| constraint.n_rows).unwrap_or(0),
-                        "total_rows": total_rows,
-                        "control_points": control_points_to_rows(&p, np1, dim),
-                    }),
-                );
-                // #endregion
-                break;
+        let (x_new, iter_total_slack, iter_max_slack);
+
+        let hard_sol = solve_qp(&h, &f, &all_a_rows, &all_lb, &all_ub, nvars, total_rows);
+
+        if let Some(x_sol) = hard_sol {
+            x_new = x_sol;
+            iter_total_slack = 0.0;
+            iter_max_slack = 0.0;
+        } else if elastic_weight > 0.0 && n_koz > 0 {
+            // Hard QP infeasible — retry with slack on KOZ rows.
+            let nvars_ext = nvars + n_koz;
+            let ext_nrows = total_rows + n_koz;
+
+            let mut h_ext = vec![0.0; nvars_ext * nvars_ext];
+            for i in 0..nvars {
+                for j in 0..nvars {
+                    h_ext[i * nvars_ext + j] = h[i * nvars + j];
+                }
             }
-        };
+
+            let mut f_ext = vec![0.0; nvars_ext];
+            f_ext[..nvars].copy_from_slice(&f);
+            for k in 0..n_koz {
+                f_ext[nvars + k] = elastic_weight;
+            }
+
+            let mut a_ext = vec![0.0; ext_nrows * nvars_ext];
+            let mut lb_ext = Vec::with_capacity(ext_nrows);
+            let mut ub_ext = Vec::with_capacity(ext_nrows);
+
+            for r in 0..total_rows {
+                let dst = r * nvars_ext;
+                let src = r * nvars;
+                a_ext[dst..dst + nvars].copy_from_slice(&all_a_rows[src..src + nvars]);
+                if r >= koz_row_start && r < koz_row_start + n_koz {
+                    a_ext[dst + nvars + (r - koz_row_start)] = 1.0;
+                }
+                lb_ext.push(all_lb[r]);
+                ub_ext.push(all_ub[r]);
+            }
+
+            for k in 0..n_koz {
+                let r = total_rows + k;
+                a_ext[r * nvars_ext + nvars + k] = 1.0;
+                lb_ext.push(0.0);
+                ub_ext.push(f64::INFINITY);
+            }
+
+            let x_full = match solve_qp(
+                &h_ext, &f_ext, &a_ext, &lb_ext, &ub_ext, nvars_ext, ext_nrows,
+            ) {
+                Some(x) => x,
+                None => {
+                    // #region agent log
+                    debug_log(
+                        &debug_run_id,
+                        "H1",
+                        "rust_optimizer/core/src/spacetime_optimizer.rs:optimize_spacetime:elastic_solve_failure",
+                        "elastic qp also failed",
+                        serde_json::json!({
+                            "iteration": it,
+                            "n_koz": n_koz,
+                            "total_rows": total_rows,
+                        }),
+                    );
+                    // #endregion
+                    break;
+                }
+            };
+
+            x_new = x_full[..nvars].to_vec();
+            iter_total_slack = x_full[nvars..].iter().sum::<f64>();
+            iter_max_slack = x_full[nvars..].iter().cloned().fold(0.0f64, f64::max);
+        } else {
+            // #region agent log
+            debug_log(
+                &debug_run_id,
+                "H1",
+                "rust_optimizer/core/src/spacetime_optimizer.rs:optimize_spacetime:solve_failure",
+                "qp solve returned none",
+                serde_json::json!({
+                    "iteration": it,
+                    "koz_present": koz.is_some(),
+                    "koz_rows": koz.as_ref().map(|constraint| constraint.n_rows).unwrap_or(0),
+                    "total_rows": total_rows,
+                    "control_points": control_points_to_rows(&p, np1, dim),
+                }),
+            );
+            // #endregion
+            break;
+        }
+
+        last_total_slack = iter_total_slack;
+        last_max_slack = iter_max_slack;
 
         let mut x_result = x_new.clone();
         let step_norm = (0..nvars)
@@ -327,7 +397,7 @@ pub fn optimize_spacetime(
             best_clearance = clearance;
             best_p = p.clone();
         }
-        if delta < tol {
+        if delta < tol && last_total_slack < 1e-10 {
             break;
         }
     }
@@ -366,6 +436,8 @@ pub fn optimize_spacetime(
     info.insert("max_control_accel_ms2".to_string(), 0.0);
     info.insert("mean_control_accel_ms2".to_string(), 0.0);
     info.insert("final_delta_norm".to_string(), last_delta);
+    info.insert("total_koz_slack".to_string(), last_total_slack);
+    info.insert("max_koz_slack".to_string(), last_max_slack);
 
     OptResult {
         p_opt: p,
