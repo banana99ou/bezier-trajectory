@@ -15,6 +15,7 @@ from .debug_stepper import (
 )
 from .geometry import bezier_curve, obstacle_array_bundle
 from .objective import build_initial_guess
+from .rust_debug_stepper import RustOptimizerStepper
 
 try:
     import bezier_opt as _bezier_opt_rs
@@ -89,7 +90,7 @@ def _optimize_spacetime_python(
     if verbose:
         print(
             f"SCP: N={stepper.N}, dim={stepper.dim}, n_seg={n_seg}, n_cp={stepper.n_cp}, "
-            f"n_obs={len(obstacles)}, backend=python"
+            f"n_obs={len(obstacles)}, backend=rust"
         )
     final_control_points, _info = stepper.run_to_completion(verbose=verbose)
     return final_control_points
@@ -167,7 +168,7 @@ def optimize_spacetime_from_control_points(
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
     verbose: bool = True,
-    backend: str = "auto",
+    backend: str = "rust",
 ) -> np.ndarray:
     """Optimize a space-time Bezier curve from an initial control polygon."""
     backend = str(backend).lower().strip()
@@ -195,7 +196,7 @@ def optimize_spacetime_from_control_points(
             )
             return P_rust
         except RuntimeError:
-            if backend == "rust":
+            if backend == "python":
                 raise
             if verbose:
                 print("Rust space-time optimizer unavailable, falling back to Python.")
@@ -235,7 +236,7 @@ def optimize_spacetime(
     time_ub_scale: float = 1.5,
     verbose: bool = True,
     init_curve: dict | None = None,
-    backend: str = "auto",
+    backend: str = "rust",
 ) -> np.ndarray:
     """Public optimizer entrypoint using either the Rust or Python backend."""
     n_cp = int(N) + 1
@@ -273,15 +274,32 @@ def create_spacetime_debug_stepper_from_control_points(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
-    backend: str = "python",
+    backend: str = "rust",
 ):
     backend = str(backend).lower().strip()
-    if backend != "python":
-        raise ValueError("Live optimizer stepping currently supports only the Python backend.")
-    return create_debug_stepper_from_control_points(
-        np.asarray(P_init, dtype=float),
-        obstacles,
+    if backend == "python":
+        return create_debug_stepper_from_control_points(
+            np.asarray(P_init, dtype=float),
+            obstacles,
+            clearance_fn=compute_min_clearance,
+            n_seg=n_seg,
+            max_iter=max_iter,
+            tol=tol,
+            scp_prox_weight=scp_prox_weight,
+            scp_trust_radius=scp_trust_radius,
+            min_dt=min_dt,
+            coord_lb=coord_lb,
+            coord_ub=coord_ub,
+            time_lb=time_lb,
+            time_ub_scale=time_ub_scale,
+        )
+    if backend != "rust":
+        raise ValueError(f"Unsupported debug backend={backend!r}")
+    return RustOptimizerStepper(
+        p_init=np.asarray(P_init, dtype=float),
+        obstacles=obstacles,
         clearance_fn=compute_min_clearance,
+        rust_solver=_optimize_spacetime_rust,
         n_seg=n_seg,
         max_iter=max_iter,
         tol=tol,
@@ -312,18 +330,38 @@ def create_spacetime_debug_stepper(
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
     init_curve: dict | None = None,
-    backend: str = "python",
+    backend: str = "rust",
 ):
     backend = str(backend).lower().strip()
-    if backend != "python":
-        raise ValueError("Live optimizer stepping currently supports only the Python backend.")
-    return create_debug_stepper(
-        N=N,
-        dim=dim,
-        p_start=p_start,
-        p_end=p_end,
-        obstacles=obstacles,
-        clearance_fn=compute_min_clearance,
+    if backend == "python":
+        return create_debug_stepper(
+            N=N,
+            dim=dim,
+            p_start=p_start,
+            p_end=p_end,
+            obstacles=obstacles,
+            clearance_fn=compute_min_clearance,
+            n_seg=n_seg,
+            max_iter=max_iter,
+            tol=tol,
+            scp_prox_weight=scp_prox_weight,
+            scp_trust_radius=scp_trust_radius,
+            min_dt=min_dt,
+            coord_lb=coord_lb,
+            coord_ub=coord_ub,
+            time_lb=time_lb,
+            time_ub_scale=time_ub_scale,
+            init_curve=init_curve,
+        )
+    if backend != "rust":
+        raise ValueError(f"Unsupported debug backend={backend!r}")
+    n_cp = int(N) + 1
+    p_init = build_initial_guess(p_start, p_end, n_cp, init_curve=init_curve)
+    if dim != p_init.shape[1]:
+        raise ValueError(f"Expected dim={dim}, got initial guess with dim={p_init.shape[1]}")
+    return create_spacetime_debug_stepper_from_control_points(
+        p_init,
+        obstacles,
         n_seg=n_seg,
         max_iter=max_iter,
         tol=tol,
@@ -334,14 +372,14 @@ def create_spacetime_debug_stepper(
         coord_ub=coord_ub,
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
-        init_curve=init_curve,
+        backend=backend,
     )
 
 
 def optimize_scenario(
     scenario: dict,
     configs: list[tuple[int, int]],
-    backend: str = "auto",
+    backend: str = "rust",
     max_iter: int = 200,
     tol: float = 1e-6,
     scp_prox_weight: float = 0.3,
@@ -420,7 +458,7 @@ def optimize_scenarios(
     scenario_names: list[str],
     scenario_map: dict,
     existing_outputs: dict | None = None,
-    backend: str = "auto",
+    backend: str = "rust",
     max_iter: int = 200,
     tol: float = 1e-6,
     scp_prox_weight: float = 0.3,
