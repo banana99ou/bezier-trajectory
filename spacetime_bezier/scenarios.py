@@ -18,7 +18,7 @@ def make_wall(
     t_start=None,
     t_end=None,
 ) -> list[dict]:
-    """Create a row of overlapping circles between p1 and p2."""
+    """Create a wall obstacle as a row of overlapping circles between p1 and p2."""
     p1 = np.asarray(p1, dtype=float)
     p2 = np.asarray(p2, dtype=float)
     length = np.linalg.norm(p2 - p1)

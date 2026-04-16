@@ -216,6 +216,7 @@ def create_spacetime_debug_stepper_from_control_points(
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
 ):
+    """Create a Rust-backed debug stepper from an existing control polygon."""
     return RustOptimizerStepper(
         p_init=np.asarray(P_init, dtype=float),
         obstacles=obstacles,
@@ -252,6 +253,7 @@ def create_spacetime_debug_stepper(
     time_ub_scale: float = 1.5,
     init_curve: dict | None = None,
 ):
+    """Create a Rust-backed debug stepper, building the initial guess from endpoints."""
     n_cp = int(N) + 1
     p_init = build_initial_guess(p_start, p_end, n_cp, init_curve=init_curve)
     if dim != p_init.shape[1]:

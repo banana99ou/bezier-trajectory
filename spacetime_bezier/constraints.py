@@ -195,7 +195,7 @@ def build_spacetime_koz_constraints(
 
 
 def build_boundary_constraints(n_cp: int, dim: int, p_start, p_end) -> LinearConstraint:
-    """Fix first and last control points via equality constraints."""
+    """Fix first and last control points to p_start and p_end via equality constraints."""
     p_start = np.asarray(p_start, dtype=float)
     p_end = np.asarray(p_end, dtype=float)
     rows = []
@@ -217,7 +217,7 @@ def build_boundary_constraints(n_cp: int, dim: int, p_start, p_end) -> LinearCon
 
 
 def build_time_monotonicity(n_cp: int, dim: int, min_dt: float = 0.1) -> LinearConstraint:
-    """Enforce P[i+1, t] - P[i, t] >= min_dt."""
+    """Enforce time monotonicity: P[i+1, t] - P[i, t] >= min_dt for all consecutive control points."""
     t_idx = dim - 1
     rows = []
     for cp_idx in range(n_cp - 1):
@@ -239,7 +239,7 @@ def build_box_bounds(
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
 ) -> Bounds:
-    """Create box bounds while keeping the endpoints fixed."""
+    """Create box bounds on all control point coordinates, fixing endpoints to their initial values."""
     p_init = np.asarray(p_init, dtype=float)
     n_cp, dim = p_init.shape
     lb = np.full(n_cp * dim, float(coord_lb), dtype=float)

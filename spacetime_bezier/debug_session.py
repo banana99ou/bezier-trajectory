@@ -14,6 +14,8 @@ from .scenarios import SCENARIO_MAP
 
 @dataclass(slots=True)
 class SessionConfig:
+    """Parameters for starting an optimizer debug session."""
+
     scenario_name: str
     N: int
     n_seg: int

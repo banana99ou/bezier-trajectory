@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-Run the same scenario through both Python and Rust backends, diff the results.
+Run scenarios through the Rust optimizer and report results.
+
+Primarily useful for verifying optimizer behavior across configs and
+for dumping trace data for offline inspection.
 
 Usage:
     python3 tools/compare_backends.py                    # run 'original' scenario

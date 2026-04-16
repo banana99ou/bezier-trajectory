@@ -1,5 +1,8 @@
 """
-Live, user-steppable Python SCP optimizer.
+Python SCP stepper (retained for clip_trust_region utility and reference).
+
+The Rust backend is the sole production optimizer. This module's
+SpacetimeOptimizerStepper class is no longer used as an optimizer backend.
 """
 
 from __future__ import annotations

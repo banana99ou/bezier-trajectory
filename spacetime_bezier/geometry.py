@@ -13,6 +13,8 @@ from orbital_docking.bezier import BezierCurve
 
 @dataclass(frozen=True)
 class MovingObstacle:
+    """A circular obstacle moving at constant velocity in 2D, optionally active only during [t_start, t_end]."""
+
     pos0: np.ndarray
     velocity: np.ndarray
     radius: float
