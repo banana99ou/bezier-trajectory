@@ -4,6 +4,32 @@ use crate::constraints;
 use crate::de_casteljau;
 use crate::gravity;
 use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn debug_log_solver(run_id: &str, hypothesis_id: &str, location: &str, message: &str, data: serde_json::Value) {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    let payload = serde_json::json!({
+        "sessionId": "9abff6",
+        "runId": run_id,
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": timestamp,
+    });
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/Volumes/Sandisk/code/bezier-trajectory-merge/.cursor/debug-9abff6.log")
+    {
+        let _ = writeln!(file, "{payload}");
+    }
+}
 
 /// Orbital constants (matching Python constants.py).
 pub struct OrbitalConstants {
@@ -213,6 +239,7 @@ pub(crate) fn solve_qp(
 ) -> Option<Vec<f64>> {
     use clarabel::algebra::CscMatrix;
     use clarabel::solver::{DefaultSettingsBuilder, DefaultSolver, IPSolver, SolverStatus};
+    let debug_run_id = format!("qp-n{}_m{}", n, m);
 
     // Build P as upper-triangular CSC
     let mut p_col_ptr = vec![0usize; n + 1];
@@ -406,9 +433,43 @@ pub(crate) fn solve_qp(
 
     let mut solver = match DefaultSolver::new(&p_csc, f, &a_csc, &b_vals2, &cones2, settings) {
         Ok(s) => s,
-        Err(_) => return None,
+        Err(err) => {
+            // #region agent log
+            debug_log_solver(
+                &debug_run_id,
+                "H6",
+                "rust_optimizer/core/src/optimizer.rs:solve_qp:new_solver_error",
+                "clarabel solver construction failed",
+                serde_json::json!({
+                    "n": n,
+                    "m": m,
+                    "error": err.to_string(),
+                    "total_rows2": total_rows2,
+                    "n_eq2": n_eq2,
+                    "n_ineq2": n_ineq2,
+                }),
+            );
+            // #endregion
+            return None;
+        }
     };
     solver.solve();
+    // #region agent log
+    debug_log_solver(
+        &debug_run_id,
+        "H5_H6",
+        "rust_optimizer/core/src/optimizer.rs:solve_qp:status",
+        "clarabel solve completed",
+        serde_json::json!({
+            "n": n,
+            "m": m,
+            "total_rows2": total_rows2,
+            "n_eq2": n_eq2,
+            "n_ineq2": n_ineq2,
+            "status": format!("{:?}", solver.solution.status),
+        }),
+    );
+    // #endregion
 
     match solver.solution.status {
         SolverStatus::Solved | SolverStatus::AlmostSolved => {

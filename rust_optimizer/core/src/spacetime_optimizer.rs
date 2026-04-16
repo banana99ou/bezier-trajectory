@@ -4,6 +4,40 @@ use crate::de_casteljau;
 use crate::optimizer::{solve_qp, OptResult};
 use crate::spacetime_constraints::{self, SpacetimeObstacleData};
 use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn control_points_to_rows(p: &[f64], np1: usize, dim: usize) -> Vec<Vec<f64>> {
+    let mut rows = Vec::with_capacity(np1);
+    for i in 0..np1 {
+        rows.push(p[i * dim..(i + 1) * dim].to_vec());
+    }
+    rows
+}
+
+fn debug_log(run_id: &str, hypothesis_id: &str, location: &str, message: &str, data: serde_json::Value) {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    let payload = serde_json::json!({
+        "sessionId": "9abff6",
+        "runId": run_id,
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": timestamp,
+    });
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/Volumes/Sandisk/code/bezier-trajectory-merge/.cursor/debug-9abff6.log")
+    {
+        let _ = writeln!(file, "{payload}");
+    }
+}
 
 fn build_spatial_energy_h(np1: usize, dim: usize) -> Vec<f64> {
     let n = np1 - 1;
@@ -139,6 +173,29 @@ pub fn optimize_spacetime(
     let mut best_clearance = compute_min_clearance(&best_p, np1, dim, obstacles, 1500);
     let mut iterations = 0usize;
     let mut last_delta = f64::NAN;
+    let debug_run_id = format!(
+        "scp-np{}_dim{}_seg{}_obs{}_max{}",
+        np1, dim, n_seg, obstacles.n_obs, max_iter
+    );
+    // #region agent log
+    debug_log(
+        &debug_run_id,
+        "H0",
+        "rust_optimizer/core/src/spacetime_optimizer.rs:optimize_spacetime:entry",
+        "spacetime optimize entry",
+        serde_json::json!({
+            "buildTag": "scp-debug-20260410a",
+            "np1": np1,
+            "dim": dim,
+            "n_seg": n_seg,
+            "max_iter": max_iter,
+            "tol": tol,
+            "n_obs": obstacles.n_obs,
+            "initial_clearance": best_clearance,
+            "control_points": control_points_to_rows(&p, np1, dim),
+        }),
+    );
+    // #endregion
 
     for it in 1..=max_iter {
         iterations = it;
@@ -183,6 +240,23 @@ pub fn optimize_spacetime(
             );
         }
 
+        // #region agent log
+        debug_log(
+            &debug_run_id,
+            "H1_H3",
+            "rust_optimizer/core/src/spacetime_optimizer.rs:optimize_spacetime:pre_solve",
+            "assembled scp subproblem",
+            serde_json::json!({
+                "iteration": it,
+                "koz_present": koz.is_some(),
+                "koz_rows": koz.as_ref().map(|constraint| constraint.n_rows).unwrap_or(0),
+                "total_rows": total_rows,
+                "best_clearance_before": best_clearance,
+                "control_points": control_points_to_rows(&p, np1, dim),
+            }),
+        );
+        // #endregion
+
         let x_new = match solve_qp(
             &h,
             &f,
@@ -193,7 +267,24 @@ pub fn optimize_spacetime(
             total_rows,
         ) {
             Some(x) => x,
-            None => break,
+            None => {
+                // #region agent log
+                debug_log(
+                    &debug_run_id,
+                    "H1",
+                    "rust_optimizer/core/src/spacetime_optimizer.rs:optimize_spacetime:solve_failure",
+                    "qp solve returned none",
+                    serde_json::json!({
+                        "iteration": it,
+                        "koz_present": koz.is_some(),
+                        "koz_rows": koz.as_ref().map(|constraint| constraint.n_rows).unwrap_or(0),
+                        "total_rows": total_rows,
+                        "control_points": control_points_to_rows(&p, np1, dim),
+                    }),
+                );
+                // #endregion
+                break;
+            }
         };
 
         let mut x_result = x_new.clone();
@@ -216,6 +307,22 @@ pub fn optimize_spacetime(
         p = x_result;
 
         let clearance = compute_min_clearance(&p, np1, dim, obstacles, 1500);
+        // #region agent log
+        debug_log(
+            &debug_run_id,
+            "H2",
+            "rust_optimizer/core/src/spacetime_optimizer.rs:optimize_spacetime:post_solve",
+            "qp solve produced candidate",
+            serde_json::json!({
+                "iteration": it,
+                "step_norm": step_norm,
+                "delta": delta,
+                "clearance_after": clearance,
+                "tol_break": delta < tol,
+                "accepted_control_points": control_points_to_rows(&p, np1, dim),
+            }),
+        );
+        // #endregion
         if clearance > 0.0 && clearance > best_clearance {
             best_clearance = clearance;
             best_p = p.clone();
@@ -233,6 +340,21 @@ pub fn optimize_spacetime(
 
     let feasible = final_clearance > 0.0 || obstacles.n_obs == 0;
     let cost = quadratic_cost(&h_energy, &p, nvars);
+    // #region agent log
+    debug_log(
+        &debug_run_id,
+        "H4",
+        "rust_optimizer/core/src/spacetime_optimizer.rs:optimize_spacetime:final",
+        "spacetime optimize exit",
+        serde_json::json!({
+            "iterations_reported": iterations,
+            "final_clearance": final_clearance,
+            "feasible": feasible,
+            "final_delta_norm": last_delta,
+            "final_control_points": control_points_to_rows(&p, np1, dim),
+        }),
+    );
+    // #endregion
 
     let mut info = HashMap::new();
     info.insert("iterations".to_string(), iterations as f64);
