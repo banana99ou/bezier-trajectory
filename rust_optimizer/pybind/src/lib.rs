@@ -23,6 +23,7 @@ use pyo3::types::PyDict;
     enforce_prograde = false,
     prograde_n_samples = 16,
     elastic_weight = 1e4,
+    transfer_time = 1500.0,
 ))]
 fn optimize_orbital_docking<'py>(
     py: Python<'py>,
@@ -44,6 +45,7 @@ fn optimize_orbital_docking<'py>(
     enforce_prograde: bool,
     prograde_n_samples: usize,
     elastic_weight: f64,
+    transfer_time: f64,
 ) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyDict>)> {
     let p_arr = p_init.as_array();
     let np1 = p_arr.shape()[0];
@@ -65,7 +67,7 @@ fn optimize_orbital_docking<'py>(
         r_e_val,
         max_iter,
         tol,
-        1500.0,
+        transfer_time,
         sample_count,
         objective_mode,
         dv_irls_eps,

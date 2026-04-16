@@ -124,3 +124,25 @@ Expand to harder cases once the bridge is validated.
 - **`scripts/run_dcm_db_experiment.py` is not reused** — build the experiment script fresh.
 - **No rewrite of the Bézier optimizer** — only a thin wrapper to handle `TransferConfig → endpoints` and `control points → (t, x, u)`.
 - The experiment script should live at repo root level (e.g., `tools/` or `scripts/`) since it bridges both subprojects.
+
+## Revision History
+
+### 2026-04-16: Pivot to Pass 1 replacement experiment
+
+Initial experiments showed that the original "warm-start" design does not improve DCM performance (see `doc/dcm_experiment_findings.md`, Findings 1–2). Two issues:
+
+1. Bézier representation fails for multi-revolution transfers (`T_normed > 0.5`) — the polynomial cannot track multi-revolution orbits without extreme control point excursions.
+2. For short-transfer cases where Bézier is feasible, DCM converges to the same cost regardless of warm-start. The ν₀/νf mismatch (Bézier uses fixed endpoints; DCM optimizes them) means the warm-start trajectory starts at the wrong orbital position.
+
+**Revised goal**: Test whether the Bézier optimizer can **replace Pass 1** (Hermite-Simpson collocation) as a cheaper way to discover thrust peak structure and provide a warm-start for Pass 2 (Multi-Phase LGL).
+
+Revised pipelines:
+
+```
+Baseline:   TransferConfig → Pass 1 (H-S) → peak detect → Pass 2 (LGL) → result
+Proposed:   TransferConfig → Bézier SCP → peak detect → Pass 2 (LGL) → result
+```
+
+The claim shifts from "Bézier finds a better answer" to "Bézier replaces Pass 1 with a faster structural pre-analysis step while preserving solution quality."
+
+See `doc/dcm_experiment_findings.md` Finding 3 for full rationale.

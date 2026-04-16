@@ -29,6 +29,9 @@ figures/*.pkl
 # Syncthing conflict files
 *.sync-conflict-*
 
+# Experiment results (regenerable from scripts)
+results/
+
 # Specific excludes
 doc/20250902_*
 

@@ -413,6 +413,7 @@ def optimize_orbital_docking(
     ignore_existing_cache=False,
     store_history: bool = False,
     history_samples: int = 200,
+    transfer_time: float | None = None,
 ):
     """
     Optimize Bézier curve for orbital docking.
@@ -444,6 +445,8 @@ def optimize_orbital_docking(
     from .constants import KOZ_RADIUS, TRANSFER_TIME_S
     if r_e is None:
         r_e = KOZ_RADIUS
+    if transfer_time is None:
+        transfer_time = TRANSFER_TIME_S
     
     t0 = time.time()
     # Check cache first (optional bypass for forced fresh computation)
@@ -491,12 +494,13 @@ def optimize_orbital_docking(
         enforce_prograde=enforce_prograde,
         prograde_n_samples=prograde_n_samples,
         elastic_weight=elastic_weight,
+        transfer_time=float(transfer_time),
     )
 
     P = np.asarray(P_opt, dtype=float)
     Np1, dim = P.shape
     N = Np1 - 1
-    T = float(TRANSFER_TIME_S)
+    T = float(transfer_time)
     info = dict(rust_info)
     keep_history = bool(store_history or debug)
     it = int(info.get("iterations", max_iter))
