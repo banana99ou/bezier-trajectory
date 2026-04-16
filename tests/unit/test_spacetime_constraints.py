@@ -3,6 +3,7 @@ Unit tests for the space-time Bezier constraint builders.
 """
 
 import numpy as np
+import pytest
 
 from orbital_docking.de_casteljau import segment_matrices_equal_params
 from spacetime_bezier.constraints import (
@@ -89,7 +90,33 @@ def test_spacetime_koz_constraints_return_debug_metadata():
     active = seg["active_obstacles"][0]
     assert active["obstacle_name"] == "A"
     assert active["row_count"] == 3
-    np.testing.assert_allclose(active["support_point"], np.array([0.5, 1.0]))
+    np.testing.assert_allclose(active["center"], np.array([0.0, 1.0, 1.0]))
+    np.testing.assert_allclose(active["velocity"], np.array([0.0, 0.0]))
+    np.testing.assert_allclose(active["normal"], np.array([1.0, 0.0, 0.0]))
+    np.testing.assert_allclose(active["support_point"], np.array([0.5, 1.0, 1.0]))
+
+
+def test_spacetime_koz_constraints_round_time_caps_with_nonzero_time_normal():
+    A_list = segment_matrices_equal_params(2, 1)
+    P = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [1.0, 0.0, 2.0],
+            [1.0, 0.0, 4.0],
+        ]
+    )
+    obstacles = [{"pos0": [0.0, 0.0], "vel": [0.0, 0.0], "r": 0.5, "t_start": 0.0, "t_end": 1.0, "name": "cap"}]
+
+    constraint, debug = build_spacetime_koz_constraints(A_list, P, obstacles, dim=3, return_debug=True)
+
+    assert constraint is not None
+    assert np.all(np.diag(constraint.A[:, 2::3]) > 0.0)
+    assert np.count_nonzero(constraint.A[:, 2::3]) == 3
+    active = debug["segments"][0]["active_obstacles"][0]
+    assert active["obstacle_name"] == "cap"
+    assert active["center"][2] == pytest.approx(1.0)
+    assert active["support_point"][2] > active["center"][2]
+    assert active["normal"][2] > 0.0
 
 
 def test_box_bounds_fix_endpoints_and_limit_time():

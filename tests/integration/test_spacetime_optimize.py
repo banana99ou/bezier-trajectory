@@ -3,6 +3,7 @@ Integration tests for the space-time Bezier optimizer package.
 """
 
 import argparse
+import json
 from pathlib import Path
 
 import numpy as np
@@ -284,7 +285,7 @@ def test_debug_session_next_prev_reset_are_history_based():
             )
         }
     )
-    state = session.start(SessionConfig(scenario_name="toy", N=4, n_seg=4, max_iter=8))
+    state = session.start(SessionConfig(scenario_name="toy", N=4, n_seg=4, max_iter=8, backend="python"))
     assert state["current_frame"] is None
 
     state = session.next()
@@ -301,6 +302,42 @@ def test_debug_session_next_prev_reset_are_history_based():
     state = session.reset()
     assert state["current_frame"] is None
     assert state["session"]["frame_count"] == 0
+
+
+def test_rust_debug_stepper_reports_rust_backend_truthfully():
+    bezier_opt = pytest.importorskip("bezier_opt")
+    if not hasattr(bezier_opt, "optimize_spacetime_bezier"):
+        pytest.skip("Rust spacetime optimizer is not installed")
+
+    scenario = _toy_scenario()
+    stepper = create_spacetime_debug_stepper(
+        N=4,
+        dim=3,
+        p_start=scenario["start"],
+        p_end=scenario["end"],
+        obstacles=scenario["obstacles"],
+        n_seg=4,
+        max_iter=4,
+        tol=1e-6,
+        scp_prox_weight=0.3,
+        scp_trust_radius=0.0,
+        min_dt=0.1,
+        init_curve=scenario["init_curve"],
+        backend="rust",
+    )
+
+    frames = []
+    while True:
+        frame = stepper.next_frame()
+        if frame is None:
+            break
+        frames.append(frame.to_dict())
+
+    assert frames
+    assert frames[0]["payload"]["backend"] == "rust"
+    assert any(frame["stage"] == "solver-call" for frame in frames)
+    assert frames[-1]["stage"] == "finalize"
+    assert "scipy" not in json.dumps(frames).lower()
 
 
 def test_debug_stepper_emits_expected_stage_order_prefix():
