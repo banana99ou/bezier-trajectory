@@ -1,20 +1,23 @@
 """
-Truthful Rust-backed debugger stepper built from Rust optimizer logs.
+Rust-backed debug stepper driven by SpacetimeScpContext.step().
+
+Each SCP iteration calls the Rust backend directly and reads the full
+per-row KOZ metadata out of the return value. No log parsing.
 """
 
 from __future__ import annotations
-
-import json
-from pathlib import Path
 
 import numpy as np
 
 from orbital_docking.de_casteljau import segment_matrices_equal_params
 
 from .debug_trace import DebugFrame
-from .geometry import bezier_curve
+from .geometry import bezier_curve, obstacle_array_bundle
 
-RUST_DEBUG_LOG_PATH = Path("/Volumes/Sandisk/code/bezier-trajectory-merge/.cursor/debug-9abff6.log")
+try:
+    import bezier_opt as _bezier_opt_rs
+except ImportError:  # pragma: no cover
+    _bezier_opt_rs = None
 
 
 def _segment_snapshots(a_list, control_points: np.ndarray, num_pts: int = 40) -> list[dict]:
@@ -35,14 +38,18 @@ def _segment_snapshots(a_list, control_points: np.ndarray, num_pts: int = 40) ->
 
 
 class RustOptimizerStepper:
-    """Step through actual Rust optimizer execution without faking Python stages."""
+    """Step through Rust SCP execution one iteration at a time.
+
+    Emits stage frames for each SCP iteration using per-row KOZ data
+    returned by SpacetimeScpContext.step().
+    """
 
     def __init__(
         self,
         p_init: np.ndarray,
         obstacles: list[dict],
         clearance_fn,
-        rust_solver,
+        rust_solver=None,  # retained for API compatibility, unused
         n_seg: int = 8,
         max_iter: int = 30,
         tol: float = 1e-6,
@@ -54,10 +61,12 @@ class RustOptimizerStepper:
         time_lb: float = 0.0,
         time_ub_scale: float = 1.5,
     ) -> None:
+        if _bezier_opt_rs is None or not hasattr(_bezier_opt_rs, "SpacetimeScpContext"):
+            raise RuntimeError("Rust extension bezier_opt is not available or missing SpacetimeScpContext.")
+
         self.obstacles = list(obstacles)
         self.P_init = np.asarray(p_init, dtype=float).copy()
         self.clearance_fn = clearance_fn
-        self.rust_solver = rust_solver
         self.n_cp, self.dim = self.P_init.shape
         self.N = self.n_cp - 1
         self.n_seg = int(n_seg)
@@ -120,103 +129,105 @@ class RustOptimizerStepper:
             payload["segments"] = []
         return payload
 
-    def _clear_log(self) -> None:
-        try:
-            RUST_DEBUG_LOG_PATH.unlink()
-        except FileNotFoundError:
-            pass
+    def _build_koz_payload(
+        self,
+        control_points: np.ndarray,
+        seg_idx: np.ndarray,
+        cp_idx: np.ndarray,
+        obs_idx: np.ndarray,
+        normals: np.ndarray,
+        supports: np.ndarray,
+        centers: np.ndarray,
+        lbs: np.ndarray,
+        margins: np.ndarray,
+        slack: np.ndarray,
+    ) -> dict:
+        """Build a per-segment KOZ payload from Rust's per-row data.
 
-    def _read_log_entries(self) -> list[dict]:
-        if not RUST_DEBUG_LOG_PATH.exists():
-            return []
-        entries = []
-        for line in RUST_DEBUG_LOG_PATH.read_text().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entries.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        return entries
-
-    def _koz_payload_from_summary(self, summary: dict, control_points: np.ndarray | None) -> dict:
-        koz = {
-            "row_count": int(summary.get("n_rows", 0)),
-            "segments": [],
-            "summary": summary,
-        }
-        worst_segment = summary.get("worst_segment")
-        worst_obstacle = summary.get("worst_obstacle")
-        if worst_segment is None or worst_obstacle is None or control_points is None:
-            return koz
+        Groups rows by segment and builds active_obstacles entries with
+        real normal/support/margin values for each obstacle-segment-CP triple.
+        """
+        n_rows = len(seg_idx)
         segment_snapshots = _segment_snapshots(self.A_list, np.asarray(control_points, dtype=float))
-        selected_segment = next(
-            (segment for segment in segment_snapshots if int(segment["segment_index"]) == int(worst_segment)),
-            None,
-        )
-        if selected_segment is None:
-            return koz
-        selected_segment = dict(selected_segment)
-        normal = list(summary.get("worst_normal_with_time_coeff", []))
-        time_coefficient = float(normal[-1]) if normal else None
-        spatial_normal = normal[:-1] if normal else []
-        selected_segment["active_obstacles"] = [
-            {
-                "obstacle_index": int(worst_obstacle),
-                "obstacle_name": self.obstacles[int(worst_obstacle)].get("name", f"obs{worst_obstacle}"),
-                "geometry_type": "capsule",
-                "center": summary.get("worst_obstacle_center", []),
-                "support_point": summary.get("worst_support_point", []),
-                "normal": spatial_normal,
-                "time_coefficient": time_coefficient,
-                "lower_bound": summary.get("worst_lb"),
-                "lhs_current": summary.get("worst_lhs"),
-                "margin_current": None
-                if summary.get("worst_lhs") is None or summary.get("worst_lb") is None
-                else float(summary["worst_lhs"]) - float(summary["worst_lb"]),
-                "row_indices": [],
-            }
-        ]
-        koz["segments"] = [selected_segment]
-        return koz
+        # Index by segment
+        by_segment: dict[int, list[int]] = {}
+        for r in range(n_rows):
+            by_segment.setdefault(int(seg_idx[r]), []).append(r)
+
+        segments_out = []
+        worst_margin = float("inf")
+        worst_segment_idx = None
+        for snap in segment_snapshots:
+            s_idx = int(snap["segment_index"])
+            if s_idx not in by_segment:
+                segments_out.append(snap)
+                continue
+            seg = dict(snap)
+            rows_here = by_segment[s_idx]
+
+            # Aggregate per-obstacle (one entry per obstacle that touches this segment)
+            obs_to_rows: dict[int, list[int]] = {}
+            for r in rows_here:
+                obs_to_rows.setdefault(int(obs_idx[r]), []).append(r)
+
+            active_obs = []
+            for o_idx, r_list in obs_to_rows.items():
+                # Pick the tightest (lowest margin) row for this obstacle-segment pair
+                tightest = min(r_list, key=lambda r: float(margins[r]))
+                margin_val = float(margins[tightest])
+                if margin_val < worst_margin:
+                    worst_margin = margin_val
+                    worst_segment_idx = s_idx
+
+                normal = normals[tightest].tolist()
+                active_obs.append({
+                    "obstacle_index": o_idx,
+                    "obstacle_name": self.obstacles[o_idx].get("name", f"obs{o_idx}"),
+                    "geometry_type": "capsule",
+                    "center": centers[tightest].tolist(),
+                    "support_point": supports[tightest].tolist(),
+                    "normal": normal[:-1],
+                    "time_coefficient": float(normal[-1]),
+                    "lower_bound": float(lbs[tightest]),
+                    "lhs_current": float(lbs[tightest] + margins[tightest]),
+                    "margin_current": margin_val,
+                    "row_indices": r_list,
+                    "slack": float(slack[tightest]) if len(slack) > tightest else 0.0,
+                })
+            seg["active_obstacles"] = active_obs
+            segments_out.append(seg)
+
+        return {
+            "row_count": int(n_rows),
+            "segments": segments_out,
+            "worst_margin": worst_margin if worst_margin != float("inf") else None,
+            "worst_segment": worst_segment_idx,
+        }
 
     def _prepare_frames(self) -> None:
         if self._prepared:
             return
 
+        # Static/initial frames
         init_payload = self._common_payload(self.P_init)
         init_payload["sampled_curve"] = bezier_curve(self.P_init, num_pts=200)
         init_payload["metrics"] = {"clearance": self.initial_clearance}
-        init_payload["diagnostics"] = {
-            "summary": "Actual Rust backend. Segment snapshots are derived from the Rust input control points.",
-            "derived_visualization": True,
-        }
+        init_payload["diagnostics"] = {"summary": "Initial control polygon passed into Rust."}
         self._frames.append(self._frame("init-guess", "Initial control polygon", init_payload, iteration=None))
 
         subdivision_payload = self._common_payload(self.P_init)
-        subdivision_payload["diagnostics"] = {
-            "summary": "Equal-parameter subdivision derived from the same control polygon passed into Rust.",
-            "derived_visualization": True,
-        }
+        subdivision_payload["diagnostics"] = {"summary": "Equal-parameter De Casteljau subdivision."}
         self._frames.append(
             self._frame("segment-subdivision", "Segment subdivision", subdivision_payload, iteration=0)
         )
 
         obstacle_payload = self._common_payload(self.P_init)
-        obstacle_payload["diagnostics"] = {
-            "summary": "Showing raw Rust obstacle inputs. Backend-specific intermediate obstacle geometry is not exposed yet.",
-            "not_available_for_backend": True,
-        }
+        obstacle_payload["diagnostics"] = {"summary": "Raw Rust obstacle inputs (capsule world-tubes in space-time)."}
         self._frames.append(
             self._frame("obstacle-geometry", "Obstacle geometry", obstacle_payload, iteration=0)
         )
 
         objective_payload = self._common_payload(self.P_init)
-        objective_payload["diagnostics"] = {
-            "summary": "Objective metadata from the Rust optimizer configuration.",
-            "derived_visualization": False,
-        }
         objective_payload["objective"] = {
             "type": "spatial_acceleration_energy",
             "scp_prox_weight": self.scp_prox_weight,
@@ -229,180 +240,180 @@ class RustOptimizerStepper:
             self._frame("objective-assembly", "Objective assembly", objective_payload, iteration=0)
         )
 
-        self._clear_log()
-        p_opt, info = self.rust_solver(
-            self.P_init,
-            self.obstacles,
+        # Build Rust context
+        spatial_dim = self.dim - 1
+        pos0, vel, radii, t_start, t_end = obstacle_array_bundle(self.obstacles, spatial_dim)
+        time_upper = float(self.P_init[-1, -1]) * self.time_ub_scale
+
+        ctx = _bezier_opt_rs.SpacetimeScpContext(
+            p_init=self.P_init,
+            obstacle_pos0=pos0,
+            obstacle_vel=vel,
+            obstacle_r=radii,
+            obstacle_t_start=t_start,
+            obstacle_t_end=t_end,
             n_seg=self.n_seg,
-            max_iter=self.max_iter,
-            tol=self.tol,
-            scp_prox_weight=self.scp_prox_weight,
-            scp_trust_radius=self.scp_trust_radius,
             min_dt=self.min_dt,
             coord_lb=self.coord_lb,
             coord_ub=self.coord_ub,
             time_lb=self.time_lb,
-            time_ub_scale=self.time_ub_scale,
-            verbose=False,
+            time_ub=time_upper,
+            scp_prox_weight=self.scp_prox_weight,
+            scp_trust_radius=self.scp_trust_radius,
+            elastic_weight=100.0,
+            tol=self.tol,
         )
-        self.final_control_points = np.asarray(p_opt, dtype=float)
-        self.result_info = dict(info)
-        log_entries = self._read_log_entries()
 
+        # Track best feasible iterate (match Rust optimize_spacetime semantics)
         current_cp = self.P_init.copy()
-        guessed_iteration = -1
-        last_solver_payload = {}
-        for entry in log_entries:
-            data = dict(entry.get("data", {}))
-            hypothesis_id = str(entry.get("hypothesisId", ""))
-            if "control_points" in data:
-                current_cp = np.asarray(data["control_points"], dtype=float)
-            iteration = data.get("iteration")
-            if iteration is None:
-                if hypothesis_id == "H7_H8_H9_H10":
-                    guessed_iteration += 1
-                    iter_index = guessed_iteration
-                else:
-                    iter_index = max(0, guessed_iteration)
-            else:
-                iter_index = max(0, int(iteration) - 1)
-                guessed_iteration = max(guessed_iteration, iter_index)
+        best_cp = current_cp.copy()
+        best_clearance = self.initial_clearance
 
-            if hypothesis_id == "H7_H8_H9_H10":
-                payload = self._common_payload(current_cp)
-                payload["koz"] = self._koz_payload_from_summary(data, current_cp)
-                payload["diagnostics"] = {
-                    "summary": "Actual Rust supporting-surface summary. Full per-row geometry is not exposed yet.",
-                    "not_available_for_backend": False,
-                }
-                self._frames.append(
-                    self._frame(
-                        "supporting-surface-generation",
-                        f"Iteration {iter_index + 1} supporting surfaces",
-                        payload,
-                        iteration=iter_index,
-                    )
-                )
-            elif hypothesis_id == "H1_H3":
-                payload = self._common_payload(current_cp)
-                payload["koz"]["row_count"] = int(data.get("koz_rows", 0))
-                payload["diagnostics"] = {
-                    "summary": "Actual Rust constraint assembly counts.",
-                    "total_rows": int(data.get("total_rows", 0)),
-                    "best_clearance_before": data.get("best_clearance_before"),
-                }
-                self._frames.append(
-                    self._frame(
-                        "constraint-assembly",
-                        f"Iteration {iter_index + 1} constraint assembly",
-                        payload,
-                        iteration=iter_index,
-                    )
-                )
-            elif hypothesis_id == "H5_H6":
-                payload = self._common_payload(current_cp)
-                payload["solver"] = {
-                    "name": "Clarabel",
-                    "raw_status": data.get("status"),
-                    "interpreted_status": data.get("status"),
-                    "candidate_available": bool(
-                        data.get("status") in {"Solved", "AlmostSolved"}
-                    ),
-                    "accepted": False,
-                    "reason_for_rejection": None
-                    if data.get("status") in {"Solved", "AlmostSolved"}
-                    else "solve_qp rejected non-solved status",
-                    "status": data.get("status"),
-                }
-                last_solver_payload = payload["solver"]
-                self._frames.append(
-                    self._frame("solver-call", f"Iteration {iter_index + 1} solver call", payload, iteration=iter_index)
-                )
-            elif hypothesis_id == "H1":
-                payload = self._common_payload(current_cp)
-                payload["solver"] = last_solver_payload or {
-                    "name": "Clarabel",
-                    "raw_status": "unknown",
-                    "interpreted_status": "failed",
-                    "candidate_available": False,
-                    "accepted": False,
-                    "reason_for_rejection": "qp solve returned none",
-                }
-                payload["trust_region"] = {
-                    "radius": self.scp_trust_radius,
-                    "candidate_available": False,
-                }
-                payload["diagnostics"] = {
-                    "summary": "Rust candidate filter had no candidate because the solver returned no acceptable solution.",
-                }
-                self._frames.append(
-                    self._frame(
-                        "candidate-filter",
-                        f"Iteration {iter_index + 1} candidate filter",
-                        payload,
-                        iteration=iter_index,
-                    )
-                )
-            elif hypothesis_id == "H2":
-                accepted_cp = np.asarray(data.get("accepted_control_points", current_cp), dtype=float)
-                payload = self._common_payload(accepted_cp)
-                payload["accepted_control_points"] = accepted_cp
-                payload["trust_region"] = {
-                    "radius": self.scp_trust_radius,
-                    "raw_step_norm": data.get("step_norm"),
-                    "used_step_norm": data.get("delta"),
-                    "clipped": None
-                    if self.scp_trust_radius <= 0.0 or data.get("step_norm") is None or data.get("delta") is None
-                    else bool(float(data["delta"]) + 1e-12 < float(data["step_norm"])),
-                }
-                payload["diagnostics"] = {
-                    "summary": "Accepted Rust candidate after optional post-solve clipping.",
-                }
-                self._frames.append(
-                    self._frame(
-                        "candidate-filter",
-                        f"Iteration {iter_index + 1} candidate filter",
-                        payload,
-                        iteration=iter_index,
-                    )
-                )
+        for it in range(1, self.max_iter + 1):
+            result = ctx.step(current_cp)
+            p_new, info, seg_idx, cp_idx, obs_idx, normals, supports, centers, lbs, margins, slack = result
+            p_new = np.asarray(p_new, dtype=float)
+            seg_idx = np.asarray(seg_idx)
+            cp_idx = np.asarray(cp_idx)
+            obs_idx = np.asarray(obs_idx)
+            normals = np.asarray(normals)
+            supports = np.asarray(supports)
+            centers = np.asarray(centers)
+            lbs = np.asarray(lbs)
+            margins = np.asarray(margins)
+            slack = np.asarray(slack)
+            status = str(info["solver_status"])
 
-                post_payload = self._common_payload(accepted_cp)
-                post_payload["metrics"] = {
-                    "delta": data.get("delta"),
-                    "clearance": data.get("clearance_after"),
-                }
-                post_payload["diagnostics"] = {
-                    "summary": "Actual Rust post-evaluation metrics.",
-                    "tol_break": data.get("tol_break"),
-                }
-                self._frames.append(
-                    self._frame("post-eval", f"Iteration {iter_index + 1} evaluation", post_payload, iteration=iter_index)
-                )
-                current_cp = accepted_cp
-            elif hypothesis_id == "H4":
-                payload = self._common_payload(self.final_control_points)
-                payload["final_clearance"] = data.get("final_clearance")
-                payload["last_iterate_control_points"] = self.final_control_points
-                payload["best_control_points"] = self.final_control_points
-                payload["diagnostics"] = {
-                    "summary": "Final Rust return value.",
-                    "iterations_reported": data.get("iterations_reported"),
-                    "feasible": data.get("feasible"),
-                }
-                self._frames.append(self._frame("finalize", "Final result", payload, iteration=None))
-
-        if not any(frame.stage == "finalize" for frame in self._frames):
-            payload = self._common_payload(self.final_control_points)
-            payload["final_clearance"] = float(
-                self.clearance_fn(self.final_control_points, self.obstacles, dim=self.dim, n_eval=1500)
+            # supporting-surface-generation frame — real per-row data
+            ss_payload = self._common_payload(current_cp)
+            ss_payload["koz"] = self._build_koz_payload(
+                current_cp, seg_idx, cp_idx, obs_idx, normals, supports, centers, lbs, margins, slack
             )
-            payload["last_iterate_control_points"] = self.final_control_points
-            payload["best_control_points"] = self.final_control_points
-            payload["diagnostics"] = {
-                "summary": "Final Rust result with no matching finalize log entry.",
+            ss_payload["diagnostics"] = {
+                "summary": f"Iteration {it} KOZ supporting surfaces ({info['koz_row_count']} rows).",
+                "per_row_data": True,
             }
-            self._frames.append(self._frame("finalize", "Final result", payload, iteration=None))
+            self._frames.append(
+                self._frame("supporting-surface-generation", f"Iteration {it} supporting surfaces",
+                            ss_payload, iteration=it - 1)
+            )
+
+            # constraint-assembly frame
+            ca_payload = self._common_payload(current_cp)
+            ca_payload["koz"]["row_count"] = int(info["koz_row_count"])
+            ca_payload["diagnostics"] = {
+                "summary": f"Iteration {it} constraint assembly.",
+                "koz_rows": int(info["koz_row_count"]),
+            }
+            self._frames.append(
+                self._frame("constraint-assembly", f"Iteration {it} constraint assembly",
+                            ca_payload, iteration=it - 1)
+            )
+
+            # solver-call frame
+            sc_payload = self._common_payload(current_cp)
+            sc_payload["solver"] = {
+                "name": "Clarabel",
+                "raw_status": status,
+                "interpreted_status": status,
+                "candidate_available": status in {"Solved", "Elastic"},
+                "accepted": status in {"Solved", "Elastic"},
+                "reason_for_rejection": None if status in {"Solved", "Elastic"} else "QP infeasible (elastic also failed)",
+                "status": status,
+                "elastic_used": status == "Elastic",
+                "total_slack": float(info["total_slack"]),
+                "max_slack": float(info["max_slack"]),
+            }
+            self._frames.append(
+                self._frame("solver-call", f"Iteration {it} solver call",
+                            sc_payload, iteration=it - 1)
+            )
+
+            if status == "Failed":
+                # Stop here — no candidate produced
+                fail_payload = self._common_payload(current_cp)
+                fail_payload["solver"] = sc_payload["solver"]
+                fail_payload["diagnostics"] = {"summary": "QP and elastic fallback both failed; optimizer halted."}
+                self._frames.append(
+                    self._frame("candidate-filter", f"Iteration {it} candidate filter",
+                                fail_payload, iteration=it - 1)
+                )
+                break
+
+            # candidate-filter frame (trust region clip)
+            cf_payload = self._common_payload(p_new)
+            cf_payload["accepted_control_points"] = p_new
+            cf_payload["trust_region"] = {
+                "radius": self.scp_trust_radius,
+                "raw_step_norm": float(info["raw_step_norm"]),
+                "used_step_norm": float(info["delta"]),
+                "clipped": bool(
+                    self.scp_trust_radius > 0.0
+                    and float(info["delta"]) + 1e-12 < float(info["raw_step_norm"])
+                ),
+            }
+            cf_payload["diagnostics"] = {"summary": "Accepted candidate after trust-region clipping."}
+            self._frames.append(
+                self._frame("candidate-filter", f"Iteration {it} candidate filter",
+                            cf_payload, iteration=it - 1)
+            )
+
+            # post-eval frame
+            pe_payload = self._common_payload(p_new)
+            pe_payload["metrics"] = {
+                "delta": float(info["delta"]),
+                "clearance": float(info["clearance"]),
+                "cost": float(info["cost"]),
+                "total_koz_slack": float(info["total_slack"]),
+            }
+            pe_payload["diagnostics"] = {
+                "summary": f"Iteration {it} post-evaluation.",
+                "converged": bool(info["converged"]),
+            }
+            self._frames.append(
+                self._frame("post-eval", f"Iteration {it} evaluation",
+                            pe_payload, iteration=it - 1)
+            )
+
+            # Advance state
+            current_cp = p_new
+            if float(info["clearance"]) > 0.0 and float(info["clearance"]) > best_clearance:
+                best_clearance = float(info["clearance"])
+                best_cp = current_cp.copy()
+
+            if bool(info["converged"]):
+                break
+
+        # Final iterate: use best feasible if current is infeasible
+        final_clearance = float(
+            self.clearance_fn(current_cp, self.obstacles, dim=self.dim, n_eval=1500)
+        )
+        used_best = False
+        if final_clearance < 0.0 and best_clearance > 0.0:
+            final_cp = best_cp
+            final_clearance = best_clearance
+            used_best = True
+        else:
+            final_cp = current_cp
+
+        self.final_control_points = np.asarray(final_cp, dtype=float)
+        self.result_info = {
+            "backend": "rust",
+            "iterations": int(it) if "it" in dir() else 0,
+            "min_clearance": final_clearance,
+            "best_clearance": best_clearance,
+            "used_best_feasible": used_best,
+        }
+
+        finalize_payload = self._common_payload(self.final_control_points)
+        finalize_payload["final_clearance"] = final_clearance
+        finalize_payload["last_iterate_control_points"] = current_cp
+        finalize_payload["best_control_points"] = best_cp
+        finalize_payload["used_best_feasible"] = used_best
+        finalize_payload["diagnostics"] = {
+            "summary": f"Final result (clearance={final_clearance:.4f}, {'best-feasible' if used_best else 'last-iterate'}).",
+        }
+        self._frames.append(self._frame("finalize", "Final result", finalize_payload, iteration=None))
 
         self._prepared = True
 
