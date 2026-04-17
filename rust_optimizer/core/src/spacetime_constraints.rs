@@ -1,30 +1,4 @@
 use crate::constraints::LinearConstraint;
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-fn debug_log_constraints(run_id: &str, hypothesis_id: &str, location: &str, message: &str, data: serde_json::Value) {
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0);
-    let payload = serde_json::json!({
-        "sessionId": "9abff6",
-        "runId": run_id,
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-        "timestamp": timestamp,
-    });
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/Volumes/Sandisk/code/bezier-trajectory-merge/.cursor/debug-9abff6.log")
-    {
-        let _ = writeln!(file, "{payload}");
-    }
-}
 
 pub struct SpacetimeObstacleData<'a> {
     pub pos0: &'a [f64],    // (n_obs, spatial_dim) row-major
@@ -34,6 +8,25 @@ pub struct SpacetimeObstacleData<'a> {
     pub t_end: &'a [f64],   // (n_obs,)
     pub n_obs: usize,
     pub spatial_dim: usize,
+}
+
+/// Per-row metadata for a single KOZ constraint.
+pub struct KozRowData {
+    pub segment_idx: usize,
+    pub cp_idx: usize,
+    pub obstacle_idx: usize,
+    pub normal: Vec<f64>,
+    pub support_point: Vec<f64>,
+    pub closest_center: Vec<f64>,
+    pub lower_bound: f64,
+    pub lhs: f64,
+    pub margin: f64,
+}
+
+/// KOZ constraint matrix plus per-row metadata.
+pub struct KozConstraintBundle {
+    pub constraint: LinearConstraint,
+    pub rows: Vec<KozRowData>,
 }
 
 const SPACETIME_CAPSULE_TIME_SCALE: f64 = 0.5;
@@ -49,7 +42,7 @@ fn scaled_spacetime_capsule_support(
     time_start: f64,
     time_end: f64,
     time_scale: f64,
-) -> Option<(Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, f64)> {
+) -> Option<(Vec<f64>, Vec<f64>, Vec<f64>, f64)> {
     let spatial_dim = obstacles.spatial_dim;
     let dim = spatial_dim + 1;
     let eff_t0 = obstacles.t_start[obs_idx].max(time_start);
@@ -116,33 +109,22 @@ fn scaled_spacetime_capsule_support(
     closest_orig[dim - 1] /= time_scale;
     let lb = dot(&n_orig, &support_orig);
 
-    Some((n_orig, support_orig, closest_orig, n_scaled, lb))
+    Some((n_orig, support_orig, closest_orig, lb))
 }
 
 pub fn build_spacetime_koz_constraints(
     a_list: &[Vec<f64>],
-    p: &[f64], // (np1, dim) row-major
+    p: &[f64],
     np1: usize,
     dim: usize,
     obstacles: &SpacetimeObstacleData<'_>,
-) -> Option<LinearConstraint> {
+) -> Option<KozConstraintBundle> {
     let n_vars = np1 * dim;
-    let mut rows: Vec<Vec<f64>> = Vec::new();
+    let mut constraint_rows: Vec<Vec<f64>> = Vec::new();
     let mut lbs: Vec<f64> = Vec::new();
-    let debug_run_id = format!("koz-np{}_dim{}_seg{}_obs{}", np1, dim, a_list.len(), obstacles.n_obs);
+    let mut row_meta: Vec<KozRowData> = Vec::new();
     let plan_t0 = p[dim - 1];
     let plan_t1 = p[(np1 - 1) * dim + (dim - 1)];
-    let mut total_active_obstacles = 0usize;
-    let mut total_violated_rows = 0usize;
-    let mut min_margin = f64::INFINITY;
-    let mut worst_segment = usize::MAX;
-    let mut worst_obstacle = usize::MAX;
-    let mut worst_segment_point: Vec<f64> = Vec::new();
-    let mut worst_obstacle_center: Vec<f64> = Vec::new();
-    let mut worst_normal: Vec<f64> = Vec::new();
-    let mut worst_support_point: Vec<f64> = Vec::new();
-    let mut worst_lb = f64::NAN;
-    let mut worst_lhs = f64::NAN;
 
     if obstacles.n_obs == 0 {
         return None;
@@ -160,20 +142,10 @@ pub fn build_spacetime_koz_constraints(
             }
         }
 
-        let mut centroid = vec![0.0; dim];
-        for i in 0..np1 {
-            for d in 0..dim {
-                centroid[d] += q[i * dim + d];
-            }
-        }
-        for d in 0..dim {
-            centroid[d] /= np1 as f64;
-        }
-
         for k in 0..np1 {
             let query_point: Vec<f64> = (0..dim).map(|d| q[k * dim + d]).collect();
             for obs_idx in 0..obstacles.n_obs {
-                let Some((n_orig, support_orig, closest_orig, n_scaled, lb)) =
+                let Some((n_orig, support_orig, closest_orig, lb)) =
                     scaled_spacetime_capsule_support(
                         &query_point,
                         obstacles,
@@ -185,7 +157,6 @@ pub fn build_spacetime_koz_constraints(
                 else {
                     continue;
                 };
-                total_active_obstacles += 1;
 
                 let mut row = vec![0.0; n_vars];
                 for j in 0..np1 {
@@ -196,65 +167,43 @@ pub fn build_spacetime_koz_constraints(
                 }
                 let lhs = (0..n_vars).map(|idx| row[idx] * p[idx]).sum::<f64>();
                 let margin = lhs - lb;
-                if margin < 0.0 {
-                    total_violated_rows += 1;
-                }
-                if margin < min_margin {
-                    min_margin = margin;
-                    worst_segment = seg_idx;
-                    worst_obstacle = obs_idx;
-                    worst_segment_point = query_point.clone();
-                    worst_obstacle_center = closest_orig;
-                    worst_normal = n_scaled;
-                    worst_support_point = support_orig;
-                    worst_lb = lb;
-                    worst_lhs = lhs;
-                }
-                rows.push(row);
+
+                row_meta.push(KozRowData {
+                    segment_idx: seg_idx,
+                    cp_idx: k,
+                    obstacle_idx: obs_idx,
+                    normal: n_orig,
+                    support_point: support_orig,
+                    closest_center: closest_orig,
+                    lower_bound: lb,
+                    lhs,
+                    margin,
+                });
+                constraint_rows.push(row);
                 lbs.push(lb);
             }
         }
     }
 
-    if rows.is_empty() {
+    if constraint_rows.is_empty() {
         return None;
     }
 
-    let n_rows = rows.len();
+    let n_rows = constraint_rows.len();
     let mut a = vec![0.0; n_rows * n_vars];
-    for (i, row) in rows.iter().enumerate() {
+    for (i, row) in constraint_rows.iter().enumerate() {
         a[i * n_vars..(i + 1) * n_vars].copy_from_slice(row);
     }
 
-    // #region agent log
-    debug_log_constraints(
-        &debug_run_id,
-        "H7_H8_H9_H10",
-        "rust_optimizer/core/src/spacetime_constraints.rs:build_spacetime_koz_constraints:summary",
-        "built spacetime koz constraints",
-        serde_json::json!({
-            "n_rows": n_rows,
-            "active_obstacles": total_active_obstacles,
-            "violated_rows_at_reference": total_violated_rows,
-            "min_margin_at_reference": min_margin,
-            "worst_segment": if worst_segment == usize::MAX { None } else { Some(worst_segment) },
-            "worst_obstacle": if worst_obstacle == usize::MAX { None } else { Some(worst_obstacle) },
-            "worst_segment_point": worst_segment_point,
-            "worst_obstacle_center": worst_obstacle_center,
-            "worst_normal_with_time_coeff": worst_normal,
-            "worst_support_point": worst_support_point,
-            "worst_lb": worst_lb,
-            "worst_lhs": worst_lhs,
-        }),
-    );
-    // #endregion
-
-    Some(LinearConstraint {
-        a,
-        lb: lbs,
-        ub: vec![f64::INFINITY; n_rows],
-        n_rows,
-        n_vars,
+    Some(KozConstraintBundle {
+        constraint: LinearConstraint {
+            a,
+            lb: lbs,
+            ub: vec![f64::INFINITY; n_rows],
+            n_rows,
+            n_vars,
+        },
+        rows: row_meta,
     })
 }
 
@@ -289,14 +238,13 @@ pub fn build_time_monotonicity(np1: usize, dim: usize, min_dt: f64) -> LinearCon
     let n_vars = np1 * dim;
     let n_rows = np1 - 1;
     let mut a = vec![0.0; n_rows * n_vars];
-    let mut lb = vec![min_dt; n_rows];
+    let lb = vec![min_dt; n_rows];
     let ub = vec![f64::INFINITY; n_rows];
     let t_idx = dim - 1;
 
     for i in 0..n_rows {
         a[i * n_vars + i * dim + t_idx] = -1.0;
         a[i * n_vars + (i + 1) * dim + t_idx] = 1.0;
-        lb[i] = min_dt;
     }
 
     LinearConstraint {

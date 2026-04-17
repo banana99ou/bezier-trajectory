@@ -1,5 +1,5 @@
 use bezier_opt_core::{optimizer, spacetime_constraints::SpacetimeObstacleData, spacetime_optimizer};
-use numpy::{PyArray2, PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -254,9 +254,208 @@ fn optimize_spacetime_bezier<'py>(
     Ok((p_opt, info))
 }
 
+/// Opaque handle holding precomputed SCP data and obstacle arrays.
+/// Exposes a `step()` method that runs one SCP iteration.
+#[pyclass]
+struct SpacetimeScpContext {
+    precomputed: spacetime_optimizer::ScpPrecomputed,
+    pos0: Vec<f64>,
+    vel: Vec<f64>,
+    radii: Vec<f64>,
+    t_start: Vec<f64>,
+    t_end: Vec<f64>,
+    n_obs: usize,
+    spatial_dim: usize,
+    scp_prox_weight: f64,
+    scp_trust_radius: f64,
+    elastic_weight: f64,
+    tol: f64,
+}
+
+#[pymethods]
+impl SpacetimeScpContext {
+    #[new]
+    #[pyo3(signature = (
+        p_init,
+        obstacle_pos0,
+        obstacle_vel,
+        obstacle_r,
+        obstacle_t_start = None,
+        obstacle_t_end = None,
+        n_seg = 8,
+        min_dt = 0.1,
+        coord_lb = -20.0,
+        coord_ub = 20.0,
+        time_lb = 0.0,
+        time_ub = 15.0,
+        scp_prox_weight = 0.5,
+        scp_trust_radius = 0.0,
+        elastic_weight = 100.0,
+        tol = 1e-6,
+    ))]
+    fn new(
+        p_init: PyReadonlyArray2<'_, f64>,
+        obstacle_pos0: PyReadonlyArray2<'_, f64>,
+        obstacle_vel: PyReadonlyArray2<'_, f64>,
+        obstacle_r: PyReadonlyArray1<'_, f64>,
+        obstacle_t_start: Option<PyReadonlyArray1<'_, f64>>,
+        obstacle_t_end: Option<PyReadonlyArray1<'_, f64>>,
+        n_seg: usize,
+        min_dt: f64,
+        coord_lb: f64,
+        coord_ub: f64,
+        time_lb: f64,
+        time_ub: f64,
+        scp_prox_weight: f64,
+        scp_trust_radius: f64,
+        elastic_weight: f64,
+        tol: f64,
+    ) -> PyResult<Self> {
+        let p_arr = p_init.as_array();
+        let np1 = p_arr.shape()[0];
+        let dim = p_arr.shape()[1];
+        if dim < 2 {
+            return Err(pyo3::exceptions::PyValueError::new_err("dim >= 2 required"));
+        }
+        let spatial_dim = dim - 1;
+        let p_flat: Vec<f64> = p_arr.iter().copied().collect();
+
+        let n_obs = obstacle_pos0.as_array().shape()[0];
+        let pos0: Vec<f64> = obstacle_pos0.as_array().iter().copied().collect();
+        let vel: Vec<f64> = obstacle_vel.as_array().iter().copied().collect();
+        let radii: Vec<f64> = obstacle_r.as_array().iter().copied().collect();
+        let t_start = obstacle_t_start
+            .map(|a| a.as_array().iter().copied().collect())
+            .unwrap_or_else(|| vec![f64::NEG_INFINITY; n_obs]);
+        let t_end = obstacle_t_end
+            .map(|a| a.as_array().iter().copied().collect())
+            .unwrap_or_else(|| vec![f64::INFINITY; n_obs]);
+
+        let pre = spacetime_optimizer::precompute_scp(
+            &p_flat, np1, dim, n_seg, min_dt, coord_lb, coord_ub, time_lb, time_ub,
+        );
+
+        Ok(Self {
+            precomputed: pre,
+            pos0,
+            vel,
+            radii,
+            t_start,
+            t_end,
+            n_obs,
+            spatial_dim,
+            scp_prox_weight,
+            scp_trust_radius,
+            elastic_weight,
+            tol,
+        })
+    }
+
+    /// Run one SCP iteration from the given control points.
+    /// Returns (p_new, info_dict, koz_segment_idx, koz_cp_idx, koz_obstacle_idx,
+    ///          koz_normals, koz_support_points, koz_closest_centers,
+    ///          koz_lower_bounds, koz_margins, koz_slack).
+    fn step<'py>(
+        &self,
+        py: Python<'py>,
+        p_current: PyReadonlyArray2<'py, f64>,
+    ) -> PyResult<PyObject> {
+        let p_arr = p_current.as_array();
+        let p_flat: Vec<f64> = p_arr.iter().copied().collect();
+
+        let obstacles = SpacetimeObstacleData {
+            pos0: &self.pos0,
+            vel: &self.vel,
+            radii: &self.radii,
+            t_start: &self.t_start,
+            t_end: &self.t_end,
+            n_obs: self.n_obs,
+            spatial_dim: self.spatial_dim,
+        };
+
+        let result = spacetime_optimizer::scp_step(
+            &p_flat,
+            &self.precomputed,
+            &obstacles,
+            self.scp_prox_weight,
+            self.scp_trust_radius,
+            self.elastic_weight,
+            self.tol,
+        );
+
+        let np1 = self.precomputed.np1;
+        let dim = self.precomputed.dim;
+
+        // Pack p_new as (np1, dim)
+        let p_new = PyArray2::from_vec2(py, &{
+            let mut rows = Vec::with_capacity(np1);
+            for i in 0..np1 {
+                rows.push(result.p_new[i * dim..(i + 1) * dim].to_vec());
+            }
+            rows
+        }).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
+
+        // Pack info dict
+        let info = PyDict::new(py);
+        info.set_item("solver_status", &result.solver_status)?;
+        info.set_item("delta", result.delta)?;
+        info.set_item("raw_step_norm", result.raw_step_norm)?;
+        info.set_item("clearance", result.clearance)?;
+        info.set_item("total_slack", result.total_slack)?;
+        info.set_item("max_slack", result.max_slack)?;
+        info.set_item("converged", result.converged)?;
+        info.set_item("cost", result.cost)?;
+        info.set_item("koz_row_count", result.koz_rows.len())?;
+
+        // Pack per-row KOZ data as parallel flat arrays
+        let n_koz = result.koz_rows.len();
+        let seg_idx: Vec<i32> = result.koz_rows.iter().map(|r| r.segment_idx as i32).collect();
+        let cp_idx: Vec<i32> = result.koz_rows.iter().map(|r| r.cp_idx as i32).collect();
+        let obs_idx: Vec<i32> = result.koz_rows.iter().map(|r| r.obstacle_idx as i32).collect();
+
+        let mut normals_flat = Vec::with_capacity(n_koz * dim);
+        let mut support_flat = Vec::with_capacity(n_koz * dim);
+        let mut closest_flat = Vec::with_capacity(n_koz * dim);
+        let mut lbs = Vec::with_capacity(n_koz);
+        let mut margins = Vec::with_capacity(n_koz);
+
+        for row in &result.koz_rows {
+            normals_flat.extend_from_slice(&row.normal);
+            support_flat.extend_from_slice(&row.support_point);
+            closest_flat.extend_from_slice(&row.closest_center);
+            lbs.push(row.lower_bound);
+            margins.push(row.margin);
+        }
+
+        let koz_seg = PyArray1::from_vec(py, seg_idx);
+        let koz_cp = PyArray1::from_vec(py, cp_idx);
+        let koz_obs = PyArray1::from_vec(py, obs_idx);
+        let koz_normals = PyArray2::from_vec2(py, &{
+            result.koz_rows.iter().map(|r| r.normal.clone()).collect::<Vec<_>>()
+        }).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
+        let koz_supports = PyArray2::from_vec2(py, &{
+            result.koz_rows.iter().map(|r| r.support_point.clone()).collect::<Vec<_>>()
+        }).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
+        let koz_centers = PyArray2::from_vec2(py, &{
+            result.koz_rows.iter().map(|r| r.closest_center.clone()).collect::<Vec<_>>()
+        }).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
+        let koz_lbs = PyArray1::from_vec(py, lbs);
+        let koz_margins = PyArray1::from_vec(py, margins);
+        let koz_slack = PyArray1::from_vec(py, result.koz_slack_per_row);
+
+        Ok((
+            p_new, info,
+            koz_seg, koz_cp, koz_obs,
+            koz_normals, koz_supports, koz_centers,
+            koz_lbs, koz_margins, koz_slack,
+        ).into_pyobject(py)?.into_any().unbind())
+    }
+}
+
 #[pymodule]
 fn bezier_opt(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(optimize_orbital_docking, m)?)?;
     m.add_function(wrap_pyfunction!(optimize_spacetime_bezier, m)?)?;
+    m.add_class::<SpacetimeScpContext>()?;
     Ok(())
 }
