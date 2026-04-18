@@ -1,128 +1,64 @@
-## Bézier Trajectory – Orbital Docking Optimizer
+# Space-Time Bezier Trajectory Sandbox
 
-An orbital docking trajectory optimizer based on Bézier curves. The code finds low control-effort trajectories (proxy objective) for a chaser satellite to rendezvous with the ISS while respecting a spherical Keep‑Out Zone (KOZ), and generates all figures used in the paper and slides.
+An interactive research workbench for **space-time Bezier trajectory optimization** — a paper-pitch demo exploring whether lifting moving obstacles into space-time (adding time as an explicit Bezier coordinate) lets the existing convex-hull / supporting-half-space machinery handle moving-obstacle avoidance directly.
 
-## Requirements
+The sandbox is the demo: drag obstacles, tweak parameters, watch the optimizer re-solve. For north-star direction see [`VISION.md`](VISION.md). For current architecture and Claude-Code-facing notes see [`CLAUDE.md`](CLAUDE.md).
 
-- **Python**: 3.7 or newer  
-- **Dependencies**: install via `requirements.txt`:
+## Quickstart
 
 ```bash
+# 1. Install Python deps
 pip install -r requirements.txt
+
+# 2. Build the Rust optimizer (one-time, requires a Rust toolchain + maturin)
+cd rust_optimizer/pybind && PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 maturin develop --release
+cd ../..
+
+# 3. Launch the interactive sandbox (live re-solve on every slider change)
+python3 -m spacetime_bezier
+# opens http://127.0.0.1:8767/ automatically
+
+# 4. (Optional) Regenerate the pre-baked scenario JSON for file:// viewing
+python3 -m spacetime_bezier.io
+# then: open figures/spacetime_bezier_interactive.html
+
+# 5. (Optional) Launch the live step-through debugger
+python3 tools/spacetime_opt_debug.py
+# then open figures/spacetime_bezier_opt_debug.html
+
+# 6. Run tests
+pytest
 ```
 
-Run all commands from the project root directory (`bezier-trajectory`).
+## Demo scenarios
 
-## One‑click: generate all figures
+Defined in `spacetime_bezier/scenarios.py`. Each is a 2D + time problem: moving obstacles, fixed endpoints, the optimizer plans both path *and* timing.
 
-- **Script**: `generate_all_figures.py`  
-- **What it does**: sequentially calls the existing scripts to regenerate the main figures.
+| Scenario | What it shows |
+|----------|---------------|
+| `original` (3 moving obstacles) | Basic proof of concept — curve threads between constant-velocity tubes in (x, y, t). |
+| `disappearing_wall` | A wall that vanishes at a known time. The curve "waits" in space-time then passes through — demonstrates time as a real optimization dimension. |
+| `diverse` (varied sizes / speeds / directions) | Stress case. Currently infeasible across all configs — elastic relaxation keeps the solver running but no feasible path is found. |
 
-```bash
-python generate_all_figures.py
-```
+Scenarios are registered in `SCENARIO_MAP`; add your own by appending to `scenarios.py`.
 
-This will:
-- **Run** `Orbital_Docking_Optimizer.py` to:
-  - Optimize docking trajectories for different segment counts and curve orders
-  - Save main figures under `figures/`, including:
-    - `comparison_N2.png`, `comparison_N3.png`, `comparison_N4.png`
-    - `performance_N2.png`, `performance_N3.png`, `performance_N4.png`
-    - `accel_profiles_N2_seg{2,4,8,16,32,64}.png`
-    - `time_vs_order.png`
-- **Run** `figure/scnario_figure.py` to create the orbital docking scenario / expectation figure:
-  - `orbital_docking_expectation.png`
-- **Run** `figure/constraint_linearization_figures.py` to show KOZ / constraint‑linearization demo figures (3D + 2D).
-- **Run** `archive/Bezier_Curve_Optimizer_legacy.py` to reproduce the legacy sphere‑avoidance optimization figure (used in the initial paper).
+## What's in the repo
 
-> Note: some of the illustration scripts are primarily interactive and call `plt.show()`. To save additional static images, uncomment or add `plt.savefig(...)` lines inside those modules if needed.
+- `spacetime_bezier/` — Python package. Public API, constraint builders, geometry, scenarios, debug stepper, JSON I/O.
+- `rust_optimizer/` — Rust SCP optimizer (Clarabel QP + elastic relaxation). `core/` is the engine, `pybind/` is the PyO3 binding.
+- `tools/` — `spacetime_opt_debug.py` (debug UI HTTP server), `compare_backends.py` (scenario diff tool).
+- `figures/` — Interactive HTML demos and generated JSON outputs.
+- `orbital_docking/` — **Legacy module.** Earlier orbital-rendezvous work (Bezier + spherical Earth KOZ). Still imports dimension-agnostic building blocks (`bezier.py`, `de_casteljau.py`) that the spacetime code reuses. Not the current headline.
+- `tests/` — `pytest` suite for both modules.
 
-## Main scripts and what they do
+## Architecture in one paragraph
 
-- **`Orbital_Docking_Optimizer.py`**  
-  - Full orbital docking optimizer using Bézier curves (N=2,3,4).  
-  - Uses an SCP-style loop with:
-    - KOZ supporting-half-space updates
-    - a quadratic objective built from geometric acceleration plus gravity/J2 linearization around the current iterate
-  - Saves the main optimization, performance, and profile figures into `figures/`.  
-  - Boundary conditions:
-    - **Always enforced**: endpoint positions \(r(0)=P_0\), \(r(1)=P_N\) (implemented by locking the first/last control points via bounds).
-    - **Optional**: endpoint velocity/acceleration equality constraints.
-      - `v0`, `v1`, `a0`, `a1` are forwarded through `optimize_all_segment_counts(...)` into `optimize_orbital_docking(...)` and enforced when provided.
-  - Usage:
-    - **Default (cache enabled)**:
-      ```bash
-      python Orbital_Docking_Optimizer.py
-      ```
-    - **Force recomputation (ignore existing cache, still write new cache)**:
-      ```bash
-      python Orbital_Docking_Optimizer.py --no-cache
-      ```
+Rust is the sole optimizer backend. A single SCP `scp_step` function in the Rust core is both the batch iteration and the debug step — debugger sessions observe the real run via an emitted trace, they don't implement a second optimizer. Python handles request shaping, scenario definitions, JSON I/O, and the debug UI server. See `VISION.md` for the foundational rules (backend honesty, geometry authenticity, one execution model) that these choices enforce.
 
-- **`figure/scnario_figure.py`**  
-  - Generates an “expectation” figure showing Earth, KOZ, chaser, and ISS positions (3D + 2D layout).  
-  - Saves `orbital_docking_expectation.png` (in the current working directory).  
-  - Usage:
-    ```bash
-    python figure/scnario_figure.py
-    ```
+## Contributing / extending
 
-- **`figure/constraint_linearization_figures.py`**  
-  - Visualizes how nonlinear KOZ constraints are turned into supporting half‑spaces using Bézier segment subdivision.  
-  - Provides:
-    - 3D illustrations of a curve and sphere with segment‑wise constraint planes  
-    - 2D KOZ linearization plots showing violating segments and corrected segments  
-  - When run as a script, it currently focuses on the 2D KOZ linearization figure and shows it interactively.  
-  - Usage:
-    ```bash
-    python figure/constraint_linearization_figures.py
-    ```
+- **Add a scenario**: edit `spacetime_bezier/scenarios.py`, register in `SCENARIO_MAP`.
+- **Change the optimizer**: edit `rust_optimizer/core/src/spacetime_optimizer.rs` (outer loop) or `spacetime_constraints.rs` (KOZ geometry), then rebuild with `maturin develop --release`.
+- **Change the UI**: edit `figures/spacetime_bezier_interactive.html` or `figures/spacetime_bezier_opt_debug.html`.
 
-- **`archive/Bezier_Curve_Optimizer_legacy.py`**  
-  - Legacy implementation used to generate figures for the initial paper (sphere‑avoidance with a single Bézier curve).  
-  - Shows a 2×3 grid of optimized curves with different segment counts.  
-  - Contains a commented `plt.savefig("bezier_outside_sphere_2x3.png", ...)` line you can uncomment to save the legacy figure.  
-  - Usage:
-    ```bash
-    python archive/Bezier_Curve_Optimizer_legacy.py
-    ```
-
-- **`archive/basic_usage.py`, `archive/bezier.py`, `archive/bezier_matrix_utils.py`, `archive/integration_demo.py`**  
-  - Earlier, more didactic utilities and demos for Bézier curves and integration.  
-  - Kept for reference; not required for the main orbital docking results.
-
-- **`generate_all_figures.py`**  
-  - Thin “orchestrator” that runs all major scripts in sequence for one‑click reproduction of figures.  
-  - Recommended entry point for reproducing all results.
-
-## Directories
-
-- **`figures/`**  
-  - Output directory for generated figures (PNG) from the main optimizer and diagnostic scripts.
-
-- **`cache/`**  
-  - Stores pickled optimization results used by `Orbital_Docking_Optimizer.py` for faster repeated runs.
-
-- **`archive/`**  
-  - Legacy code and figure generators corresponding to the initial paper versions.  
-
-
-## A/B: endpoint feasibility fix (parallel)
-
-The repo includes a reproducible A/B benchmark script:
-
-- **Script**: `tools/ab_endpoint_fix_parallel.py`
-- **Output**: writes CSV + Markdown reports into `artifacts/ab_tests/`
-- **Windows-friendly**: no here-doc, and it defaults to using `.venv/Scripts/python.exe` when present
-
-Run (example):
-
-```bash
-python tools/ab_endpoint_fix_parallel.py --objective dv --max-iter 1000 --tol 1e-3 --workers 32
-```
-
-You can also pass lists:
-
-```bash
-python tools/ab_endpoint_fix_parallel.py --orders 2 3 4 --seg-counts 2 4 8 16 32 64
-```
+Before opening a PR, run `pytest` (two pre-existing failures in `orbital_docking/` tests are known — golden drift and a removed warning check).

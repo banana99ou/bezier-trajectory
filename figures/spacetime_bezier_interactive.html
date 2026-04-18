@@ -24,6 +24,35 @@
     border: 1px solid #333; font-size: 11px; font-family: monospace; white-space: pre;
     max-width: 380px; max-height: 300px; overflow-y: auto;
   }
+  #solverStatus {
+    position: fixed; bottom: 320px; right: 10px; z-index: 10;
+    background: rgba(20,20,40,0.92); padding: 8px 12px; border-radius: 8px;
+    border: 1px solid #333; font-size: 11px; font-family: monospace;
+    max-width: 520px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #solverStatus.solved { border-color: #2ecc71; color: #9af2b6; }
+  #solverStatus.infeasible { border-color: #f39c12; color: #ffd37a; }
+  #solverStatus.failed { border-color: #e74c3c; color: #ffb3ad; }
+  #solverStatus.solving { border-color: #8af; color: #8af; }
+  #solverStatus.offline { border-color: #555; color: #888; }
+  .sandbox-section { margin-top: 10px; padding-top: 8px; border-top: 1px solid #2a2a44; }
+  .sandbox-section[data-disabled="true"] { opacity: 0.4; pointer-events: none; }
+  .num-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 6px; }
+  .num-cell { display: flex; flex-direction: column; }
+  .num-cell label { font-size: 11px; color: #aaa; margin: 0 0 2px 0; }
+  .num-cell input[type=number] {
+    background: #222; color: #eee; border: 1px solid #555; border-radius: 3px;
+    padding: 3px 5px; font-size: 11px; font-family: monospace; width: 100%;
+  }
+  .num-cell input[type=number]:focus { border-color: #6a8fd9; outline: none; }
+  .view-mode { display: flex; gap: 4px; margin: 3px 0 4px 0; }
+  .view-mode .seg {
+    flex: 1; padding: 5px 8px; font-size: 12px; cursor: pointer;
+    background: #222; color: #ccc; border: 1px solid #444; border-radius: 4px;
+  }
+  .view-mode .seg:hover { background: #2c2c48; color: #fff; }
+  .view-mode .seg.active { background: #3f5fa8; color: #fff; border-color: #6a8fd9; }
+  body[data-view-mode="2d"] .view-3d-only { display: none; }
   #legend {
     position: fixed; top: 10px; right: 10px; z-index: 10;
     background: rgba(20,20,40,0.92); padding: 10px 14px; border-radius: 8px;
@@ -45,31 +74,68 @@
   <label>Curve config <span class="val" id="curveInfo" style="color:#0f0"></span></label>
   <select id="curveSelect"></select>
 
+  <label>View mode</label>
+  <div class="view-mode" role="radiogroup" aria-label="View mode">
+    <button type="button" class="seg active" id="btnView3D" data-mode="3d">3D</button>
+    <button type="button" class="seg" id="btnView2D" data-mode="2d">2D (x, y)</button>
+  </div>
+
   <label>Time t <span class="val" id="tVal">0.0</span></label>
   <input type="range" id="tSlider" min="0" max="1" step="0.002" value="0">
 
-  <label>View rotation <span class="val" id="rotVal">-55</span></label>
-  <input type="range" id="rotSlider" min="-180" max="180" step="1" value="-55">
+  <label class="view-3d-only">View rotation <span class="val" id="rotVal">-55</span></label>
+  <input type="range" class="view-3d-only" id="rotSlider" min="-180" max="180" step="1" value="-55">
 
-  <label>View elevation <span class="val" id="elevVal">22</span></label>
-  <input type="range" id="elevSlider" min="5" max="85" step="1" value="22">
+  <label class="view-3d-only">View elevation <span class="val" id="elevVal">22</span></label>
+  <input type="range" class="view-3d-only" id="elevSlider" min="5" max="85" step="1" value="22">
 
-  <div class="toggle"><input type="checkbox" id="chkTubes" checked>Obstacle tubes</div>
+  <div class="toggle view-3d-only"><input type="checkbox" id="chkTubes" checked>Obstacle tubes</div>
   <div class="toggle"><input type="checkbox" id="chkHull">Convex hull</div>
   <div class="toggle"><input type="checkbox" id="chkSegments" checked>De Casteljau segments</div>
-  <div class="toggle"><input type="checkbox" id="chkHalfspace">Supporting half-spaces</div>
+  <div class="toggle view-3d-only"><input type="checkbox" id="chkHalfspace">Supporting half-spaces</div>
   <div class="toggle"><input type="checkbox" id="chkDistLines">Distance lines</div>
-  <div class="toggle"><input type="checkbox" id="chkTimePlane" checked>Time-sweep plane</div>
-  <div class="toggle"><input type="checkbox" id="chk2D" checked>Show 2D overlay</div>
+  <div class="toggle view-3d-only"><input type="checkbox" id="chkTimePlane" checked>Time-sweep plane</div>
 
-  <label>Subdivisions <span class="val" id="subVal">4</span></label>
-  <input type="range" id="subSlider" min="1" max="16" step="1" value="4">
+  <div class="sandbox-section" id="sandboxSection" data-disabled="true">
+    <h2 style="font-size:13px;margin-bottom:4px;color:#8af">Optimizer parameters</h2>
+    <label>Curve order N <span class="val" id="nVal">8</span></label>
+    <input type="range" id="nSlider" min="4" max="14" step="1" value="8">
+
+    <label>Segments n_seg <span class="val" id="nsegVal">8</span></label>
+    <input type="range" id="nsegSlider" min="2" max="24" step="1" value="8">
+
+    <label>Proximal weight <span class="val" id="proxVal">0.50</span></label>
+    <input type="range" id="proxSlider" min="0.01" max="2" step="0.01" value="0.5">
+
+    <label>Trust-region radius <span class="val" id="trustVal">0.00</span></label>
+    <input type="range" id="trustSlider" min="0" max="2" step="0.01" value="0">
+
+    <label>Time scale &alpha; <span class="val" id="alphaVal">1.50</span></label>
+    <input type="range" id="alphaSlider" min="1" max="3" step="0.05" value="1.5">
+
+    <div class="num-grid">
+      <div class="num-cell">
+        <label for="maxIterInput">max_iter</label>
+        <input type="number" id="maxIterInput" min="1" max="2000" step="1" value="30">
+      </div>
+      <div class="num-cell">
+        <label for="tolInput">tol</label>
+        <input type="number" id="tolInput" step="any" value="1e-6">
+      </div>
+      <div class="num-cell">
+        <label for="minDtInput">min_dt</label>
+        <input type="number" id="minDtInput" min="0" step="any" value="0.1">
+      </div>
+    </div>
+  </div>
 
   <div style="margin-top:10px">
     <button id="btnPlay">Play</button>
     <button id="btnReset">Reset</button>
   </div>
 </div>
+
+<div id="solverStatus" class="offline">solver: offline (no server)</div>
 
 <div id="info"></div>
 <div id="legend"></div>
@@ -975,6 +1041,7 @@ const SCENARIOS = {
 // ══════════════════════════════════════════════════════════════
 let currentScenario = null;
 let currentCurveKey = null;
+let currentSolveInfo = { N: 0, n_seg: 0, min_clearance: 0, feasible: false };
 let OBSTACLES = [];
 let CTRL_PTS = [];
 let T_TOTAL = 10;
@@ -982,7 +1049,17 @@ let tFrac = 0, playing = false;
 let azimuth = -55, elevation = 22;
 let viewScale = 38, panX = 0, panY = 0;
 let dragMode = null, lastMouseX = 0, lastMouseY = 0;
+let viewMode = '3d';  // '3d' | '2d'
 const SCENE_CENTER = [5, 5, 5];
+
+// Sandbox (server-backed live re-solve) state
+let serverMode = false;
+let serverCatalog = null;
+let lastFeasibleResponse = null;
+let solveDebounceHandle = null;
+let solveInFlight = false;
+let solveRequestSeq = 0;
+const SOLVE_DEBOUNCE_MS = 150;
 
 // ══════════════════════════════════════════════════════════════
 // Math
@@ -1038,7 +1115,10 @@ function convexHull2D(points) {
 // ══════════════════════════════════════════════════════════════
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
-function updateCanvasCursor() { canvas.style.cursor = dragMode ? 'grabbing' : 'grab'; }
+function updateCanvasCursor() {
+  if (viewMode === '2d') { canvas.style.cursor = 'default'; return; }
+  canvas.style.cursor = dragMode ? 'grabbing' : 'grab';
+}
 function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
 window.addEventListener('resize', () => { resize(); draw(); }); resize();
 updateCanvasCursor();
@@ -1137,23 +1217,58 @@ function drawHullFaces(pts3d, color, alpha) {
 function draw() {
   if (!CTRL_PTS.length) return;
   const tNow = tFrac * T_TOTAL;
-  const nSub = parseInt(document.getElementById('subSlider').value);
+
+  document.getElementById('tVal').textContent = tNow.toFixed(1);
+  document.getElementById('rotVal').textContent = azimuth.toFixed(1);
+  document.getElementById('elevVal').textContent = elevation.toFixed(1);
+  document.getElementById('rotSlider').value = azimuth;
+  document.getElementById('elevSlider').value = elevation;
+
+  // Common geometry computation (shared by 3D and 2D views + info panel)
+  const fullCurve = bezierCurve(CTRL_PTS, 400);
+  let curPt = fullCurve[0];
+  for (let i = 0; i < fullCurve.length; i++) { if (fullCurve[i][2] >= tNow) { curPt = fullCurve[i]; break; } }
+
+  const dists = [];
+  for (const obs of OBSTACLES) {
+    const t0 = obs.t_start != null ? obs.t_start : -Infinity;
+    const t1 = obs.t_end != null ? obs.t_end : Infinity;
+    if (tNow < t0 || tNow > t1) continue;
+    const ox = obs.pos0[0] + obs.vel[0] * tNow, oy = obs.pos0[1] + obs.vel[1] * tNow;
+    const dx = curPt[0] - ox, dy = curPt[1] - oy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    dists.push({ name: obs.name, dist: dist - obs.r, color: obs.color, ox, oy, r: obs.r, dx, dy, rawDist: dist });
+  }
+
+  const minClearances = {};
+  for (const pt of fullCurve) {
+    for (const obs of OBSTACLES) {
+      const t0 = obs.t_start != null ? obs.t_start : -Infinity;
+      const t1 = obs.t_end != null ? obs.t_end : Infinity;
+      if (pt[2] < t0 || pt[2] > t1) continue;
+      const ox = obs.pos0[0] + obs.vel[0] * pt[2], oy = obs.pos0[1] + obs.vel[1] * pt[2];
+      const d = Math.sqrt((pt[0] - ox) ** 2 + (pt[1] - oy) ** 2) - obs.r;
+      if (!(obs.name in minClearances) || d < minClearances[obs.name]) minClearances[obs.name] = d;
+    }
+  }
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (viewMode === '2d') {
+    draw2DScene(tNow, curPt, fullCurve, dists);
+  } else {
+    draw3DScene(tNow, curPt, fullCurve, dists);
+  }
+  renderInfoPanel(tNow, curPt, dists, minClearances);
+}
+
+function draw3DScene(tNow, curPt, fullCurve, dists) {
   const showTubes = document.getElementById('chkTubes').checked;
   const showHull = document.getElementById('chkHull').checked;
   const showSeg = document.getElementById('chkSegments').checked;
   const showHS = document.getElementById('chkHalfspace').checked;
   const showDist = document.getElementById('chkDistLines').checked;
   const showTP = document.getElementById('chkTimePlane').checked;
-  const show2D = document.getElementById('chk2D').checked;
-
-  document.getElementById('tVal').textContent = tNow.toFixed(1);
-  document.getElementById('rotVal').textContent = azimuth.toFixed(1);
-  document.getElementById('elevVal').textContent = elevation.toFixed(1);
-  document.getElementById('subVal').textContent = nSub;
-  document.getElementById('rotSlider').value = azimuth;
-  document.getElementById('elevSlider').value = elevation;
-
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const nSub = Math.max(1, currentSolveInfo.n_seg || 8);
 
   // Axes
   drawLine3D([0,0,0],[10,0,0],'#666',1,0.4); drawLine3D([0,0,0],[0,10,0],'#666',1,0.4); drawLine3D([0,0,0],[0,0,T_TOTAL],'#666',1,0.4);
@@ -1161,10 +1276,8 @@ function draw() {
   ctx.font='12px monospace'; ctx.fillStyle='#888'; ctx.fillText('x',lx.x,lx.y); ctx.fillText('y',ly.x,ly.y); ctx.fillText('t',lz.x,lz.y);
   for(let i=0;i<=10;i+=2){drawLine3D([i,0,0],[i,10,0],'#333',0.5,0.2);drawLine3D([0,i,0],[10,i,0],'#333',0.5,0.2);}
 
-  // Obstacle tubes
   if (showTubes) { for (const obs of OBSTACLES) drawTube(obs, obs.color); }
 
-  // Time-sweep plane
   if (showTP && tNow > 0) {
     const co = [[0,0,tNow],[10,0,tNow],[10,10,tNow],[0,10,tNow]].map(c => toScreen(...c));
     ctx.beginPath(); ctx.moveTo(co[0].x,co[0].y); for(let i=1;i<4;i++) ctx.lineTo(co[i].x,co[i].y);
@@ -1177,7 +1290,6 @@ function draw() {
     }
   }
 
-  // Segments
   const segColors = ['#f0f','#0ff','#ff0','#f80','#8f0','#08f','#f08','#0f8','#fa0','#0fa','#a0f','#af0','#f0a','#0af','#a00','#0a0'];
   const segments = subdivide(CTRL_PTS, nSub);
   if (showSeg) {
@@ -1192,7 +1304,6 @@ function draw() {
   }
   if(showHull && !showSeg) drawHullFaces(CTRL_PTS,'#ffc800',0.08);
 
-  // Half-spaces
   if (showHS) {
     segments.forEach(seg => {
       const centroid = [0,0,0]; seg.forEach(p => {for(let d=0;d<3;d++) centroid[d]+=p[d];}); for(let d=0;d<3;d++) centroid[d]/=seg.length;
@@ -1212,8 +1323,7 @@ function draw() {
     });
   }
 
-  // Full trajectory
-  const fullCurve = bezierCurve(CTRL_PTS, 400);
+  // Trajectory (past = bright, future = faint)
   for(let i=0;i<fullCurve.length-1;i++) drawLine3D(fullCurve[i],fullCurve[i+1],'#ff0',2,0.15);
   for(let i=0;i<fullCurve.length-1;i++){if(fullCurve[i][2]>tNow)break; drawLine3D(fullCurve[i],fullCurve[i+1],'#ff0',2.5,1);}
 
@@ -1221,50 +1331,159 @@ function draw() {
   for(let i=0;i<CTRL_PTS.length-1;i++) drawLine3D(CTRL_PTS[i],CTRL_PTS[i+1],'#888',1,0.5);
   CTRL_PTS.forEach((p,i)=>{const sp=toScreen(...p); ctx.beginPath(); ctx.arc(sp.x,sp.y,5,0,Math.PI*2); ctx.fillStyle=i===0?'#0f0':i===CTRL_PTS.length-1?'#f00':'#fff'; ctx.fill(); ctx.strokeStyle='#000'; ctx.lineWidth=1; ctx.stroke();});
 
-  // Current position
-  let curPt = fullCurve[0];
-  for(let i=0;i<fullCurve.length;i++){if(fullCurve[i][2]>=tNow){curPt=fullCurve[i];break;}}
+  // Current position marker
   const sp = toScreen(...curPt);
   ctx.beginPath(); ctx.arc(sp.x,sp.y,7,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill(); ctx.strokeStyle='#ff0'; ctx.lineWidth=2; ctx.stroke();
 
-  // Distance lines + clearance
-  const dists = [];
+  // Distance lines
+  if (showDist) {
+    for (const d of dists) {
+      if (d.rawDist <= 0.01) continue;
+      const nx = d.dx / d.rawDist, ny = d.dy / d.rawDist;
+      drawLine3D(curPt, [d.ox + d.r * nx, d.oy + d.r * ny, tNow], d.color, 1.5, 0.8);
+      const mid = toScreen((curPt[0] + d.ox + d.r * nx) / 2, (curPt[1] + d.oy + d.r * ny) / 2, tNow);
+      ctx.font = '11px monospace'; ctx.fillStyle = d.dist < 0 ? '#f00' : d.color;
+      ctx.fillText(d.dist.toFixed(2), mid.x + 5, mid.y - 5);
+    }
+  }
+}
+
+// Full-canvas 2D (x, y) view at the current time t. The 3D scene is collapsed
+// to the time slice so you can read path geometry without occlusion from tubes.
+function draw2DScene(tNow, curPt, fullCurve, dists) {
+  const showHull = document.getElementById('chkHull').checked;
+  const showSeg = document.getElementById('chkSegments').checked;
+  const showDist = document.getElementById('chkDistLines').checked;
+  const nSub = Math.max(1, currentSolveInfo.n_seg || 8);
+
+  const pad = 60;
+  const w = canvas.width - 2 * pad;
+  const h = canvas.height - 2 * pad;
+  const s = Math.min(w, h) / 11; // world is [-0.5, 10.5] in x and y
+  const originX = canvas.width / 2 - 5 * s;
+  const originY = canvas.height / 2 + 5 * s;
+  const tx = v => originX + v * s;
+  const ty = v => originY - v * s;
+
+  // Grid and axes
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 0.5; ctx.globalAlpha = 0.5;
+  for (let i = 0; i <= 10; i++) {
+    ctx.beginPath(); ctx.moveTo(tx(i), ty(0)); ctx.lineTo(tx(i), ty(10)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(tx(0), ty(i)); ctx.lineTo(tx(10), ty(i)); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = '#666'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(tx(0), ty(0)); ctx.lineTo(tx(10), ty(0)); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(tx(0), ty(0)); ctx.lineTo(tx(0), ty(10)); ctx.stroke();
+  ctx.fillStyle = '#888'; ctx.font = '12px monospace';
+  ctx.fillText('x', tx(10.3), ty(-0.2));
+  ctx.fillText('y', tx(-0.3), ty(10.3));
+  ctx.fillText(`t = ${tNow.toFixed(2)} / ${T_TOTAL}`, pad, pad - 12);
+
+  // Obstacles at the current time slice
   for (const obs of OBSTACLES) {
-    const t0=obs.t_start!=null?obs.t_start:-Infinity, t1=obs.t_end!=null?obs.t_end:Infinity;
-    if (tNow < t0 || tNow > t1) continue;
-    const ox=obs.pos0[0]+obs.vel[0]*tNow, oy=obs.pos0[1]+obs.vel[1]*tNow;
-    const dx=curPt[0]-ox, dy=curPt[1]-oy, dist=Math.sqrt(dx*dx+dy*dy), clearance=dist-obs.r;
-    dists.push({name:obs.name,dist:clearance,color:obs.color});
-    if(showDist && dist>0.01){
-      const nx=dx/dist,ny=dy/dist;
-      drawLine3D(curPt,[ox+obs.r*nx,oy+obs.r*ny,tNow],obs.color,1.5,0.8);
-      const mid=toScreen((curPt[0]+ox+obs.r*nx)/2,(curPt[1]+oy+obs.r*ny)/2,tNow);
-      ctx.font='11px monospace'; ctx.fillStyle=clearance<0?'#f00':obs.color; ctx.fillText(clearance.toFixed(2),mid.x+5,mid.y-5);
+    const t0 = obs.t_start != null ? obs.t_start : -Infinity;
+    const t1 = obs.t_end != null ? obs.t_end : Infinity;
+    const active = tNow >= t0 && tNow <= t1;
+    const cx = obs.pos0[0] + obs.vel[0] * tNow;
+    const cy = obs.pos0[1] + obs.vel[1] * tNow;
+    ctx.beginPath(); ctx.arc(tx(cx), ty(cy), obs.r * s, 0, Math.PI * 2);
+    ctx.fillStyle = obs.color; ctx.globalAlpha = active ? 0.3 : 0.05; ctx.fill();
+    ctx.strokeStyle = obs.color; ctx.globalAlpha = active ? 0.9 : 0.2; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.globalAlpha = 1;
+    if (active) {
+      ctx.fillStyle = obs.color;
+      ctx.fillText(obs.name, tx(cx) + obs.r * s + 3, ty(cy));
     }
   }
 
-  // Min clearance over full trajectory
-  let minClearances = {};
-  for (const pt of fullCurve) {
-    for (const obs of OBSTACLES) {
-      const t0=obs.t_start!=null?obs.t_start:-Infinity, t1=obs.t_end!=null?obs.t_end:Infinity;
-      if (pt[2]<t0||pt[2]>t1) continue;
-      const ox=obs.pos0[0]+obs.vel[0]*pt[2], oy=obs.pos0[1]+obs.vel[1]*pt[2];
-      const d=Math.sqrt((pt[0]-ox)**2+(pt[1]-oy)**2)-obs.r;
-      if(!(obs.name in minClearances)||d<minClearances[obs.name]) minClearances[obs.name]=d;
-    }
+  // De Casteljau segments (polygon outlines in 2D only — no per-segment hull faces)
+  if (showSeg) {
+    const segColors = ['#f0f','#0ff','#ff0','#f80','#8f0','#08f','#f08','#0f8','#fa0','#0fa','#a0f','#af0','#f0a','#0af','#a00','#0a0'];
+    const segments = subdivide(CTRL_PTS, nSub);
+    segments.forEach((seg, si) => {
+      const c = segColors[si % segColors.length];
+      ctx.strokeStyle = c; ctx.globalAlpha = 0.4; ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      seg.forEach((p, idx) => {
+        const X = tx(p[0]), Y = ty(p[1]);
+        if (idx === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      });
+      ctx.stroke(); ctx.globalAlpha = 1;
+    });
   }
 
-  // Info
-  const cData = currentScenario.results[currentCurveKey];
+  if (showHull) {
+    const screenPts = CTRL_PTS.map(p => ({ x: tx(p[0]), y: ty(p[1]) }));
+    const idx = convexHull2D(screenPts.map(p => [p.x, p.y]));
+    ctx.beginPath();
+    idx.forEach((i, k) => {
+      if (k === 0) ctx.moveTo(screenPts[i].x, screenPts[i].y);
+      else ctx.lineTo(screenPts[i].x, screenPts[i].y);
+    });
+    ctx.closePath(); ctx.fillStyle = '#ffc800'; ctx.globalAlpha = 0.06; ctx.fill();
+    ctx.strokeStyle = '#ffc800'; ctx.globalAlpha = 0.3; ctx.lineWidth = 1; ctx.stroke(); ctx.globalAlpha = 1;
+  }
+
+  // Full trajectory (faint) + past portion (bright)
+  ctx.strokeStyle = '#ff0'; ctx.globalAlpha = 0.2; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  fullCurve.forEach((p, i) => {
+    const X = tx(p[0]), Y = ty(p[1]);
+    if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+  });
+  ctx.stroke();
+  ctx.strokeStyle = '#ff0'; ctx.globalAlpha = 1; ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  let started = false;
+  for (const p of fullCurve) {
+    if (p[2] > tNow) break;
+    const X = tx(p[0]), Y = ty(p[1]);
+    if (!started) { ctx.moveTo(X, Y); started = true; } else ctx.lineTo(X, Y);
+  }
+  if (started) ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // Control polygon
+  ctx.strokeStyle = '#888'; ctx.lineWidth = 1; ctx.globalAlpha = 0.6;
+  ctx.beginPath();
+  CTRL_PTS.forEach((p, i) => { if (i === 0) ctx.moveTo(tx(p[0]), ty(p[1])); else ctx.lineTo(tx(p[0]), ty(p[1])); });
+  ctx.stroke(); ctx.globalAlpha = 1;
+  CTRL_PTS.forEach((p, i) => {
+    ctx.beginPath(); ctx.arc(tx(p[0]), ty(p[1]), 5, 0, Math.PI * 2);
+    ctx.fillStyle = i === 0 ? '#0f0' : i === CTRL_PTS.length - 1 ? '#f00' : '#fff';
+    ctx.fill(); ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
+  });
+
+  // Current position marker
+  ctx.beginPath(); ctx.arc(tx(curPt[0]), ty(curPt[1]), 7, 0, Math.PI * 2);
+  ctx.fillStyle = '#fff'; ctx.fill();
+  ctx.strokeStyle = '#ff0'; ctx.lineWidth = 2; ctx.stroke();
+
+  // Distance lines
+  if (showDist) {
+    for (const d of dists) {
+      if (d.rawDist <= 0.01) continue;
+      const nx = d.dx / d.rawDist, ny = d.dy / d.rawDist;
+      const ex = d.ox + d.r * nx, ey = d.oy + d.r * ny;
+      ctx.strokeStyle = d.color; ctx.globalAlpha = 0.8; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(tx(curPt[0]), ty(curPt[1])); ctx.lineTo(tx(ex), ty(ey)); ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = d.dist < 0 ? '#f00' : d.color;
+      ctx.fillText(d.dist.toFixed(2), (tx(curPt[0]) + tx(ex)) / 2 + 4, (ty(curPt[1]) + ty(ey)) / 2 - 4);
+    }
+  }
+}
+
+function renderInfoPanel(tNow, curPt, dists, minClearances) {
+  const cData = currentSolveInfo;
   let info = `Scenario: ${currentScenario.title}\n`;
-  info += `Curve: ${currentCurveKey} (N=${cData.N}, seg=${cData.n_seg})\n`;
+  info += `Curve: N=${cData.N}, seg=${cData.n_seg}\n`;
   info += `CPs: ${CTRL_PTS.length}, reported clr: ${cData.min_clearance.toFixed(4)}\n\n`;
   info += `t = ${tNow.toFixed(2)} / ${T_TOTAL}\n`;
   info += `pos = (${curPt[0].toFixed(2)}, ${curPt[1].toFixed(2)})\n\n`;
   if (dists.length > 0) {
     info += `Active clearance:\n`;
-    // deduplicate wall obstacles: show only worst
     const byPrefix = {};
     for (const d of dists) {
       const prefix = d.name.replace(/\d+$/,'');
@@ -1284,33 +1503,6 @@ function draw() {
     info += `  ${prefix}: ${d.toFixed(3)}${d<0?' !!':''}\n`;
   }
   document.getElementById('info').textContent = info;
-
-  // 2D overlay
-  if (show2D) {
-    const ox=20, oy=canvas.height-240, sz=200;
-    ctx.fillStyle='rgba(10,10,30,0.85)'; ctx.fillRect(ox-5,oy-5,sz+10,sz+10);
-    ctx.strokeStyle='#444'; ctx.strokeRect(ox-5,oy-5,sz+10,sz+10);
-    const s=sz/11, tx=v=>ox+(v+0.5)*s, ty=v=>oy+sz-(v+0.5)*s;
-
-    // obstacles
-    for(const obs of OBSTACLES){
-      const t0=obs.t_start!=null?obs.t_start:-Infinity, t1=obs.t_end!=null?obs.t_end:Infinity;
-      const active = tNow>=t0&&tNow<=t1;
-      const cx=obs.pos0[0]+obs.vel[0]*tNow, cy=obs.pos0[1]+obs.vel[1]*tNow;
-      ctx.beginPath(); ctx.arc(tx(cx),ty(cy),obs.r*s,0,Math.PI*2);
-      ctx.fillStyle=obs.color; ctx.globalAlpha=active?0.3:0.05; ctx.fill();
-      ctx.strokeStyle=obs.color; ctx.globalAlpha=active?0.8:0.15; ctx.lineWidth=1; ctx.stroke(); ctx.globalAlpha=1;
-    }
-
-    // trajectory
-    ctx.beginPath(); ctx.moveTo(tx(fullCurve[0][0]),ty(fullCurve[0][1]));
-    fullCurve.forEach(p=>ctx.lineTo(tx(p[0]),ty(p[1]))); ctx.strokeStyle='#ff0'; ctx.globalAlpha=0.3; ctx.lineWidth=1; ctx.stroke(); ctx.globalAlpha=1;
-    ctx.beginPath(); ctx.moveTo(tx(fullCurve[0][0]),ty(fullCurve[0][1]));
-    for(const p of fullCurve){if(p[2]>tNow)break; ctx.lineTo(tx(p[0]),ty(p[1]));} ctx.strokeStyle='#ff0'; ctx.lineWidth=2; ctx.stroke();
-    ctx.beginPath(); ctx.arc(tx(curPt[0]),ty(curPt[1]),4,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
-
-    ctx.font='10px monospace'; ctx.fillStyle='#888'; ctx.fillText(`2D (x,y) t=${tNow.toFixed(1)}`,ox,oy-8);
-  }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1340,6 +1532,12 @@ function loadCurve(key) {
   currentCurveKey = key;
   const r = currentScenario.results[key];
   CTRL_PTS = r.control_points;
+  currentSolveInfo = {
+    N: r.N,
+    n_seg: r.n_seg,
+    min_clearance: r.min_clearance,
+    feasible: !!r.feasible,
+  };
   document.getElementById('curveInfo').textContent = `N=${r.N} clr=${r.min_clearance.toFixed(3)}`;
   draw();
 }
@@ -1378,9 +1576,23 @@ async function refreshScenarioData() {
   }
 }
 
-function populateScenarioSelector() {
+async function tryLoadServerCatalog() {
+  try {
+    const response = await fetch('/api/scenarios', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (!data || typeof data !== 'object' || Object.keys(data).length === 0) {
+      throw new Error('empty server catalog');
+    }
+    return data;
+  } catch (err) {
+    return null;
+  }
+}
+
+function populateScenarioSelector(entries) {
   scenarioSelect.innerHTML = '';
-  for (const [key, sc] of Object.entries(SCENARIOS)) {
+  for (const [key, sc] of Object.entries(entries)) {
     const opt = document.createElement('option');
     opt.value = key;
     opt.textContent = sc.title;
@@ -1388,20 +1600,232 @@ function populateScenarioSelector() {
   }
 }
 
+// ══════════════════════════════════════════════════════════════
+// Sandbox (server-mode) helpers
+// ══════════════════════════════════════════════════════════════
+function setStatus(kind, text) {
+  const el = document.getElementById('solverStatus');
+  el.className = kind;
+  el.textContent = text;
+}
+
+function enableSandboxControls(enabled) {
+  const section = document.getElementById('sandboxSection');
+  section.dataset.disabled = enabled ? 'false' : 'true';
+  ['nSlider','nsegSlider','proxSlider','trustSlider','alphaSlider',
+   'maxIterInput','tolInput','minDtInput'].forEach(id => {
+    document.getElementById(id).disabled = !enabled;
+  });
+}
+
+function currentSandboxParams() {
+  const maxIter = parseInt(document.getElementById('maxIterInput').value, 10);
+  const tol = parseFloat(document.getElementById('tolInput').value);
+  const minDt = parseFloat(document.getElementById('minDtInput').value);
+  return {
+    N: parseInt(document.getElementById('nSlider').value, 10),
+    n_seg: parseInt(document.getElementById('nsegSlider').value, 10),
+    scp_prox_weight: parseFloat(document.getElementById('proxSlider').value),
+    scp_trust_radius: parseFloat(document.getElementById('trustSlider').value),
+    time_ub_scale: parseFloat(document.getElementById('alphaSlider').value),
+    max_iter: Number.isFinite(maxIter) && maxIter > 0 ? maxIter : 30,
+    tol: Number.isFinite(tol) && tol > 0 ? tol : 1e-6,
+    min_dt: Number.isFinite(minDt) && minDt >= 0 ? minDt : 0.1,
+  };
+}
+
+function syncSandboxReadouts() {
+  document.getElementById('nVal').textContent = document.getElementById('nSlider').value;
+  document.getElementById('nsegVal').textContent = document.getElementById('nsegSlider').value;
+  document.getElementById('proxVal').textContent = parseFloat(document.getElementById('proxSlider').value).toFixed(2);
+  document.getElementById('trustVal').textContent = parseFloat(document.getElementById('trustSlider').value).toFixed(2);
+  document.getElementById('alphaVal').textContent = parseFloat(document.getElementById('alphaSlider').value).toFixed(2);
+}
+
+function scheduleSolve() {
+  if (!serverMode) return;
+  if (solveDebounceHandle !== null) clearTimeout(solveDebounceHandle);
+  solveDebounceHandle = setTimeout(() => {
+    solveDebounceHandle = null;
+    doSolve();
+  }, SOLVE_DEBOUNCE_MS);
+}
+
+async function doSolve() {
+  if (!serverMode || !currentScenario) return;
+  const seq = ++solveRequestSeq;
+  solveInFlight = true;
+  setStatus('solving', `solving... (${currentScenario.name})`);
+  const params = currentSandboxParams();
+  const body = JSON.stringify({
+    scenario_name: currentScenario.name,
+    ...params,
+  });
+  const clientStart = performance.now();
+  let response;
+  try {
+    response = await fetch('/api/solve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+  } catch (err) {
+    if (seq !== solveRequestSeq) return;
+    solveInFlight = false;
+    setStatus('failed', `solve failed: network error (${err.message})`);
+    return;
+  }
+  const clientMs = performance.now() - clientStart;
+
+  if (seq !== solveRequestSeq) return; // a newer request superseded this one
+
+  let data;
+  try {
+    data = await response.json();
+  } catch (err) {
+    solveInFlight = false;
+    setStatus('failed', `solve failed: bad JSON (${err.message})`);
+    return;
+  }
+
+  if (!response.ok || data.error) {
+    solveInFlight = false;
+    const msg = data.error || `HTTP ${response.status}`;
+    setStatus('failed', `solve failed: ${msg}`);
+    return;
+  }
+
+  solveInFlight = false;
+  applySolveResponse(data, clientMs);
+}
+
+function applySolveResponse(data, clientMs) {
+  const info = data.info || {};
+  const feasible = !!info.feasible;
+  const iters = info.iterations != null ? info.iterations : '-';
+  const clr = info.min_clearance != null ? info.min_clearance : NaN;
+  const serverMs = data.solve_ms != null ? data.solve_ms : NaN;
+
+  OBSTACLES = data.obstacles;
+  T_TOTAL = data.T;
+
+  if (feasible) {
+    lastFeasibleResponse = data;
+    CTRL_PTS = data.control_points;
+    currentSolveInfo = {
+      N: data.N,
+      n_seg: data.n_seg,
+      min_clearance: clr,
+      feasible: true,
+    };
+    setStatus(
+      'solved',
+      `solved · N=${data.N} seg=${data.n_seg} · iters=${iters} · clr=${clr.toFixed(3)} · solve=${serverMs.toFixed(0)}ms (round-trip ${clientMs.toFixed(0)}ms)`,
+    );
+  } else {
+    // Infeasible: keep last feasible trajectory visible if we have one; otherwise
+    // render the returned (infeasible) control points so the user still sees something.
+    if (lastFeasibleResponse) {
+      CTRL_PTS = lastFeasibleResponse.control_points;
+      currentSolveInfo = {
+        N: lastFeasibleResponse.N,
+        n_seg: lastFeasibleResponse.n_seg,
+        min_clearance: lastFeasibleResponse.info.min_clearance,
+        feasible: true,
+      };
+    } else {
+      CTRL_PTS = data.control_points;
+      currentSolveInfo = {
+        N: data.N,
+        n_seg: data.n_seg,
+        min_clearance: isFinite(clr) ? clr : 0,
+        feasible: false,
+      };
+    }
+    setStatus(
+      'infeasible',
+      `infeasible at N=${data.N} seg=${data.n_seg} · iters=${iters} · clr=${isFinite(clr) ? clr.toFixed(3) : 'n/a'} · solve=${serverMs.toFixed(0)}ms · showing last feasible`,
+    );
+  }
+  draw();
+}
+
+function loadScenarioFromServer(name) {
+  const entry = serverCatalog[name];
+  currentScenario = {
+    name: entry.name,
+    title: entry.title,
+    results: {},  // unused in server mode; retained so existing code paths don't NPE
+  };
+  OBSTACLES = entry.obstacles;
+  T_TOTAL = entry.T;
+  lastFeasibleResponse = null;
+
+  // Hide the pre-baked curve dropdown in server mode
+  document.getElementById('curveSelect').innerHTML = '';
+  document.getElementById('curveInfo').textContent = '(live)';
+
+  // Reset sliders to the scenario's preferred defaults
+  document.getElementById('nSlider').value = entry.default_N;
+  document.getElementById('nsegSlider').value = entry.default_n_seg;
+  document.getElementById('proxSlider').value = 0.5;
+  document.getElementById('trustSlider').value = 0.0;
+  document.getElementById('alphaSlider').value = 1.5;
+  document.getElementById('maxIterInput').value = 30;
+  document.getElementById('tolInput').value = '1e-6';
+  document.getElementById('minDtInput').value = 0.1;
+  syncSandboxReadouts();
+
+  updateLegend();
+  scheduleSolve();
+}
+
 // Scenario selector
 const scenarioSelect = document.getElementById('scenarioSelect');
-scenarioSelect.addEventListener('change', () => loadScenario(scenarioSelect.value));
+scenarioSelect.addEventListener('change', () => {
+  if (serverMode) {
+    loadScenarioFromServer(scenarioSelect.value);
+  } else {
+    loadScenario(scenarioSelect.value);
+  }
+});
 
 document.getElementById('curveSelect').addEventListener('change', function() { loadCurve(this.value); });
 document.getElementById('tSlider').addEventListener('input', function() { tFrac = parseFloat(this.value); draw(); });
 document.getElementById('rotSlider').addEventListener('input', function() { azimuth = parseFloat(this.value); draw(); });
 document.getElementById('elevSlider').addEventListener('input', function() { elevation = parseFloat(this.value); draw(); });
-document.getElementById('subSlider').addEventListener('input', draw);
-['chkTubes','chkHull','chkSegments','chkHalfspace','chkDistLines','chkTimePlane','chk2D'].forEach(id =>
+['chkTubes','chkHull','chkSegments','chkHalfspace','chkDistLines','chkTimePlane'].forEach(id =>
   document.getElementById(id).addEventListener('change', draw));
+
+// View mode toggle (3D / 2D)
+function setViewMode(mode) {
+  viewMode = mode === '2d' ? '2d' : '3d';
+  document.body.dataset.viewMode = viewMode;
+  document.getElementById('btnView3D').classList.toggle('active', viewMode === '3d');
+  document.getElementById('btnView2D').classList.toggle('active', viewMode === '2d');
+  // Disable mouse drag in 2D (rotation/pan are 3D-only)
+  canvas.style.cursor = viewMode === '2d' ? 'default' : 'grab';
+  draw();
+}
+document.getElementById('btnView3D').addEventListener('click', () => setViewMode('3d'));
+document.getElementById('btnView2D').addEventListener('click', () => setViewMode('2d'));
+
+// Sandbox slider listeners: update readouts every frame, debounced re-solve
+['nSlider','nsegSlider','proxSlider','trustSlider','alphaSlider'].forEach(id => {
+  document.getElementById(id).addEventListener('input', () => {
+    syncSandboxReadouts();
+    scheduleSolve();
+  });
+});
+
+// Numeric inputs (max_iter / tol / min_dt): re-solve on commit, not per keystroke
+['maxIterInput','tolInput','minDtInput'].forEach(id => {
+  document.getElementById(id).addEventListener('change', scheduleSolve);
+});
 
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('mousedown', e => {
+  if (viewMode === '2d') return;  // 2D is static — no pan/rotate
   if (e.button === 0) dragMode = 'pan';
   else if (e.button === 2) dragMode = 'rotate';
   else return;
@@ -1436,6 +1860,7 @@ window.addEventListener('mouseup', () => {
   updateCanvasCursor();
 });
 canvas.addEventListener('wheel', e => {
+  if (viewMode === '2d') return;  // Zoom is 3D-only for now
   e.preventDefault();
   viewScale = clamp(viewScale * Math.exp(-e.deltaY * 0.0015), 16, 140);
   draw();
@@ -1460,8 +1885,30 @@ function animate() {
 
 // Init
 async function init() {
+  document.body.dataset.viewMode = viewMode;
+  syncSandboxReadouts();
+  const catalog = await tryLoadServerCatalog();
+  if (catalog) {
+    serverMode = true;
+    serverCatalog = catalog;
+    enableSandboxControls(true);
+    populateScenarioSelector(catalog);
+    const names = Object.keys(catalog);
+    if (!names.length) {
+      setStatus('failed', 'server returned no scenarios');
+      return;
+    }
+    scenarioSelect.value = names[0];
+    loadScenarioFromServer(names[0]);
+    return;
+  }
+
+  // File:// or no-server fallback: use pre-baked JSON / embedded data.
+  serverMode = false;
+  enableSandboxControls(false);
+  setStatus('offline', 'solver: offline (open via `python3 -m spacetime_bezier` for live re-solve)');
   const loadedFreshJson = await refreshScenarioData();
-  populateScenarioSelector();
+  populateScenarioSelector(SCENARIOS);
   const names = Object.keys(SCENARIOS);
   if (!names.length) {
     document.getElementById('info').textContent = 'No scenario data available.';
@@ -1469,7 +1916,7 @@ async function init() {
   }
   if (!loadedFreshJson) {
     document.getElementById('info').textContent =
-      'Viewer fell back to embedded scenario data. Run the optimizer from a local HTTP server for fresh JSON.';
+      'Viewer fell back to embedded scenario data. Run `python3 -m spacetime_bezier` for live re-solve.';
   }
   loadScenario(names[0]);
 }

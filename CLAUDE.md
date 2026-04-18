@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Branch Goal: `integrate/rust-into-spacetime`
 
-Build a demo to pitch a new paper idea to a professor: **space-time Bezier trajectory optimization for moving obstacle avoidance**.
+Build a **research sandbox / paper-pitch demo** for **space-time Bezier trajectory optimization for moving obstacle avoidance**. An interactive workbench where a user drags obstacles, tweaks parameters, and watches the optimizer re-solve.
+
+For north-star direction (target UX, foundational rules, non-goals, near-term capabilities), see [`VISION.md`](VISION.md).
 
 ## Architecture
 
@@ -53,10 +55,13 @@ Correct pattern:
 ## Commands
 
 ```bash
-# Run spacetime optimizer (outputs JSON for HTML demo)
+# Launch the interactive sandbox (live re-solve on every slider change) — main entrypoint
+python3 -m spacetime_bezier
+
+# Regenerate the pre-baked scenario JSON (only needed for file:// viewing)
 python3 -m spacetime_bezier.io
 
-# Open interactive demo
+# Open the static interactive demo (uses pre-baked JSON; no live re-solve)
 open figures/spacetime_bezier_interactive.html
 
 # Run live optimizer step debugger
@@ -83,6 +88,8 @@ cd rust_optimizer/pybind && PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 maturin develo
 ## Key Files
 
 ### Python package (`spacetime_bezier/`)
+- `__main__.py` -- Entrypoint: `python3 -m spacetime_bezier` → launches the sandbox
+- `sandbox.py` -- Interactive sandbox HTTP server (live re-solve on slider change)
 - `optimize.py` -- Public API: `optimize_spacetime()`, `optimize_scenario()`, debug stepper factories
 - `constraints.py` -- Python KOZ constraint builder (used by Python debug stepper only)
 - `rust_debug_stepper.py` -- Steps through actual Rust optimizer execution via debug log
