@@ -1,7 +1,9 @@
 """
 Optimization entrypoints for space-time Bezier trajectories.
 
-All optimization runs through the Rust backend (Clarabel QP solver).
+Public API only: request normalization, backend dispatch, batch orchestration.
+Debugger factories live in ``rust_debug_stepper``; clearance computation and
+obstacle geometry live in ``geometry``.
 """
 
 from __future__ import annotations
@@ -10,47 +12,13 @@ import math
 
 import numpy as np
 
-from .debug_stepper import clip_trust_region
-from .geometry import bezier_curve, obstacle_array_bundle
+from .geometry import compute_min_clearance, obstacle_array_bundle
 from .objective import build_initial_guess
-from .rust_debug_stepper import RustOptimizerStepper
 
 try:
     import bezier_opt as _bezier_opt_rs
 except ImportError:  # pragma: no cover - exercised when the native extension is unavailable.
     _bezier_opt_rs = None
-
-
-def _clip_trust_region(x_new: np.ndarray, x_ref: np.ndarray, trust_radius: float) -> np.ndarray:
-    return clip_trust_region(np.asarray(x_new, dtype=float), np.asarray(x_ref, dtype=float), trust_radius)
-
-
-def compute_min_clearance(P, obstacles: list[dict], dim: int, n_eval: int = 1500) -> float:
-    """Evaluate the minimum clearance of a Bezier curve to all obstacles."""
-    if not obstacles:
-        return float("inf")
-
-    pts = bezier_curve(np.asarray(P, dtype=float), num_pts=n_eval)
-    spatial_dim = dim - 1
-    worst = np.inf
-
-    for obs in obstacles:
-        pos0 = np.asarray(obs["pos0"], dtype=float)
-        vel = np.asarray(obs["vel"], dtype=float)
-        radius = float(obs["r"])
-        t0 = float(obs.get("t_start", -np.inf))
-        t1 = float(obs.get("t_end", np.inf))
-
-        t_vals = pts[:, -1]
-        active = (t_vals >= t0) & (t_vals <= t1)
-        if not active.any():
-            continue
-
-        o_positions = pos0[None, :] + vel[None, :] * t_vals[active, None]
-        dists = np.linalg.norm(pts[active, :spatial_dim] - o_positions, axis=1) - radius
-        worst = min(worst, float(dists.min()))
-
-    return float(worst)
 
 
 def _optimize_spacetime_rust(
@@ -66,6 +34,7 @@ def _optimize_spacetime_rust(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
+    capsule_time_scale: float = 0.5,
     verbose: bool = True,
 ) -> tuple[np.ndarray, dict]:
     """Call the native Rust backend for the space-time optimizer."""
@@ -95,6 +64,7 @@ def _optimize_spacetime_rust(
         coord_ub=coord_ub,
         time_lb=time_lb,
         time_ub=time_upper,
+        capsule_time_scale=capsule_time_scale,
     )
     P_opt = np.asarray(P_opt, dtype=float)
     info = dict(info)
@@ -109,7 +79,6 @@ def _optimize_spacetime_rust(
         print(
             f"SCP: N={n_cp - 1}, dim={dim}, n_seg={n_seg}, n_cp={n_cp}, n_obs={len(obstacles)}, backend=rust"
         )
-        # Determine termination reason
         if delta < tol and total_slack < 1e-10:
             reason = "converged"
         elif iterations >= max_iter:
@@ -135,6 +104,7 @@ def optimize_spacetime_from_control_points(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
+    capsule_time_scale: float = 0.5,
     verbose: bool = True,
 ) -> tuple[np.ndarray, dict]:
     """Optimize a space-time Bezier curve from an initial control polygon.
@@ -154,6 +124,7 @@ def optimize_spacetime_from_control_points(
         coord_ub=coord_ub,
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
+        capsule_time_scale=capsule_time_scale,
         verbose=verbose,
     )
 
@@ -174,6 +145,7 @@ def optimize_spacetime(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
+    capsule_time_scale: float = 0.5,
     verbose: bool = True,
     init_curve: dict | None = None,
 ) -> tuple[np.ndarray, dict]:
@@ -198,79 +170,8 @@ def optimize_spacetime(
         coord_ub=coord_ub,
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
+        capsule_time_scale=capsule_time_scale,
         verbose=verbose,
-    )
-
-
-def create_spacetime_debug_stepper_from_control_points(
-    P_init,
-    obstacles: list[dict],
-    n_seg: int = 8,
-    max_iter: int = 30,
-    tol: float = 1e-6,
-    scp_prox_weight: float = 0.5,
-    scp_trust_radius: float = 0.0,
-    min_dt: float = 0.1,
-    coord_lb: float = -20.0,
-    coord_ub: float = 20.0,
-    time_lb: float = 0.0,
-    time_ub_scale: float = 1.5,
-):
-    """Create a Rust-backed debug stepper from an existing control polygon."""
-    return RustOptimizerStepper(
-        p_init=np.asarray(P_init, dtype=float),
-        obstacles=obstacles,
-        clearance_fn=compute_min_clearance,
-        rust_solver=_optimize_spacetime_rust,
-        n_seg=n_seg,
-        max_iter=max_iter,
-        tol=tol,
-        scp_prox_weight=scp_prox_weight,
-        scp_trust_radius=scp_trust_radius,
-        min_dt=min_dt,
-        coord_lb=coord_lb,
-        coord_ub=coord_ub,
-        time_lb=time_lb,
-        time_ub_scale=time_ub_scale,
-    )
-
-
-def create_spacetime_debug_stepper(
-    N: int,
-    dim: int,
-    p_start,
-    p_end,
-    obstacles: list[dict],
-    n_seg: int = 8,
-    max_iter: int = 30,
-    tol: float = 1e-6,
-    scp_prox_weight: float = 0.5,
-    scp_trust_radius: float = 0.0,
-    min_dt: float = 0.1,
-    coord_lb: float = -20.0,
-    coord_ub: float = 20.0,
-    time_lb: float = 0.0,
-    time_ub_scale: float = 1.5,
-    init_curve: dict | None = None,
-):
-    """Create a Rust-backed debug stepper, building the initial guess from endpoints."""
-    n_cp = int(N) + 1
-    p_init = build_initial_guess(p_start, p_end, n_cp, init_curve=init_curve)
-    if dim != p_init.shape[1]:
-        raise ValueError(f"Expected dim={dim}, got initial guess with dim={p_init.shape[1]}")
-    return create_spacetime_debug_stepper_from_control_points(
-        p_init,
-        obstacles,
-        n_seg=n_seg,
-        max_iter=max_iter,
-        tol=tol,
-        scp_prox_weight=scp_prox_weight,
-        scp_trust_radius=scp_trust_radius,
-        min_dt=min_dt,
-        coord_lb=coord_lb,
-        coord_ub=coord_ub,
-        time_lb=time_lb,
-        time_ub_scale=time_ub_scale,
     )
 
 

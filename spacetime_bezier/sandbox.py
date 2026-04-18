@@ -75,6 +75,7 @@ def solve_from_payload(payload: dict) -> dict:
     max_iter = int(payload.get("max_iter", 30))
     tol = float(payload.get("tol", 1e-6))
     min_dt = float(payload.get("min_dt", 0.1))
+    capsule_time_scale = float(payload.get("capsule_time_scale", 0.5))
 
     p_start = scenario["start"]
     p_end = scenario["end"]
@@ -93,6 +94,7 @@ def solve_from_payload(payload: dict) -> dict:
         scp_trust_radius=scp_trust_radius,
         min_dt=min_dt,
         time_ub_scale=time_ub_scale,
+        capsule_time_scale=capsule_time_scale,
         verbose=False,
         init_curve=scenario.get("init_curve"),
     )
@@ -119,6 +121,7 @@ def solve_from_payload(payload: dict) -> dict:
         "max_iter": max_iter,
         "tol": tol,
         "min_dt": min_dt,
+        "capsule_time_scale": capsule_time_scale,
         "control_points": np.asarray(P_opt, dtype=float).tolist(),
         "obstacles": scenario["obstacles"],
         "start": list(p_start),

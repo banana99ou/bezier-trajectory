@@ -160,6 +160,7 @@ pub fn scp_step(
     scp_trust_radius: f64,
     elastic_weight: f64,
     tol: f64,
+    capsule_time_scale: f64,
 ) -> ScpStepResult {
     let np1 = pre.np1;
     let dim = pre.dim;
@@ -167,7 +168,7 @@ pub fn scp_step(
 
     // Build KOZ constraints with per-row metadata
     let koz_bundle = spacetime_constraints::build_spacetime_koz_constraints(
-        &pre.a_list, p_current, np1, dim, obstacles,
+        &pre.a_list, p_current, np1, dim, obstacles, capsule_time_scale,
     );
 
     // Build objective: H_energy + proximal
@@ -347,6 +348,7 @@ pub fn optimize_spacetime(
     time_ub: f64,
     obstacles: &SpacetimeObstacleData<'_>,
     elastic_weight: f64,
+    capsule_time_scale: f64,
 ) -> OptResult {
     let nvars = np1 * dim;
     let pre = precompute_scp(p_init, np1, dim, n_seg, min_dt, coord_lb, coord_ub, time_lb, time_ub);
@@ -360,7 +362,10 @@ pub fn optimize_spacetime(
 
     for it in 1..=max_iter {
         iterations = it;
-        let step = scp_step(&p, &pre, obstacles, scp_prox_weight, scp_trust_radius, elastic_weight, tol);
+        let step = scp_step(
+            &p, &pre, obstacles, scp_prox_weight, scp_trust_radius, elastic_weight, tol,
+            capsule_time_scale,
+        );
 
         if step.solver_status == "Failed" {
             break;

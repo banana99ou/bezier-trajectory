@@ -29,7 +29,7 @@ pub struct KozConstraintBundle {
     pub rows: Vec<KozRowData>,
 }
 
-const SPACETIME_CAPSULE_TIME_SCALE: f64 = 0.5;
+pub const DEFAULT_CAPSULE_TIME_SCALE: f64 = 0.5;
 
 fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b.iter()).map(|(lhs, rhs)| lhs * rhs).sum()
@@ -118,6 +118,7 @@ pub fn build_spacetime_koz_constraints(
     np1: usize,
     dim: usize,
     obstacles: &SpacetimeObstacleData<'_>,
+    capsule_time_scale: f64,
 ) -> Option<KozConstraintBundle> {
     let n_vars = np1 * dim;
     let mut constraint_rows: Vec<Vec<f64>> = Vec::new();
@@ -152,7 +153,7 @@ pub fn build_spacetime_koz_constraints(
                         obs_idx,
                         plan_t0,
                         plan_t1,
-                        SPACETIME_CAPSULE_TIME_SCALE,
+                        capsule_time_scale,
                     )
                 else {
                     continue;

@@ -126,6 +126,9 @@
     <label>Time scale &alpha; <span class="val" id="alphaVal">1.50</span></label>
     <input type="range" id="alphaSlider" min="1" max="3" step="0.05" value="1.5">
 
+    <label>Capsule time scale <span class="val" id="capScaleVal">0.50</span></label>
+    <input type="range" id="capScaleSlider" min="0.1" max="2" step="0.05" value="0.5">
+
     <div class="num-grid">
       <div class="num-cell">
         <label for="maxIterInput">max_iter</label>
@@ -1169,54 +1172,175 @@ function drawCircle3D(center, radius, tVal, color, alpha = 0.3, nPts = 36) {
   ctx.strokeStyle = color; ctx.globalAlpha = alpha; ctx.lineWidth = 1; ctx.stroke(); ctx.globalAlpha = 1;
 }
 
-function drawTube(obs, color) {
-  const tStart = obs.t_start != null ? obs.t_start : 0;
-  const tEnd = obs.t_end != null ? obs.t_end : T_TOTAL;
-  const nRings = 20;
-  for (let i = 0; i < nRings; i++) {
-    const t1 = tStart + (i / nRings) * (tEnd - tStart);
-    const t2 = tStart + ((i + 1) / nRings) * (tEnd - tStart);
-    const c1 = [obs.pos0[0] + obs.vel[0] * t1, obs.pos0[1] + obs.vel[1] * t1];
-    const c2 = [obs.pos0[0] + obs.vel[0] * t2, obs.pos0[1] + obs.vel[1] * t2];
-    for (let j = 0; j < 10; j++) {
-      const th = (j / 10) * Math.PI * 2;
-      drawLine3D([c1[0]+obs.r*Math.cos(th), c1[1]+obs.r*Math.sin(th), t1],
-                 [c2[0]+obs.r*Math.cos(th), c2[1]+obs.r*Math.sin(th), t2], color, 0.5, 0.12);
-    }
-    drawCircle3D(c2, obs.r, t2, color, 0.15);
-  }
-  drawCircle3D([obs.pos0[0]+obs.vel[0]*tStart, obs.pos0[1]+obs.vel[1]*tStart], obs.r, tStart, color, 0.3);
-  // cap at tEnd for time-limited obstacles
-  if (obs.t_end != null) drawCircle3D([obs.pos0[0]+obs.vel[0]*tEnd, obs.pos0[1]+obs.vel[1]*tEnd], obs.r, tEnd, color, 0.4);
+// Build a pair of orthonormal vectors perpendicular to `axis` (unit 3D vector).
+function perpBasis(axis) {
+  let seed = [0, 0, 1];
+  if (Math.abs(axis[2]) > 0.9) seed = [1, 0, 0];
+  const d = seed[0]*axis[0] + seed[1]*axis[1] + seed[2]*axis[2];
+  let e1 = [seed[0]-d*axis[0], seed[1]-d*axis[1], seed[2]-d*axis[2]];
+  const en = Math.hypot(e1[0], e1[1], e1[2]);
+  e1 = [e1[0]/en, e1[1]/en, e1[2]/en];
+  const e2 = [
+    axis[1]*e1[2] - axis[2]*e1[1],
+    axis[2]*e1[0] - axis[0]*e1[2],
+    axis[0]*e1[1] - axis[1]*e1[0],
+  ];
+  return { e1, e2 };
 }
 
-function drawLiftedHalfspace(obs, supportPoint, normal, color, halfLen = 3) {
-  const nx = normal[0];
-  const ny = normal[1];
-  const normXY = Math.hypot(nx, ny);
-  if (normXY <= 1e-12) return;
+// Draw the time-limited obstacle as a capsule in the scaled space (x, y, c·t)
+// and unscale back to (x, y, t) for rendering. Matches the geometry the Rust
+// KOZ constraint actually enforces (see `scaled_spacetime_capsule_support`
+// in rust_optimizer/core/src/spacetime_constraints.rs).
+function drawCapsule(obs, capScale, color) {
+  const tStart = obs.t_start != null ? obs.t_start : 0;
+  const tEnd = obs.t_end != null ? obs.t_end : T_TOTAL;
+  const r = obs.r;
+  const A = [obs.pos0[0]+obs.vel[0]*tStart, obs.pos0[1]+obs.vel[1]*tStart, capScale*tStart];
+  const B = [obs.pos0[0]+obs.vel[0]*tEnd,   obs.pos0[1]+obs.vel[1]*tEnd,   capScale*tEnd];
+  const axisVec = [B[0]-A[0], B[1]-A[1], B[2]-A[2]];
+  const L = Math.hypot(axisVec[0], axisVec[1], axisVec[2]);
+  if (L < 1e-9) return;
+  const axisUnit = [axisVec[0]/L, axisVec[1]/L, axisVec[2]/L];
+  const { e1, e2 } = perpBasis(axisUnit);
+  const fromScaled = p => [p[0], p[1], p[2] / capScale];
+  const nLon = 14, nLat = 4, nRing = 6;
 
-  const perpX = -ny / normXY;
-  const perpY = nx / normXY;
-  const t0 = obs.t_start != null ? obs.t_start : 0;
-  const t1 = obs.t_end != null ? obs.t_end : T_TOTAL;
-
-  const edgeAt = (tVal) => {
-    const dt = tVal - supportPoint[2];
-    const sx = supportPoint[0] + obs.vel[0] * dt;
-    const sy = supportPoint[1] + obs.vel[1] * dt;
-    return [
-      [sx - perpX * halfLen, sy - perpY * halfLen, tVal],
-      [sx + perpX * halfLen, sy + perpY * halfLen, tVal],
-    ];
+  const ringAt = (center, ringR, axialOffset) => {
+    // center + axialOffset*axisUnit + ringR*(cos th*e1 + sin th*e2), for th in [0, 2π]
+    const pts = [];
+    for (let j = 0; j <= nLon; j++) {
+      const th = (j / nLon) * Math.PI * 2;
+      const cx = Math.cos(th), sx = Math.sin(th);
+      pts.push(fromScaled([
+        center[0] + axialOffset*axisUnit[0] + ringR*(cx*e1[0] + sx*e2[0]),
+        center[1] + axialOffset*axisUnit[1] + ringR*(cx*e1[1] + sx*e2[1]),
+        center[2] + axialOffset*axisUnit[2] + ringR*(cx*e1[2] + sx*e2[2]),
+      ]));
+    }
+    return pts;
   };
 
-  const [p0, p1] = edgeAt(t0);
-  const [p2, p3] = edgeAt(t1);
-  drawLine3D(p0, p1, color, 1, 0.35);
-  drawLine3D(p2, p3, color, 1, 0.35);
-  drawLine3D(p0, p2, color, 0.8, 0.25);
-  drawLine3D(p1, p3, color, 0.8, 0.25);
+  const drawRing = (pts, alpha) => {
+    for (let k = 0; k < pts.length - 1; k++) drawLine3D(pts[k], pts[k+1], color, 0.5, alpha);
+  };
+
+  // Cylinder body: rings perpendicular to axis
+  for (let i = 0; i <= nRing; i++) {
+    const u = i / nRing;
+    const center = [A[0]+u*axisVec[0], A[1]+u*axisVec[1], A[2]+u*axisVec[2]];
+    drawRing(ringAt(center, r, 0), 0.12);
+  }
+  // Cylinder body: longitudinal lines
+  for (let j = 0; j < nLon; j++) {
+    const th = (j / nLon) * Math.PI * 2;
+    const cx = Math.cos(th), sx = Math.sin(th);
+    const offset = [r*(cx*e1[0]+sx*e2[0]), r*(cx*e1[1]+sx*e2[1]), r*(cx*e1[2]+sx*e2[2])];
+    drawLine3D(
+      fromScaled([A[0]+offset[0], A[1]+offset[1], A[2]+offset[2]]),
+      fromScaled([B[0]+offset[0], B[1]+offset[1], B[2]+offset[2]]),
+      color, 0.5, 0.12
+    );
+  }
+
+  // Hemispheres: A is the "bottom" (flip=-1 along axis), B is the "top" (flip=+1)
+  for (const [center, flip, capAlpha] of [[A, -1, 0.15], [B, 1, 0.2]]) {
+    // Latitude rings
+    for (let i = 1; i <= nLat; i++) {
+      const lat = (i / nLat) * Math.PI / 2;
+      drawRing(ringAt(center, r*Math.cos(lat), flip*r*Math.sin(lat)), capAlpha);
+    }
+    // Pole point marker (single drawCircle3D-style fill)
+    // Meridians
+    for (let j = 0; j < nLon; j++) {
+      const th = (j / nLon) * Math.PI * 2;
+      const cx = Math.cos(th), sx = Math.sin(th);
+      const pts = [];
+      for (let i = 0; i <= nLat; i++) {
+        const lat = (i / nLat) * Math.PI / 2;
+        const sR = r*Math.cos(lat);
+        const aO = flip*r*Math.sin(lat);
+        pts.push(fromScaled([
+          center[0] + aO*axisUnit[0] + sR*(cx*e1[0]+sx*e2[0]),
+          center[1] + aO*axisUnit[1] + sR*(cx*e1[1]+sx*e2[1]),
+          center[2] + aO*axisUnit[2] + sR*(cx*e1[2]+sx*e2[2]),
+        ]));
+      }
+      for (let k = 0; k < pts.length - 1; k++) drawLine3D(pts[k], pts[k+1], color, 0.5, capAlpha * 0.7);
+    }
+  }
+}
+
+// JS port of rust_optimizer/core/src/spacetime_constraints.rs::
+// scaled_spacetime_capsule_support — closest point on the obstacle capsule
+// in scaled (x, y, capScale·t) space, then unscaled for rendering.
+function capsuleSupport(queryPoint, obs, planT0, planT1, capScale) {
+  const tStart = obs.t_start != null ? obs.t_start : -Infinity;
+  const tEnd = obs.t_end != null ? obs.t_end : Infinity;
+  const effT0 = Math.max(tStart, planT0);
+  const effT1 = Math.min(tEnd, planT1);
+  if (effT1 < effT0) return null;
+
+  const qS = [queryPoint[0], queryPoint[1], queryPoint[2] * capScale];
+  const aS = [obs.pos0[0] + obs.vel[0]*effT0, obs.pos0[1] + obs.vel[1]*effT0, capScale*effT0];
+  const bS = [obs.pos0[0] + obs.vel[0]*effT1, obs.pos0[1] + obs.vel[1]*effT1, capScale*effT1];
+  const axis = [bS[0]-aS[0], bS[1]-aS[1], bS[2]-aS[2]];
+  const denom = axis[0]*axis[0] + axis[1]*axis[1] + axis[2]*axis[2];
+  const rel = [qS[0]-aS[0], qS[1]-aS[1], qS[2]-aS[2]];
+  const tau = denom > 1e-12
+    ? Math.max(0, Math.min(1, (rel[0]*axis[0] + rel[1]*axis[1] + rel[2]*axis[2]) / denom))
+    : 0;
+  const closestS = [aS[0]+tau*axis[0], aS[1]+tau*axis[1], aS[2]+tau*axis[2]];
+  const diff = [qS[0]-closestS[0], qS[1]-closestS[1], qS[2]-closestS[2]];
+  const dist = Math.hypot(diff[0], diff[1], diff[2]);
+  if (dist < 1e-10) return null;
+  const nS = [diff[0]/dist, diff[1]/dist, diff[2]/dist];
+  const supportS = [closestS[0]+obs.r*nS[0], closestS[1]+obs.r*nS[1], closestS[2]+obs.r*nS[2]];
+  return {
+    n: [nS[0], nS[1], nS[2] * capScale],
+    support: [supportS[0], supportS[1], supportS[2] / capScale],
+    closest: [closestS[0], closestS[1], closestS[2] / capScale],
+  };
+}
+
+// Draw a half-space boundary plane perpendicular to `normalVec`, centered at
+// `support`. Unlike the older vertical-slab variant this handles normals with
+// any time component — needed for supporting planes at capsule caps (e.g. the
+// top/bottom of a time-limited wall).
+function drawHalfspacePlane(support, normalVec, color, halfLen = 2.2) {
+  const nLen = Math.hypot(normalVec[0], normalVec[1], normalVec[2]);
+  if (nLen < 1e-12) return;
+  const n = [normalVec[0]/nLen, normalVec[1]/nLen, normalVec[2]/nLen];
+
+  let seed = [0, 0, 1];
+  if (Math.abs(n[2]) > 0.9) seed = [1, 0, 0];
+  const d = seed[0]*n[0] + seed[1]*n[1] + seed[2]*n[2];
+  let u = [seed[0]-d*n[0], seed[1]-d*n[1], seed[2]-d*n[2]];
+  const un = Math.hypot(u[0], u[1], u[2]);
+  u = [u[0]/un, u[1]/un, u[2]/un];
+  const v = [
+    n[1]*u[2] - n[2]*u[1],
+    n[2]*u[0] - n[0]*u[2],
+    n[0]*u[1] - n[1]*u[0],
+  ];
+  const corners = [];
+  for (const [su, sv] of [[+1,+1],[-1,+1],[-1,-1],[+1,-1]]) {
+    corners.push([
+      support[0] + halfLen*(su*u[0] + sv*v[0]),
+      support[1] + halfLen*(su*u[1] + sv*v[1]),
+      support[2] + halfLen*(su*u[2] + sv*v[2]),
+    ]);
+  }
+  for (let i = 0; i < 4; i++) drawLine3D(corners[i], corners[(i+1)%4], color, 1, 0.35);
+  drawLine3D(corners[0], corners[2], color, 0.6, 0.12);
+  drawLine3D(corners[1], corners[3], color, 0.6, 0.12);
+  // Normal arrow pointing into the feasible side (away from capsule).
+  const arrowLen = 0.7;
+  drawLine3D(
+    support,
+    [support[0]+arrowLen*n[0], support[1]+arrowLen*n[1], support[2]+arrowLen*n[2]],
+    color, 1.8, 0.95
+  );
 }
 
 function drawTrustBox3D(center, radius, color, alpha) {
@@ -1304,6 +1428,7 @@ function draw3DScene(tNow, curPt, fullCurve, dists) {
   const nSub = Math.max(1, currentSolveInfo.n_seg || 8);
   const alpha = serverMode ? parseFloat(document.getElementById('alphaSlider').value) : 1;
   const trustR = serverMode ? parseFloat(document.getElementById('trustSlider').value) : 0;
+  const capScale = serverMode ? parseFloat(document.getElementById('capScaleSlider').value) : 0.5;
 
   // Axes
   drawLine3D([0,0,0],[10,0,0],'#666',1,0.4); drawLine3D([0,0,0],[0,10,0],'#666',1,0.4); drawLine3D([0,0,0],[0,0,T_TOTAL],'#666',1,0.4);
@@ -1323,7 +1448,7 @@ function draw3DScene(tNow, curPt, fullCurve, dists) {
     ctx.fillText(`α·T = ${tMax.toFixed(1)}`, labelPos.x + 6, labelPos.y);
   }
 
-  if (showTubes) { for (const obs of OBSTACLES) drawTube(obs, obs.color); }
+  if (showTubes) { for (const obs of OBSTACLES) drawCapsule(obs, capScale, obs.color); }
 
   if (showTP && tNow > 0) {
     const co = [[0,0,tNow],[10,0,tNow],[10,10,tNow],[0,10,tNow]].map(c => toScreen(...c));
@@ -1352,20 +1477,17 @@ function draw3DScene(tNow, curPt, fullCurve, dists) {
   if(showHull && !showSeg) drawHullFaces(CTRL_PTS,'#ffc800',0.08);
 
   if (showHS) {
+    const planT0 = CTRL_PTS[0][2];
+    const planT1 = CTRL_PTS[CTRL_PTS.length - 1][2];
     segments.forEach(seg => {
-      const centroid = [0,0,0]; seg.forEach(p => {for(let d=0;d<3;d++) centroid[d]+=p[d];}); for(let d=0;d<3;d++) centroid[d]/=seg.length;
-      const tSeg = centroid[2];
+      const centroid = [0,0,0];
+      seg.forEach(p => { for (let d = 0; d < 3; d++) centroid[d] += p[d]; });
+      for (let d = 0; d < 3; d++) centroid[d] /= seg.length;
       for (const obs of OBSTACLES) {
-        const t0=obs.t_start!=null?obs.t_start:-Infinity, t1=obs.t_end!=null?obs.t_end:Infinity;
-        if (tSeg < t0 || tSeg > t1) continue;
-        const ox=obs.pos0[0]+obs.vel[0]*tSeg, oy=obs.pos0[1]+obs.vel[1]*tSeg;
-        const dx=centroid[0]-ox, dy=centroid[1]-oy, dist=Math.sqrt(dx*dx+dy*dy);
-        if(dist<0.01)continue;
-        const nx=dx/dist, ny=dy/dist, beta=-(nx*obs.vel[0] + ny*obs.vel[1]);
-        const support=[ox+obs.r*nx, oy+obs.r*ny, tSeg];
-        const center=[ox, oy, tSeg];
-        drawLiftedHalfspace(obs, support, [nx, ny, beta], '#ff0', 3);
-        drawLine3D(center, support, '#ff0', 1.2, 0.55);
+        const result = capsuleSupport(centroid, obs, planT0, planT1, capScale);
+        if (!result) continue;
+        drawHalfspacePlane(result.support, result.n, '#ff0', 2.2);
+        drawLine3D(result.closest, result.support, '#ff0', 1.2, 0.55);
       }
     });
   }
@@ -1691,7 +1813,7 @@ function stopSolveProgress() {
 function enableSandboxControls(enabled) {
   const section = document.getElementById('sandboxSection');
   section.dataset.disabled = enabled ? 'false' : 'true';
-  ['nSlider','nsegSlider','proxSlider','trustSlider','alphaSlider',
+  ['nSlider','nsegSlider','proxSlider','trustSlider','alphaSlider','capScaleSlider',
    'maxIterInput','tolInput','minDtInput'].forEach(id => {
     document.getElementById(id).disabled = !enabled;
   });
@@ -1707,6 +1829,7 @@ function currentSandboxParams() {
     scp_prox_weight: parseFloat(document.getElementById('proxSlider').value),
     scp_trust_radius: parseFloat(document.getElementById('trustSlider').value),
     time_ub_scale: parseFloat(document.getElementById('alphaSlider').value),
+    capsule_time_scale: parseFloat(document.getElementById('capScaleSlider').value),
     max_iter: Number.isFinite(maxIter) && maxIter > 0 ? maxIter : 30,
     tol: Number.isFinite(tol) && tol > 0 ? tol : 1e-6,
     min_dt: Number.isFinite(minDt) && minDt >= 0 ? minDt : 0.1,
@@ -1719,6 +1842,7 @@ function syncSandboxReadouts() {
   document.getElementById('proxVal').textContent = parseFloat(document.getElementById('proxSlider').value).toFixed(2);
   document.getElementById('trustVal').textContent = parseFloat(document.getElementById('trustSlider').value).toFixed(2);
   document.getElementById('alphaVal').textContent = parseFloat(document.getElementById('alphaSlider').value).toFixed(2);
+  document.getElementById('capScaleVal').textContent = parseFloat(document.getElementById('capScaleSlider').value).toFixed(2);
 }
 
 function scheduleSolve() {
@@ -1866,6 +1990,7 @@ function loadScenarioFromServer(name) {
   document.getElementById('proxSlider').value = 0.5;
   document.getElementById('trustSlider').value = 0.0;
   document.getElementById('alphaSlider').value = 1.5;
+  document.getElementById('capScaleSlider').value = 0.5;
   document.getElementById('maxIterInput').value = 30;
   document.getElementById('tolInput').value = '1e-6';
   document.getElementById('minDtInput').value = 0.1;
@@ -1908,10 +2033,10 @@ document.getElementById('btnView2D').addEventListener('click', () => setViewMode
 // Sandbox slider listeners: update readouts every frame, debounced re-solve.
 // Trust / α also redraw immediately so their overlay feedback tracks the
 // slider position even before the new solve arrives.
-['nSlider','nsegSlider','proxSlider','trustSlider','alphaSlider'].forEach(id => {
+['nSlider','nsegSlider','proxSlider','trustSlider','alphaSlider','capScaleSlider'].forEach(id => {
   document.getElementById(id).addEventListener('input', () => {
     syncSandboxReadouts();
-    if (id === 'trustSlider' || id === 'alphaSlider') draw();
+    if (id === 'trustSlider' || id === 'alphaSlider' || id === 'capScaleSlider') draw();
     scheduleSolve();
   });
 });
