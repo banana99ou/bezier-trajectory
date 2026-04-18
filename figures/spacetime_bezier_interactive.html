@@ -1081,6 +1081,8 @@ let azimuth = -55, elevation = 22;
 let viewScale = 38, panX = 0, panY = 0;
 let dragMode = null, lastMouseX = 0, lastMouseY = 0;
 let viewMode = '3d';  // '3d' | '2d'
+let hoveredSegIdx = null;  // which De Casteljau segment the cursor is on (3D only)
+const HOVER_PIXEL_THRESHOLD = 22;
 const SCENE_CENTER = [5, 5, 5];
 
 // Sandbox (server-backed live re-solve) state
@@ -1315,11 +1317,32 @@ function capsuleSupport(queryPoint, obs, planT0, planT1, capScale) {
   };
 }
 
+// 3D arrow: shaft + four short head-lines angling back from the tip toward
+// the base, giving a recognizable directional pip from any viewing angle.
+function drawArrow3D(from, to, color, width, alpha) {
+  drawLine3D(from, to, color, width, alpha);
+  const dir = [to[0]-from[0], to[1]-from[1], to[2]-from[2]];
+  const len = Math.hypot(dir[0], dir[1], dir[2]);
+  if (len < 1e-9) return;
+  const axis = [dir[0]/len, dir[1]/len, dir[2]/len];
+  const { e1, e2 } = perpBasis(axis);
+  const headLen = Math.min(0.35, len * 0.45);
+  const headR = headLen * 0.55;
+  for (const [su, sv] of [[+1,0],[-1,0],[0,+1],[0,-1]]) {
+    const base = [
+      to[0] - headLen*axis[0] + headR*(su*e1[0] + sv*e2[0]),
+      to[1] - headLen*axis[1] + headR*(su*e1[1] + sv*e2[1]),
+      to[2] - headLen*axis[2] + headR*(su*e1[2] + sv*e2[2]),
+    ];
+    drawLine3D(base, to, color, width, alpha);
+  }
+}
+
 // Draw a half-space boundary plane perpendicular to `normalVec`, centered at
-// `support`. Unlike the older vertical-slab variant this handles normals with
-// any time component — needed for supporting planes at capsule caps (e.g. the
-// top/bottom of a time-limited wall).
-function drawHalfspacePlane(support, normalVec, color, halfLen = 2.2) {
+// `support`. Handles normals with any time component (needed for supporting
+// planes at capsule caps). `alphaScale` dims the whole element — used when
+// another segment is currently under the cursor.
+function drawHalfspacePlane(support, normalVec, color, halfLen = 2.2, alphaScale = 1) {
   const nLen = Math.hypot(normalVec[0], normalVec[1], normalVec[2]);
   if (nLen < 1e-12) return;
   const n = [normalVec[0]/nLen, normalVec[1]/nLen, normalVec[2]/nLen];
@@ -1343,15 +1366,18 @@ function drawHalfspacePlane(support, normalVec, color, halfLen = 2.2) {
       support[2] + halfLen*(su*u[2] + sv*v[2]),
     ]);
   }
-  for (let i = 0; i < 4; i++) drawLine3D(corners[i], corners[(i+1)%4], color, 1, 0.35);
-  drawLine3D(corners[0], corners[2], color, 0.6, 0.12);
-  drawLine3D(corners[1], corners[3], color, 0.6, 0.12);
-  // Normal arrow pointing into the feasible side (away from capsule).
-  const arrowLen = 0.7;
-  drawLine3D(
+  const edgeA = 0.35 * alphaScale;
+  const diagA = 0.12 * alphaScale;
+  const arrowA = 0.95 * alphaScale;
+  const arrowW = 1.6 * (0.5 + 0.5 * alphaScale);
+  for (let i = 0; i < 4; i++) drawLine3D(corners[i], corners[(i+1)%4], color, 1, edgeA);
+  drawLine3D(corners[0], corners[2], color, 0.6, diagA);
+  drawLine3D(corners[1], corners[3], color, 0.6, diagA);
+  const arrowLen = 0.9;
+  drawArrow3D(
     support,
     [support[0]+arrowLen*n[0], support[1]+arrowLen*n[1], support[2]+arrowLen*n[2]],
-    color, 1.8, 0.95
+    color, arrowW, arrowA
   );
 }
 
@@ -1491,17 +1517,28 @@ function draw3DScene(tNow, curPt, fullCurve, dists) {
   if (showHS) {
     const planT0 = CTRL_PTS[0][2];
     const planT1 = CTRL_PTS[CTRL_PTS.length - 1][2];
-    segments.forEach(seg => {
+    segments.forEach((seg, segIdx) => {
+      // Dim segments the user isn't hovering on. When no segment is hovered,
+      // everything renders at full alpha (same as before).
+      const isActive = hoveredSegIdx === null || segIdx === hoveredSegIdx;
+      const alphaScale = isActive ? 1.0 : 0.15;
       const centroid = [0,0,0];
       seg.forEach(p => { for (let d = 0; d < 3; d++) centroid[d] += p[d]; });
       for (let d = 0; d < 3; d++) centroid[d] /= seg.length;
       for (const obs of OBSTACLES) {
         const result = capsuleSupport(centroid, obs, planT0, planT1, capScale);
         if (!result) continue;
-        drawHalfspacePlane(result.support, result.n, '#ff0', 2.2);
-        drawLine3D(result.closest, result.support, '#ff0', 1.2, 0.55);
+        drawHalfspacePlane(result.support, result.n, '#ff0', 2.2, alphaScale);
+        drawLine3D(result.closest, result.support, '#ff0', 1.2, 0.55 * alphaScale);
       }
     });
+    // Highlight the hovered segment's curve piece so the SHS↔segment mapping
+    // is unambiguous.
+    if (hoveredSegIdx !== null) {
+      const seg = segments[hoveredSegIdx];
+      const crv = bezierCurve(seg, 60);
+      for (let i = 0; i < crv.length - 1; i++) drawLine3D(crv[i], crv[i+1], '#ffa500', 3, 0.9);
+    }
   }
 
   // Initial-guess overlay (drawn behind so the solved curve remains primary)
@@ -2089,6 +2126,47 @@ document.getElementById('btnView2D').addEventListener('click', () => setViewMode
 // Numeric inputs (max_iter / tol / min_dt): re-solve on commit, not per keystroke
 ['maxIterInput','tolInput','minDtInput'].forEach(id => {
   document.getElementById(id).addEventListener('change', scheduleSolve);
+});
+
+// Hover picking: find the closest curve point to the cursor and translate
+// back to a segment index (floor(t · n_seg)). Only meaningful in 3D and only
+// when "Supporting half-spaces" is on — otherwise we skip the walk to stay
+// cheap on passive mouse motion.
+function updateHoverFromCursor(cx, cy) {
+  if (viewMode !== '3d' || !CTRL_PTS.length) return;
+  if (!document.getElementById('chkHalfspace').checked) {
+    if (hoveredSegIdx !== null) { hoveredSegIdx = null; draw(); }
+    return;
+  }
+  const nSub = Math.max(1, currentSolveInfo.n_seg || 8);
+  const threshSq = HOVER_PIXEL_THRESHOLD * HOVER_PIXEL_THRESHOLD;
+  let best = threshSq;
+  let bestSeg = null;
+  const nSamples = 160;
+  for (let i = 0; i <= nSamples; i++) {
+    const t = i / nSamples;
+    const pt = evalBezier(CTRL_PTS, t);
+    const sp = toScreen(...pt);
+    const dx = sp.x - cx, dy = sp.y - cy;
+    const d2 = dx*dx + dy*dy;
+    if (d2 < best) {
+      best = d2;
+      bestSeg = Math.min(nSub - 1, Math.floor(t * nSub));
+    }
+  }
+  if (bestSeg !== hoveredSegIdx) {
+    hoveredSegIdx = bestSeg;
+    draw();
+  }
+}
+
+canvas.addEventListener('mousemove', e => {
+  if (dragMode) return;  // don't hover-update mid-drag
+  const rect = canvas.getBoundingClientRect();
+  updateHoverFromCursor(e.clientX - rect.left, e.clientY - rect.top);
+});
+canvas.addEventListener('mouseleave', () => {
+  if (hoveredSegIdx !== null) { hoveredSegIdx = null; draw(); }
 });
 
 canvas.addEventListener('contextmenu', e => e.preventDefault());
