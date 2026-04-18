@@ -20,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .objective import build_initial_guess
 from .optimize import optimize_spacetime
 from .scenarios import SCENARIO_MAP
 
@@ -79,6 +80,7 @@ def solve_from_payload(payload: dict) -> dict:
 
     p_start = scenario["start"]
     p_end = scenario["end"]
+    P_init = build_initial_guess(p_start, p_end, int(N) + 1, init_curve=scenario.get("init_curve"))
 
     t0 = time.perf_counter()
     P_opt, info = optimize_spacetime(
@@ -123,6 +125,7 @@ def solve_from_payload(payload: dict) -> dict:
         "min_dt": min_dt,
         "capsule_time_scale": capsule_time_scale,
         "control_points": np.asarray(P_opt, dtype=float).tolist(),
+        "init_control_points": np.asarray(P_init, dtype=float).tolist(),
         "obstacles": scenario["obstacles"],
         "start": list(p_start),
         "end": list(p_end),
