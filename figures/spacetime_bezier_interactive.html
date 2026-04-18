@@ -1235,15 +1235,15 @@ function drawCapsule(obs, capScale, color) {
     return pts;
   };
 
-  const drawRing = (pts, alpha) => {
-    for (let k = 0; k < pts.length - 1; k++) drawLine3D(pts[k], pts[k+1], color, 0.5, alpha);
+  const drawRing = (pts, alpha, w = 1) => {
+    for (let k = 0; k < pts.length - 1; k++) drawLine3D(pts[k], pts[k+1], color, w, alpha);
   };
 
   // Cylinder body: rings perpendicular to axis
   for (let i = 0; i <= nRing; i++) {
     const u = i / nRing;
     const center = [A[0]+u*axisVec[0], A[1]+u*axisVec[1], A[2]+u*axisVec[2]];
-    drawRing(ringAt(center, r, 0), 0.12);
+    drawRing(ringAt(center, r, 0), 0.45, 1.1);
   }
   // Cylinder body: longitudinal lines
   for (let j = 0; j < nLon; j++) {
@@ -1253,18 +1253,17 @@ function drawCapsule(obs, capScale, color) {
     drawLine3D(
       fromScaled([A[0]+offset[0], A[1]+offset[1], A[2]+offset[2]]),
       fromScaled([B[0]+offset[0], B[1]+offset[1], B[2]+offset[2]]),
-      color, 0.5, 0.12
+      color, 0.8, 0.35
     );
   }
 
   // Hemispheres: A is the "bottom" (flip=-1 along axis), B is the "top" (flip=+1)
-  for (const [center, flip, capAlpha] of [[A, -1, 0.15], [B, 1, 0.2]]) {
+  for (const [center, flip, capAlpha] of [[A, -1, 0.5], [B, 1, 0.55]]) {
     // Latitude rings
     for (let i = 1; i <= nLat; i++) {
       const lat = (i / nLat) * Math.PI / 2;
-      drawRing(ringAt(center, r*Math.cos(lat), flip*r*Math.sin(lat)), capAlpha);
+      drawRing(ringAt(center, r*Math.cos(lat), flip*r*Math.sin(lat)), capAlpha, 1.1);
     }
-    // Pole point marker (single drawCircle3D-style fill)
     // Meridians
     for (let j = 0; j < nLon; j++) {
       const th = (j / nLon) * Math.PI * 2;
@@ -1280,7 +1279,7 @@ function drawCapsule(obs, capScale, color) {
           center[2] + aO*axisUnit[2] + sR*(cx*e1[2]+sx*e2[2]),
         ]));
       }
-      for (let k = 0; k < pts.length - 1; k++) drawLine3D(pts[k], pts[k+1], color, 0.5, capAlpha * 0.7);
+      for (let k = 0; k < pts.length - 1; k++) drawLine3D(pts[k], pts[k+1], color, 0.9, capAlpha * 0.75);
     }
   }
 }
