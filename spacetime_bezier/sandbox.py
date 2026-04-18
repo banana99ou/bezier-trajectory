@@ -15,6 +15,7 @@ import json
 import time
 import traceback
 import webbrowser
+from collections import OrderedDict
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -23,6 +24,32 @@ import numpy as np
 from .objective import build_initial_guess
 from .optimize import optimize_spacetime
 from .scenarios import SCENARIO_MAP
+
+# In-memory LRU cache of solve results keyed by the full problem definition.
+# Solves are deterministic in their inputs, so repeated scrubs across the same
+# parameter set become free. Bounded size keeps memory in check; process exit
+# drops the cache (no disk persistence).
+_SOLVE_CACHE: "OrderedDict[tuple, dict]" = OrderedDict()
+_SOLVE_CACHE_MAX = 256
+
+
+def _cache_key(payload: dict) -> tuple:
+    return (
+        str(payload.get("scenario_name")),
+        int(payload.get("N", 0)),
+        int(payload.get("n_seg", 0)),
+        float(payload.get("scp_prox_weight", 0.5)),
+        float(payload.get("scp_trust_radius", 0.0)),
+        float(payload.get("time_ub_scale", 1.5)),
+        float(payload.get("capsule_time_scale", 0.5)),
+        int(payload.get("max_iter", 30)),
+        float(payload.get("tol", 1e-6)),
+        float(payload.get("min_dt", 0.1)),
+    )
+
+
+def clear_solve_cache() -> None:
+    _SOLVE_CACHE.clear()
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -68,6 +95,12 @@ def solve_from_payload(payload: dict) -> dict:
     scenario_fn, _configs = SCENARIO_MAP[scenario_name]
     scenario = scenario_fn()
 
+    key = _cache_key(payload)
+    cached_entry = _SOLVE_CACHE.get(key)
+    if cached_entry is not None:
+        _SOLVE_CACHE.move_to_end(key)
+        return {**cached_entry, "cached": True}
+
     N = int(payload["N"])
     n_seg = int(payload["n_seg"])
     scp_prox_weight = float(payload.get("scp_prox_weight", 0.5))
@@ -103,17 +136,17 @@ def solve_from_payload(payload: dict) -> dict:
     solve_ms = (time.perf_counter() - t0) * 1000.0
 
     info_out = {}
-    for key, value in dict(info).items():
+    for k, value in dict(info).items():
         if isinstance(value, (np.floating,)):
-            info_out[key] = float(value)
+            info_out[k] = float(value)
         elif isinstance(value, (np.integer,)):
-            info_out[key] = int(value)
+            info_out[k] = int(value)
         else:
-            info_out[key] = value
+            info_out[k] = value
     info_out["feasible"] = bool(info_out.get("feasible", 0.0))
     info_out["iterations"] = int(info_out.get("iterations", -1))
 
-    return {
+    response = {
         "scenario_name": scenario_name,
         "N": N,
         "n_seg": n_seg,
@@ -132,7 +165,12 @@ def solve_from_payload(payload: dict) -> dict:
         "T": float(scenario.get("T", 10.0)),
         "info": info_out,
         "solve_ms": solve_ms,
+        "cached": False,
     }
+    _SOLVE_CACHE[key] = response
+    if len(_SOLVE_CACHE) > _SOLVE_CACHE_MAX:
+        _SOLVE_CACHE.popitem(last=False)
+    return response
 
 
 def _read_json_body(handler: SimpleHTTPRequestHandler) -> dict:

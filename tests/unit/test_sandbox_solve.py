@@ -58,6 +58,31 @@ def test_solve_from_payload_returns_jsonable_response(_require_rust):
     json.dumps(response)
 
 
+def test_solve_cache_reuses_identical_payload(_require_rust):
+    spacetime_sandbox.clear_solve_cache()
+    payload = {
+        "scenario_name": "original",
+        "N": 6,
+        "n_seg": 4,
+        "scp_prox_weight": 0.5,
+        "scp_trust_radius": 0.0,
+        "time_ub_scale": 1.5,
+        "capsule_time_scale": 0.5,
+        "max_iter": 10,
+        "tol": 1e-6,
+        "min_dt": 0.1,
+    }
+    first = spacetime_sandbox.solve_from_payload(payload)
+    assert first["cached"] is False
+    second = spacetime_sandbox.solve_from_payload(payload)
+    assert second["cached"] is True
+    assert second["control_points"] == first["control_points"]
+
+    # Any change in a solve-affecting parameter must miss the cache.
+    changed = spacetime_sandbox.solve_from_payload({**payload, "N": 8})
+    assert changed["cached"] is False
+
+
 def test_solve_rejects_unknown_scenario():
     with pytest.raises(ValueError, match="Unknown scenario"):
         spacetime_sandbox.solve_from_payload({

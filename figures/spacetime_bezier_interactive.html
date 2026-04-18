@@ -138,8 +138,8 @@
     <label>Time scale &alpha; <span class="val" id="alphaVal">1.50</span></label>
     <input type="range" id="alphaSlider" min="1" max="3" step="0.05" value="1.5">
 
-    <label>Capsule time scale <span class="val" id="capScaleVal">0.50</span></label>
-    <input type="range" id="capScaleSlider" min="0.1" max="2" step="0.05" value="0.5">
+    <label title="1 = isotropic spherical caps. >1 elongates caps in t, &lt;1 flattens them. Cylinder body is unaffected.">Cap roundness <span class="val" id="capRoundVal">2.00</span></label>
+    <input type="range" id="capRoundSlider" min="0.2" max="5" step="0.05" value="2">
 
     <div class="num-grid">
       <div class="num-cell">
@@ -1465,7 +1465,7 @@ function draw3DScene(tNow, curPt, fullCurve, dists) {
   const nSub = Math.max(1, currentSolveInfo.n_seg || 8);
   const alpha = serverMode ? parseFloat(document.getElementById('alphaSlider').value) : 1;
   const trustR = serverMode ? parseFloat(document.getElementById('trustSlider').value) : 0;
-  const capScale = serverMode ? parseFloat(document.getElementById('capScaleSlider').value) : 0.5;
+  const capScale = serverMode ? roundnessToCapScale(parseFloat(document.getElementById('capRoundSlider').value)) : 0.5;
 
   // Axes
   drawLine3D([0,0,0],[10,0,0],'#666',1,0.4); drawLine3D([0,0,0],[0,10,0],'#666',1,0.4); drawLine3D([0,0,0],[0,0,T_TOTAL],'#666',1,0.4);
@@ -1893,10 +1893,21 @@ function stopSolveProgress() {
 function enableSandboxControls(enabled) {
   const section = document.getElementById('sandboxSection');
   section.dataset.disabled = enabled ? 'false' : 'true';
-  ['nSlider','nsegSlider','proxSlider','trustSlider','alphaSlider','capScaleSlider',
+  ['nSlider','nsegSlider','proxSlider','trustSlider','alphaSlider','capRoundSlider',
    'maxIterInput','tolInput','minDtInput'].forEach(id => {
     document.getElementById(id).disabled = !enabled;
   });
+}
+
+// Roundness is the user-facing knob: 1 = isotropic spherical caps (xy extent
+// r equals t extent r), >1 elongates caps along t, <1 flattens them. The Rust
+// solver parameter `capsule_time_scale` is the reciprocal — it scales the
+// t axis of the capsule's interior before distance is measured. Inverting
+// here keeps the UI semantic ("more rounded") aligned with user intuition
+// without changing the underlying optimizer contract.
+function roundnessToCapScale(roundness) {
+  const r = Number.isFinite(roundness) && roundness > 0 ? roundness : 1;
+  return 1 / r;
 }
 
 function currentSandboxParams() {
@@ -1909,7 +1920,7 @@ function currentSandboxParams() {
     scp_prox_weight: parseFloat(document.getElementById('proxSlider').value),
     scp_trust_radius: parseFloat(document.getElementById('trustSlider').value),
     time_ub_scale: parseFloat(document.getElementById('alphaSlider').value),
-    capsule_time_scale: parseFloat(document.getElementById('capScaleSlider').value),
+    capsule_time_scale: roundnessToCapScale(parseFloat(document.getElementById('capRoundSlider').value)),
     max_iter: Number.isFinite(maxIter) && maxIter > 0 ? maxIter : 30,
     tol: Number.isFinite(tol) && tol > 0 ? tol : 1e-6,
     min_dt: Number.isFinite(minDt) && minDt >= 0 ? minDt : 0.1,
@@ -1922,7 +1933,7 @@ function syncSandboxReadouts() {
   document.getElementById('proxVal').textContent = parseFloat(document.getElementById('proxSlider').value).toFixed(2);
   document.getElementById('trustVal').textContent = parseFloat(document.getElementById('trustSlider').value).toFixed(2);
   document.getElementById('alphaVal').textContent = parseFloat(document.getElementById('alphaSlider').value).toFixed(2);
-  document.getElementById('capScaleVal').textContent = parseFloat(document.getElementById('capScaleSlider').value).toFixed(2);
+  document.getElementById('capRoundVal').textContent = parseFloat(document.getElementById('capRoundSlider').value).toFixed(2);
 }
 
 function scheduleSolve() {
@@ -2002,6 +2013,7 @@ function applySolveResponse(data, clientMs) {
   const iters = info.iterations != null ? info.iterations : '-';
   const clr = info.min_clearance != null ? info.min_clearance : NaN;
   const serverMs = data.solve_ms != null ? data.solve_ms : NaN;
+  const cacheTag = data.cached ? ' · cached' : '';
 
   OBSTACLES = data.obstacles;
   T_TOTAL = data.T;
@@ -2018,7 +2030,7 @@ function applySolveResponse(data, clientMs) {
     };
     setStatus(
       'solved',
-      `solved · N=${data.N} seg=${data.n_seg} · iters=${iters} · clr=${clr.toFixed(3)} · solve=${serverMs.toFixed(0)}ms (round-trip ${clientMs.toFixed(0)}ms)`,
+      `solved · N=${data.N} seg=${data.n_seg} · iters=${iters} · clr=${clr.toFixed(3)} · solve=${serverMs.toFixed(0)}ms (round-trip ${clientMs.toFixed(0)}ms)${cacheTag}`,
       100,
     );
   } else {
@@ -2043,7 +2055,7 @@ function applySolveResponse(data, clientMs) {
     }
     setStatus(
       'infeasible',
-      `infeasible at N=${data.N} seg=${data.n_seg} · iters=${iters} · clr=${isFinite(clr) ? clr.toFixed(3) : 'n/a'} · solve=${serverMs.toFixed(0)}ms · showing last feasible`,
+      `infeasible at N=${data.N} seg=${data.n_seg} · iters=${iters} · clr=${isFinite(clr) ? clr.toFixed(3) : 'n/a'} · solve=${serverMs.toFixed(0)}ms · showing last feasible${cacheTag}`,
       100,
     );
   }
@@ -2071,7 +2083,7 @@ function loadScenarioFromServer(name) {
   document.getElementById('proxSlider').value = 0.5;
   document.getElementById('trustSlider').value = 0.0;
   document.getElementById('alphaSlider').value = 1.5;
-  document.getElementById('capScaleSlider').value = 0.5;
+  document.getElementById('capRoundSlider').value = 2.0;
   document.getElementById('maxIterInput').value = 30;
   document.getElementById('tolInput').value = '1e-6';
   document.getElementById('minDtInput').value = 0.1;
@@ -2114,10 +2126,10 @@ document.getElementById('btnView2D').addEventListener('click', () => setViewMode
 // Sandbox slider listeners: update readouts every frame, debounced re-solve.
 // Trust / α also redraw immediately so their overlay feedback tracks the
 // slider position even before the new solve arrives.
-['nSlider','nsegSlider','proxSlider','trustSlider','alphaSlider','capScaleSlider'].forEach(id => {
+['nSlider','nsegSlider','proxSlider','trustSlider','alphaSlider','capRoundSlider'].forEach(id => {
   document.getElementById(id).addEventListener('input', () => {
     syncSandboxReadouts();
-    if (id === 'trustSlider' || id === 'alphaSlider' || id === 'capScaleSlider') draw();
+    if (id === 'trustSlider' || id === 'alphaSlider' || id === 'capRoundSlider') draw();
     scheduleSolve();
   });
 });
