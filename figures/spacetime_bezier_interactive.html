@@ -35,6 +35,18 @@
   #solverStatus.failed { border-color: #e74c3c; color: #ffb3ad; }
   #solverStatus.solving { border-color: #8af; color: #8af; }
   #solverStatus.offline { border-color: #555; color: #888; }
+  #solverStatus .progress {
+    display: block; margin-top: 4px; height: 4px; width: 100%;
+    background: rgba(255,255,255,0.07); border-radius: 2px; overflow: hidden;
+  }
+  #solverStatus .progress > .bar {
+    display: block; height: 100%; width: 0%;
+    background: #8af; transition: width 100ms linear;
+  }
+  #solverStatus.solved .progress > .bar { background: #2ecc71; }
+  #solverStatus.infeasible .progress > .bar { background: #f39c12; }
+  #solverStatus.failed .progress > .bar { background: #e74c3c; }
+  #solverStatus.offline .progress { visibility: hidden; }
   .sandbox-section { margin-top: 10px; padding-top: 8px; border-top: 1px solid #2a2a44; }
   .sandbox-section[data-disabled="true"] { opacity: 0.4; pointer-events: none; }
   .num-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 6px; }
@@ -53,6 +65,7 @@
   .view-mode .seg:hover { background: #2c2c48; color: #fff; }
   .view-mode .seg.active { background: #3f5fa8; color: #fff; border-color: #6a8fd9; }
   body[data-view-mode="2d"] .view-3d-only { display: none; }
+  body[data-server-mode="true"] .fallback-only { display: none; }
   #legend {
     position: fixed; top: 10px; right: 10px; z-index: 10;
     background: rgba(20,20,40,0.92); padding: 10px 14px; border-radius: 8px;
@@ -71,8 +84,8 @@
   <label>Scenario</label>
   <select id="scenarioSelect"></select>
 
-  <label>Curve config <span class="val" id="curveInfo" style="color:#0f0"></span></label>
-  <select id="curveSelect"></select>
+  <label class="fallback-only">Curve config <span class="val" id="curveInfo" style="color:#0f0"></span></label>
+  <select id="curveSelect" class="fallback-only"></select>
 
   <label>View mode</label>
   <div class="view-mode" role="radiogroup" aria-label="View mode">
@@ -135,7 +148,10 @@
   </div>
 </div>
 
-<div id="solverStatus" class="offline">solver: offline (no server)</div>
+<div id="solverStatus" class="offline">
+  <span id="solverStatusText">solver: offline (no server)</span>
+  <span class="progress"><span class="bar" id="solverProgressBar"></span></span>
+</div>
 
 <div id="info"></div>
 <div id="legend"></div>
@@ -1059,6 +1075,8 @@ let lastFeasibleResponse = null;
 let solveDebounceHandle = null;
 let solveInFlight = false;
 let solveRequestSeq = 0;
+let solveProgressHandle = null;
+let lastSolveMs = 200;  // rolling estimate of solve duration for progress bar
 const SOLVE_DEBOUNCE_MS = 150;
 
 // ══════════════════════════════════════════════════════════════
@@ -1201,6 +1219,21 @@ function drawLiftedHalfspace(obs, supportPoint, normal, color, halfLen = 3) {
   drawLine3D(p1, p3, color, 0.8, 0.25);
 }
 
+function drawTrustBox3D(center, radius, color, alpha) {
+  const [cx, cy, ct] = center;
+  const r = radius;
+  const corners = [
+    [cx-r,cy-r,ct-r],[cx+r,cy-r,ct-r],[cx+r,cy+r,ct-r],[cx-r,cy+r,ct-r],
+    [cx-r,cy-r,ct+r],[cx+r,cy-r,ct+r],[cx+r,cy+r,ct+r],[cx-r,cy+r,ct+r],
+  ];
+  const edges = [
+    [0,1],[1,2],[2,3],[3,0],  // bottom square (t-)
+    [4,5],[5,6],[6,7],[7,4],  // top square (t+)
+    [0,4],[1,5],[2,6],[3,7],  // verticals in t
+  ];
+  for (const [a, b] of edges) drawLine3D(corners[a], corners[b], color, 0.8, alpha);
+}
+
 function drawHullFaces(pts3d, color, alpha) {
   const sp = pts3d.map(p => toScreen(...p));
   const hull = convexHull2D(sp);
@@ -1269,12 +1302,26 @@ function draw3DScene(tNow, curPt, fullCurve, dists) {
   const showDist = document.getElementById('chkDistLines').checked;
   const showTP = document.getElementById('chkTimePlane').checked;
   const nSub = Math.max(1, currentSolveInfo.n_seg || 8);
+  const alpha = serverMode ? parseFloat(document.getElementById('alphaSlider').value) : 1;
+  const trustR = serverMode ? parseFloat(document.getElementById('trustSlider').value) : 0;
 
   // Axes
   drawLine3D([0,0,0],[10,0,0],'#666',1,0.4); drawLine3D([0,0,0],[0,10,0],'#666',1,0.4); drawLine3D([0,0,0],[0,0,T_TOTAL],'#666',1,0.4);
   const lx=toScreen(10.5,0,0),ly=toScreen(0,10.5,0),lz=toScreen(0,0,T_TOTAL+0.5);
   ctx.font='12px monospace'; ctx.fillStyle='#888'; ctx.fillText('x',lx.x,lx.y); ctx.fillText('y',ly.x,ly.y); ctx.fillText('t',lz.x,lz.y);
   for(let i=0;i<=10;i+=2){drawLine3D([i,0,0],[i,10,0],'#333',0.5,0.2);drawLine3D([0,i,0],[10,i,0],'#333',0.5,0.2);}
+
+  // Alpha envelope: if α > 1, the optimizer can place interior control points
+  // at times above T. Visualize that slack as a dashed t-axis extension.
+  if (alpha > 1.001) {
+    const tMax = alpha * T_TOTAL;
+    ctx.save(); ctx.setLineDash([4, 4]);
+    drawLine3D([0, 0, T_TOTAL], [0, 0, tMax], '#8af', 1, 0.6);
+    ctx.restore();
+    const labelPos = toScreen(0, 0, tMax + 0.5);
+    ctx.font = '11px monospace'; ctx.fillStyle = '#8af';
+    ctx.fillText(`α·T = ${tMax.toFixed(1)}`, labelPos.x + 6, labelPos.y);
+  }
 
   if (showTubes) { for (const obs of OBSTACLES) drawTube(obs, obs.color); }
 
@@ -1331,6 +1378,14 @@ function draw3DScene(tNow, curPt, fullCurve, dists) {
   for(let i=0;i<CTRL_PTS.length-1;i++) drawLine3D(CTRL_PTS[i],CTRL_PTS[i+1],'#888',1,0.5);
   CTRL_PTS.forEach((p,i)=>{const sp=toScreen(...p); ctx.beginPath(); ctx.arc(sp.x,sp.y,5,0,Math.PI*2); ctx.fillStyle=i===0?'#0f0':i===CTRL_PTS.length-1?'#f00':'#fff'; ctx.fill(); ctx.strokeStyle='#000'; ctx.lineWidth=1; ctx.stroke();});
 
+  // Trust-region boxes: axis-aligned cube of side 2·trust_radius around each
+  // interior CP (endpoints are boundary-constrained so trust doesn't apply).
+  if (trustR > 0.001) {
+    ctx.save(); ctx.setLineDash([3, 3]);
+    for (let i = 1; i < CTRL_PTS.length - 1; i++) drawTrustBox3D(CTRL_PTS[i], trustR, '#8af', 0.45);
+    ctx.restore();
+  }
+
   // Current position marker
   const sp = toScreen(...curPt);
   ctx.beginPath(); ctx.arc(sp.x,sp.y,7,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill(); ctx.strokeStyle='#ff0'; ctx.lineWidth=2; ctx.stroke();
@@ -1355,6 +1410,7 @@ function draw2DScene(tNow, curPt, fullCurve, dists) {
   const showSeg = document.getElementById('chkSegments').checked;
   const showDist = document.getElementById('chkDistLines').checked;
   const nSub = Math.max(1, currentSolveInfo.n_seg || 8);
+  const trustR = serverMode ? parseFloat(document.getElementById('trustSlider').value) : 0;
 
   const pad = 60;
   const w = canvas.width - 2 * pad;
@@ -1454,6 +1510,19 @@ function draw2DScene(tNow, curPt, fullCurve, dists) {
     ctx.fillStyle = i === 0 ? '#0f0' : i === CTRL_PTS.length - 1 ? '#f00' : '#fff';
     ctx.fill(); ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
   });
+
+  // Trust-region boxes around interior CPs (visual of configured param).
+  if (trustR > 0.001) {
+    ctx.save(); ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = '#8af'; ctx.globalAlpha = 0.45; ctx.lineWidth = 0.8;
+    for (let i = 1; i < CTRL_PTS.length - 1; i++) {
+      const p = CTRL_PTS[i];
+      const X = tx(p[0]), Y = ty(p[1]);
+      const rPx = trustR * s;
+      ctx.strokeRect(X - rPx, Y - rPx, 2 * rPx, 2 * rPx);
+    }
+    ctx.globalAlpha = 1; ctx.restore();
+  }
 
   // Current position marker
   ctx.beginPath(); ctx.arc(tx(curPt[0]), ty(curPt[1]), 7, 0, Math.PI * 2);
@@ -1603,10 +1672,20 @@ function populateScenarioSelector(entries) {
 // ══════════════════════════════════════════════════════════════
 // Sandbox (server-mode) helpers
 // ══════════════════════════════════════════════════════════════
-function setStatus(kind, text) {
+function setStatus(kind, text, progressPct) {
   const el = document.getElementById('solverStatus');
   el.className = kind;
-  el.textContent = text;
+  document.getElementById('solverStatusText').textContent = text;
+  if (progressPct != null) {
+    document.getElementById('solverProgressBar').style.width = `${Math.max(0, Math.min(100, progressPct))}%`;
+  }
+}
+
+function stopSolveProgress() {
+  if (solveProgressHandle !== null) {
+    clearInterval(solveProgressHandle);
+    solveProgressHandle = null;
+  }
 }
 
 function enableSandboxControls(enabled) {
@@ -1655,13 +1734,20 @@ async function doSolve() {
   if (!serverMode || !currentScenario) return;
   const seq = ++solveRequestSeq;
   solveInFlight = true;
-  setStatus('solving', `solving... (${currentScenario.name})`);
+
+  // Progress ticker: estimate percentage from elapsed / lastSolveMs, capped
+  // at 95% so we never claim "done" before the response actually arrives.
+  const solveStart = performance.now();
+  stopSolveProgress();
+  setStatus('solving', `solving ${currentScenario.name}... 0%`, 0);
+  solveProgressHandle = setInterval(() => {
+    const elapsed = performance.now() - solveStart;
+    const pct = Math.min(95, (elapsed / Math.max(80, lastSolveMs)) * 100);
+    setStatus('solving', `solving ${currentScenario.name}... ${pct.toFixed(0)}% (${elapsed.toFixed(0)}ms)`, pct);
+  }, 50);
+
   const params = currentSandboxParams();
-  const body = JSON.stringify({
-    scenario_name: currentScenario.name,
-    ...params,
-  });
-  const clientStart = performance.now();
+  const body = JSON.stringify({ scenario_name: currentScenario.name, ...params });
   let response;
   try {
     response = await fetch('/api/solve', {
@@ -1672,30 +1758,37 @@ async function doSolve() {
   } catch (err) {
     if (seq !== solveRequestSeq) return;
     solveInFlight = false;
-    setStatus('failed', `solve failed: network error (${err.message})`);
+    stopSolveProgress();
+    setStatus('failed', `solve failed: network error (${err.message})`, 100);
     return;
   }
-  const clientMs = performance.now() - clientStart;
+  const clientMs = performance.now() - solveStart;
 
-  if (seq !== solveRequestSeq) return; // a newer request superseded this one
+  if (seq !== solveRequestSeq) return; // superseded by a newer request
 
   let data;
   try {
     data = await response.json();
   } catch (err) {
     solveInFlight = false;
-    setStatus('failed', `solve failed: bad JSON (${err.message})`);
+    stopSolveProgress();
+    setStatus('failed', `solve failed: bad JSON (${err.message})`, 100);
     return;
   }
 
   if (!response.ok || data.error) {
     solveInFlight = false;
+    stopSolveProgress();
     const msg = data.error || `HTTP ${response.status}`;
-    setStatus('failed', `solve failed: ${msg}`);
+    setStatus('failed', `solve failed: ${msg}`, 100);
     return;
   }
 
   solveInFlight = false;
+  stopSolveProgress();
+  // Exponential smoothing so lastSolveMs adapts but doesn't jump wildly
+  const serverMs = data.solve_ms != null ? data.solve_ms : clientMs;
+  lastSolveMs = 0.5 * lastSolveMs + 0.5 * Math.max(40, serverMs);
   applySolveResponse(data, clientMs);
 }
 
@@ -1721,6 +1814,7 @@ function applySolveResponse(data, clientMs) {
     setStatus(
       'solved',
       `solved · N=${data.N} seg=${data.n_seg} · iters=${iters} · clr=${clr.toFixed(3)} · solve=${serverMs.toFixed(0)}ms (round-trip ${clientMs.toFixed(0)}ms)`,
+      100,
     );
   } else {
     // Infeasible: keep last feasible trajectory visible if we have one; otherwise
@@ -1745,6 +1839,7 @@ function applySolveResponse(data, clientMs) {
     setStatus(
       'infeasible',
       `infeasible at N=${data.N} seg=${data.n_seg} · iters=${iters} · clr=${isFinite(clr) ? clr.toFixed(3) : 'n/a'} · solve=${serverMs.toFixed(0)}ms · showing last feasible`,
+      100,
     );
   }
   draw();
@@ -1810,10 +1905,13 @@ function setViewMode(mode) {
 document.getElementById('btnView3D').addEventListener('click', () => setViewMode('3d'));
 document.getElementById('btnView2D').addEventListener('click', () => setViewMode('2d'));
 
-// Sandbox slider listeners: update readouts every frame, debounced re-solve
+// Sandbox slider listeners: update readouts every frame, debounced re-solve.
+// Trust / α also redraw immediately so their overlay feedback tracks the
+// slider position even before the new solve arrives.
 ['nSlider','nsegSlider','proxSlider','trustSlider','alphaSlider'].forEach(id => {
   document.getElementById(id).addEventListener('input', () => {
     syncSandboxReadouts();
+    if (id === 'trustSlider' || id === 'alphaSlider') draw();
     scheduleSolve();
   });
 });
@@ -1826,8 +1924,8 @@ document.getElementById('btnView2D').addEventListener('click', () => setViewMode
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('mousedown', e => {
   if (viewMode === '2d') return;  // 2D is static — no pan/rotate
-  if (e.button === 0) dragMode = 'pan';
-  else if (e.button === 2) dragMode = 'rotate';
+  if (e.button === 0) dragMode = e.shiftKey ? 'pan' : 'rotate';
+  else if (e.button === 2) dragMode = 'pan';
   else return;
   lastMouseX = e.clientX;
   lastMouseY = e.clientY;
@@ -1891,6 +1989,7 @@ async function init() {
   if (catalog) {
     serverMode = true;
     serverCatalog = catalog;
+    document.body.dataset.serverMode = 'true';
     enableSandboxControls(true);
     populateScenarioSelector(catalog);
     const names = Object.keys(catalog);
@@ -1905,6 +2004,7 @@ async function init() {
 
   // File:// or no-server fallback: use pre-baked JSON / embedded data.
   serverMode = false;
+  document.body.dataset.serverMode = 'false';
   enableSandboxControls(false);
   setStatus('offline', 'solver: offline (open via `python3 -m spacetime_bezier` for live re-solve)');
   const loadedFreshJson = await refreshScenarioData();
