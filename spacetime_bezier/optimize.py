@@ -34,7 +34,7 @@ def _optimize_spacetime_rust(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
-    capsule_time_scale: float = 0.5,
+    cap_bulge_ratio: float = 2.0,
     verbose: bool = True,
 ) -> tuple[np.ndarray, dict]:
     """Call the native Rust backend for the space-time optimizer."""
@@ -64,7 +64,7 @@ def _optimize_spacetime_rust(
         coord_ub=coord_ub,
         time_lb=time_lb,
         time_ub=time_upper,
-        capsule_time_scale=capsule_time_scale,
+        cap_bulge_ratio=cap_bulge_ratio,
     )
     P_opt = np.asarray(P_opt, dtype=float)
     info = dict(info)
@@ -104,7 +104,7 @@ def optimize_spacetime_from_control_points(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
-    capsule_time_scale: float = 0.5,
+    cap_bulge_ratio: float = 2.0,
     verbose: bool = True,
 ) -> tuple[np.ndarray, dict]:
     """Optimize a space-time Bezier curve from an initial control polygon.
@@ -124,7 +124,7 @@ def optimize_spacetime_from_control_points(
         coord_ub=coord_ub,
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
-        capsule_time_scale=capsule_time_scale,
+        cap_bulge_ratio=cap_bulge_ratio,
         verbose=verbose,
     )
 
@@ -145,7 +145,7 @@ def optimize_spacetime(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
-    capsule_time_scale: float = 0.5,
+    cap_bulge_ratio: float = 2.0,
     verbose: bool = True,
     init_curve: dict | None = None,
 ) -> tuple[np.ndarray, dict]:
@@ -170,7 +170,7 @@ def optimize_spacetime(
         coord_ub=coord_ub,
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
-        capsule_time_scale=capsule_time_scale,
+        cap_bulge_ratio=cap_bulge_ratio,
         verbose=verbose,
     )
 

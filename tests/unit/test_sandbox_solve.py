@@ -67,7 +67,7 @@ def test_solve_cache_reuses_identical_payload(_require_rust):
         "scp_prox_weight": 0.5,
         "scp_trust_radius": 0.0,
         "time_ub_scale": 1.5,
-        "capsule_time_scale": 0.5,
+        "cap_bulge_ratio": 2.0,
         "max_iter": 10,
         "tol": 1e-6,
         "min_dt": 0.1,

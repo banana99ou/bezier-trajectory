@@ -115,7 +115,7 @@ fn optimize_orbital_docking<'py>(
     time_lb = 0.0,
     time_ub = 15.0,
     elastic_weight = 100.0,
-    capsule_time_scale = 0.5,
+    cap_bulge_ratio = 2.0,
 ))]
 fn optimize_spacetime_bezier<'py>(
     py: Python<'py>,
@@ -136,7 +136,7 @@ fn optimize_spacetime_bezier<'py>(
     time_lb: f64,
     time_ub: f64,
     elastic_weight: f64,
-    capsule_time_scale: f64,
+    cap_bulge_ratio: f64,
 ) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyDict>)> {
     let p_arr = p_init.as_array();
     let np1 = p_arr.shape()[0];
@@ -235,7 +235,7 @@ fn optimize_spacetime_bezier<'py>(
         time_ub,
         &obstacles,
         elastic_weight,
-        capsule_time_scale,
+        cap_bulge_ratio,
     );
 
     let p_opt = PyArray2::from_vec2(py, &{
@@ -273,7 +273,7 @@ struct SpacetimeScpContext {
     scp_trust_radius: f64,
     elastic_weight: f64,
     tol: f64,
-    capsule_time_scale: f64,
+    cap_bulge_ratio: f64,
 }
 
 #[pymethods]
@@ -296,7 +296,7 @@ impl SpacetimeScpContext {
         scp_trust_radius = 0.0,
         elastic_weight = 100.0,
         tol = 1e-6,
-        capsule_time_scale = 0.5,
+        cap_bulge_ratio = 2.0,
     ))]
     fn new(
         p_init: PyReadonlyArray2<'_, f64>,
@@ -315,7 +315,7 @@ impl SpacetimeScpContext {
         scp_trust_radius: f64,
         elastic_weight: f64,
         tol: f64,
-        capsule_time_scale: f64,
+        cap_bulge_ratio: f64,
     ) -> PyResult<Self> {
         let p_arr = p_init.as_array();
         let np1 = p_arr.shape()[0];
@@ -354,7 +354,7 @@ impl SpacetimeScpContext {
             scp_trust_radius,
             elastic_weight,
             tol,
-            capsule_time_scale,
+            cap_bulge_ratio,
         })
     }
 
@@ -388,7 +388,7 @@ impl SpacetimeScpContext {
             self.scp_trust_radius,
             self.elastic_weight,
             self.tol,
-            self.capsule_time_scale,
+            self.cap_bulge_ratio,
         );
 
         let np1 = self.precomputed.np1;

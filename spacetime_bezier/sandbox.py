@@ -41,7 +41,7 @@ def _cache_key(payload: dict) -> tuple:
         float(payload.get("scp_prox_weight", 0.5)),
         float(payload.get("scp_trust_radius", 0.0)),
         float(payload.get("time_ub_scale", 1.5)),
-        float(payload.get("capsule_time_scale", 0.5)),
+        float(payload.get("cap_bulge_ratio", 2.0)),
         int(payload.get("max_iter", 30)),
         float(payload.get("tol", 1e-6)),
         float(payload.get("min_dt", 0.1)),
@@ -109,7 +109,7 @@ def solve_from_payload(payload: dict) -> dict:
     max_iter = int(payload.get("max_iter", 30))
     tol = float(payload.get("tol", 1e-6))
     min_dt = float(payload.get("min_dt", 0.1))
-    capsule_time_scale = float(payload.get("capsule_time_scale", 0.5))
+    cap_bulge_ratio = float(payload.get("cap_bulge_ratio", 2.0))
 
     p_start = scenario["start"]
     p_end = scenario["end"]
@@ -129,7 +129,7 @@ def solve_from_payload(payload: dict) -> dict:
         scp_trust_radius=scp_trust_radius,
         min_dt=min_dt,
         time_ub_scale=time_ub_scale,
-        capsule_time_scale=capsule_time_scale,
+        cap_bulge_ratio=cap_bulge_ratio,
         verbose=False,
         init_curve=scenario.get("init_curve"),
     )
@@ -156,7 +156,7 @@ def solve_from_payload(payload: dict) -> dict:
         "max_iter": max_iter,
         "tol": tol,
         "min_dt": min_dt,
-        "capsule_time_scale": capsule_time_scale,
+        "cap_bulge_ratio": cap_bulge_ratio,
         "control_points": np.asarray(P_opt, dtype=float).tolist(),
         "init_control_points": np.asarray(P_init, dtype=float).tolist(),
         "obstacles": scenario["obstacles"],

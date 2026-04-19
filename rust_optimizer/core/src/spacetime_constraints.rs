@@ -29,19 +29,32 @@ pub struct KozConstraintBundle {
     pub rows: Vec<KozRowData>,
 }
 
-pub const DEFAULT_CAPSULE_TIME_SCALE: f64 = 0.5;
+pub const DEFAULT_CAP_BULGE_RATIO: f64 = 2.0;
 
 fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b.iter()).map(|(lhs, rhs)| lhs * rhs).sum()
 }
 
-fn scaled_spacetime_capsule_support(
+/// Closest-point / supporting-half-space for a moving-obstacle capsule.
+///
+/// The capsule is modeled as the union of two pieces:
+///   - **body**: swept circular cross-section of radius `r` along the
+///     path `pos0 + vel·t` for `t ∈ [eff_t0, eff_t1]`. Cross-section at
+///     every interior `t` is a circle of radius `r` in xy, independent
+///     of any slider.
+///   - **caps**: axis-aligned ellipsoid halves at each endpoint with xy
+///     semi-axes `r` and `t` semi-axis `k·r`, where `k = cap_bulge_ratio`.
+///     The bottom cap lives at `t ≤ eff_t0`, the top at `t ≥ eff_t1`.
+///
+/// Returns (outward normal, support point on surface, closest axis point,
+/// plane offset `lb = n·support`) — the tangent half-space is `n·p ≥ lb`.
+fn capsule_surface_support(
     query_orig: &[f64],
     obstacles: &SpacetimeObstacleData<'_>,
     obs_idx: usize,
     time_start: f64,
     time_end: f64,
-    time_scale: f64,
+    cap_bulge_ratio: f64,
 ) -> Option<(Vec<f64>, Vec<f64>, Vec<f64>, f64)> {
     let spatial_dim = obstacles.spatial_dim;
     let dim = spatial_dim + 1;
@@ -51,65 +64,96 @@ fn scaled_spacetime_capsule_support(
         return None;
     }
 
-    let mut query_scaled = query_orig.to_vec();
-    query_scaled[dim - 1] *= time_scale;
+    let radius = obstacles.radii[obs_idx];
+    let qt = query_orig[dim - 1];
 
-    let mut a_scaled = vec![0.0; dim];
-    let mut b_scaled = vec![0.0; dim];
-    for d in 0..spatial_dim {
-        let base = obs_idx * spatial_dim + d;
-        a_scaled[d] = obstacles.pos0[base] + obstacles.vel[base] * eff_t0;
-        b_scaled[d] = obstacles.pos0[base] + obstacles.vel[base] * eff_t1;
-    }
-    a_scaled[dim - 1] = time_scale * eff_t0;
-    b_scaled[dim - 1] = time_scale * eff_t1;
-
-    let axis: Vec<f64> = b_scaled.iter().zip(a_scaled.iter()).map(|(b, a)| b - a).collect();
-    let denom = dot(&axis, &axis);
-    let rel: Vec<f64> = query_scaled
-        .iter()
-        .zip(a_scaled.iter())
-        .map(|(q, a)| q - a)
-        .collect();
-    let tau = if denom > 1e-12 {
-        (dot(&rel, &axis) / denom).clamp(0.0, 1.0)
-    } else {
-        0.0
+    let pos_at = |t: f64| -> Vec<f64> {
+        (0..spatial_dim)
+            .map(|d| {
+                obstacles.pos0[obs_idx * spatial_dim + d]
+                    + obstacles.vel[obs_idx * spatial_dim + d] * t
+            })
+            .collect()
     };
 
-    let closest_scaled: Vec<f64> = a_scaled
-        .iter()
-        .zip(axis.iter())
-        .map(|(a, axis_val)| a + tau * axis_val)
-        .collect();
-    let diff_scaled: Vec<f64> = query_scaled
-        .iter()
-        .zip(closest_scaled.iter())
-        .map(|(q, c)| q - c)
-        .collect();
-    let dist = dot(&diff_scaled, &diff_scaled).sqrt();
-    if dist <= 1e-10 {
-        return None;
+    // Case 1: cylinder body.
+    // Closest surface point sits at the same t with xy direction toward query.
+    if qt >= eff_t0 && qt <= eff_t1 {
+        let pos = pos_at(qt);
+        let diff_xy: Vec<f64> = (0..spatial_dim).map(|d| query_orig[d] - pos[d]).collect();
+        let xy_dist_sq: f64 = diff_xy.iter().map(|v| v * v).sum();
+        if xy_dist_sq <= 1e-20 {
+            return None; // query on the axis, degenerate
+        }
+        let xy_dist = xy_dist_sq.sqrt();
+        let mut n = vec![0.0; dim];
+        let mut support = vec![0.0; dim];
+        for d in 0..spatial_dim {
+            n[d] = diff_xy[d] / xy_dist;
+            support[d] = pos[d] + radius * n[d];
+        }
+        // Normal's t-component is 0 for the cylinder body.
+        support[dim - 1] = qt;
+        let mut closest = vec![0.0; dim];
+        for d in 0..spatial_dim {
+            closest[d] = pos[d];
+        }
+        closest[dim - 1] = qt;
+        let lb = dot(&n, &support);
+        return Some((n, support, closest, lb));
     }
 
-    let n_scaled: Vec<f64> = diff_scaled.iter().map(|value| value / dist).collect();
-    let mut n_orig = n_scaled.clone();
-    n_orig[dim - 1] *= time_scale;
+    // Case 2/3: cap. Pick the nearer endpoint.
+    let cap_t = if qt > eff_t1 { eff_t1 } else { eff_t0 };
+    let cap_center_xy = pos_at(cap_t);
 
-    let radius = obstacles.radii[obs_idx];
-    let support_scaled: Vec<f64> = closest_scaled
-        .iter()
-        .zip(n_scaled.iter())
-        .map(|(c, n)| c + radius * n)
-        .collect();
-    let mut support_orig = support_scaled.clone();
-    support_orig[dim - 1] /= time_scale;
+    // Scale the query's t offset so the ellipsoid becomes a unit sphere of
+    // radius r: (x, y, (q_t - cap_t) / k).
+    let k = cap_bulge_ratio;
+    let mut u_scaled = vec![0.0; dim];
+    for d in 0..spatial_dim {
+        u_scaled[d] = query_orig[d] - cap_center_xy[d];
+    }
+    u_scaled[dim - 1] = (qt - cap_t) / k;
+    let u_norm_sq: f64 = u_scaled.iter().map(|v| v * v).sum();
+    if u_norm_sq <= 1e-20 {
+        return None; // query sitting exactly at the cap center
+    }
+    let u_norm = u_norm_sq.sqrt();
 
-    let mut closest_orig = closest_scaled.clone();
-    closest_orig[dim - 1] /= time_scale;
-    let lb = dot(&n_orig, &support_orig);
+    // Closest point on the ellipsoid: scaled direction scaled by r, then
+    // un-scale (multiply t component by k).
+    let mut support = vec![0.0; dim];
+    for d in 0..spatial_dim {
+        support[d] = cap_center_xy[d] + radius * u_scaled[d] / u_norm;
+    }
+    support[dim - 1] = cap_t + radius * k * u_scaled[dim - 1] / u_norm;
 
-    Some((n_orig, support_orig, closest_orig, lb))
+    // Outward normal = grad f / |grad f| where f(p) = (p_xy - c)² + ((p_t - cap_t)/k)² - r².
+    // grad f ∝ ((p_xy - c), (p_t - cap_t)/k²).
+    let mut n = vec![0.0; dim];
+    for d in 0..spatial_dim {
+        n[d] = support[d] - cap_center_xy[d];
+    }
+    n[dim - 1] = (support[dim - 1] - cap_t) / (k * k);
+    let n_norm_sq: f64 = n.iter().map(|v| v * v).sum();
+    if n_norm_sq <= 1e-20 {
+        return None;
+    }
+    let n_norm = n_norm_sq.sqrt();
+    for val in n.iter_mut() {
+        *val /= n_norm;
+    }
+
+    // "Closest axis point" for diagnostic viz is the cap center itself.
+    let mut closest = vec![0.0; dim];
+    for d in 0..spatial_dim {
+        closest[d] = cap_center_xy[d];
+    }
+    closest[dim - 1] = cap_t;
+
+    let lb = dot(&n, &support);
+    Some((n, support, closest, lb))
 }
 
 pub fn build_spacetime_koz_constraints(
@@ -118,7 +162,7 @@ pub fn build_spacetime_koz_constraints(
     np1: usize,
     dim: usize,
     obstacles: &SpacetimeObstacleData<'_>,
-    capsule_time_scale: f64,
+    cap_bulge_ratio: f64,
 ) -> Option<KozConstraintBundle> {
     let n_vars = np1 * dim;
     let mut constraint_rows: Vec<Vec<f64>> = Vec::new();
@@ -146,16 +190,14 @@ pub fn build_spacetime_koz_constraints(
         for k in 0..np1 {
             let query_point: Vec<f64> = (0..dim).map(|d| q[k * dim + d]).collect();
             for obs_idx in 0..obstacles.n_obs {
-                let Some((n_orig, support_orig, closest_orig, lb)) =
-                    scaled_spacetime_capsule_support(
-                        &query_point,
-                        obstacles,
-                        obs_idx,
-                        plan_t0,
-                        plan_t1,
-                        capsule_time_scale,
-                    )
-                else {
+                let Some((n_orig, support_orig, closest_orig, lb)) = capsule_surface_support(
+                    &query_point,
+                    obstacles,
+                    obs_idx,
+                    plan_t0,
+                    plan_t1,
+                    cap_bulge_ratio,
+                ) else {
                     continue;
                 };
 
