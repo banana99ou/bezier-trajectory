@@ -1641,9 +1641,14 @@ function draw3DScene(tNow, curPt, fullCurve, dists) {
     });
   }
 
-  // Trajectory (past = bright, future = faint)
-  for(let i=0;i<fullCurve.length-1;i++) drawLine3D(fullCurve[i],fullCurve[i+1],'#ff0',2,0.15);
-  for(let i=0;i<fullCurve.length-1;i++){if(fullCurve[i][2]>tNow)break; drawLine3D(fullCurve[i],fullCurve[i+1],'#ff0',2.5,1);}
+  // Trajectory (past = bright, future = faint). When the user is dragging
+  // a handle or a solve is in flight, the curve on screen is stale — dim
+  // it to make that unambiguous.
+  const stale = cpDragState !== null || endpointDragState !== null || solveInFlight;
+  const alphaFuture = stale ? 0.07 : 0.15;
+  const alphaPast = stale ? 0.35 : 1.0;
+  for(let i=0;i<fullCurve.length-1;i++) drawLine3D(fullCurve[i],fullCurve[i+1],'#ff0',2,alphaFuture);
+  for(let i=0;i<fullCurve.length-1;i++){if(fullCurve[i][2]>tNow)break; drawLine3D(fullCurve[i],fullCurve[i+1],'#ff0',2.5,alphaPast);}
 
   // Control polygon
   for(let i=0;i<CTRL_PTS.length-1;i++) drawLine3D(CTRL_PTS[i],CTRL_PTS[i+1],'#888',1,0.5);
@@ -1783,15 +1788,17 @@ function draw2DScene(tNow, curPt, fullCurve, dists) {
     });
   }
 
-  // Full trajectory (faint) + past portion (bright)
-  ctx.strokeStyle = '#ff0'; ctx.globalAlpha = 0.2; ctx.lineWidth = 1.5;
+  // Full trajectory (faint) + past portion (bright). Dim both when stale
+  // so the user sees "this curve is out of date, a new one is on the way".
+  const stale2d = cpDragState !== null || endpointDragState !== null || solveInFlight;
+  ctx.strokeStyle = '#ff0'; ctx.globalAlpha = stale2d ? 0.08 : 0.2; ctx.lineWidth = 1.5;
   ctx.beginPath();
   fullCurve.forEach((p, i) => {
     const X = tx(p[0]), Y = ty(p[1]);
     if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
   });
   ctx.stroke();
-  ctx.strokeStyle = '#ff0'; ctx.globalAlpha = 1; ctx.lineWidth = 2.5;
+  ctx.strokeStyle = '#ff0'; ctx.globalAlpha = stale2d ? 0.35 : 1; ctx.lineWidth = 2.5;
   ctx.beginPath();
   let started = false;
   for (const p of fullCurve) {
@@ -2073,6 +2080,7 @@ async function doSolve() {
   if (!serverMode || !currentScenario) return;
   const seq = ++solveRequestSeq;
   solveInFlight = true;
+  draw();  // redraw to dim the now-stale trajectory while we wait
 
   // Progress ticker: estimate percentage from elapsed / lastSolveMs, capped
   // at 95% so we never claim "done" before the response actually arrives.
