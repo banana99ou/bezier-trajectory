@@ -273,6 +273,121 @@
 - Guidance:
   - `비볼록`과 `non-convex` 중 하나를 정해서 문서 전체에서 통일
 
+### Case 18. 기여 bullet에 과도한 기술적 parameter 나열
+
+- Source pattern:
+  - `동일한 downstream multi-phase LGL Pass 2 solver·dynamics·tolerance 하에서 two-pass direct collocation pipeline의 Pass 1 단계를 Bézier SCP upstream으로 대체하는 matched pipeline-variant 비교 실험을 수행하여, 정의된 작동 영역 내에서 최종 비용이 보존되고 end-to-end runtime이 일부 사례에서 감소함을 확인한다.`
+- Comment:
+  - `feels too long. and too much detailed`
+- Bad pattern:
+  - 기여 bullet 한 줄에 실험 설정, 조건, 결과, 해석 범위를 모두 욱여넣어 핵심이 흐려짐
+  - 기여 목록은 독자가 한눈에 기여의 윤곽을 파악해야 하는데, 본문에나 들어갈 세부 parameter가 여기서 먼저 노출됨
+- Better direction:
+  - 기여 bullet은 `무엇을 했다 + 왜 의미가 있다` 두 요소에 집중
+  - 구체적 parameter, 조건, 수치는 5절(실험 설정)과 6절(결과)에서 제시
+- Good pattern example:
+  - `downstream direct collocation pipeline의 Pass 1 단계를 제안 기법으로 대체하는 비교 실험을 수행하여, 정의된 작동 영역 안에서의 초기화 교체 가능성을 확인한다.`
+
+### Case 19. 비주장 disclaimer를 기여 목록 바로 뒤에 배치 (Case 12 강화)
+
+- Source pattern:
+  - `위 다섯 번째 기여는 본 논문에서 주장하지 않는 범위를 명확히 하기 위해 별도로 강조한다. 이 실험은 direct collocation 대비 method-class 우월성 주장이 아니라, 동일한 DCM pipeline 내부에서 Pass 1 초기화 단계를 대체했을 때의 거동을 측정한 것이며, 결과의 해석은 Bézier upstream이 feasible하고 downstream Pass 2가 수렴하는 circular orbit 영역으로 한정된다.`
+- Comment:
+  - `is this line really neccessary? even if it is neccessary, shouldn't it move to section 7?`
+- Bad pattern:
+  - Case 12의 일반 원칙("비주장은 서론에서 빼라")이 필요할 때조차도, 비주장을 기여 목록 바로 뒤에 길게 붙이면 기여의 여운을 지움
+  - 독자는 기여 목록에서 "한 일"을 기억하고 싶은데 곧바로 "하지 않은 일"의 긴 설명이 뒤따르면 인상이 반전됨
+- Better direction:
+  - 해당 비주장 paragraph는 §7(한계 및 해석 범위)로 이동
+  - 기여 bullet에 `정의된 작동 영역 안에서`처럼 한 개의 단서어(qualifier)만 넣어 scoping은 유지
+  - 비주장이 정말로 필요한지 먼저 물어본 뒤, 필요하다면 §7로 옮긴다
+- Good pattern example:
+  - 기여 bullet에 `정의된 작동 영역 안에서` 같은 scoping qualifier 한 개 추가
+  - §7에 별도 항목으로 "본 비교가 주장하지 않는 것" 정리
+
+### Case 20. 외래어 transliteration을 loneword로 사용
+
+- Source pattern:
+  - `문제 인스턴스는 trajectory database ...의 converged 행에서 추출하였다.`
+- Comment:
+  - `unnatural loneword used`
+- Bad pattern:
+  - `인스턴스`, `런타임`, `페이로드` 등 영어를 한글 음역해서 맨 단독으로 쓰면 한국어 공학 문헌에서 어색하게 떠 있음
+  - 문맥에 따라 대체 가능한 한국어 표현(예: `사례`, `실행 시간`)이 있는데 굳이 음역어를 쓰면 번역 비용을 독자에게 떠넘김
+- Better direction:
+  - 한국어 대체어가 있으면 그것을 사용(`문제 사례`, `실험 사례`)
+  - 한국어 대체어가 부자연스럽다면 영어 그대로 두고 병기(`instance(사례)`)
+  - 가장 피해야 할 것은 음역어 단독 사용
+- Good pattern example:
+  - Bad: `문제 인스턴스는...`
+  - Good: `문제 사례는...` 또는 `문제 instance(사례)는...`
+
+### Case 21. 절 사이 연결 문단의 과도한 길이
+
+- Source pattern:
+  - `이상의 결과는 제안 정식화 자체의 실행 가능성과 분할 수 및 차수 변화에 따른 거동을 보여준다. 다음 절에서는 본 프레임워크의 downstream 활용 가능성에 관한 matched pipeline-variant 비교 결과를 제시한다.`
+- Comment:
+  - `not bad. this is connector paragraph. but feels too long for a connector paragraph. what do you think?`
+- Bad pattern:
+  - 연결 문단(이전 절 요약 + 다음 절 예고)이 두 개 이상의 완전한 문장으로 구성되면, 절의 리듬을 끊고 본문을 한 번 더 훑어 읽게 함
+  - 요약과 예고를 둘 다 full sentence로 쓰면 독자가 이미 읽은 내용을 한 번 더 처리해야 함
+- Better direction:
+  - 연결 문단은 한 문장 이내로 축약
+  - 요약은 생략하고 예고만 남기거나, "A를 보였고, 다음 절에서는 B를 다룬다" 형식으로 합치기
+  - 절 간 연결이 자연스러우면 연결 문단 자체를 생략해도 됨
+- Good pattern example:
+  - `다음 절에서는 downstream 활용 가능성에 관한 비교 결과를 제시한다.`
+
+### Case 22. `자리` 등 모호한 장소 명사 사용
+
+- Source pattern:
+  - `본 절은 direct collocation 대비 우월성 주장을 위한 자리가 아니다.`
+- Comment:
+  - `what '자리'? and unnessary line`
+- Bad pattern:
+  - `자리`, `장(場)`, `맥락(context)` 같은 추상적 장소 명사를 부정문의 주어로 쓰면 무엇을 부정하고 있는지 모호해짐
+  - 대개는 해당 문장 자체가 불필요한 비주장 disclaimer인 경우가 많음 (Case 12와 결합)
+- Better direction:
+  - 문장 자체가 필요한지 먼저 검토 — 대부분 불필요
+  - 정말 필요하다면 `자리` 대신 직접적인 술어를 사용
+  - `본 절은 X를 주장하지 않는다` 같은 명료한 표현으로 대체
+- Good pattern example:
+  - 문장 삭제가 1순위
+  - 유지해야 한다면: `본 절은 direct collocation 대비 우월성을 주장하지 않는다.`
+
+### Case 23. 영어 `not A but B` 구문의 한국어 직역
+
+- Source pattern:
+  - `따라서 본 결과는 "Pass 1 단계의 완전한 drop-in 대체"를 지지하는 것이 아니라, "7개 사례 중 6개에서 동일 국소해에 수렴하고 1개 사례에서는 phase 구조 결정의 차이로 인해 결과가 달라진다"는 범위에서 해석되어야 한다.`
+- Comment:
+  - `reusing english sentence structure of 'not A but B'`
+- Bad pattern:
+  - 영어의 `not A but B` 구조를 `A가 아니라 B`로 그대로 옮기면 한국어 문장이 길어지고 주어-술어 거리가 멀어짐
+  - 두 긴 인용구가 대구를 이루면 독자가 두 개를 모두 기억한 채 마지막 술어까지 가야 함
+- Better direction:
+  - 긍정 주장을 먼저 제시하고, 부정 단서는 짧은 후속 문장으로 처리
+  - 또는 `B이며, A는 아니다` 순서로 뒤집기
+  - 인용구가 길면 독립 문장으로 분리
+- Good pattern example:
+  - `이 결과는 7개 사례 중 6개에서 동일 국소해로의 수렴을 의미하며, 1개 사례에서는 phase 구조 결정 차이로 국소해가 달라진다. 따라서 Pass 1 단계의 drop-in 대체라기보다는 제한된 범위 안에서의 교체 가능성으로 해석해야 한다.`
+
+### Case 24. `본 절의 X` 류 모호한 참조
+
+- Source pattern:
+  - `본 절의 작동 영역은 두 가지 독립된 경계로 정의된다.`
+- Comment:
+  - `what is '본 절'?`
+- Bad pattern:
+  - `본 절의 작동 영역`처럼 절(section)에 속성을 귀속시키면 무엇의 작동 영역인지 모호함
+  - 작동 영역은 제안 기법이나 pipeline의 속성이지 절 자체의 속성이 아님
+  - 영어 `This section presents X`를 `본 절의 X`로 옮길 때 잘 발생
+- Better direction:
+  - 속성의 진짜 주체(기법, pipeline, 결과)를 주어로 명시
+  - `이하에서`, `아래에서`처럼 위치 부사를 쓰거나, 주어를 직접 서술
+- Good pattern example:
+  - Bad: `본 절의 작동 영역은 두 가지 독립된 경계로 정의된다.`
+  - Good: `제안 pipeline의 작동 영역은 두 가지 독립된 경계로 정의되며, 이하에서 각각을 살펴본다.`
+
 ---
 
 ## 3. Reusable Writing Rules
@@ -286,6 +401,12 @@
 5. 한국어에서 어색한 직역 문장(`안전성 논리는 단순하다`)은 논리 연결 문장으로 고친다.
 6. 부정적 한계 서술은 필요하지만, 연구의 핵심 인상을 먼저 세운 뒤 배치한다.
 7. 기여 문장에는 `무엇을 했는가`뿐 아니라 `왜 의미 있는가`도 들어가야 한다.
+8. 기여 bullet에는 수치·parameter·조건을 쌓지 않는다. 한 줄에 한 개의 기여와 한 개의 의의만 담는다.
+9. 비주장 disclaimer는 기여 목록 직후가 아니라 §7로 이동시킨다. 기여 bullet 안의 짧은 scoping qualifier 한 개만 허용한다.
+10. 외래어 음역(`인스턴스`, `런타임` 등)을 loneword로 쓰지 않는다. 한국어 대체어를 쓰거나, 영어 원문을 병기한다.
+11. 절 사이 연결 문단은 한 문장 이내로 축약한다. 요약과 예고를 둘 다 full sentence로 쓰지 않는다.
+12. `자리`, `본 절의 X` 같은 모호한 장소·절-귀속 명사 구문은 지우거나 진짜 주어로 고친다.
+13. 영어 `not A but B` 구문을 `A가 아니라 B` 형태로 직역하지 않는다. 긍정 주장을 먼저 쓰고 부정 단서는 짧게 뒤에 붙인다.
 
 ---
 
@@ -313,6 +434,24 @@
 
 - Bad: 한국어로 충분한 단어까지 영어 유지
 - Good: 핵심 기술 용어만 영어 유지, 나머지는 자연스러운 한국어 사용
+
+- Bad: 기여 bullet에 실험 조건·parameter·수치를 모두 욱여넣음
+- Good: `무엇을 했다 + 정의된 작동 영역 안에서 의의`만 남기고 세부는 실험 설정 절로 이동
+
+- Bad: 기여 목록 직후에 "주장하지 않는 범위" paragraph를 길게 배치
+- Good: 기여 bullet에 짧은 scoping qualifier 한 개만 두고 비주장 본문은 §7로 이동
+
+- Bad: `문제 인스턴스`
+- Good: `문제 사례`, `실험 사례`, 또는 `instance(사례)` 병기
+
+- Bad: 요약 문장 + 예고 문장의 2문장 연결 문단
+- Good: `다음 절에서는 ...을 다룬다` 한 문장
+
+- Bad: `...를 위한 자리가 아니다`, `본 절의 작동 영역은...`
+- Good: 문장 삭제, 또는 `제안 pipeline의 작동 영역은...`
+
+- Bad: `A를 지지하는 것이 아니라, B는 범위에서 해석되어야 한다` (긴 not-A-but-B 직역)
+- Good: `B이며, A라기보다는 제한된 범위 안에서의 교체 가능성으로 해석해야 한다`
 
 ---
 
