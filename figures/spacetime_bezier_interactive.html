@@ -1887,6 +1887,33 @@ function populateScenarioSelector(entries) {
 // ══════════════════════════════════════════════════════════════
 // Sandbox (server-mode) helpers
 // ══════════════════════════════════════════════════════════════
+
+// Mirror of spacetime_bezier.geometry.moving_obstacle_from_bezier: a wire-format
+// BezierObstacle (degree-1, two control points in (x,y,t) plus `radius`) becomes
+// the legacy `{pos0, vel, r, t_start, t_end, name, color}` dict consumed by the
+// render code (drawCapsule, capsuleSupport, updateLegend).
+function legacyFromBezier(bo) {
+  const cps = bo.control_points;
+  if (!Array.isArray(cps) || cps.length < 2) {
+    throw new Error('BezierObstacle must have >=2 control points');
+  }
+  const p0 = cps[0], p1 = cps[1];
+  const t0 = p0[p0.length - 1];
+  const t1 = p1[p1.length - 1];
+  const dim = p0.length - 1;
+  const vel = new Array(dim);
+  const pos0 = new Array(dim);
+  const dt = t1 - t0;
+  for (let i = 0; i < dim; i++) {
+    vel[i] = dt > 0 ? (p1[i] - p0[i]) / dt : 0;
+    pos0[i] = p0[i] - vel[i] * t0;
+  }
+  const out = { pos0, vel, r: bo.radius, t_start: t0, t_end: t1 };
+  if (bo.name != null) out.name = bo.name;
+  if (bo.color != null) out.color = bo.color;
+  return out;
+}
+
 function setStatus(kind, text, progressPct) {
   const el = document.getElementById('solverStatus');
   el.className = kind;
@@ -1972,7 +1999,14 @@ async function doSolve() {
   }, 50);
 
   const params = currentSandboxParams();
-  const body = JSON.stringify({ scenario_name: currentScenario.name, ...params });
+  const body = JSON.stringify({
+    scenario_name: currentScenario.name,
+    obstacles: currentScenario.bezier_obstacles,
+    start: currentScenario.start,
+    end: currentScenario.end,
+    T: currentScenario.T,
+    ...params,
+  });
   let response;
   try {
     response = await fetch('/api/solve', {
@@ -2023,9 +2057,15 @@ function applySolveResponse(data, clientMs) {
   const iters = info.iterations != null ? info.iterations : '-';
   const clr = info.min_clearance != null ? info.min_clearance : NaN;
   const serverMs = data.solve_ms != null ? data.solve_ms : NaN;
-  const cacheTag = data.cached ? ' · cached' : '';
+  const cacheTag = '';
 
-  OBSTACLES = data.obstacles;
+  if (Array.isArray(data.obstacles)) {
+    currentScenario.bezier_obstacles = data.obstacles;
+    OBSTACLES = data.obstacles.map(legacyFromBezier);
+  }
+  if (Array.isArray(data.start)) currentScenario.start = data.start.slice();
+  if (Array.isArray(data.end)) currentScenario.end = data.end.slice();
+  currentScenario.T = data.T;
   T_TOTAL = data.T;
   if (Array.isArray(data.init_control_points)) INIT_CTRL_PTS = data.init_control_points;
 
@@ -2077,9 +2117,13 @@ function loadScenarioFromServer(name) {
   currentScenario = {
     name: entry.name,
     title: entry.title,
+    bezier_obstacles: entry.obstacles,
+    start: entry.start.slice(),
+    end: entry.end.slice(),
+    T: entry.T,
     results: {},  // unused in server mode; retained so existing code paths don't NPE
   };
-  OBSTACLES = entry.obstacles;
+  OBSTACLES = entry.obstacles.map(legacyFromBezier);
   T_TOTAL = entry.T;
   lastFeasibleResponse = null;
 

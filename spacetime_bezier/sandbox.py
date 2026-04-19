@@ -15,41 +15,15 @@ import json
 import time
 import traceback
 import webbrowser
-from collections import OrderedDict
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import numpy as np
 
+from .geometry import bezier_obstacle_from_moving, moving_obstacle_from_bezier
 from .objective import build_initial_guess
 from .optimize import optimize_spacetime
 from .scenarios import SCENARIO_MAP
-
-# In-memory LRU cache of solve results keyed by the full problem definition.
-# Solves are deterministic in their inputs, so repeated scrubs across the same
-# parameter set become free. Bounded size keeps memory in check; process exit
-# drops the cache (no disk persistence).
-_SOLVE_CACHE: "OrderedDict[tuple, dict]" = OrderedDict()
-_SOLVE_CACHE_MAX = 256
-
-
-def _cache_key(payload: dict) -> tuple:
-    return (
-        str(payload.get("scenario_name")),
-        int(payload.get("N", 0)),
-        int(payload.get("n_seg", 0)),
-        float(payload.get("scp_prox_weight", 0.5)),
-        float(payload.get("scp_trust_radius", 0.0)),
-        float(payload.get("time_ub_scale", 1.5)),
-        float(payload.get("cap_bulge_ratio", 2.0)),
-        int(payload.get("max_iter", 30)),
-        float(payload.get("tol", 1e-6)),
-        float(payload.get("min_dt", 0.1)),
-    )
-
-
-def clear_solve_cache() -> None:
-    _SOLVE_CACHE.clear()
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -67,39 +41,53 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _scenario_preset_bezier(name: str) -> dict:
+    """Load a named preset and return it with obstacles in BezierObstacle shape."""
+    if name not in SCENARIO_MAP:
+        raise ValueError(f"Unknown scenario: {name}")
+    scenario_fn, configs = SCENARIO_MAP[name]
+    scenario = scenario_fn()
+    T = float(scenario.get("T", 10.0))
+    default_N, default_n_seg = configs[0]
+    return {
+        "name": scenario["name"],
+        "title": scenario["title"],
+        "obstacles": [bezier_obstacle_from_moving(o, T) for o in scenario["obstacles"]],
+        "start": list(scenario["start"]),
+        "end": list(scenario["end"]),
+        "T": T,
+        "init_curve": scenario.get("init_curve"),
+        "default_N": int(default_N),
+        "default_n_seg": int(default_n_seg),
+    }
+
+
 def scenario_catalog() -> dict:
     """Build the scenario metadata served to the UI on first paint."""
-    catalog = {}
-    for name, (scenario_fn, configs) in SCENARIO_MAP.items():
-        scenario = scenario_fn()
-        default_N, default_n_seg = configs[0]
-        catalog[name] = {
-            "name": scenario["name"],
-            "title": scenario["title"],
-            "obstacles": scenario["obstacles"],
-            "start": list(scenario["start"]),
-            "end": list(scenario["end"]),
-            "T": float(scenario.get("T", 10.0)),
-            "init_curve": scenario.get("init_curve"),
-            "default_N": int(default_N),
-            "default_n_seg": int(default_n_seg),
-        }
-    return catalog
+    return {name: _scenario_preset_bezier(name) for name in SCENARIO_MAP}
 
 
 def solve_from_payload(payload: dict) -> dict:
-    """Run one optimizer call for the sandbox UI. Returns the response dict."""
-    scenario_name = str(payload["scenario_name"])
-    if scenario_name not in SCENARIO_MAP:
-        raise ValueError(f"Unknown scenario: {scenario_name}")
-    scenario_fn, _configs = SCENARIO_MAP[scenario_name]
-    scenario = scenario_fn()
+    """Run one optimizer call for the sandbox UI.
 
-    key = _cache_key(payload)
-    cached_entry = _SOLVE_CACHE.get(key)
-    if cached_entry is not None:
-        _SOLVE_CACHE.move_to_end(key)
-        return {**cached_entry, "cached": True}
+    The payload is expected to carry the full problem state in BezierObstacle
+    wire format: ``obstacles`` (list), ``start``, ``end``, ``T``, plus solver
+    params. ``scenario_name`` is informational (used as a label and as the
+    fallback preset when the UI requests a fresh scenario).
+    """
+    scenario_name = str(payload.get("scenario_name", ""))
+    # Backfill missing problem state from the named preset (first paint path).
+    preset = _scenario_preset_bezier(scenario_name) if scenario_name in SCENARIO_MAP else None
+
+    bezier_obstacles = payload.get("obstacles")
+    if bezier_obstacles is None:
+        if preset is None:
+            raise ValueError("Payload missing 'obstacles' and no valid 'scenario_name' preset")
+        bezier_obstacles = preset["obstacles"]
+    p_start = list(payload.get("start") or (preset["start"] if preset else []))
+    p_end = list(payload.get("end") or (preset["end"] if preset else []))
+    T = float(payload.get("T", preset["T"] if preset else 10.0))
+    init_curve = payload.get("init_curve", preset["init_curve"] if preset else None)
 
     N = int(payload["N"])
     n_seg = int(payload["n_seg"])
@@ -111,9 +99,9 @@ def solve_from_payload(payload: dict) -> dict:
     min_dt = float(payload.get("min_dt", 0.1))
     cap_bulge_ratio = float(payload.get("cap_bulge_ratio", 2.0))
 
-    p_start = scenario["start"]
-    p_end = scenario["end"]
-    P_init = build_initial_guess(p_start, p_end, int(N) + 1, init_curve=scenario.get("init_curve"))
+    legacy_obstacles = [moving_obstacle_from_bezier(bo) for bo in bezier_obstacles]
+
+    P_init = build_initial_guess(p_start, p_end, int(N) + 1, init_curve=init_curve)
 
     t0 = time.perf_counter()
     P_opt, info = optimize_spacetime(
@@ -121,7 +109,7 @@ def solve_from_payload(payload: dict) -> dict:
         dim=len(p_start),
         p_start=p_start,
         p_end=p_end,
-        obstacles=scenario["obstacles"],
+        obstacles=legacy_obstacles,
         n_seg=n_seg,
         max_iter=max_iter,
         tol=tol,
@@ -131,7 +119,7 @@ def solve_from_payload(payload: dict) -> dict:
         time_ub_scale=time_ub_scale,
         cap_bulge_ratio=cap_bulge_ratio,
         verbose=False,
-        init_curve=scenario.get("init_curve"),
+        init_curve=init_curve,
     )
     solve_ms = (time.perf_counter() - t0) * 1000.0
 
@@ -146,7 +134,7 @@ def solve_from_payload(payload: dict) -> dict:
     info_out["feasible"] = bool(info_out.get("feasible", 0.0))
     info_out["iterations"] = int(info_out.get("iterations", -1))
 
-    response = {
+    return {
         "scenario_name": scenario_name,
         "N": N,
         "n_seg": n_seg,
@@ -159,18 +147,13 @@ def solve_from_payload(payload: dict) -> dict:
         "cap_bulge_ratio": cap_bulge_ratio,
         "control_points": np.asarray(P_opt, dtype=float).tolist(),
         "init_control_points": np.asarray(P_init, dtype=float).tolist(),
-        "obstacles": scenario["obstacles"],
+        "obstacles": bezier_obstacles,
         "start": list(p_start),
         "end": list(p_end),
-        "T": float(scenario.get("T", 10.0)),
+        "T": T,
         "info": info_out,
         "solve_ms": solve_ms,
-        "cached": False,
     }
-    _SOLVE_CACHE[key] = response
-    if len(_SOLVE_CACHE) > _SOLVE_CACHE_MAX:
-        _SOLVE_CACHE.popitem(last=False)
-    return response
 
 
 def _read_json_body(handler: SimpleHTTPRequestHandler) -> dict:

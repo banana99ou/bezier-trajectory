@@ -29,6 +29,16 @@ def test_scenario_catalog_shape():
     assert isinstance(entry["default_n_seg"], int)
     assert len(entry["start"]) == len(entry["end"])
 
+    # Obstacles are returned in BezierObstacle wire shape (control_points + radius).
+    obstacles = entry["obstacles"]
+    assert obstacles, "original scenario should have obstacles"
+    for obs in obstacles:
+        assert "control_points" in obs and "radius" in obs
+        cps = obs["control_points"]
+        assert isinstance(cps, list) and len(cps) >= 2
+        for cp in cps:
+            assert isinstance(cp, list) and len(cp) == len(entry["start"])
+
 
 def test_solve_from_payload_returns_jsonable_response(_require_rust):
     payload = {
@@ -47,6 +57,12 @@ def test_solve_from_payload_returns_jsonable_response(_require_rust):
     assert isinstance(cps, list) and len(cps) == 9  # N+1 control points
     assert all(isinstance(p, list) and len(p) == 3 for p in cps)
 
+    # Response echoes obstacles in the same BezierObstacle shape the client sent
+    # (or the preset shape when the client omitted them on first paint).
+    assert isinstance(response["obstacles"], list) and response["obstacles"]
+    for obs in response["obstacles"]:
+        assert "control_points" in obs and "radius" in obs
+
     info = response["info"]
     assert isinstance(info["feasible"], bool)
     assert isinstance(info["iterations"], int)
@@ -58,33 +74,42 @@ def test_solve_from_payload_returns_jsonable_response(_require_rust):
     json.dumps(response)
 
 
-def test_solve_cache_reuses_identical_payload(_require_rust):
-    spacetime_sandbox.clear_solve_cache()
+def test_solve_uses_payload_obstacles_over_preset(_require_rust):
+    """When the client sends explicit ``obstacles``, they override the named preset.
+
+    This is the core of Step 1: the client is the source of truth for problem
+    state. A preset is only consulted to backfill missing fields on first paint.
+    """
+    catalog = spacetime_sandbox.scenario_catalog()
+    entry = catalog["original"]
+
+    # A brand-new, far-away obstacle that the preset doesn't have. If the server
+    # still used the preset, the optimizer would return the preset's answer; with
+    # the edited obstacle, the solve is easier and the clearance must be larger.
+    edited = [{
+        "control_points": [[15.0, 15.0, 0.0], [15.0, 15.0, entry["T"]]],
+        "radius": 0.1,
+        "name": "solo",
+    }]
+
     payload = {
         "scenario_name": "original",
+        "obstacles": edited,
+        "start": entry["start"],
+        "end": entry["end"],
+        "T": entry["T"],
         "N": 6,
         "n_seg": 4,
-        "scp_prox_weight": 0.5,
-        "scp_trust_radius": 0.0,
-        "time_ub_scale": 1.5,
-        "cap_bulge_ratio": 2.0,
-        "max_iter": 10,
-        "tol": 1e-6,
-        "min_dt": 0.1,
+        "max_iter": 15,
     }
-    first = spacetime_sandbox.solve_from_payload(payload)
-    assert first["cached"] is False
-    second = spacetime_sandbox.solve_from_payload(payload)
-    assert second["cached"] is True
-    assert second["control_points"] == first["control_points"]
-
-    # Any change in a solve-affecting parameter must miss the cache.
-    changed = spacetime_sandbox.solve_from_payload({**payload, "N": 8})
-    assert changed["cached"] is False
+    response = spacetime_sandbox.solve_from_payload(payload)
+    assert len(response["obstacles"]) == 1
+    assert response["obstacles"][0]["name"] == "solo"
+    assert response["info"]["min_clearance"] > 1.0  # far-away obstacle, generous clearance
 
 
-def test_solve_rejects_unknown_scenario():
-    with pytest.raises(ValueError, match="Unknown scenario"):
+def test_solve_rejects_payload_with_no_problem_state():
+    with pytest.raises(ValueError, match="missing 'obstacles'"):
         spacetime_sandbox.solve_from_payload({
             "scenario_name": "does-not-exist",
             "N": 8,
