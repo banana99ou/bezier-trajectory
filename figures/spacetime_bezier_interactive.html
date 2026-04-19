@@ -1090,6 +1090,9 @@ const SCENE_CENTER = [5, 5, 5];
 let hoveredObstacleCP = null;  // { obsIdx, cpIdx } | null
 let obstacleCPPickTargets = [];  // refilled each draw: { obsIdx, cpIdx, sx, sy }
 const OBSTACLE_CP_PICK_PX = 16;
+// Active obstacle-CP drag state. While non-null the camera is locked and
+// cursor motion is re-interpreted as a constrained world-space edit.
+let cpDragState = null;  // { obsIdx, cpIdx, mode: 'xy'|'t', initial: [x,y,t], moved: bool }
 
 // Sandbox (server-backed live re-solve) state
 let serverMode = false;
@@ -1174,6 +1177,36 @@ function project(x, y, z) {
   return { x: rx * viewScale, y: -rz2 * viewScale, z: ry2 };
 }
 function toScreen(x, y, z) { const p = project(x, y, z); return { x: canvas.width * 0.55 + panX + p.x, y: canvas.height * 0.5 + panY + p.y, z: p.z }; }
+
+// Inverse of toScreen constrained to a horizontal plane at fixed t. Used by
+// L-click drag: the cursor slides the control point across the (x, y) plane
+// at the CP's current time.
+function screenToWorldAtFixedT(cx, cy, tFixed) {
+  const az = azimuth * Math.PI / 180, el = elevation * Math.PI / 180;
+  const rx = (cx - (canvas.width * 0.55 + panX)) / viewScale;
+  const rz2 = -(cy - (canvas.height * 0.5 + panY)) / viewScale;
+  const pz = tFixed - SCENE_CENTER[2];
+  const sinEl = Math.sin(el);
+  // elevation is clamped to [5, 85] degrees in camera controls, so sinEl is
+  // never small enough to blow up; no guard needed.
+  const ry = (rz2 - pz * Math.cos(el)) / sinEl;
+  const px = rx * Math.cos(az) + ry * Math.sin(az);
+  const py = -rx * Math.sin(az) + ry * Math.cos(az);
+  return [px + SCENE_CENTER[0], py + SCENE_CENTER[1]];
+}
+
+// Inverse of toScreen constrained to a vertical line at fixed (x, y). Used by
+// Shift+L-click drag: the cursor slides the control point along t. Only the
+// cursor's screen Y matters; screen X is fixed (determined by (x, y)).
+function screenYToTAtFixedXY(cy, xFixed, yFixed) {
+  const az = azimuth * Math.PI / 180, el = elevation * Math.PI / 180;
+  const rz2 = -(cy - (canvas.height * 0.5 + panY)) / viewScale;
+  const px = xFixed - SCENE_CENTER[0];
+  const py = yFixed - SCENE_CENTER[1];
+  const ry = px * Math.sin(az) + py * Math.cos(az);
+  const pz = (rz2 - ry * Math.sin(el)) / Math.cos(el);
+  return pz + SCENE_CENTER[2];
+}
 
 // ══════════════════════════════════════════════════════════════
 // Drawing helpers
@@ -2282,7 +2315,7 @@ function updateHoverFromCursor(cx, cy) {
 }
 
 canvas.addEventListener('mousemove', e => {
-  if (dragMode) return;  // don't hover-update mid-drag
+  if (dragMode || cpDragState) return;  // don't hover-update mid-drag
   const rect = canvas.getBoundingClientRect();
   updateHoverFromCursor(e.clientX - rect.left, e.clientY - rect.top);
 });
@@ -2296,6 +2329,29 @@ canvas.addEventListener('mouseleave', () => {
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('mousedown', e => {
   if (viewMode === '2d') return;  // 2D is static — no pan/rotate
+
+  // Obstacle CP under the cursor? Start a constrained drag instead of the
+  // camera. Shift switches the constraint from the (x, y) plane at fixed t
+  // to the vertical line at fixed (x, y).
+  if (e.button === 0 && hoveredObstacleCP && currentScenario && Array.isArray(currentScenario.bezier_obstacles)) {
+    const { obsIdx, cpIdx } = hoveredObstacleCP;
+    const bo = currentScenario.bezier_obstacles[obsIdx];
+    if (bo && Array.isArray(bo.control_points) && bo.control_points[cpIdx]) {
+      cpDragState = {
+        obsIdx, cpIdx,
+        mode: e.shiftKey ? 't' : 'xy',
+        initial: bo.control_points[cpIdx].slice(),
+        moved: false,
+      };
+      // Invalidate any in-flight solve so its response can't clobber the
+      // obstacle we're editing (applySolveResponse keys off the latest seq).
+      solveRequestSeq++;
+      canvas.style.cursor = 'grabbing';
+      e.preventDefault();
+      return;
+    }
+  }
+
   if (e.button === 0) dragMode = e.shiftKey ? 'pan' : 'rotate';
   else if (e.button === 2) dragMode = 'pan';
   else return;
@@ -2305,6 +2361,40 @@ canvas.addEventListener('mousedown', e => {
   e.preventDefault();
 });
 window.addEventListener('mousemove', e => {
+  // Obstacle CP drag takes priority: the camera is locked while the user
+  // is editing a control point.
+  if (cpDragState) {
+    if (e.buttons === 0) {
+      // User released outside any tracked element — treat as mouseup.
+      const moved = cpDragState.moved;
+      cpDragState = null;
+      canvas.style.cursor = 'grab';
+      if (moved) scheduleSolve();
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+    const bo = currentScenario.bezier_obstacles[cpDragState.obsIdx];
+    const cp = bo.control_points[cpDragState.cpIdx];
+    if (cpDragState.mode === 'xy') {
+      const tFixed = cpDragState.initial[2];
+      const [nx, ny] = screenToWorldAtFixedT(cx, cy, tFixed);
+      cp[0] = nx; cp[1] = ny; cp[2] = tFixed;
+    } else {
+      const xFixed = cpDragState.initial[0];
+      const yFixed = cpDragState.initial[1];
+      const newT = clamp(screenYToTAtFixedXY(cy, xFixed, yFixed), 0, T_TOTAL);
+      cp[0] = xFixed; cp[1] = yFixed; cp[2] = newT;
+    }
+    cpDragState.moved = true;
+    // Keep the legacy obstacle (drives the capsule mesh, clearance line, and
+    // 2D view) in sync with the edited Bezier so the capsule follows the drag.
+    OBSTACLES[cpDragState.obsIdx] = legacyFromBezier(bo);
+    draw();
+    e.preventDefault();
+    return;
+  }
+
   if (!dragMode) return;
   if (e.buttons === 0) {
     dragMode = null;
@@ -2326,8 +2416,26 @@ window.addEventListener('mousemove', e => {
   e.preventDefault();
 });
 window.addEventListener('mouseup', () => {
+  if (cpDragState) {
+    const moved = cpDragState.moved;
+    cpDragState = null;
+    canvas.style.cursor = 'grab';
+    if (moved) scheduleSolve();
+    return;
+  }
   dragMode = null;
   updateCanvasCursor();
+});
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && cpDragState) {
+    // Restore the CP to its pre-drag position and skip the re-solve.
+    const bo = currentScenario.bezier_obstacles[cpDragState.obsIdx];
+    bo.control_points[cpDragState.cpIdx] = cpDragState.initial.slice();
+    OBSTACLES[cpDragState.obsIdx] = legacyFromBezier(bo);
+    cpDragState = null;
+    canvas.style.cursor = 'grab';
+    draw();
+  }
 });
 canvas.addEventListener('wheel', e => {
   if (viewMode === '2d') return;  // Zoom is 3D-only for now
