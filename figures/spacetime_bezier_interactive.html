@@ -1084,6 +1084,12 @@ let viewMode = '3d';  // '3d' | '2d'
 let hoveredSegIdx = null;  // which De Casteljau segment the cursor is on (3D only)
 const HOVER_PIXEL_THRESHOLD = 22;
 const SCENE_CENTER = [5, 5, 5];
+// Obstacle control-point handles: bezier_obstacles control points are the
+// source of truth for direct manipulation. Drawn as dots in 3D with hover
+// highlight; Step 3 wires drag.
+let hoveredObstacleCP = null;  // { obsIdx, cpIdx } | null
+let obstacleCPPickTargets = [];  // refilled each draw: { obsIdx, cpIdx, sx, sy }
+const OBSTACLE_CP_PICK_PX = 16;
 
 // Sandbox (server-backed live re-solve) state
 let serverMode = false;
@@ -1499,6 +1505,33 @@ function draw3DScene(tNow, curPt, fullCurve, dists) {
   }
 
   if (showTubes) { for (const obs of OBSTACLES) drawCapsule(obs, capBulge, obs.color); }
+
+  // Obstacle control-point handles: these are the source of truth for direct
+  // manipulation — drawn on top of the capsule so the user can always grab
+  // them. Pick targets are refreshed each frame so camera moves stay accurate.
+  obstacleCPPickTargets.length = 0;
+  const bezierObstaclesForHandles = (currentScenario && Array.isArray(currentScenario.bezier_obstacles))
+    ? currentScenario.bezier_obstacles : [];
+  bezierObstaclesForHandles.forEach((bo, obsIdx) => {
+    const cps = bo.control_points;
+    if (!Array.isArray(cps) || cps.length < 2) return;
+    const handleColor = bo.color || '#ffa500';
+    for (let i = 0; i < cps.length - 1; i++) {
+      drawLine3D(cps[i], cps[i+1], handleColor, 1.2, 0.55);
+    }
+    cps.forEach((p, cpIdx) => {
+      const sp = toScreen(...p);
+      const isHover = hoveredObstacleCP && hoveredObstacleCP.obsIdx === obsIdx && hoveredObstacleCP.cpIdx === cpIdx;
+      const r = isHover ? 7 : 4.5;
+      ctx.beginPath(); ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = handleColor; ctx.globalAlpha = 0.95; ctx.fill();
+      ctx.strokeStyle = isHover ? '#fff' : '#000';
+      ctx.lineWidth = isHover ? 2 : 1;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      obstacleCPPickTargets.push({ obsIdx, cpIdx, sx: sp.x, sy: sp.y });
+    });
+  });
 
   if (showTP && tNow > 0) {
     const co = [[0,0,tNow],[10,0,tNow],[10,10,tNow],[0,10,tNow]].map(c => toScreen(...c));
@@ -2199,30 +2232,53 @@ document.getElementById('btnView2D').addEventListener('click', () => setViewMode
 // cheap on passive mouse motion.
 function updateHoverFromCursor(cx, cy) {
   if (viewMode !== '3d' || !CTRL_PTS.length) return;
-  if (!document.getElementById('chkHalfspace').checked) {
-    if (hoveredSegIdx !== null) { hoveredSegIdx = null; draw(); }
-    return;
-  }
-  const nSub = Math.max(1, currentSolveInfo.n_seg || 8);
-  const threshSq = HOVER_PIXEL_THRESHOLD * HOVER_PIXEL_THRESHOLD;
-  let best = threshSq;
-  let bestSeg = null;
-  const nSamples = 160;
-  for (let i = 0; i <= nSamples; i++) {
-    const t = i / nSamples;
-    const pt = evalBezier(CTRL_PTS, t);
-    const sp = toScreen(...pt);
-    const dx = sp.x - cx, dy = sp.y - cy;
+
+  // Obstacle control-point hover runs independent of the SHS flag so the
+  // handles are always grabbable.
+  let cpBest = OBSTACLE_CP_PICK_PX * OBSTACLE_CP_PICK_PX;
+  let cpHit = null;
+  for (const tgt of obstacleCPPickTargets) {
+    const dx = tgt.sx - cx, dy = tgt.sy - cy;
     const d2 = dx*dx + dy*dy;
-    if (d2 < best) {
-      best = d2;
-      bestSeg = Math.min(nSub - 1, Math.floor(t * nSub));
+    if (d2 < cpBest) {
+      cpBest = d2;
+      cpHit = { obsIdx: tgt.obsIdx, cpIdx: tgt.cpIdx };
     }
   }
-  if (bestSeg !== hoveredSegIdx) {
-    hoveredSegIdx = bestSeg;
-    draw();
+  const prev = hoveredObstacleCP;
+  const cpChanged = (prev === null) !== (cpHit === null) ||
+    (prev !== null && cpHit !== null && (prev.obsIdx !== cpHit.obsIdx || prev.cpIdx !== cpHit.cpIdx));
+  hoveredObstacleCP = cpHit;
+  canvas.style.cursor = cpHit ? 'pointer' : (dragMode ? 'grabbing' : 'grab');
+
+  // SHS segment hover: only meaningful while the SHS overlay is visible.
+  let segChanged = false;
+  if (!document.getElementById('chkHalfspace').checked) {
+    if (hoveredSegIdx !== null) { hoveredSegIdx = null; segChanged = true; }
+  } else {
+    const nSub = Math.max(1, currentSolveInfo.n_seg || 8);
+    const threshSq = HOVER_PIXEL_THRESHOLD * HOVER_PIXEL_THRESHOLD;
+    let best = threshSq;
+    let bestSeg = null;
+    const nSamples = 160;
+    for (let i = 0; i <= nSamples; i++) {
+      const t = i / nSamples;
+      const pt = evalBezier(CTRL_PTS, t);
+      const sp = toScreen(...pt);
+      const dx = sp.x - cx, dy = sp.y - cy;
+      const d2 = dx*dx + dy*dy;
+      if (d2 < best) {
+        best = d2;
+        bestSeg = Math.min(nSub - 1, Math.floor(t * nSub));
+      }
+    }
+    if (bestSeg !== hoveredSegIdx) {
+      hoveredSegIdx = bestSeg;
+      segChanged = true;
+    }
   }
+
+  if (cpChanged || segChanged) draw();
 }
 
 canvas.addEventListener('mousemove', e => {
@@ -2231,7 +2287,10 @@ canvas.addEventListener('mousemove', e => {
   updateHoverFromCursor(e.clientX - rect.left, e.clientY - rect.top);
 });
 canvas.addEventListener('mouseleave', () => {
-  if (hoveredSegIdx !== null) { hoveredSegIdx = null; draw(); }
+  let changed = false;
+  if (hoveredSegIdx !== null) { hoveredSegIdx = null; changed = true; }
+  if (hoveredObstacleCP !== null) { hoveredObstacleCP = null; changed = true; }
+  if (changed) draw();
 });
 
 canvas.addEventListener('contextmenu', e => e.preventDefault());
