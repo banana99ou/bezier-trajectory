@@ -1093,6 +1093,12 @@ const OBSTACLE_CP_PICK_PX = 16;
 // Active obstacle-CP drag state. While non-null the camera is locked and
 // cursor motion is re-interpreted as a constrained world-space edit.
 let cpDragState = null;  // { obsIdx, cpIdx, mode: 'xy'|'t', initial: [x,y,t], moved: bool }
+// Endpoint handle state: start (green, t=0) and end (red, t=T). L-click drag
+// moves xy. Shift+L on `end` edits T; start's t is pinned at 0.
+let hoveredEndpoint = null;  // 'start' | 'end' | null
+let endpointPickTargets = [];  // [{ role, sx, sy }]
+let endpointDragState = null;  // { role, idx, mode: 'xy'|'t', initial, moved }
+const MIN_SCENARIO_T = 1.0;  // keep T positive so build_initial_guess has enough room
 
 // Sandbox (server-backed live re-solve) state
 let serverMode = false;
@@ -1641,7 +1647,22 @@ function draw3DScene(tNow, curPt, fullCurve, dists) {
 
   // Control polygon
   for(let i=0;i<CTRL_PTS.length-1;i++) drawLine3D(CTRL_PTS[i],CTRL_PTS[i+1],'#888',1,0.5);
-  CTRL_PTS.forEach((p,i)=>{const sp=toScreen(...p); ctx.beginPath(); ctx.arc(sp.x,sp.y,5,0,Math.PI*2); ctx.fillStyle=i===0?'#0f0':i===CTRL_PTS.length-1?'#f00':'#fff'; ctx.fill(); ctx.strokeStyle='#000'; ctx.lineWidth=1; ctx.stroke();});
+  endpointPickTargets.length = 0;
+  CTRL_PTS.forEach((p,i)=>{
+    const sp=toScreen(...p);
+    const isStart = i === 0, isEnd = i === CTRL_PTS.length - 1;
+    const role = isStart ? 'start' : (isEnd ? 'end' : null);
+    const isHover = role !== null && hoveredEndpoint === role;
+    const radius = isHover ? 7.5 : 5;
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, radius, 0, Math.PI*2);
+    ctx.fillStyle = isStart ? '#0f0' : (isEnd ? '#f00' : '#fff');
+    ctx.fill();
+    ctx.strokeStyle = isHover ? '#fff' : '#000';
+    ctx.lineWidth = isHover ? 2 : 1;
+    ctx.stroke();
+    if (role !== null) endpointPickTargets.push({ role, sx: sp.x, sy: sp.y });
+  });
 
   // Trust-region boxes: axis-aligned cube of side 2·trust_radius around each
   // interior CP (endpoints are boundary-constrained so trust doesn't apply).
@@ -2266,23 +2287,28 @@ document.getElementById('btnView2D').addEventListener('click', () => setViewMode
 function updateHoverFromCursor(cx, cy) {
   if (viewMode !== '3d' || !CTRL_PTS.length) return;
 
-  // Obstacle control-point hover runs independent of the SHS flag so the
-  // handles are always grabbable.
-  let cpBest = OBSTACLE_CP_PICK_PX * OBSTACLE_CP_PICK_PX;
+  // Handle hover — obstacle CPs and endpoint handles share one pick pass so
+  // the closer of the two wins when they overlap on screen. Hover works
+  // regardless of the SHS overlay flag so handles are always grabbable.
+  let bestD2 = OBSTACLE_CP_PICK_PX * OBSTACLE_CP_PICK_PX;
   let cpHit = null;
+  let epHit = null;
   for (const tgt of obstacleCPPickTargets) {
-    const dx = tgt.sx - cx, dy = tgt.sy - cy;
-    const d2 = dx*dx + dy*dy;
-    if (d2 < cpBest) {
-      cpBest = d2;
-      cpHit = { obsIdx: tgt.obsIdx, cpIdx: tgt.cpIdx };
-    }
+    const d2 = (tgt.sx - cx) * (tgt.sx - cx) + (tgt.sy - cy) * (tgt.sy - cy);
+    if (d2 < bestD2) { bestD2 = d2; cpHit = { obsIdx: tgt.obsIdx, cpIdx: tgt.cpIdx }; epHit = null; }
   }
-  const prev = hoveredObstacleCP;
-  const cpChanged = (prev === null) !== (cpHit === null) ||
-    (prev !== null && cpHit !== null && (prev.obsIdx !== cpHit.obsIdx || prev.cpIdx !== cpHit.cpIdx));
+  for (const tgt of endpointPickTargets) {
+    const d2 = (tgt.sx - cx) * (tgt.sx - cx) + (tgt.sy - cy) * (tgt.sy - cy);
+    if (d2 < bestD2) { bestD2 = d2; epHit = tgt.role; cpHit = null; }
+  }
+  const prevCP = hoveredObstacleCP;
+  const cpChanged = (prevCP === null) !== (cpHit === null) ||
+    (prevCP !== null && cpHit !== null && (prevCP.obsIdx !== cpHit.obsIdx || prevCP.cpIdx !== cpHit.cpIdx));
   hoveredObstacleCP = cpHit;
-  canvas.style.cursor = cpHit ? 'pointer' : (dragMode ? 'grabbing' : 'grab');
+  const epChanged = hoveredEndpoint !== epHit;
+  hoveredEndpoint = epHit;
+  const anyHandle = cpHit !== null || epHit !== null;
+  canvas.style.cursor = anyHandle ? 'pointer' : (dragMode ? 'grabbing' : 'grab');
 
   // SHS segment hover: only meaningful while the SHS overlay is visible.
   let segChanged = false;
@@ -2311,11 +2337,11 @@ function updateHoverFromCursor(cx, cy) {
     }
   }
 
-  if (cpChanged || segChanged) draw();
+  if (cpChanged || epChanged || segChanged) draw();
 }
 
 canvas.addEventListener('mousemove', e => {
-  if (dragMode || cpDragState) return;  // don't hover-update mid-drag
+  if (dragMode || cpDragState || endpointDragState) return;  // don't hover-update mid-drag
   const rect = canvas.getBoundingClientRect();
   updateHoverFromCursor(e.clientX - rect.left, e.clientY - rect.top);
 });
@@ -2323,6 +2349,7 @@ canvas.addEventListener('mouseleave', () => {
   let changed = false;
   if (hoveredSegIdx !== null) { hoveredSegIdx = null; changed = true; }
   if (hoveredObstacleCP !== null) { hoveredObstacleCP = null; changed = true; }
+  if (hoveredEndpoint !== null) { hoveredEndpoint = null; changed = true; }
   if (changed) draw();
 });
 
@@ -2350,6 +2377,23 @@ canvas.addEventListener('mousedown', e => {
       e.preventDefault();
       return;
     }
+  }
+
+  // Endpoint (start/end) handle? Start is pinned at t=0 (xy-only drag);
+  // Shift+L on end edits the scenario T, which re-scales the t-axis live.
+  if (e.button === 0 && hoveredEndpoint && currentScenario) {
+    const role = hoveredEndpoint;
+    const idx = role === 'start' ? 0 : CTRL_PTS.length - 1;
+    endpointDragState = {
+      role, idx,
+      mode: (e.shiftKey && role === 'end') ? 't' : 'xy',
+      initial: CTRL_PTS[idx].slice(),
+      moved: false,
+    };
+    solveRequestSeq++;
+    canvas.style.cursor = 'grabbing';
+    e.preventDefault();
+    return;
   }
 
   if (e.button === 0) dragMode = e.shiftKey ? 'pan' : 'rotate';
@@ -2395,6 +2439,42 @@ window.addEventListener('mousemove', e => {
     return;
   }
 
+  // Endpoint drag: move start/end in (x, y) at their current t, or (for end
+  // only) slide along t — which also updates the scenario T_TOTAL so the
+  // scene axis re-scales live.
+  if (endpointDragState) {
+    if (e.buttons === 0) {
+      const moved = endpointDragState.moved;
+      endpointDragState = null;
+      canvas.style.cursor = 'grab';
+      if (moved) scheduleSolve();
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+    const { role, idx, mode, initial } = endpointDragState;
+    const cp = CTRL_PTS[idx];
+    if (mode === 'xy') {
+      const tFixed = initial[2];
+      const [nx, ny] = screenToWorldAtFixedT(cx, cy, tFixed);
+      cp[0] = nx; cp[1] = ny; cp[2] = tFixed;
+    } else {
+      // mode 't' is only enabled for role='end' at mousedown, so updating
+      // T_TOTAL here is always intended.
+      const xFixed = initial[0], yFixed = initial[1];
+      const newT = Math.max(MIN_SCENARIO_T, screenYToTAtFixedXY(cy, xFixed, yFixed));
+      cp[0] = xFixed; cp[1] = yFixed; cp[2] = newT;
+      currentScenario.T = newT;
+      T_TOTAL = newT;
+    }
+    if (role === 'start') currentScenario.start = cp.slice();
+    else currentScenario.end = cp.slice();
+    endpointDragState.moved = true;
+    draw();
+    e.preventDefault();
+    return;
+  }
+
   if (!dragMode) return;
   if (e.buttons === 0) {
     dragMode = null;
@@ -2423,16 +2503,39 @@ window.addEventListener('mouseup', () => {
     if (moved) scheduleSolve();
     return;
   }
+  if (endpointDragState) {
+    const moved = endpointDragState.moved;
+    endpointDragState = null;
+    canvas.style.cursor = 'grab';
+    if (moved) scheduleSolve();
+    return;
+  }
   dragMode = null;
   updateCanvasCursor();
 });
 window.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && cpDragState) {
+  if (e.key !== 'Escape') return;
+  if (cpDragState) {
     // Restore the CP to its pre-drag position and skip the re-solve.
     const bo = currentScenario.bezier_obstacles[cpDragState.obsIdx];
     bo.control_points[cpDragState.cpIdx] = cpDragState.initial.slice();
     OBSTACLES[cpDragState.obsIdx] = legacyFromBezier(bo);
     cpDragState = null;
+    canvas.style.cursor = 'grab';
+    draw();
+    return;
+  }
+  if (endpointDragState) {
+    const { role, idx, initial } = endpointDragState;
+    CTRL_PTS[idx] = initial.slice();
+    if (role === 'start') {
+      currentScenario.start = initial.slice();
+    } else {
+      currentScenario.end = initial.slice();
+      currentScenario.T = initial[2];
+      T_TOTAL = initial[2];
+    }
+    endpointDragState = null;
     canvas.style.cursor = 'grab';
     draw();
   }
