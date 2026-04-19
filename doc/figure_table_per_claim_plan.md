@@ -234,15 +234,15 @@ ID gaps are allowed if an earlier planned artifact was removed or deferred; do n
 - Evidence needed: A fair downstream comparison between direct collocation from a naive initialization and direct collocation from a Bezier-based warm start, under identical solver settings and evaluation criteria.
 - Best support form: table
 - Why this support form is appropriate: The central question is comparative performance under matched conditions. A table is the cleanest way to report success, convergence, time, and final quality without visual ambiguity.
-- Exact figure or table concept: `T6. Downstream direct-collocation initialization comparison.` Suggested columns: initialization type, solve success, solve time, iteration count, final objective, and final constraint satisfaction. If enough cases exist, report medians and spread rather than one anecdotal run.
+- Exact figure or table concept: `T6. Pass-1-replacement comparison under matched Pass 2.` Columns: case id, `T_normed`, `h0`, `delta_a`, `delta_i`, baseline and proposed convergence, baseline and stage-decomposed proposed runtime, speedup, `|cost_delta|`, baseline and proposed peak counts. Companion figure `F6` (speedup + runtime composition). Reported over the both-converged subset; upstream-feasibility boundary reported separately.
 - Required data, experiment, or analysis inputs:
-  - A direct-collocation implementation and solver protocol
-  - A clearly defined naive initialization
-  - Export of the Bezier result into the downstream representation
-  - Matched problem instances
-  - Fairness protocol with identical tolerances and stopping rules
-- Input status: missing
-- Why the inputs are marked this way: The evidence map identifies this as missing, and no repository artifact currently shows the downstream comparison.
+  - The two-pass DCM pipeline (baseline) — already implemented in `orbit_transfer.optimizer.two_pass.TwoPassOptimizer`
+  - Bézier SCP upstream — already implemented in `orbital_docking.optimization.optimize_orbital_docking`
+  - Warm-start export mapping from Bézier to Pass 2 LGL, reusing the baseline's `detect_peaks`, `determine_phase_structure`, and `interpolate_pass1_to_pass2`
+  - Matched problem instances drawn from `orbit-transfer-analysis/data/trajectories.duckdb`
+  - Fairness protocol with identical tolerances and stopping rules across both pipelines
+- Input status: present
+- Why the inputs are marked this way: T6 and F6 are data-ready via `artifacts/paper_artifacts/t6_downstream_comparison.csv` and `figures/f6_downstream_speedup.png`; owned by `doc/dcm_downstream_pack.md`; evidence map entry for C9 now marks it `present` with the scoped Pass-1-replacement wording.
 - Production priority: must-have
 - Shared support opportunities:
   - `T6` is the central table for the paper's downstream usefulness case.

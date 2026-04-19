@@ -54,9 +54,9 @@ The paper is trying to prove four things:
 1. A Bézier control-point-space formulation can turn continuous spherical-KOZ avoidance into a conservative and computationally manageable constrained optimization procedure.
 2. The structured `D`/`E`/Gram-matrix formulation gives a coherent way to represent derivatives and objectives without rebuilding everything from pointwise Bernstein evaluation inside the optimization loop.
 3. The framework can produce smooth, feasible, safety-respecting trajectories for a nontrivial demonstration problem.
-4. These trajectories are useful as **initial guesses for downstream solvers**, which should be tested by comparing downstream optimization from a naive initialization versus downstream optimization from the Bézier-based warm start.
+4. These trajectories are useful as the **initialization stage of a downstream direct-collocation pipeline**, which is tested by comparing the full two-pass DCM pipeline (Pass 1 Hermite-Simpson → peak detect → Pass 2 multi-phase LGL) against a variant in which the Bézier upstream replaces Pass 1 while Pass 2 remains identical.
 
-Item 4 is a major part of the paper's usefulness case, not an optional side branch. However, it should still remain downstream to the framework identity in the paper's rhetoric. If the direct-collocation warm-start comparison is not completed, item 4 can no longer be presented as demonstrated usefulness, and the paper loses one major component of its planned evidence package.
+Item 4 is a major part of the paper's usefulness case, not an optional side branch. However, it should still remain downstream to the framework identity in the paper's rhetoric. The comparison is scoped to circular transfers in which both pipelines converge — a set bounded on one side by eccentricity (every elliptic case in the tested dataset produced an infeasible Bézier upstream) and on the other by downstream Pass 2 convergence at long transfer times. Any wording that extends item 4 beyond that regime, or that implies method-class superiority over direct collocation, is a framing violation.
 
 ## Explicit non-claims
 

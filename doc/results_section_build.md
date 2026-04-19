@@ -41,7 +41,7 @@ Claim status from the evidence map:
 - `C5`: `present`
 - `C6`: `partial`
 - `C7`: `partial`
-- `C9`: `missing`
+- `C9`: `present` (scoped Pass-1-replacement framing; see `doc/dcm_downstream_pack.md`)
 
 Claims that must not be smuggled into the results section:
 
@@ -57,14 +57,14 @@ Recommended subsection order, consistent with `doc/paper_technical_skeleton.md`:
 1. `6.1 Demonstration feasibility and representative trajectories`
 2. `6.2 Subdivision-count trade-off`
 3. `6.3 Degree trade-off`
-4. `6.4 Downstream warm-start comparison`
+4. `6.4 Pass-1-replacement comparison under matched Pass 2`
 
 This order is defensible because:
 
 - `6.1` establishes that the method works on the target demonstration case before ablations are interpreted.
 - `6.2` carries the main ablation claim (`C6`).
 - `6.3` carries the secondary ablation claim (`C7`).
-- `6.4` carries the strongest external-value claim (`C9`) and should appear last because it is fairness-sensitive and, for the current paper pass, remains placeholder-only.
+- `6.4` carries the scoped external-value claim (`C9`) in its Pass-1-replacement framing and should appear last because it is fairness-sensitive and regime-scoped.
 
 Results-section discipline rules:
 
@@ -356,18 +356,13 @@ This section covers only the results figures/tables. Method-support figures such
 
 ## Evidence gaps and blocked claims
 
-### Gap 1: Warm-start usefulness remains blocked without `T6`
+### Gap 1: ~~Warm-start usefulness remains blocked without `T6`~~ RESOLVED (2026-04-17, reframed)
 
-- A publishable warm-start claim requires the downstream direct-collocation comparison identified in the evidence map.
-- What is still needed:
-  - a matched downstream problem definition
-  - naive versus Bézier-warm-start initialization protocol
-  - identical solver settings, stopping rules, and constraint reporting
-  - reported success, time, iterations, final objective, and final constraint satisfaction
-- For the current paper pass, keep this subsection placeholder-only while the downstream direct-collocation machinery is still under active development.
-- Until a stable comparison exists, `C9` is not an achieved results claim.
-- Required fallback wording:
-  - the method is intended as a warm-start generator for downstream solvers
+- The original naive-versus-warm-start framing is closed (see `doc/dcm_experiment_findings.md` Finding 2).
+- `C9` now rests on the Pass-1-replacement comparison owned by `doc/dcm_downstream_pack.md`.
+- T6 and F6 are data-ready: `artifacts/paper_artifacts/t6_downstream_comparison.csv` and `figures/f6_downstream_speedup.png`.
+- Scoped regime: circular transfers in which both pipelines converge. On the 7 both-converged cases (`T_normed` from 0.28 to 2.05) the final cost is preserved to `|cost_delta| < 1e-9` on 6 of 7; case 114 has a 1.7% cost delta from a 5-vs-4 peak-count mismatch. Median speedup `1.22×` (min `0.51×`, max `2.47×`), faster in 4 of 7.
+- Required wording: scoped Pass-1-replacement framing; do not promote to method-class superiority over direct collocation.
 
 ### Gap 2: ~~Subdivision ablation remains only partially supported without a disciplined interpretation~~ RESOLVED
 

@@ -2,31 +2,38 @@
 
 This document records the current go/no-go decisions for the non-core branches so later work does not reopen the same scope questions by accident.
 
-## T6 decision: placeholder only for the current paper pass
+## T6 decision: Pass-1-replacement framing, data-ready (reversed 2026-04-17)
 
-### Decision
+### Current decision
 
-- `T6. Downstream direct-collocation initialization comparison` stays placeholder-only for the current paper pass.
+- `T6. Pass-1-replacement comparison under matched Pass 2` is data-ready and on the main paper path.
+- The original naive-vs-warm-started framing is closed (see `doc/dcm_experiment_findings.md` Finding 2).
+- T6 is owned by `doc/dcm_downstream_pack.md` and backed by `artifacts/paper_artifacts/t6_downstream_comparison.csv` and `figures/f6_downstream_speedup.png`.
 
-### Why
+### Why the decision was reversed
 
-- downstream direct-collocation work is still under active development
-- the current paper pass should not let that moving target destabilize the core method and results package
-- the requested workflow is to keep `T6` as a placeholder rather than to promote or reject the claim based on an interim spike
+- the three conditions originally required for reversal (stable downstream protocol, completed matched comparison table, actual reported results) are now met
+- the Bézier-replaces-Pass-1 pipeline uses identical Pass 2 solver, dynamics, tolerances, and boundary-condition protocol as the baseline — only the origin of the warm-start and phase structure differs
+- on 6 of 7 both-converged cases the final cost is preserved to `|cost_delta| < 1e-9`; case 114 is the caveat (1.7% cost delta from a 5-vs-4 peak-count mismatch)
+- median speedup is `1.22×` (min `0.51×`, max `2.47×`) with 4 of 7 faster end-to-end
+- both regime boundaries (eccentricity at short `T_normed`; downstream Pass 2 divergence at long `T_normed`) are first-class evidence and are reported as part of the pack
 
-### Required wording until this changes
+### Required wording for C9 and §6.4
 
-Use the narrow fallback:
+Use the scoped, pipeline-variant framing:
 
-- the framework is intended as a warm-start generator for downstream solvers
+- the Bézier upstream can replace Pass 1 of the two-pass DCM pipeline within the scoped regime of circular transfers in which both pipelines converge, preserving final cost on 6 of 7 tested cases under matched Pass 2 and reducing end-to-end runtime on 4 of 7
 
-Do not use the stronger demonstrated-value wording unless `T6` is actually built and stabilized.
+Do not use any of the following:
 
-### What would be required to reverse this decision
+- method-class superiority over DCM or direct collocation
+- a general "Bézier is faster than DCM" claim
+- any extension of the speedup claim outside the scoped regime
 
-1. a stable downstream protocol
-2. a completed matched comparison table
-3. actual reported results rather than placeholders
+### Earlier placeholder policy (historical, superseded)
+
+- before 2026-04-17 the section above required T6 to stay placeholder-only and C9 to stay at "intended use" wording
+- superseded by the reversal recorded in this section; retained here as audit trail
 
 ## Degree branch decision
 
@@ -68,6 +75,7 @@ The paper package is now being re-centered on `N = 6, 7, 8`.
 
 | Branch | Current status | Current action |
 |---|---|---|
-| `T6` | placeholder only | keep `C9` at intended-use wording |
+| `T6` | data-ready, on main-paper path | Pass-1-replacement framing; 7 both-converged cases (`T_normed` 0.28–2.05); `|cost_delta| < 1e-9` on 6 / 7; case 114 has 1.7% cost delta from phase-structure mismatch; median speedup `1.22×` |
+| `F6` | data-ready, on main-paper path | per-case speedup + runtime composition from `figures/f6_downstream_speedup.png` |
 | `T4` | data-ready, on main-paper path | table populated with refreshed 120-deg data; interpret metric-specific tradeoff (N=8 best effort, N=7 fastest convergence) |
 | `F5` | needs regeneration | regenerate from updated 120-deg cache; the figure now has clear differentiation across degrees |

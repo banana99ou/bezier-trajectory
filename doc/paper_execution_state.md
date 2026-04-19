@@ -2,7 +2,7 @@
 
 This document is the mutable source of truth for the artifact-build phase. It exists to preserve shared context across parallel workstreams and to stop notation, metric, and scope drift.
 
-Last updated: 2026-04-15
+Last updated: 2026-04-17
 
 ## Workflow source of truth
 
@@ -72,9 +72,9 @@ Secondary but still live:
 
 - `C7`: degree trade-off
 
-Conditional only:
+Secondary, scoped:
 
-- `C9`: warm-start usefulness for downstream direct collocation
+- `C9`: Pass-1-replacement usefulness within a two-pass DCM pipeline, scoped to circular transfers in which both pipelines converge (tested cases span `T_normed` from `0.28` to `2.05`)
 
 Explicitly not in the current evidence package:
 
@@ -194,15 +194,16 @@ Rationale:
 | `F4` | subdivision trade-off figure | draft-ready | `figures/f4_subdivision_tradeoff_N7.png` |
 | `T4` | degree ablation table | draft-ready | `doc/degree_ablation_pack.md` |
 | `F5` | multi-order trend figure | draft-ready | `figures/f5_multi_order_tradeoff_N678.png` |
-| `T6` | downstream comparison table | placeholder-only | placeholder text only |
+| `T6` | Pass-1-replacement comparison table | data-ready | `artifacts/paper_artifacts/t6_downstream_comparison.csv` |
+| `F6` | downstream speedup and runtime composition figure | draft-ready | `figures/f6_downstream_speedup.png` |
 
 ## Resolved conditional decisions
 
-### T6 decision
+### T6 decision (reversed 2026-04-17)
 
-- Current status: placeholder-only for the current paper pass
-- Reason: downstream direct-collocation work is still under active development and should not control the defended evidence package
-- Required wording until that changes: warm-start use remains `intended use`, not demonstrated downstream value
+- Current status: data-ready, Pass-1-replacement framing, on the main paper path
+- Reason: the three conditions originally required for reversal — stable downstream protocol, completed matched comparison table, actual reported results — are now met via `doc/dcm_downstream_pack.md`
+- Required wording: scoped Pass-1-replacement framing (see `doc/conditional_branch_decisions.md` for the exact language); do not promote to a method-class superiority claim
 
 ### Degree-range decision
 
@@ -222,4 +223,5 @@ Rationale:
 
 - keep `C6` wording tied to the tested 120-deg scenario; the monotone trend is real but scenario-specific
 - keep `C7` wording disciplined so the integrated `F5` figure is read as tradeoff evidence rather than blanket higher-degree superiority
-- complete `T6` only when the downstream direct-collocation comparison protocol and results are stable enough to defend
+- keep `C9` wording tied to the scoped circular-transfer regime and the Pass-1-replacement framing; the evidence is small-N (7 both-converged cases from the 112-case boundary sweep) and should not be extrapolated outside the scoped regime
+- flag case 114 (`T_normed = 2.05`, 5 peaks vs baseline's 4) as the material caveat: Bézier phase-structure decision differs from Pass 1's on 1 of 7 cases, yielding a 1.7% cost delta — do not hide this in the narrative
