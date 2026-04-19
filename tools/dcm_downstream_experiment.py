@@ -290,14 +290,26 @@ def load_cases(
     h0: float | None = None,
     max_ecc: float = 0.01,
     max_t_normed: float | None = None,
+    converged_filter: str = "converged",
 ) -> list[CaseRow]:
-    """Load converged collocation cases from the trajectory DB."""
+    """Load collocation cases from the trajectory DB.
+
+    converged_filter:
+        "converged" — only rows where converged=TRUE (default)
+        "failed"    — only rows where converged=FALSE
+        "all"       — both
+    """
     con = duckdb.connect(str(db_path), read_only=True)
 
     # check available columns
     cols = {row[1] for row in con.execute("PRAGMA table_info('trajectories')").fetchall()}
 
-    conditions = ["converged = TRUE"]
+    conditions: list[str] = []
+    if converged_filter == "converged":
+        conditions.append("converged = TRUE")
+    elif converged_filter == "failed":
+        conditions.append("converged = FALSE")
+    # "all" → no filter on converged
     params: list[Any] = []
 
     if "method" in cols:
@@ -319,7 +331,8 @@ def load_cases(
             conditions.append("T_normed <= ?")
             params.append(max_t_normed)
 
-    query = f"SELECT id, h0, delta_a, delta_i, T_normed, e0, ef FROM trajectories WHERE {' AND '.join(conditions)} ORDER BY id"
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    query = f"SELECT id, h0, delta_a, delta_i, T_normed, e0, ef FROM trajectories {where} ORDER BY id"
     if limit is not None:
         query += f" LIMIT {int(limit)}"
 
@@ -388,6 +401,9 @@ def parse_args() -> argparse.Namespace:
                    help="Filter out cases with e0 or ef above this.")
     p.add_argument("--max-t-normed", type=float, default=None,
                    help="Filter out cases with T_normed above this.")
+    p.add_argument("--converged", type=str, default="converged",
+                   choices=["converged", "failed", "all"],
+                   help="Case filter by DB convergence status.")
     p.add_argument("--degree", type=int, default=DEFAULT_DEGREE,
                    help="Bézier curve degree.")
     p.add_argument("--n-seg", type=int, default=DEFAULT_NSEG,
@@ -408,6 +424,7 @@ def main() -> None:
         h0=args.h0,
         max_ecc=args.max_ecc,
         max_t_normed=args.max_t_normed,
+        converged_filter=args.converged,
     )
 
     if not cases:

@@ -122,3 +122,47 @@ The comparison is no longer "does Bézier find a better answer?" but "can Bézie
 The ν₀/νf mismatch from Finding 2 still applies. Options:
 - Grid search over (ν₀, νf) in the Bézier optimizer (~64 runs × 0.1s = ~6s, still cheaper than Pass 1 for hard cases)
 - Accept the suboptimal ν and let Pass 2's free-ν search correct it
+
+---
+
+## Finding 4: Bézier does not rescue DCM-failed cases
+
+**Date**: 2026-04-17
+
+### Motivation
+
+Finding 3 showed Bézier+P2 matches DCM's answer faster on cases where DCM already converges. The natural follow-up (Option 3 from the brainstorm): does Bézier+P2 *rescue* cases where DCM fails? A positive result would be strong — Bézier solves otherwise-unsolvable transfers.
+
+### Experiment
+
+Ran the Pass 1 replacement pipeline against all 29 rows in `trajectories.duckdb` with `converged = FALSE AND method = 'collocation'`.
+
+### Result: 0 rescues
+
+| Outcome                        | Count |
+|--------------------------------|-------|
+| Rescued (proposed succeeds, baseline fails) | **0** |
+| Baseline now converges (solver drift) | 14 |
+| Both still fail                | 15 |
+| Bézier upstream feasible       | 4 of 29 |
+
+### Root cause
+
+Two distinct failure modes in the DB "failed" set:
+
+1. **Solver drift**. 14 of 29 cases now converge in our baseline despite the DB marking them failed. The DB was generated with different IPOPT settings / numerical noise / initial guesses. These are not actually failures anymore — they are successes relabeled by history.
+
+2. **Beyond Bézier's representational limits**. Of the remaining 15 genuine failures, 25 of 29 (the full set) have `T_normed ≥ 2`, which Finding 1 already established as infeasible for the single-arc polynomial Bézier. The Bézier upstream fails on these before Pass 2 even runs.
+
+Only 4 cases had Bézier feasible (cases 14, 26, 29, 37). None of those 4 were rescued — Pass 2 still could not converge even with a valid Bézier warm-start, indicating the underlying downstream problem is genuinely hard (tight `da = -500 km` altitude constraints, extreme `delta_a` values, etc.).
+
+### Conclusion
+
+Option 3 is not viable against the existing DB. The failed rows are either (a) DCM failures that no longer reproduce, or (b) multi-revolution transfers outside Bézier's representational range. There is no middle ground in this DB where Bézier+P2 helps where DCM fails.
+
+### Evidence
+
+- Per-case results: `results/dcm_failed_rescue/case_*.json` (29 files)
+- Run commands:
+  - `python tools/dcm_downstream_experiment.py --converged failed --outdir results/dcm_failed_rescue` (circular only)
+  - `python tools/dcm_downstream_experiment.py --converged failed --max-ecc 0.1 --outdir results/dcm_failed_rescue` (incl. eccentric)
