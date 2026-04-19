@@ -4,6 +4,17 @@ An interactive research workbench for **space-time Bezier trajectory optimizatio
 
 The sandbox is the demo: drag obstacles, tweak parameters, watch the optimizer re-solve. For north-star direction see [`VISION.md`](VISION.md). For current architecture and Claude-Code-facing notes see [`CLAUDE.md`](CLAUDE.md).
 
+## Interacting with the sandbox
+
+Every obstacle, plus the start (green) and goal (red) markers, is a grab-handle in the 3D view:
+
+- **L-click + drag** — slide the handle across (x, y) at its current t.
+- **Shift + L-click + drag** — slide along t at fixed (x, y). On an obstacle's end control point this shrinks/extends its active time window; on the goal marker it re-scales scenario T live.
+- **Escape** while dragging — cancel and revert to the pre-drag position.
+- **Right-click drag** — pan the camera. **L-click drag on empty space** — rotate. **Shift + L-click drag on empty space** — pan. **Scroll** — zoom.
+
+The re-solve fires automatically on release (debounced ~150 ms). The trajectory dims while a drag is in progress or a solve is in flight so you can tell the current curve is stale.
+
 ## Quickstart
 
 ```bash

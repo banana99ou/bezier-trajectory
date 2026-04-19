@@ -21,11 +21,13 @@ Action items for moving toward the VISION north star. Ordering follows the phase
 
 ## Phase 2 — Direct manipulation
 
-- [ ] Add 3D picking for obstacles in the interactive viewer (raycast against tube geometry).
-- [ ] Implement drag-on-ground-plane (or drag-in-view-plane) for obstacle position; re-solve on release.
-- [ ] Extend drag to obstacle velocity (e.g. drag a velocity handle) so timing geometry can be edited.
-- [ ] Add drag handles for start and goal endpoints; re-solve on release.
-- [ ] Visual feedback during drag: ghost trajectory, or "solving…" spinner.
+Landed as a 5-commit series on 2026-04-20 (`e9d3311` → `c5d4f8b`). Obstacles travel over the wire as BezierObstacle (`{control_points: [[x,y,t], ...], radius, ...}`); internal APIs still see the legacy `{pos0, vel, r, t_start, t_end}` dict via a converter in `spacetime_bezier/geometry.py`. Degree-1 is a pure schema change (byte-identical parity verified); degree ≥2 raises `NotImplementedError` until the Rust KOZ builder is extended (Phase 3).
+
+- [x] Add 3D picking for obstacles in the interactive viewer — per-frame screen-space pick targets built from the obstacle control points in BezierObstacle shape.
+- [x] Implement drag for obstacle control points: L-click slides (x, y) at fixed t; Shift+L slides along t at fixed (x, y). Camera is locked during drag; Escape cancels; re-solve fires on release.
+- [x] Add drag handles for start and goal endpoints: L-click slides xy; Shift+L on end edits scenario T live (start is pinned at t = 0). A unified pick pass chooses the nearest handle when obstacle CPs and endpoints overlap.
+- [x] Visual feedback during drag: the trajectory is dimmed while a drag or solve is in flight; the existing status pill doubles as the solving spinner.
+- [ ] Obstacle velocity handles — deferred. Velocity is now fully editable via the two control-point t-coordinates, so a separate velocity handle isn't load-bearing for the demo.
 
 ## Phase 3 — Diagnostic bridge
 
