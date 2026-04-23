@@ -1,128 +1,114 @@
-## Bézier Trajectory – Orbital Docking Optimizer
+## Bézier Trajectory – Orbital Rendezvous Optimizer
 
-An orbital docking trajectory optimizer based on Bézier curves. The code finds low control-effort trajectories (proxy objective) for a chaser satellite to rendezvous with the ISS while respecting a spherical Keep‑Out Zone (KOZ), and generates all figures used in the paper and slides.
+Bézier-curve based trajectory optimizer for a simplified orbital rendezvous scenario (Progress-to-ISS inspired). The optimizer minimizes a delta-v surrogate (control acceleration minus gravity, including J2) subject to an Earth-centric spherical Keep‑Out Zone (KOZ), with the KOZ nonconvex constraint convexified segment-by-segment via De Casteljau subdivision.
 
-## Requirements
+See `Project_Spec.md` for the underlying math (scaling, D/E/G matrices, objective, KOZ convexification) and `doc/` for the paper drafts, evidence packs, and experiment design notes that this code backs.
 
-- **Python**: 3.7 or newer  
-- **Dependencies**: install via `requirements.txt`:
+## Repository layout
+
+- **`orbital_docking/`** — Python package: Bézier primitives, D/E/G matrices, De Casteljau subdivision, KOZ + boundary constraints, SCP loop (`optimization.py`), caching, visualization. Also hosts `downstream_collocation.py` and `dymos_t6.py` for comparisons against collocation.
+- **`rust_optimizer/`** — Rust workspace with a core crate (`core/`) and PyO3 bindings (`pybind/`, Python module `bezier_opt`). Optional fast backend; Python is the reference implementation. See `rust_optimizer/QA_strategy.md` for cross-validation rules.
+- **`Orbital_Docking_Optimizer.py`** — main entry point; wraps the `orbital_docking` package.
+- **`sweep_koz_ablation.py`** — KOZ-altitude sweep for the subdivision-count ablation study (N=7).
+- **`tools/`** — A/B benchmarks, diagnostics, Dymos comparison, J2 validation, DCM downstream experiment, figure/CSV builders.
+- **`tests/`** — `unit/`, `integration/`, `regression/`, `property/` splits; conftest under `tests/conftest.py`.
+- **`orbit-transfer-analysis/`** — sibling project absorbed into this repo for the DCM (direct collocation) pipeline used in downstream comparisons.
+- **`doc/`** — paper drafts (Korean), evidence/execution tracking, experiment design notes.
+- **`figures/`**, **`artifacts/`**, **`cache/`**, **`results/`** — generated outputs. Most are gitignored.
+- **`archive/`** — legacy single-curve sphere-avoidance scripts kept for reference.
+
+## Install
+
+Python dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Run all commands from the project root directory (`bezier-trajectory`).
+The scripts target Python 3.11+. The repo-local `.venv/` is a Python 3.11 environment that already has the Rust extension installed; system Python will work for the pure-Python path but needs `maturin develop` (below) if you want the Rust backend.
 
-## One‑click: generate all figures
-
-- **Script**: `generate_all_figures.py`  
-- **What it does**: sequentially calls the existing scripts to regenerate the main figures.
+Optional Rust backend (requires a Rust toolchain and `maturin`):
 
 ```bash
-python generate_all_figures.py
+cd rust_optimizer/pybind
+maturin develop --release
 ```
 
-This will:
-- **Run** `Orbital_Docking_Optimizer.py` to:
-  - Optimize docking trajectories for different segment counts and curve orders
-  - Save main figures under `figures/`, including:
-    - `comparison_N2.png`, `comparison_N3.png`, `comparison_N4.png`
-    - `performance_N2.png`, `performance_N3.png`, `performance_N4.png`
-    - `accel_profiles_N2_seg{2,4,8,16,32,64}.png`
-    - `time_vs_order.png`
-- **Run** `figure/scnario_figure.py` to create the orbital docking scenario / expectation figure:
-  - `orbital_docking_expectation.png`
-- **Run** `figure/constraint_linearization_figures.py` to show KOZ / constraint‑linearization demo figures (3D + 2D).
-- **Run** `archive/Bezier_Curve_Optimizer_legacy.py` to reproduce the legacy sphere‑avoidance optimization figure (used in the initial paper).
+This builds and installs the `bezier_opt` extension into the active venv.
 
-> Note: some of the illustration scripts are primarily interactive and call `plt.show()`. To save additional static images, uncomment or add `plt.savefig(...)` lines inside those modules if needed.
-
-## Main scripts and what they do
-
-- **`Orbital_Docking_Optimizer.py`**  
-  - Full orbital docking optimizer using Bézier curves (N=2,3,4).  
-  - Uses an SCP-style loop with:
-    - KOZ supporting-half-space updates
-    - a quadratic objective built from geometric acceleration plus gravity/J2 linearization around the current iterate
-  - Saves the main optimization, performance, and profile figures into `figures/`.  
-  - Boundary conditions:
-    - **Always enforced**: endpoint positions \(r(0)=P_0\), \(r(1)=P_N\) (implemented by locking the first/last control points via bounds).
-    - **Optional**: endpoint velocity/acceleration equality constraints.
-      - `v0`, `v1`, `a0`, `a1` are forwarded through `optimize_all_segment_counts(...)` into `optimize_orbital_docking(...)` and enforced when provided.
-  - Usage:
-    - **Default (cache enabled)**:
-      ```bash
-      python Orbital_Docking_Optimizer.py
-      ```
-    - **Force recomputation (ignore existing cache, still write new cache)**:
-      ```bash
-      python Orbital_Docking_Optimizer.py --no-cache
-      ```
-
-- **`figure/scnario_figure.py`**  
-  - Generates an “expectation” figure showing Earth, KOZ, chaser, and ISS positions (3D + 2D layout).  
-  - Saves `orbital_docking_expectation.png` (in the current working directory).  
-  - Usage:
-    ```bash
-    python figure/scnario_figure.py
-    ```
-
-- **`figure/constraint_linearization_figures.py`**  
-  - Visualizes how nonlinear KOZ constraints are turned into supporting half‑spaces using Bézier segment subdivision.  
-  - Provides:
-    - 3D illustrations of a curve and sphere with segment‑wise constraint planes  
-    - 2D KOZ linearization plots showing violating segments and corrected segments  
-  - When run as a script, it currently focuses on the 2D KOZ linearization figure and shows it interactively.  
-  - Usage:
-    ```bash
-    python figure/constraint_linearization_figures.py
-    ```
-
-- **`archive/Bezier_Curve_Optimizer_legacy.py`**  
-  - Legacy implementation used to generate figures for the initial paper (sphere‑avoidance with a single Bézier curve).  
-  - Shows a 2×3 grid of optimized curves with different segment counts.  
-  - Contains a commented `plt.savefig("bezier_outside_sphere_2x3.png", ...)` line you can uncomment to save the legacy figure.  
-  - Usage:
-    ```bash
-    python archive/Bezier_Curve_Optimizer_legacy.py
-    ```
-
-- **`archive/basic_usage.py`, `archive/bezier.py`, `archive/bezier_matrix_utils.py`, `archive/integration_demo.py`**  
-  - Earlier, more didactic utilities and demos for Bézier curves and integration.  
-  - Kept for reference; not required for the main orbital docking results.
-
-- **`generate_all_figures.py`**  
-  - Thin “orchestrator” that runs all major scripts in sequence for one‑click reproduction of figures.  
-  - Recommended entry point for reproducing all results.
-
-## Directories
-
-- **`figures/`**  
-  - Output directory for generated figures (PNG) from the main optimizer and diagnostic scripts.
-
-- **`cache/`**  
-  - Stores pickled optimization results used by `Orbital_Docking_Optimizer.py` for faster repeated runs.
-
-- **`archive/`**  
-  - Legacy code and figure generators corresponding to the initial paper versions.  
-
-
-## A/B: endpoint feasibility fix (parallel)
-
-The repo includes a reproducible A/B benchmark script:
-
-- **Script**: `tools/ab_endpoint_fix_parallel.py`
-- **Output**: writes CSV + Markdown reports into `artifacts/ab_tests/`
-- **Windows-friendly**: no here-doc, and it defaults to using `.venv/Scripts/python.exe` when present
-
-Run (example):
+## Run the main optimizer
 
 ```bash
-python tools/ab_endpoint_fix_parallel.py --objective dv --max-iter 1000 --tol 1e-3 --workers 32
+python Orbital_Docking_Optimizer.py
 ```
 
-You can also pass lists:
+Useful flags:
+
+- `-N {6,7,8} [...]` — Bézier degrees to run (default `6 7 8`).
+- `--objective {dv,energy}` — L1-style delta-v proxy (default) or legacy L2 control-energy.
+- `--no-cache` — ignore existing pickled results under `cache/` and recompute.
+- `--max-iter N`, `--tol T` — SCP outer-loop budget / convergence tolerance.
+- `--scp-prox`, `--scp-trust-radius` — outer-loop stabilization (proximal weight + trust radius).
+- `--enforce-prograde` — add prograde-motion constraint.
+- `--n-jobs K` — parallelize across segment counts (`K=0` for auto).
+- `--show` — display figures interactively (default: save to `figures/` only).
+- `-v` / `-d` — verbose / debug output.
+
+Outputs are written under `figures/` (plots) and `cache/` (pickled optimization results).
+
+## KOZ-altitude subdivision ablation
 
 ```bash
-python tools/ab_endpoint_fix_parallel.py --orders 2 3 4 --seg-counts 2 4 8 16 32 64
+python sweep_koz_ablation.py
 ```
+
+Sweeps KOZ altitudes at N=7 across all segment counts to isolate regimes where subdivision count actually matters. Results feed `doc/subdivision_ablation_pack.md` and `doc/degree_ablation_pack.md`.
+
+## Diagnostic, benchmark, and comparison tools
+
+All live under `tools/`. Representative entry points:
+
+- **A/B endpoint-feasibility fix** — `tools/ab_endpoint_fix_parallel.py`, CSV + Markdown reports into `artifacts/ab_tests/`. Example:
+  ```bash
+  python tools/ab_endpoint_fix_parallel.py --objective dv --max-iter 1000 --tol 1e-3 --workers 32
+  python tools/ab_endpoint_fix_parallel.py --orders 2 3 4 --seg-counts 2 4 8 16 32 64
+  ```
+- **Convergence diagnostic** — `tools/convergence_diagnostic.py`.
+- **J2 validation** — `tools/fetch_j2_reference_data.py`, `tools/verify_j2_logic.py`.
+- **Dymos T6 comparison** — `tools/t6_dymos_compare.py`, `tools/t6_dymos_time_sweep.py`, evidence pack builder `tools/t6_evidence_pack.py`.
+- **DCM downstream experiment** — `tools/dcm_downstream_experiment.py` (Bézier as Pass‑1 replacement for a Hermite–Simpson → LGL pipeline from `orbit-transfer-analysis/`). Design: `doc/dcm_downstream_experiment_design.md`.
+- **Boundary-condition feasibility diagnostics** — `tools/diagnose_n3_bc_feasibility.py`, `tools/diagnose_boundary_velocity_cases.py`.
+- **Paper figure/CSV builders** — `tools/build_csv.py`, `tools/build_f3.py` … `tools/build_f5.py`, `tools/build_t6_f6.py`, `tools/extract_pngs_to_artifacts.py`.
+
+Each tool is self-contained with `--help`.
+
+## Tests
+
+```bash
+pytest
+```
+
+Layout under `tests/`:
+- `unit/` — Bézier primitives, D/E/G, De Casteljau, gravity + J2, constraints, downstream collocation.
+- `integration/` — full SCP feasibility and KOZ satisfaction.
+- `regression/` — golden-run and J2 baseline snapshots.
+- `property/` — property-based checks.
+
+Regression snapshots pin the current physics + numerics; a diff there means either an intentional change or a bug.
+
+## Papers and evidence
+
+- **`Project_Spec.md`** — problem statement, coordinate frame, Bézier derivative matrices, KOZ convexification, objective.
+- **`doc/paper_draft_korean.md`**, **`doc/paper_draft_korean.pdf`** — current manuscript.
+- **`doc/paper_evidence_map.md`**, **`doc/paper_execution_state.md`** — claim → evidence mapping and status.
+- **`doc/method_artifact_pack.md`**, **`doc/demonstration_evidence_pack.md`**, **`doc/degree_ablation_pack.md`**, **`doc/subdivision_ablation_pack.md`**, **`doc/dcm_downstream_pack.md`** — artifact packs per figure/table.
+
+## Scenario (summary)
+
+- Chaser (Progress-like) at 245 km circularized parking orbit.
+- Target (ISS-like) at 400 km circular orbit.
+- Inclination 51.64°, RAAN 0°, 30° phase lag.
+- KOZ: Earth-centric sphere at 100 km altitude (`‖r(τ)‖ ≥ R_E + 100 km`).
+- Fixed transfer time `T` (variable-time extension is future work).
+
+Full derivation of endpoints and matrices is in `Project_Spec.md`.
