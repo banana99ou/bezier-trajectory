@@ -388,6 +388,138 @@
   - Bad: `본 절의 작동 영역은 두 가지 독립된 경계로 정의된다.`
   - Good: `제안 pipeline의 작동 영역은 두 가지 독립된 경계로 정의되며, 이하에서 각각을 살펴본다.`
 
+### Case 25. `증명 요약` — "Proof sketch" 직역
+
+- Source pattern:
+  - `**증명 요약.** ...`
+- Comment:
+  - `awkward direct translation`
+- Bad pattern:
+  - 영어 논문의 `Proof sketch.` 라벨을 기계적으로 한국어로 옮김
+  - 한국어 수학/공학 논문에서는 `증명 요약`이라는 라벨을 잘 쓰지 않음
+- Better direction:
+  - `증명.` 한 단어로 충분
+  - 내용이 짧고 비엄밀하면 독자가 이미 sketch로 인식함
+  - 굳이 sketch임을 밝혀야 한다면 `증명의 개요`나 본문 서술로 풀어 쓰기
+- Good pattern example:
+  - `**증명.** Bézier 곡선은 제어점의 컨벡스 헐 안에 놓인다. ...`
+
+### Case 26. 용어 선택 일관성 (저자 정책: `컨벡스`)
+
+- Source pattern:
+  - `볼록 껍질`
+  - `볼록 2차 계획 문제`
+- Comment:
+  - `sync word choice with the rest of paper. my choice of word for convex is "컨벡스"`
+- Bad pattern:
+  - `볼록`과 `컨벡스`를 한 문서 안에서 섞어 씀
+  - 이 저자의 정책은 `convex` 계열 용어를 `컨벡스`로 통일
+- Better direction:
+  - `convex hull` → `컨벡스 헐`
+  - `convex QP` → `컨벡스 QP`
+  - `non-convex` → `논컨벡스`
+  - `convexity` → `컨벡스성`
+  - `convexification` → `컨벡스화`
+- Good pattern example:
+  - `제어점의 컨벡스 헐 안에 놓인다.`
+
+### Case 27. `유래한다` — unusual verb for "stem from"
+
+- Source pattern:
+  - `X는 Y가 구조적으로 어려운 수준이라는 점에서 유래한다.`
+- Comment:
+  - `unusual word choice`
+- Bad pattern:
+  - `유래한다`는 원인 서술에서 자연스럽지 않음
+  - 역사·기원 서술에 가까운 단어이며 기술 서술에서는 이질감
+- Better direction:
+  - `이는 ... 때문이다`
+  - `기인한다`
+  - `~에서 비롯된다`
+- Good pattern example:
+  - `이는 수렴 허용오차가 구조적으로 도달하기 어려운 수준이기 때문이다.`
+
+### Case 28. `SCP 절차`의 어색함
+
+- Source pattern:
+  - `SCP 절차에서는 ...`
+- Comment:
+  - `awkward`
+- Bad pattern:
+  - `절차(procedure)`라는 추상명사가 반복 설명과 결합할 때 어색함
+  - 이미 본문에서 `SCP 반복`이라는 자연스러운 표현이 정착되어 있음
+- Better direction:
+  - `SCP 반복에서는 ...`
+  - `SCP 루프에서는 ...`
+  - 알고리즘을 지칭할 때는 `SCP 알고리즘`
+- Good pattern example:
+  - `SCP 반복에서는 매 반복마다 지지 반공간이 재구성된다.`
+
+### Case 29. `노름`이라는 음역의 부자연스러움
+
+- Source pattern:
+  - `Frobenius 노름`
+- Comment:
+  - `da fuq is this brain dead word? I know Korean people use this word. this feels soooo brain dead Konglish. either use 한자어 or English`
+- Bad pattern:
+  - `norm`의 한국어 음역 `노름`은 발음과 기존 한국어 단어(도박의 `노름`)와 충돌
+  - 공학 문헌에서 흔히 쓰이긴 하지만 저자 기준으로는 부자연스러움
+- Better direction:
+  - 영어 그대로 유지: `Frobenius norm`
+  - 이미 수식이 옆에 있으면 굳이 단어로 반복하지 않아도 됨
+- Good pattern example:
+  - `제어점 변화의 Frobenius norm이 $10^{-12}$ 이하로 감소하기 어렵다.`
+
+### Case 30. `변화시키는 진단 실험` — awkward noun-stacked phrase
+
+- Source pattern:
+  - `반복 한도를 100부터 10000까지 변화시키는 진단 실험을 수행하였다.`
+- Comment:
+  - `bad word choice. choose other words for this meaning`
+- Bad pattern:
+  - `변화시키는`은 영어 `varying`의 직역이며, 뒤의 `진단 실험`과 결합하면 추상명사 밀도가 과도
+  - Case 7(어색한 추상명사 결합)의 연장
+- Better direction:
+  - 동작 중심으로 풀어 쓰기
+  - `바꿔가며 ... 를 측정하였다`
+  - `... 를 조절하며 ... 를 관찰하였다`
+- Good pattern example:
+  - `반복 한도를 100부터 10000까지 바꿔가며 수렴 거동을 측정하였다.`
+
+### Case 31. `X는 약 Y 이내에 있었고` — English "was within" 직역
+
+- Source pattern:
+  - `안전 여유는 약 7% 이내에 있었고, ...`
+- Comment:
+  - `again reuse of English sentence structure`
+- Bad pattern:
+  - `X was within Y%`를 `X는 Y% 이내에 있었고`로 그대로 옮김
+  - 한국어에서는 `~에 있다`가 공간 존재에 가깝고, 수치 범위에는 `~로 좁혀지다`, `~에 머물다`가 자연스러움
+- Better direction:
+  - `~이내로 좁혀졌다`
+  - `~이내에 머물렀다`
+  - `~이내의 차이를 보였다`
+- Good pattern example:
+  - `delta-v 대리 지표와 안전 여유는 각각 약 2.6%, 7% 이내로 좁혀졌고, ...`
+
+### Case 32. `보고된` — direct translation of "reported"
+
+- Source pattern:
+  - `보고된 결과는 안정화된 해로 해석할 수 있다.`
+- Comment:
+  - `another brain dead direct translation of "reported"`
+- Bad pattern:
+  - 영어 `the reported results`를 `보고된 결과`로 옮김
+  - 논문 본문에서 `보고`라는 단어는 보통 관료·보고서 맥락을 연상시킴
+  - 자체 논문 안에서 자기 결과를 `보고된`이라고 부르면 어색함
+- Better direction:
+  - `위 결과는 ...`
+  - `제시된 결과는 ...`
+  - `표 X의 결과는 ...`
+  - 문장에 따라 지시어로 대체 (`이 결과는`)
+- Good pattern example:
+  - `위 결과는 안정화된 해로 해석할 수 있다.`
+
 ---
 
 ## 3. Reusable Writing Rules
@@ -407,6 +539,11 @@
 11. 절 사이 연결 문단은 한 문장 이내로 축약한다. 요약과 예고를 둘 다 full sentence로 쓰지 않는다.
 12. `자리`, `본 절의 X` 같은 모호한 장소·절-귀속 명사 구문은 지우거나 진짜 주어로 고친다.
 13. 영어 `not A but B` 구문을 `A가 아니라 B` 형태로 직역하지 않는다. 긍정 주장을 먼저 쓰고 부정 단서는 짧게 뒤에 붙인다.
+14. 영어 수학/증명 라벨(`Proof sketch`, `Remark`)을 기계적으로 번역하지 않는다. `증명.` 등 한국어 관용 라벨로 축약하거나 본문 서술로 흡수한다.
+15. `convex` 계열 용어는 저자 정책에 따라 `컨벡스 / 컨벡스 헐 / 논컨벡스 / 컨벡스화`로 통일한다. `볼록`과 혼용하지 않는다.
+16. `유래한다`, `에 있었다`, `보고된` 등 영어 서술 동사의 기계적 직역을 피한다. `이기 때문이다`, `로 좁혀지다`, `위 결과는` 등 한국어 서술 습관을 따른다.
+17. `norm`처럼 음역이 기존 한국어 단어(`노름`)와 충돌하는 경우 영어 그대로 둔다.
+18. `변화시키는 진단 실험`처럼 동사+추상명사 스택으로 영어 원문을 직역하지 않는다. 동작 중심 문장으로 다시 쓴다.
 
 ---
 
@@ -452,6 +589,30 @@
 
 - Bad: `A를 지지하는 것이 아니라, B는 범위에서 해석되어야 한다` (긴 not-A-but-B 직역)
 - Good: `B이며, A라기보다는 제한된 범위 안에서의 교체 가능성으로 해석해야 한다`
+
+- Bad: `**증명 요약.**`
+- Good: `**증명.**`
+
+- Bad: `볼록 껍질`, `볼록 2차 계획 문제`
+- Good: `컨벡스 헐`, `컨벡스 QP`
+
+- Bad: `유래한다`
+- Good: `이기 때문이다`, `기인한다`, `에서 비롯된다`
+
+- Bad: `SCP 절차`
+- Good: `SCP 반복`, `SCP 루프`
+
+- Bad: `Frobenius 노름`
+- Good: `Frobenius norm`
+
+- Bad: `반복 한도를 변화시키는 진단 실험을 수행하였다`
+- Good: `반복 한도를 바꿔가며 수렴 거동을 측정하였다`
+
+- Bad: `안전 여유는 약 7% 이내에 있었고`
+- Good: `안전 여유는 약 7% 이내로 좁혀졌고`
+
+- Bad: `보고된 결과는 ...`
+- Good: `위 결과는 ...`, `제시된 결과는 ...`
 
 ---
 
