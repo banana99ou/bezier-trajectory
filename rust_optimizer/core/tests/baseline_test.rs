@@ -216,6 +216,9 @@ fn test_optimizer_golden_run() {
         None,
         false,
         16,
+        1e4,   // elastic_weight
+        false, // freeze_gravity_jacobian
+        1,     // freeze_after_iter
     );
 
     eprintln!("=== Rust optimizer result ===");

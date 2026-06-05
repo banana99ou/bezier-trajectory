@@ -2,6 +2,7 @@
 
 /// A linear constraint: lb <= A @ x <= ub.
 /// A is stored row-major with shape (n_rows, n_vars).
+#[derive(Clone)]
 pub struct LinearConstraint {
     pub a: Vec<f64>,
     pub lb: Vec<f64>,

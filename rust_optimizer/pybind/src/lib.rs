@@ -1,7 +1,7 @@
 use bezier_opt_core::optimizer;
 use numpy::{PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
 
 #[pyfunction]
 #[pyo3(signature = (
@@ -24,6 +24,8 @@ use pyo3::types::PyDict;
     prograde_n_samples = 16,
     elastic_weight = 1e4,
     transfer_time = 1500.0,
+    freeze_gravity_jacobian = false,
+    freeze_after_iter = 1,
 ))]
 fn optimize_orbital_docking<'py>(
     py: Python<'py>,
@@ -46,6 +48,8 @@ fn optimize_orbital_docking<'py>(
     prograde_n_samples: usize,
     elastic_weight: f64,
     transfer_time: f64,
+    freeze_gravity_jacobian: bool,
+    freeze_after_iter: usize,
 ) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyDict>)> {
     let p_arr = p_init.as_array();
     let np1 = p_arr.shape()[0];
@@ -81,6 +85,8 @@ fn optimize_orbital_docking<'py>(
         enforce_prograde,
         prograde_n_samples,
         elastic_weight,
+        freeze_gravity_jacobian,
+        freeze_after_iter,
     );
 
     let p_opt = PyArray2::from_vec2(py, &{
@@ -97,6 +103,16 @@ fn optimize_orbital_docking<'py>(
     }
     info.set_item("feasible", result.feasible)?;
     info.set_item("iterations", result.iterations)?;
+
+    // Surface jacobian drift trace as a list-of-lists (outer = SCP iter, inner = segment).
+    if !result.jacobian_drift_history.is_empty() {
+        let outer = PyList::empty(py);
+        for row in &result.jacobian_drift_history {
+            let inner = PyList::new(py, row)?;
+            outer.append(inner)?;
+        }
+        info.set_item("jacobian_drift_history", outer)?;
+    }
 
     Ok((p_opt, info))
 }
