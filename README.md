@@ -9,10 +9,9 @@ See `Project_Spec.md` for the underlying math (scaling, D/E/G matrices, objectiv
 - **`orbital_docking/`** — Python package: Bézier primitives, D/E/G matrices, De Casteljau subdivision, KOZ + boundary constraints, SCP loop (`optimization.py`), caching, visualization. Also hosts `downstream_collocation.py` and `dymos_t6.py` for comparisons against collocation.
 - **`rust_optimizer/`** — Rust workspace with a core crate (`core/`) and PyO3 bindings (`pybind/`, Python module `bezier_opt`). Optional fast backend; Python is the reference implementation. See `rust_optimizer/QA_strategy.md` for cross-validation rules.
 - **`Orbital_Docking_Optimizer.py`** — main entry point; wraps the `orbital_docking` package.
-- **`sweep_koz_ablation.py`** — KOZ-altitude sweep for the subdivision-count ablation study (N=7).
-- **`tools/`** — A/B benchmarks, diagnostics, Dymos comparison, J2 validation, DCM downstream experiment, figure/CSV builders.
+- **`tools/`** — A/B benchmarks, convergence + boundary diagnostics, Dymos comparison, J2 validation, DCM downstream experiment, KOZ-altitude sweep (`sweep_koz_ablation.py`), figure/CSV builders.
 - **`tests/`** — `unit/`, `integration/`, `regression/`, `property/` splits; conftest under `tests/conftest.py`.
-- **`orbit-transfer-analysis/`** — sibling project absorbed into this repo for the DCM (direct collocation) pipeline used in downstream comparisons.
+- **`dcm_baseline/`** — extracted DCM (direct collocation) baseline package (`orbit_transfer`): Hermite–Simpson → peak‑detect → Multi‑Phase LGL two‑pass pipeline plus its case database (`data/trajectories.duckdb`), used in downstream comparisons. Install with `pip install -e dcm_baseline`. Lifted out of the former vendored `orbit-transfer-analysis/` sibling repo.
 - **`doc/`** — paper drafts (Korean), evidence/execution tracking, experiment design notes.
 - **`figures/`**, **`artifacts/`**, **`cache/`**, **`results/`** — generated outputs. Most are gitignored.
 - **`archive/`** — legacy single-curve sphere-avoidance scripts kept for reference.
@@ -35,6 +34,53 @@ maturin develop --release
 ```
 
 This builds and installs the `bezier_opt` extension into the active venv.
+
+## Building / rebuilding the Rust backend (`bezier_opt`)
+
+> **Gotcha that will waste your afternoon:** Python imports a *compiled* `.so`.
+> After editing **any** Rust source under `rust_optimizer/`, you **must** rebuild
+> *and* reinstall it. Otherwise Python silently keeps running the old binary — your
+> change appears to have no effect (e.g. an optimizer fix that doesn't move the
+> iteration count, because the `.so` predates the fix).
+
+Standard build (works when the venv's interpreter is named `pythonX.Y`):
+
+```bash
+cd rust_optimizer/pybind
+maturin develop --release        # build + install into the ACTIVE venv
+```
+
+Robust fallback — use this if `maturin develop` errors with
+*"could not determine version from interpreter name 'python'"* (maturin can't
+introspect the venv's bare `python` symlink; happens e.g. when the repo lives on an
+external volume). Build a wheel against the **explicit** interpreter, then force-reinstall:
+
+```bash
+# from repo root, venv at .venv (Python 3.11)
+.venv/bin/maturin build --release -i .venv/bin/python3.11
+.venv/bin/pip install --force-reinstall --no-deps \
+    rust_optimizer/target/wheels/bezier_opt-*.whl
+```
+
+Confirm the installed extension is actually current (its mtime should be newer than your last Rust edit):
+
+```bash
+find .venv -iname 'bezier_opt*.so' -exec ls -l {} \;
+.venv/bin/python -c "import bezier_opt; print(bezier_opt.__file__)"
+```
+
+### Rust-only build & tests (no Python)
+
+```bash
+cd rust_optimizer/core
+cargo build --release
+cargo test --test baseline_test   # run a named target; bare `cargo test` can fail
+                                  # if a stray *.sync-conflict-*.rs file sits in tests/
+```
+
+After a Rust change, the loop is: edit → rebuild/reinstall the wheel (above) → rerun
+with `--no-cache` (cached pickles under `cache/` are keyed on params, not on the
+solver binary, so a stale cache will hand back old-solver results).
 
 ## Run the main optimizer
 
@@ -59,7 +105,7 @@ Outputs are written under `figures/` (plots) and `cache/` (pickled optimization 
 ## KOZ-altitude subdivision ablation
 
 ```bash
-python sweep_koz_ablation.py
+python tools/sweep_koz_ablation.py
 ```
 
 Sweeps KOZ altitudes at N=7 across all segment counts to isolate regimes where subdivision count actually matters. Results feed `doc/subdivision_ablation_pack.md` and `doc/degree_ablation_pack.md`.
@@ -76,7 +122,7 @@ All live under `tools/`. Representative entry points:
 - **Convergence diagnostic** — `tools/convergence_diagnostic.py`.
 - **J2 validation** — `tools/fetch_j2_reference_data.py`, `tools/verify_j2_logic.py`.
 - **Dymos T6 comparison** — `tools/t6_dymos_compare.py`, `tools/t6_dymos_time_sweep.py`, evidence pack builder `tools/t6_evidence_pack.py`.
-- **DCM downstream experiment** — `tools/dcm_downstream_experiment.py` (Bézier as Pass‑1 replacement for a Hermite–Simpson → LGL pipeline from `orbit-transfer-analysis/`). Design: `doc/dcm_downstream_experiment_design.md`.
+- **DCM downstream experiment** — `tools/dcm_downstream_experiment.py` (Bézier as Pass‑1 replacement for a Hermite–Simpson → LGL pipeline from the `dcm_baseline/` package). Design: `doc/dcm_downstream_experiment_design.md`.
 - **Boundary-condition feasibility diagnostics** — `tools/diagnose_n3_bc_feasibility.py`, `tools/diagnose_boundary_velocity_cases.py`.
 - **Paper figure/CSV builders** — `tools/build_csv.py`, `tools/build_f3.py` … `tools/build_f5.py`, `tools/build_t6_f6.py`, `tools/extract_pngs_to_artifacts.py`.
 
