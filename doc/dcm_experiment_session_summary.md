@@ -7,7 +7,7 @@ Context for resuming work on the Bézier-vs-DCM downstream experiment in a fresh
 Two subprojects coexist in this repo:
 
 - **`orbital_docking/`** — Bézier SCP optimizer for orbital trajectories (Rust backend via `bezier_opt` pybind). Originally built for Progress→ISS rendezvous (fixed 1500s transfer). Generalized during this session.
-- **`orbit-transfer-analysis/`** — DCM (Direct Collocation Method) two-pass pipeline (Hermite-Simpson → peak detect → Multi-Phase LGL) for parametric LEO-to-LEO transfers. Builds a trajectory database at `data/trajectories.duckdb` (220 converged cases, 29 failed).
+- **`dcm_baseline/`** (extracted from the retired `orbit-transfer-analysis/`) — DCM (Direct Collocation Method) two-pass pipeline (Hermite-Simpson → peak detect → Multi-Phase LGL) for parametric LEO-to-LEO transfers. Trajectory database at `dcm_baseline/data/trajectories.duckdb` (220 converged cases, 29 failed).
 
 ## The original question
 
@@ -125,7 +125,7 @@ Finding 1 blocks 25 of 29 failed cases. A piecewise Bézier (K arcs, each coveri
 - Visualization: `tools/dcm_visualize_case.py` — produces 3D + radius + thrust plots per case
 
 ### Data
-- DB: `orbit-transfer-analysis/data/trajectories.duckdb`
+- DB: `dcm_baseline/data/trajectories.duckdb`
   - Column name is `T_normed` (NOT `T_max_normed` — but `TransferConfig` field is `T_max_normed`, map carefully)
   - 220 converged, 29 failed collocation cases
 - Results: `results/dcm_pass1_replace/` (option 4 — 4 cases), `results/dcm_failed_rescue/` (option 3 — 29 cases)

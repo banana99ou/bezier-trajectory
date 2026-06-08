@@ -239,7 +239,7 @@ ID gaps are allowed if an earlier planned artifact was removed or deferred; do n
   - The two-pass DCM pipeline (baseline) — already implemented in `orbit_transfer.optimizer.two_pass.TwoPassOptimizer`
   - Bézier SCP upstream — already implemented in `orbital_docking.optimization.optimize_orbital_docking`
   - Warm-start export mapping from Bézier to Pass 2 LGL, reusing the baseline's `detect_peaks`, `determine_phase_structure`, and `interpolate_pass1_to_pass2`
-  - Matched problem instances drawn from `orbit-transfer-analysis/data/trajectories.duckdb`
+  - Matched problem instances drawn from `dcm_baseline/data/trajectories.duckdb`
   - Fairness protocol with identical tolerances and stopping rules across both pipelines
 - Input status: present
 - Why the inputs are marked this way: T6 and F6 are data-ready via `artifacts/paper_artifacts/t6_downstream_comparison.csv` and `figures/f6_downstream_speedup.png`; owned by `doc/dcm_downstream_pack.md`; evidence map entry for C9 now marks it `present` with the scoped Pass-1-replacement wording.

@@ -208,7 +208,7 @@ Item #66 (paper-wide nominalization sweep) is the only Phase-3 item that's both 
 These four are not in the 87 but are part of the same review round:
 
 - **V1.** Frozen-linearization probe (listed as Phase-0 decision above)
-- **V2.** Two-pass discoverability — `tools/dcm_downstream_experiment.py` and `orbit-transfer-analysis/` are not visible from the `orbital_docking/` directory the prof browsed. Add a top-level pointer in README and `Project_Spec.md`. Imp H, Ease T.
+- **V2.** Two-pass discoverability — `tools/dcm_downstream_experiment.py` and `dcm_baseline/` are not visible from the `orbital_docking/` directory the prof browsed. Add a top-level pointer in README and `Project_Spec.md`. Imp H, Ease T.
 - **V3.** "수십초 걸리는게 이상해요" — addressed automatically by Phase 1 (sane tolerance → ~30× runtime drop). No separate action needed.
 - **V4.** "5회 이내 수렴해야" — addressed by V1 outcome. If frozen linearization works, true. If not, reframe expectation in §6.1.
 

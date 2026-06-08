@@ -37,13 +37,13 @@ Both pipelines start from the same `TransferConfig` (case parameters). No stored
 
 | Experiment concept    | Code                                                                 |
 |-----------------------|----------------------------------------------------------------------|
-| Case parameters       | `orbit-transfer-analysis/data/trajectories.duckdb` (converged rows)  |
-| TransferConfig        | `orbit-transfer-analysis/src/orbit_transfer/types.py`                |
-| DCM naive guess       | `orbit-transfer-analysis/src/orbit_transfer/optimizer/initial_guess.py` → `linear_interpolation_guess()` |
-| DCM solver            | `orbit-transfer-analysis/src/orbit_transfer/optimizer/two_pass.py` → `TwoPassOptimizer` |
+| Case parameters       | `dcm_baseline/data/trajectories.duckdb` (converged rows)  |
+| TransferConfig        | `dcm_baseline/src/orbit_transfer/types.py`                |
+| DCM naive guess       | `dcm_baseline/src/orbit_transfer/optimizer/initial_guess.py` → `linear_interpolation_guess()` |
+| DCM solver            | `dcm_baseline/src/orbit_transfer/optimizer/two_pass.py` → `TwoPassOptimizer` |
 | Upstream optimizer    | `orbital_docking/optimization.py` → `optimize_orbital_docking()`     |
 | Bézier initialization | `orbital_docking/optimization.py` → `generate_initial_control_points()` |
-| ECI conversion        | `orbit-transfer-analysis/src/orbit_transfer/astrodynamics/orbital_elements.py` → `oe_to_rv()` |
+| ECI conversion        | `dcm_baseline/src/orbit_transfer/astrodynamics/orbital_elements.py` → `oe_to_rv()` |
 
 ## Interface Bridge
 
