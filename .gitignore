@@ -1,6 +1,7 @@
 .venv
 .DS_Store
 __pycache__
+*.egg-info/
 *.code-workspace
 .git_corrupt_*
 ref/*

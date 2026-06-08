@@ -15,3 +15,5 @@ python-dateutil==2.9.0.post0
 scipy==1.16.3
 six==1.17.0
 trimesh>=4.0.0
+# DCM baseline package (orbit_transfer); pulls casadi, duckdb, scikit-learn, etc.
+-e ./dcm_baseline

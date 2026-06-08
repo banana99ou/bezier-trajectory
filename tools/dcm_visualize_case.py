@@ -19,9 +19,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-OTA_ROOT = REPO_ROOT / "orbit-transfer-analysis"
-sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(0, str(OTA_ROOT / "src"))
+sys.path.insert(0, str(REPO_ROOT))  # for the in-repo orbital_docking package
+# orbit_transfer is the DCM baseline package, provided by `pip install -e dcm_baseline`
 
 from orbital_docking.bezier import BezierCurve
 from orbital_docking.optimization import optimize_orbital_docking
@@ -38,7 +37,7 @@ from orbit_transfer.dynamics.two_body import gravity_acceleration
 from orbit_transfer.optimizer.two_pass import TwoPassOptimizer
 from orbit_transfer.types import TransferConfig
 
-DEFAULT_DB = OTA_ROOT / "data" / "trajectories.duckdb"
+DEFAULT_DB = REPO_ROOT / "dcm_baseline" / "data" / "trajectories.duckdb"
 OUT_DIR = REPO_ROOT / "results" / "dcm_visualize"
 
 

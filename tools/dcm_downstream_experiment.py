@@ -28,16 +28,14 @@ import numpy as np
 
 # ── path setup ──────────────────────────────────────────────────────────────
 REPO_ROOT = Path(__file__).resolve().parents[1]
-OTA_ROOT = REPO_ROOT / "orbit-transfer-analysis"
-
-sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(0, str(OTA_ROOT / "src"))
+sys.path.insert(0, str(REPO_ROOT))  # for the in-repo orbital_docking package
+# orbit_transfer is the DCM baseline package, provided by `pip install -e dcm_baseline`
 
 # ── imports: Bézier optimizer ───────────────────────────────────────────────
 from orbital_docking.bezier import BezierCurve
 from orbital_docking.optimization import optimize_orbital_docking
 
-# ── imports: orbit-transfer-analysis (DCM) ──────────────────────────────────
+# ── imports: DCM baseline (orbit_transfer) ──────────────────────────────────
 from orbit_transfer.astrodynamics.kepler import kepler_propagate
 from orbit_transfer.astrodynamics.orbital_elements import oe_to_rv
 from orbit_transfer.classification.classifier import classify_profile, determine_phase_structure
@@ -50,7 +48,7 @@ from orbit_transfer.optimizer.two_pass import TwoPassOptimizer
 from orbit_transfer.types import TransferConfig, TrajectoryResult
 
 # ── defaults ────────────────────────────────────────────────────────────────
-DEFAULT_DB = OTA_ROOT / "data" / "trajectories.duckdb"
+DEFAULT_DB = REPO_ROOT / "dcm_baseline" / "data" / "trajectories.duckdb"
 DEFAULT_OUTDIR = REPO_ROOT / "results" / "dcm_downstream_experiment"
 DEFAULT_DEGREE = 6
 DEFAULT_NSEG = 16
