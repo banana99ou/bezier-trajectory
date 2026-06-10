@@ -43,3 +43,19 @@ doc/career_profile_and_advice.md
 
 # etc/sidetrack
 forethoughs
+
+# LaTeX build artifacts (regenerable from .tex sources)
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+*.lof
+*.lot
+*.nav
+*.snm
+*.vrb
