@@ -32,9 +32,9 @@ Scenario (Progress-to-ISS inspired, simplified single-arc):
     - 30 deg phase lag
 
 Optimization:
-    The cost function minimizes a delta-v surrogate (control acceleration minus gravity)
-    while satisfying KOZ constraints enforced through iterative linearization
-    using De Casteljau subdivision.
+    The cost function minimizes a convex quadratic control-effort energy (control
+    acceleration minus linearized gravity) while satisfying KOZ constraints enforced
+    through successive convexification with De Casteljau subdivision.
 
 Visualization:
     - 3D trajectory plots with Earth and KOZ spheres
@@ -142,7 +142,7 @@ def main() -> None:
         "--tol",
         type=float,
         default=1e-6,
-        help="Outer SCP convergence tolerance on control-point update norm. Default: 1e-6.",
+        help="Outer-loop convergence tolerance on the merit change. Default: 1e-6.",
     )
     parser.add_argument(
         "--n-jobs",
@@ -154,11 +154,11 @@ def main() -> None:
     parser.add_argument(
         "--objective",
         type=str,
-        default="dv",
+        default="energy",
         choices=["dv", "energy"],
         help="Objective to optimize. "
-        "'dv' uses an IRLS L1-style delta-v proxy; 'energy' uses the legacy L2 control-energy surrogate. "
-        "Default: dv.",
+        "'energy' (default) is the QP-native quadratic control-effort objective; "
+        "'dv' is a deprecated sum-of-norms (SOCP) delta-v proxy.",
     )
     parser.add_argument(
         "--enforce-prograde",
@@ -169,15 +169,15 @@ def main() -> None:
         "--scp-prox",
         type=float,
         default=1e-6,
-        help="Outer SCP proximal weight (>=0). Adds (lambda/2)||P-P_prev||^2 per SCP iteration. "
-        "Use small positive values (e.g., 1e-6 to 1e-3) for stabilization.",
+        help="Optional proximal weight (>=0) adding (lambda/2)||P-P_prev||^2 to the QP. "
+        "The SCvx trust region is the primary stabilizer; this is a secondary regularizer. Default: 1e-6.",
     )
     parser.add_argument(
         "--scp-trust-radius",
         type=float,
         default=2000.0,
-        help="Outer SCP trust radius in control-point vector 2-norm (km). "
-        "If >0, clips each SCP step to this radius. Default: 2000.",
+        help="SCvx trust-region radius (km, control-point 2-norm). Bounds each step as a "
+        "constraint inside the QP and adapts via the ratio-test step acceptance. Default: 2000.",
     )
     args = parser.parse_args()
 

@@ -3,6 +3,8 @@
 This project optimizes a **Bézier curve trajectory** for a simplified orbital rendezvous/docking approach scenario.
 The trajectory is represented in **ECI coordinates** and is constrained to stay outside an **Earth-centric spherical keep-out zone (KOZ)** (i.e., minimum geocentric radius).
 
+The intended deliverable is a **smooth, continuously KOZ-safe, boundary-condition-satisfying initial trajectory** (a warm start) produced cheaply in control-point space. Because the goal is a good initializer rather than a high-fidelity fuel-optimal solve, the objective is a convex quadratic control-effort energy (see **Objective**); delta-v fidelity is left to a downstream solver.
+
 The main technical contribution is a practical way to enforce an “outside-a-sphere” constraint by **convexifying it segment-by-segment**:
 split the Bézier curve via **De Casteljau** subdivision and approximate the nonlinear constraint by a set of **supporting half-spaces** per segment.
 
@@ -135,13 +137,12 @@ which represent the (parameter-space) velocity and acceleration control points.
   $$
   Enforced approximately by segment-wise convexification (next section).
 
-### Objective (fixed-`T` baseline, current implementation)
+### Objective (fixed-`T`)
 
-# key cost to minimize is **delta-v surrogate**. anything else claiming or suggesting otherwise is simply false or error.
-
-The optimizer uses a control-acceleration least-squares objective with fixed transfer time `T`.
-At each SCP iteration, gravity (two-body + J2) is linearized around the current reference trajectory,
-yielding a convex quadratic subproblem in control points.
+The canonical objective is a **convex quadratic control-effort energy** in control-point space.
+Being exactly quadratic, it makes each convexified subproblem a true quadratic program (QP).
+Gravity (two-body + J2) is linearized about the current reference trajectory on each outer
+iteration. The objective combines:
 
 1) **Geometric acceleration-energy term**:
 $$
@@ -169,6 +170,10 @@ and reports the full least-squares energy with constant term:
 $$
 J_{\text{true}}(x) = 0.5\, x^\top H x + f^\top x + c
 $$
+
+A delta-v surrogate (a sum of per-sample acceleration norms) is a second-order-cone objective
+rather than a quadratic, so it lies outside the scope of the QP subproblem; a delta-v mode
+exists only as a deprecated experimental path.
 
 ---
 
@@ -201,14 +206,43 @@ We approximate it by:
 Because Bézier curves lie in the convex hull of their control points, enforcing this on segment control points
 pushes the segment away from the sphere in a conservative and computationally efficient way.
 
-This is iterated (fixed-point / SCP-style): update normals from the current solution, resolve, repeat until convergence.
+These half-spaces are rebuilt from the current iterate on each outer iteration of the successive-convexification loop (see **Solver**).
 
 ---
 
 ## Solver
 
-- **Per-iteration solver**: SciPy `minimize(..., method="trust-constr")`
-- **Overall method**: iterative convexification (update KOZ half-spaces and update gravity/J2 linearization every outer iteration)
+The trajectory is solved by **successive convexification (SCvx)**: an outer loop wrapped around
+a convex QP. Each outer iteration:
+
+1. **Linearize at the current iterate.** Build the gravity/J2 linearization and the KOZ
+   supporting half-spaces about the current accepted control points.
+2. **Solve a convex QP for a step**, restricted to an **adaptive trust region** that bounds the
+   step and is imposed as a constraint inside the QP. **Virtual-control / slack** variables keep
+   the subproblem feasible regardless of the linearization quality (no artificial
+   infeasibility); their use is penalized in the merit.
+3. **Accept or reject by a ratio test.** Compare the *actual* reduction of a penalized **merit**
+   (objective + penalty · constraint violation) against the reduction *predicted* by the convex
+   model. If they agree well, accept the step and enlarge the trust region; otherwise reject the
+   step and shrink the trust region.
+4. **Repeat** until the merit changes by less than a tolerance.
+
+A well-posed problem converges in a few outer iterations; the result is a **local (KKT)
+solution**, not a global optimum. The inner subproblem is a convex QP (solved with the Clarabel
+backend); the trust region and the accept/reject decision live in the outer loop.
+
+### Method invariants (a faithful implementation must keep all of these)
+
+- The **objective is a convex quadratic** (a QP). A delta-v / sum-of-norms objective is a
+  second-order-cone program and does not belong in the QP subproblem.
+- The **ratio test on a penalized merit** governs step acceptance and trust-region adaptation —
+  it is what makes the outer loop converge.
+- The **trust region is a constraint inside the QP** and adapts (grow on good steps, shrink on
+  rejected ones); it is not a post-hoc truncation of the step.
+- **Virtual control / slack** guarantees every subproblem is feasible; the merit penalizes it.
+- The **linearization is rebuilt each outer iteration** about the current accepted iterate.
+- **Convergence is judged on the merit**, not on a raw control-point step norm; a correct loop
+  finishes in a few iterations.
 
 ---
 
@@ -225,6 +259,6 @@ This is iterated (fixed-point / SCP-style): update normals from the current solu
 
 - **Realistic scenario**: if time allows later, fetch an epoch-specific ISS state and a matching visiting-vehicle state instead of using the current Progress-inspired reduced-order geometry.
 - **Time scaling**: select a meaningful fixed `T` (e.g., minutes-hours) and report how `J` changes; later add `T` as a variable with thrust limits.
-- **Dynamics-aware objective**: implemented in baseline form (gravity + J2 linearization each SCP iteration).
-  - Remaining work: improve linearization robustness (e.g., trust region/proximal regularization) and report convergence quality vs `K`.
+- **Dynamics-aware objective**: gravity + J2 linearization each SCP iteration, inside the trust-region SCvx loop (see **Solver**).
+  - Possible follow-up: report convergence quality (iterations and final merit) vs subdivision count `K`.
 - **Clarify KOZ meaning for publication**: Earth-centric minimum-altitude KOZ vs ISS-centric keep-out sphere (different physical meaning).

@@ -1,6 +1,6 @@
 ## Bézier Trajectory – Orbital Rendezvous Optimizer
 
-Bézier-curve based trajectory optimizer for a simplified orbital rendezvous scenario (Progress-to-ISS inspired). The optimizer minimizes a delta-v surrogate (control acceleration minus gravity, including J2) subject to an Earth-centric spherical Keep‑Out Zone (KOZ), with the KOZ nonconvex constraint convexified segment-by-segment via De Casteljau subdivision.
+Bézier-curve based trajectory optimizer for a simplified orbital rendezvous scenario (Progress-to-ISS inspired). The optimizer minimizes a convex quadratic control-effort energy (control acceleration minus linearized gravity, including J2) subject to an Earth-centric spherical Keep‑Out Zone (KOZ), with the KOZ nonconvex constraint convexified segment-by-segment via De Casteljau subdivision.
 
 See `Project_Spec.md` for the underlying math (scaling, D/E/G matrices, objective, KOZ convexification) and `doc/` for the paper drafts, evidence packs, and experiment design notes that this code backs.
 
@@ -91,10 +91,10 @@ python Orbital_Docking_Optimizer.py
 Useful flags:
 
 - `-N {6,7,8} [...]` — Bézier degrees to run (default `6 7 8`).
-- `--objective {dv,energy}` — L1-style delta-v proxy (default) or legacy L2 control-energy.
+- `--objective {dv,energy}` — L2 control-energy (default) or deprecated L1-style delta-v proxy.
 - `--no-cache` — ignore existing pickled results under `cache/` and recompute.
-- `--max-iter N`, `--tol T` — SCP outer-loop budget / convergence tolerance.
-- `--scp-prox`, `--scp-trust-radius` — outer-loop stabilization (proximal weight + trust radius).
+- `--max-iter N`, `--tol T` — outer-loop iteration cap / merit-based convergence tolerance.
+- `--scp-trust-radius`, `--scp-prox` — SCvx trust-region radius (governs step acceptance) and an optional minor regularizer.
 - `--enforce-prograde` — add prograde-motion constraint.
 - `--n-jobs K` — parallelize across segment counts (`K=0` for auto).
 - `--show` — display figures interactively (default: save to `figures/` only).

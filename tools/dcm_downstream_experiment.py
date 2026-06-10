@@ -105,6 +105,8 @@ def bezier_warm_start(
         v0=v0,
         v1=vf,
         transfer_time=T,
+        scp_trust_radius=2000.0,   # activate trust-region SCvx (fix 04c3f07)
+        scp_prox_weight=1e-6,      # canonical setting; auto-ignored under trust region
         verbose=False,
         use_cache=True,
     )
