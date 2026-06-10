@@ -26,6 +26,8 @@ def get_cache_key(
     objective: str = "energy",
     scp_prox_weight: float = 0.0,
     scp_trust_radius: float = 0.0,
+    freeze_gravity_jacobian: bool = False,
+    freeze_after_iter: int = 1,
 ):
     """
     Generate a deterministic cache key from optimization parameters.
@@ -58,6 +60,8 @@ def get_cache_key(
         'objective': str(objective),
         'scp_prox_weight': float(scp_prox_weight),
         'scp_trust_radius': float(scp_trust_radius),
+        'freeze_gravity_jacobian': bool(freeze_gravity_jacobian),
+        'freeze_after_iter': int(freeze_after_iter),
         'solver_backend': 'rust',
         'version': CACHE_VERSION
     }

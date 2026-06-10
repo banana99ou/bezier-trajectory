@@ -389,9 +389,9 @@ def cost_function_gradient_hessian(P_flat, Np1, dim, n_samples=50, compute_grad=
 
 
 def optimize_orbital_docking(
-    P_init, 
-    n_seg=8, 
-    r_e=None, 
+    P_init,
+    n_seg=8,
+    r_e=None,
     max_iter=20,
     tol=1e-6,
     v0=None,
@@ -407,6 +407,8 @@ def optimize_orbital_docking(
     enforce_prograde: bool = False,
     prograde_n_samples: int = 16,
     elastic_weight: float = 1e4,
+    freeze_gravity_jacobian: bool = False,
+    freeze_after_iter: int = 1,
     verbose=True,
     debug=False,
     use_cache=True,
@@ -422,8 +424,14 @@ def optimize_orbital_docking(
         P_init: Initial control points (N+1, dim)
         n_seg: Number of segments for KOZ linearization
         r_e: KOZ radius (if None, uses default from constants)
-        max_iter: Max optimization iterations
-        tol: Convergence tolerance
+        max_iter: Max outer-loop iterations
+        tol: Outer-loop convergence tolerance on the merit change
+        scp_trust_radius: SCvx trust-region radius (control-point 2-norm). Bounds each step as a
+            constraint inside the QP and adapts via the ratio-test step acceptance; 0 disables it.
+        scp_prox_weight: Optional secondary proximal regularizer; the trust region is the
+            primary stabilizer.
+        objective_mode: "energy" (default, QP-native quadratic control-effort) or the deprecated
+            "dv" sum-of-norms surrogate.
         v0, v1: Velocity boundary conditions
         a0, a1: Acceleration boundary conditions
         sample_count: Number of samples for cost evaluation
@@ -456,6 +464,8 @@ def optimize_orbital_docking(
             objective=objective_mode,
             scp_prox_weight=scp_prox_weight,
             scp_trust_radius=scp_trust_radius,
+            freeze_gravity_jacobian=freeze_gravity_jacobian,
+            freeze_after_iter=freeze_after_iter,
         )
         cache_path = get_cache_path(cache_key, n_seg)
         cached_result = load_from_cache(cache_path)
@@ -495,6 +505,8 @@ def optimize_orbital_docking(
         prograde_n_samples=prograde_n_samples,
         elastic_weight=elastic_weight,
         transfer_time=float(transfer_time),
+        freeze_gravity_jacobian=freeze_gravity_jacobian,
+        freeze_after_iter=freeze_after_iter,
     )
 
     P = np.asarray(P_opt, dtype=float)
@@ -578,6 +590,8 @@ def optimize_orbital_docking(
             "objective": str(objective_mode),
             "scp_prox_weight": float(scp_prox_weight),
             "scp_trust_radius": float(scp_trust_radius),
+            "freeze_gravity_jacobian": bool(freeze_gravity_jacobian),
+            "freeze_after_iter": int(freeze_after_iter),
             "elapsed_time": time.time() - t0,
             "solver_backend": "rust",
             "koz_linear_max_violation": float(koz_linear_max_violation),
@@ -595,6 +609,8 @@ def optimize_orbital_docking(
             objective=objective_mode,
             scp_prox_weight=scp_prox_weight,
             scp_trust_radius=scp_trust_radius,
+            freeze_gravity_jacobian=freeze_gravity_jacobian,
+            freeze_after_iter=freeze_after_iter,
         )
         cache_path = get_cache_path(cache_key, n_seg)
         save_to_cache(cache_path, P, info)
