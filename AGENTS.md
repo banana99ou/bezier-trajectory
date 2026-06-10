@@ -6,5 +6,5 @@
 
 ## Commit hygiene
 
-- No AI co-author trailers. Do not add `Co-Authored-By: Claude ...` lines to commit messages.
+- No AI co-author trailers. Do not add `Co-Authored-By: Codex ...` lines to commit messages.
 - Split unrelated changes into separate commits — one commit per work context.
