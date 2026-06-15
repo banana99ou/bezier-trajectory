@@ -6,9 +6,9 @@
 > case database now live in **`dcm_baseline/`** (install with `pip install -e dcm_baseline`). The
 > pieces this guide originally also covered — the `blade-orbit` inline-array DB, the
 > `run_dcm_db_experiment.py` single-script driver, and the per-row `.npz` trajectory files — were
-> **not** promoted; they are preserved in `~/code/orbit-transfer-archive/` and will leave the repo
-> when `orbit-transfer-analysis/` is deleted. This guide now documents only what remains usable in
-> the repo.
+> **not** promoted; they are preserved in `~/code/orbit-transfer-archive/`. The
+> `orbit-transfer-analysis/` folder has since been removed, so this guide documents only what
+> remains usable in the repo.
 
 The goal is unchanged: don't rediscover the DB layout by reading source again — remember what is
 stored in DuckDB versus external files, and which entry points support a DB-seeded DCM experiment.

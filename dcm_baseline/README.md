@@ -21,7 +21,7 @@ Then `import orbit_transfer` works with no path hacks. Consumed by
 
 ## Status
 
-The former vendored `orbit-transfer-analysis/` folder is **slated for removal** (deletion deferred
-as a safety net while the extraction is validated). It still contains a duplicate copy of this
-package, which goes away with it — `dcm_baseline/` is the canonical home. The folder's report/notes
-material was archived to `~/code/orbit-transfer-archive/`.
+The former vendored `orbit-transfer-analysis/` folder has been **removed** (the extraction was
+validated first — the DCM tools run against `dcm_baseline/` with the folder absent). `dcm_baseline/`
+is the canonical home. The folder's report/notes material is preserved in
+`~/code/orbit-transfer-archive/`.
