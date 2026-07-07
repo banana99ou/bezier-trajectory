@@ -32,6 +32,8 @@ T6_COLUMNS = [
     "delta_a_km",
     "delta_i_deg",
     "baseline_converged",
+    "baseline_pass2_converged",
+    "baseline_used_fallback",
     "proposed_converged",
     "baseline_time_s",
     "bezier_time_s",
@@ -79,6 +81,11 @@ def load_case_rows(results_dir: Path) -> list[dict]:
                 "delta_a_km": cfg.get("delta_a"),
                 "delta_i_deg": cfg.get("delta_i"),
                 "baseline_converged": bool(base.get("converged")),
+                # True Pass-2 convergence (not the fallback-masked flag). Falls back
+                # to "converged" for old JSONs that predate the honest-status fields.
+                "baseline_pass2_converged": bool(
+                    base.get("pass2_converged", base.get("converged"))),
+                "baseline_used_fallback": bool(base.get("used_pass1_fallback", False)),
                 "proposed_converged": bool(prop.get("converged")),
                 "baseline_time_s": baseline_time,
                 "bezier_time_s": bezier_time,
@@ -106,7 +113,7 @@ def write_csv(rows: list[dict], out_path: Path) -> None:
 
 def build_figure(rows: list[dict], out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    both_converged = [r for r in rows if r["baseline_converged"] and r["proposed_converged"]]
+    both_converged = [r for r in rows if r["baseline_pass2_converged"] and r["proposed_converged"]]
     if not both_converged:
         raise RuntimeError("No cases with both pipelines converged; cannot build F6.")
 
@@ -147,21 +154,26 @@ def build_figure(rows: list[dict], out_path: Path) -> None:
 
 
 def print_summary(rows: list[dict]) -> None:
-    both = [r for r in rows if r["baseline_converged"] and r["proposed_converged"]]
+    # Gate on TRUE Pass-2 convergence, not the fallback-masked "converged" flag.
+    both = [r for r in rows if r["baseline_pass2_converged"] and r["proposed_converged"]]
     speedups = np.array([r["speedup"] for r in both])
     cost_deltas = np.array([abs(r["cost_delta"]) for r in both if not math.isnan(r["cost_delta"])])
 
     n_total = len(rows)
     n_both = len(both)
-    n_base_only = sum(1 for r in rows if r["baseline_converged"] and not r["proposed_converged"])
-    n_prop_only = sum(1 for r in rows if not r["baseline_converged"] and r["proposed_converged"])
-    n_both_fail = sum(1 for r in rows if not r["baseline_converged"] and not r["proposed_converged"])
+    n_base_only = sum(1 for r in rows if r["baseline_pass2_converged"] and not r["proposed_converged"])
+    n_prop_only = sum(1 for r in rows if not r["baseline_pass2_converged"] and r["proposed_converged"])
+    n_both_fail = sum(1 for r in rows if not r["baseline_pass2_converged"] and not r["proposed_converged"])
+    n_fallback = sum(1 for r in rows if r["baseline_used_fallback"])
+    n_masked = sum(1 for r in rows if r["baseline_converged"] and not r["baseline_pass2_converged"])
 
     print(f"Cases total: {n_total}")
-    print(f"  Both converged: {n_both}")
+    print(f"  Both Pass-2 converged: {n_both}")
     print(f"  Baseline only : {n_base_only}")
     print(f"  Proposed only : {n_prop_only}")
     print(f"  Both failed   : {n_both_fail}")
+    print(f"  Baseline Pass-1 fallbacks: {n_fallback} "
+          f"(of which masked as 'converged': {n_masked})")
 
     if len(speedups):
         print(

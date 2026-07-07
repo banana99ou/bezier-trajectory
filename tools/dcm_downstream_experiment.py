@@ -44,6 +44,7 @@ from orbit_transfer.collocation.interpolation import interpolate_pass1_to_pass2
 from orbit_transfer.collocation.multiphase_lgl import MultiPhaseLGLCollocation
 from orbit_transfer.constants import MU_EARTH, R_E
 from orbit_transfer.dynamics.two_body import gravity_acceleration
+from orbit_transfer.dynamics.j2_perturbation import j2_acceleration
 from orbit_transfer.optimizer.two_pass import TwoPassOptimizer
 from orbit_transfer.types import TransferConfig, TrajectoryResult
 
@@ -97,6 +98,16 @@ def bezier_warm_start(
         r_j, _ = kepler_propagate(r0, v0, t_j, MU_EARTH)
         P_init[j] = r_j
 
+    # Project P1 and P_{N-1} onto the velocity boundary conditions. The optimizer
+    # imposes v(0)=v0 and v(1)=vf as equalities, which pin
+    #   P1     = P0 + v0*T/N ,   P_{N-1} = P_N - vf*T/N .
+    # The raw Kepler init can sit farther than the SCvx trust radius from these
+    # targets, which makes the hard trust-region QP infeasible on the very first
+    # iteration (the legacy no-trust solver had no such box and masked this).
+    # Starting on the BC manifold removes that spurious iter-1 infeasibility.
+    P_init[1] = P_init[0] + np.asarray(v0) * T / N
+    P_init[N - 1] = P_init[N] - np.asarray(vf) * T / N
+
     # Bézier optimizer
     P_opt, info = optimize_orbital_docking(
         P_init,
@@ -109,6 +120,8 @@ def bezier_warm_start(
         scp_prox_weight=1e-6,      # canonical setting; auto-ignored under trust region
         verbose=False,
         use_cache=True,
+        ignore_existing_cache=True,  # always do a real solve so bezier_time_s is
+                                     # a genuine wall-clock, not a cache/disk read
     )
 
     # Sample the optimized curve
@@ -125,8 +138,10 @@ def bezier_warm_start(
         v_k = curve.velocity(tk) / T
         # geometric acceleration: d²r/dt² = (1/T²) d²r/dτ²
         a_k = curve.acceleration(tk) / (T * T)
-        # thrust = geometric acceleration - gravity
-        g_k = gravity_acceleration(r_k, MU_EARTH)
+        # thrust = geometric acceleration - gravity. Use the SAME gravity model as
+        # the DCM dynamics (two-body + J2) so the peak structure detected here is
+        # consistent with the baseline/Pass-2 (two_body only would shift peaks).
+        g_k = gravity_acceleration(r_k, MU_EARTH) + j2_acceleration(r_k, MU_EARTH)
         u_k = a_k - g_k
 
         x_init[:3, k] = r_k
@@ -142,6 +157,8 @@ def bezier_warm_start(
         "min_radius": float(info.get("min_radius", float("nan"))),
         "feasible": bool(info.get("feasible", False)),
         "termination_reason": info.get("termination_reason", "unknown"),
+        "scvx_converged": bool(float(info.get("scvx_converged", 0.0)) >= 0.5),
+        "final_trust_radius": float(info.get("final_trust_radius", float("nan"))),
     }
 
     return t_init, x_init, u_init, bezier_info
@@ -156,7 +173,9 @@ def run_baseline(config: TransferConfig) -> tuple[Any, float]:
     """Baseline: full two-pass (Pass 1 H-S → peak detect → Pass 2 LGL)."""
     optimizer = TwoPassOptimizer(config)
     t0 = time.perf_counter()
-    result = optimizer.solve()
+    # match_T_max: pin baseline Pass 2 to config.T_max so its horizon matches the
+    # proposed pipeline (apples-to-apples cost). See two_pass.solve.
+    result = optimizer.solve(match_T_max=True)
     elapsed = time.perf_counter() - t0
     return result, elapsed
 
@@ -230,16 +249,32 @@ def summarize_result(
 ) -> dict[str, Any]:
     """Extract a flat metrics dict from a TrajectoryResult."""
     if result.x.size == 0:
-        return {"stage": name, "converged": False, "solve_time_s": solve_time}
+        return {"stage": name, "converged": False, "solve_time_s": solve_time,
+                "pass2_converged": False, "pass2_solve_succeeded": False,
+                "used_pass1_fallback": False}
 
     radius = np.linalg.norm(result.x[:3], axis=0)
     min_alt_margin = float(np.min(radius) - (R_E + config.h_min))
     u_mag = np.linalg.norm(result.u, axis=0)
     dv_total = float(np.trapezoid(u_mag, result.t)) if len(result.t) > 1 else float("nan")
 
+    # Honest Pass-2 status. Baseline (TwoPassOptimizer) sets pass2_* /
+    # used_pass1_fallback dynamically; the proposed result is a raw LGL result
+    # whose solver_stats carries solve_succeeded. getattr keeps both paths safe.
+    stats = getattr(result, "solver_stats", None) or {}
+    pass2_converged = bool(getattr(result, "pass2_converged", result.converged))
+    pass2_solve_succeeded = bool(getattr(
+        result, "pass2_solve_succeeded",
+        stats.get("solve_succeeded", result.converged)))
+    used_fallback = bool(getattr(result, "used_pass1_fallback", False))
+
     return {
         "stage": name,
         "converged": bool(result.converged),
+        "pass2_converged": pass2_converged,
+        "pass2_solve_succeeded": pass2_solve_succeeded,
+        "used_pass1_fallback": used_fallback,
+        "return_status": stats.get("return_status", "unknown"),
         "solve_time_s": float(solve_time),
         "cost": float(result.cost),
         "dv_total_km_s": dv_total,

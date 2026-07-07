@@ -516,10 +516,29 @@ def optimize_orbital_docking(
     info = dict(rust_info)
     keep_history = bool(store_history or debug)
     it = int(info.get("iterations", max_iter))
-    termination_reason = (
-        "converged_delta_below_tol" if it < int(max_iter) else "stopped_max_iter"
-    )
     last_delta = info.get("final_delta_norm")
+    # Classify how the solve actually terminated. The previous heuristic labelled
+    # ANY sub-max-iter exit "converged", which masked iter-1 trust-region/QP
+    # infeasibility aborts as bogus convergences. Use the diagnostics the Rust
+    # SCvx loop already reports (scvx_converged, feasible, final_trust_radius).
+    scvx_converged = float(info.get("scvx_converged", 0.0)) >= 0.5
+    rust_feasible = float(info.get("feasible", 0.0)) >= 0.5
+    final_trust = float(info.get("final_trust_radius", 0.0))
+    trust_active = float(scp_trust_radius) > 0.0
+    if it >= int(max_iter):
+        termination_reason = "stopped_max_iter"
+    elif scvx_converged:
+        termination_reason = "converged_scvx"
+    elif not rust_feasible:
+        # Stopped before reaching a feasible iterate — separate the two causes.
+        if trust_active and final_trust < 1e-2:  # trust_min in the Rust SCvx loop
+            termination_reason = "trust_collapsed"
+        elif last_delta is None or last_delta != last_delta:  # NaN: QP gave no step
+            termination_reason = "qp_infeasible"
+        else:
+            termination_reason = "infeasible_early_stop"
+    else:
+        termination_reason = "converged_delta_below_tol"  # legacy step-norm exit
 
     # Python-side validation of the Rust solution keeps downstream metrics comparable.
     curve = BezierCurve(P)
