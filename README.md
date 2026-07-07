@@ -12,7 +12,7 @@ See `Project_Spec.md` for the underlying math (scaling, D/E/G matrices, objectiv
 - **`tools/`** — A/B benchmarks, convergence + boundary diagnostics, Dymos comparison, J2 validation, DCM downstream experiment, KOZ-altitude sweep (`sweep_koz_ablation.py`), figure/CSV builders.
 - **`tests/`** — `unit/`, `integration/`, `regression/`, `property/` splits; conftest under `tests/conftest.py`.
 - **`dcm_baseline/`** — extracted DCM (direct collocation) baseline package (`orbit_transfer`): Hermite–Simpson → peak‑detect → Multi‑Phase LGL two‑pass pipeline plus its case database (`data/trajectories.duckdb`), used in downstream comparisons. Install with `pip install -e dcm_baseline`. Lifted out of the former vendored `orbit-transfer-analysis/` sibling repo.
-- **`doc/`** — paper drafts (Korean), evidence/execution tracking, experiment design notes.
+- **`doc/`** — paper drafts (Korean), evidence/execution tracking, experiment design notes. **Standing revision decisions live in `doc/paper_decision_ledger.md`** — read it before editing any paper draft.
 - **`figures/`**, **`artifacts/`**, **`cache/`**, **`results/`** — generated outputs. Most are gitignored.
 - **`archive/`** — legacy single-curve sphere-avoidance scripts kept for reference.
 
