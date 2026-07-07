@@ -85,6 +85,14 @@ class MultiPhaseLGLCollocation:
             tau = compute_lgl_nodes(N_deg)
             w = compute_lgl_weights(N_deg, tau)
             D = compute_differentiation_matrix(N_deg, tau)
+            # Fail loud: a corrupt LGL operator (historically the odd-degree node
+            # bug) would otherwise feed NaN/Inf into IPOPT and surface only as an
+            # opaque solver failure.
+            if not (np.all(np.isfinite(w)) and np.all(np.isfinite(D))):
+                raise ValueError(
+                    f"Non-finite LGL operator for phase n_nodes={N_k} "
+                    f"(deg {N_deg}): weights/differentiation matrix corrupt."
+                )
             dt_k = phase['t_end'] - phase['t_start']
             lgl_data.append({
                 'tau': tau, 'w': w, 'D': D, 'dt_k': dt_k,
@@ -194,6 +202,15 @@ class MultiPhaseLGLCollocation:
             nu0_val = float(opti.debug.value(nu0))
             nuf_val = float(opti.debug.value(nuf))
 
+        # IPOPT return status: distinguishes Solve_Succeeded from
+        # Solved_To_Acceptable_Level (loose constr viol) and the failure modes,
+        # which the bare `converged` ("solve() did not raise") flag hides.
+        try:
+            return_status = opti.stats().get('return_status', 'unknown')
+        except Exception:
+            return_status = 'unknown'
+        solve_succeeded = bool(return_status == 'Solve_Succeeded')
+
         # 피크 탐지 + 분류
         from ..classification.peak_detection import detect_peaks
         from ..classification.classifier import classify_profile
@@ -215,6 +232,8 @@ class MultiPhaseLGLCollocation:
                 'phase_boundaries': [
                     (p['t_start'], p['t_end']) for p in self.phases
                 ],
+                'return_status': return_status,
+                'solve_succeeded': solve_succeeded,
             },
         )
 

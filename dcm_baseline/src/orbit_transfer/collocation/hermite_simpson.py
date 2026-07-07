@@ -184,6 +184,12 @@ class HermiteSimpsonCollocation:
             nu0_val = float(opti.debug.value(nu0))
             nuf_val = float(opti.debug.value(nuf))
 
+        try:
+            return_status = opti.stats().get('return_status', 'unknown')
+        except Exception:
+            return_status = 'unknown'
+        solve_succeeded = bool(return_status == 'Solve_Succeeded')
+
         # 피크 탐지 + 분류
         from ..classification.peak_detection import detect_peaks
         from ..classification.classifier import classify_profile
@@ -203,4 +209,6 @@ class HermiteSimpsonCollocation:
             n_peaks=n_peaks,
             profile_class=profile_class,
             T_f=T_val,
+            solver_stats={'return_status': return_status,
+                          'solve_succeeded': solve_succeeded},
         )

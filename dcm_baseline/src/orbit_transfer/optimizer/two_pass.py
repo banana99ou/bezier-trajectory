@@ -35,6 +35,7 @@ class TwoPassOptimizer:
         x_init: np.ndarray | None = None,
         u_init: np.ndarray | None = None,
         t_init: np.ndarray | None = None,
+        match_T_max: bool = False,
     ) -> TrajectoryResult:
         """Two-Pass 최적화 실행.
 
@@ -43,10 +44,15 @@ class TwoPassOptimizer:
         x_init : ndarray, optional  외부 초기치 상태 (6, M). None이면 선형 보간 사용
         u_init : ndarray, optional  외부 초기치 제어 (3, M). None이면 zero
         t_init : ndarray, optional  외부 초기치 시간 (M,). 리샘플링에 사용
+        match_T_max : bool  True면 Pass 2 horizon을 config.T_max로 고정한다
+            (Pass 1의 자유 T_f 대신). 외부 비교에서 proposed pipeline과 동일한
+            시간 지평을 맞춰 비용을 apples-to-apples로 만들기 위함.
 
         Returns
         -------
         TrajectoryResult
+            추가 동적 속성: ``pass2_converged``, ``pass2_solve_succeeded``,
+            ``used_pass1_fallback`` (모든 반환 경로에서 설정됨).
         """
         # === Pass 1 ===
         hs = HermiteSimpsonCollocation(self.config, l1_lambda=self.l1_lambda)
@@ -110,9 +116,21 @@ class TwoPassOptimizer:
 
             if not result1.converged:
                 result1.pass1_cost = None
+                result1.pass2_converged = False
+                result1.pass2_solve_succeeded = False
+                result1.used_pass1_fallback = True
                 return result1
 
         pass1_cost = result1.cost
+
+        # Matched-horizon comparison: rescale the Pass-1 time axis to T_max so the
+        # phase structure and Pass-2 run on the same horizon as the proposed
+        # pipeline. (Identity when the free T_f already sits at T_max, which holds
+        # for the circular cases.) The warm start is only an initial guess.
+        if match_T_max and result1.T_f and result1.T_f > 0:
+            k = self.config.T_max / result1.T_f
+            result1.t = result1.t * k
+            result1.T_f = self.config.T_max
 
         # === 피크 탐지 + Phase 구조 ===
         u_mag = np.linalg.norm(result1.u, axis=0)
@@ -139,8 +157,16 @@ class TwoPassOptimizer:
         result2.pass1_cost = pass1_cost
 
         if not result2.converged:
-            # Pass 2 실패 시 Pass 1 결과로 대체
+            # Pass 2 실패 시 Pass 1 결과로 대체 (관측 가능하게 표시)
             result1.pass1_cost = pass1_cost
+            result1.pass2_converged = False
+            result1.pass2_solve_succeeded = False
+            result1.used_pass1_fallback = True
             return result1
 
+        result2.pass2_converged = True
+        result2.pass2_solve_succeeded = bool(
+            (result2.solver_stats or {}).get('solve_succeeded', True)
+        )
+        result2.used_pass1_fallback = False
         return result2
