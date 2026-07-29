@@ -219,6 +219,7 @@ fn test_optimizer_golden_run() {
         1e4,   // elastic_weight
         false, // freeze_gravity_jacobian
         1,     // freeze_after_iter
+        false, // disable_scvx_freeze
     );
 
     eprintln!("=== Rust optimizer result ===");

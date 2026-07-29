@@ -26,6 +26,7 @@ use pyo3::types::{PyDict, PyList};
     transfer_time = 1500.0,
     freeze_gravity_jacobian = false,
     freeze_after_iter = 1,
+    disable_scvx_freeze = false,
 ))]
 fn optimize_orbital_docking<'py>(
     py: Python<'py>,
@@ -50,6 +51,7 @@ fn optimize_orbital_docking<'py>(
     transfer_time: f64,
     freeze_gravity_jacobian: bool,
     freeze_after_iter: usize,
+    disable_scvx_freeze: bool,
 ) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyDict>)> {
     let p_arr = p_init.as_array();
     let np1 = p_arr.shape()[0];
@@ -87,6 +89,7 @@ fn optimize_orbital_docking<'py>(
         elastic_weight,
         freeze_gravity_jacobian,
         freeze_after_iter,
+        disable_scvx_freeze,
     );
 
     let p_opt = PyArray2::from_vec2(py, &{
@@ -112,6 +115,20 @@ fn optimize_orbital_docking<'py>(
             outer.append(inner)?;
         }
         info.set_item("jacobian_drift_history", outer)?;
+    }
+
+    // Per-accepted-step SCvx diagnostics (flat lists, one entry per accepted step).
+    for (key, hist) in [
+        ("rho_history", &result.rho_history),
+        ("trust_history", &result.trust_history),
+        ("merit_history", &result.merit_history),
+        ("step_norm_history", &result.step_norm_history),
+        ("slack_history", &result.slack_history),
+        ("phase_history", &result.phase_history),
+    ] {
+        if !hist.is_empty() {
+            info.set_item(key, PyList::new(py, hist)?)?;
+        }
     }
 
     Ok((p_opt, info))

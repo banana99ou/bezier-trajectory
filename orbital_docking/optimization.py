@@ -409,6 +409,7 @@ def optimize_orbital_docking(
     elastic_weight: float = 1e4,
     freeze_gravity_jacobian: bool = False,
     freeze_after_iter: int = 1,
+    disable_scvx_freeze: bool = False,
     verbose=True,
     debug=False,
     use_cache=True,
@@ -507,6 +508,7 @@ def optimize_orbital_docking(
         transfer_time=float(transfer_time),
         freeze_gravity_jacobian=freeze_gravity_jacobian,
         freeze_after_iter=freeze_after_iter,
+        disable_scvx_freeze=disable_scvx_freeze,
     )
 
     P = np.asarray(P_opt, dtype=float)

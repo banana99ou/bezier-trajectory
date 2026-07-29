@@ -8,8 +8,9 @@ import numpy as np
 from pathlib import Path
 
 
-# Increment to invalidate old caches when the optimization formulation changes
-CACHE_VERSION = "6.0-elastic"
+# Increment to invalidate old caches when the optimization formulation changes.
+# NOTE: the cache key does NOT hash the Rust binary; bump this after any solver rebuild.
+CACHE_VERSION = "7.0-scvx-energy"
 
 
 def get_cache_key(
@@ -28,6 +29,7 @@ def get_cache_key(
     scp_trust_radius: float = 0.0,
     freeze_gravity_jacobian: bool = False,
     freeze_after_iter: int = 1,
+    disable_scvx_freeze: bool = False,
 ):
     """
     Generate a deterministic cache key from optimization parameters.
@@ -62,6 +64,7 @@ def get_cache_key(
         'scp_trust_radius': float(scp_trust_radius),
         'freeze_gravity_jacobian': bool(freeze_gravity_jacobian),
         'freeze_after_iter': int(freeze_after_iter),
+        'disable_scvx_freeze': bool(disable_scvx_freeze),
         'solver_backend': 'rust',
         'version': CACHE_VERSION
     }

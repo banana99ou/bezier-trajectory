@@ -35,6 +35,15 @@ pub struct OptResult {
     /// iter 1 is index 0 and is identically zero), inner index = segment.
     /// Empty when freeze_gravity_jacobian is true (drift is zero by construction).
     pub jacobian_drift_history: Vec<Vec<f64>>,
+    /// Per-accepted-outer-step SCvx diagnostics (trust path only). One entry per
+    /// accepted step. `rho_history` is NaN on feasibility-restoration steps.
+    /// `phase_history`: 0 = feasibility restoration, 1 = optimality.
+    pub rho_history: Vec<f64>,
+    pub trust_history: Vec<f64>,
+    pub merit_history: Vec<f64>,
+    pub step_norm_history: Vec<f64>,
+    pub slack_history: Vec<f64>,
+    pub phase_history: Vec<f64>,
 }
 
 /// Per-segment gravity linearization quantities.
@@ -606,6 +615,7 @@ pub fn optimize_orbital_docking(
     elastic_weight: f64,
     freeze_gravity_jacobian: bool,
     freeze_after_iter: usize,
+    disable_scvx_freeze: bool,
 ) -> OptResult {
     let consts = OrbitalConstants::default();
     let n = np1 - 1;
@@ -679,6 +689,14 @@ pub fn optimize_orbital_docking(
     let mut p_feasible = false;
     let mut scvx_freeze_iter: i64 = -1; // diagnostic: iteration at which the snapshot armed
 
+    // Per-accepted-step SCvx diagnostics (for the verification harness / paper figures).
+    let mut rho_history: Vec<f64> = Vec::new();
+    let mut trust_history: Vec<f64> = Vec::new();
+    let mut merit_history: Vec<f64> = Vec::new();
+    let mut step_norm_history: Vec<f64> = Vec::new();
+    let mut slack_history: Vec<f64> = Vec::new();
+    let mut phase_history: Vec<f64> = Vec::new();
+
     // Cache of iter-1 gravity linearization (always populated, used for drift
     // diagnostic baseline even when not frozen).
     let mut lin_baseline: Option<Vec<SegmentGravLin>> = None;
@@ -698,7 +716,7 @@ pub fn optimize_orbital_docking(
         // iterate is feasible: capture BOTH the gravity linearization and the KOZ
         // supporting half-spaces at this good reference, then reuse them so the convex
         // subproblem stops moving and the remaining steps converge quickly.
-        if trust_active && scvx_freeze.is_none() && p_feasible {
+        if trust_active && scvx_freeze.is_none() && p_feasible && !disable_scvx_freeze {
             let lin_f = compute_segment_lin(&p, np1, dim, t, sample_count, &consts);
             let koz_f = constraints::build_koz_constraints(&a_list, &p, np1, dim, r_e, &c_koz);
             scvx_freeze = Some((lin_f, koz_f));
@@ -987,6 +1005,12 @@ pub fn optimize_orbital_docking(
                     p = x_new;
                     p_feasible = true_v_c <= tol_c;
                     trust = (trust * 1.5).min(trust_max);
+                    rho_history.push(f64::NAN);
+                    trust_history.push(trust);
+                    merit_history.push(true_v_c);
+                    step_norm_history.push(step_norm);
+                    slack_history.push(iter_total_slack);
+                    phase_history.push(0.0);
                 } else {
                     trust *= 0.5;
                     if trust < trust_min {
@@ -1040,6 +1064,12 @@ pub fn optimize_orbital_docking(
                     if rho > 0.9 {
                         trust = (trust * 2.0).min(trust_max); // model trustworthy — be bolder
                     }
+                    rho_history.push(rho);
+                    trust_history.push(trust);
+                    merit_history.push(model_c + corr_c);
+                    step_norm_history.push(step_norm);
+                    slack_history.push(iter_total_slack);
+                    phase_history.push(1.0);
                     if rel < tol_f {
                         converged_scvx = true;
                         break;
@@ -1189,6 +1219,12 @@ pub fn optimize_orbital_docking(
         feasible,
         iterations,
         jacobian_drift_history,
+        rho_history,
+        trust_history,
+        merit_history,
+        step_norm_history,
+        slack_history,
+        phase_history,
     }
 }
 
