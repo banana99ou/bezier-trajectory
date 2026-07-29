@@ -136,7 +136,7 @@ $$
 
 ### 3.3 Gram matrix와 quadratic form [[전반적으로 각 내용의 연결이 매끄럽지 못하고 설명이나 예고 없이 갑작스럽게 튀어나와서 독자가 흐름을 따라가기 어려움.]]
 
-Bernstein basis의 (Gram matrix)[[가 무었이고, 왜 갑자기 등장하는지에 대한 설명 보가 필요.]]는 닫힌 형태로 계산할 수 있으며,
+Bernstein basis의 (Gram matrix)[[가 무었이고, 왜 갑자기 등장하는지에 대한 설명 보강 필요.]]는 닫힌 형태로 계산할 수 있으며,
 
 $$
 [G_N]_{ij} = \frac{\binom{N}{i}\binom{N}{j}}{\binom{2N}{i+j}(2N+1)}, \qquad i,j=0,\ldots,N
