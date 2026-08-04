@@ -161,19 +161,13 @@ fn compute_segment_lin(
 /// for control acceleration energy with gravity+J2 linearized about P_ref.
 ///
 /// If `precomputed_lin` is provided, the gravity linearization (J_i, c_i, M_i)
-/// is taken from that slice instead of being recomputed from `p_ref`. The
-/// IRLS weight in 'dv' mode is still computed from the current `p_ref` so it
-/// tracks the iterate, but uses the (possibly frozen) `M_i, c_i` from the
-/// linearization slice.
+/// is taken from that slice instead of being recomputed from `p_ref`.
 fn build_ctrl_accel_quadratic(
     p_ref: &[f64],  // (Np1, dim) row-major
     np1: usize,
     dim: usize,
     t: f64,
     sample_count: usize,
-    objective: &str,
-    irls_eps: f64,
-    geom_reg: f64,
     consts: &OrbitalConstants,
     precomputed_lin: Option<&[SegmentGravLin]>,
 ) -> (Vec<f64>, Vec<f64>, f64) {
@@ -184,17 +178,14 @@ fn build_ctrl_accel_quadratic(
     let mut q_vec = vec![0.0; nvars];
     let mut c_const = 0.0f64;
 
-    // 1) Geometric regularization via G_tilde
+    // 1) Smoothness term via G_tilde
     if let Some(g_tilde) = bezier::get_g_tilde(n) {
-        let w_geom = if objective == "energy" { 1.0 } else { geom_reg };
-        if w_geom != 0.0 {
-            let scale = w_geom / (t.powi(4));
-            for i in 0..np1 {
-                for j in 0..np1 {
-                    let g_val = g_tilde[i * np1 + j];
-                    for d in 0..dim {
-                        big_q[(i * dim + d) * nvars + (j * dim + d)] += scale * g_val;
-                    }
+        let scale = 1.0 / (t.powi(4));
+        for i in 0..np1 {
+            for j in 0..np1 {
+                let g_val = g_tilde[i * np1 + j];
+                for d in 0..dim {
+                    big_q[(i * dim + d) * nvars + (j * dim + d)] += scale * g_val;
                 }
             }
         }
@@ -216,25 +207,7 @@ fn build_ctrl_accel_quadratic(
     for seg in lin {
         let m_i = &seg.m_i;
         let c_i = &seg.c_i;
-
-        // IRLS weight for dv objective: use current p_ref against (possibly frozen) M_i, c_i
-        let mut w_i = w_seg;
-        if objective == "dv" {
-            let mut r_ref_res = [0.0f64; 3];
-            for d in 0..dim {
-                let mut mx = 0.0;
-                for v in 0..nvars {
-                    mx += m_i[d * nvars + v] * p_ref[v];
-                }
-                r_ref_res[d] = mx - c_i[d];
-            }
-            let alpha = (r_ref_res[0] * r_ref_res[0]
-                + r_ref_res[1] * r_ref_res[1]
-                + r_ref_res[2] * r_ref_res[2]
-                + irls_eps)
-                .sqrt();
-            w_i = w_seg / alpha;
-        }
+        let w_i = w_seg;
 
         // Q += w_i * M_i^T @ M_i;  q += w_i * (-M_i^T @ c_i);  c_const += w_i * c_i^T c_i
         for v1 in 0..nvars {
@@ -494,45 +467,15 @@ fn quad_form(h: &[f64], f: &[f64], x: &[f64], n: usize) -> f64 {
     val
 }
 
-/// IRLS weights for the 'dv' objective, frozen at `p_ref` against `lin`.
-/// Mirrors the weight logic in `build_ctrl_accel_quadratic`. For non-'dv'
-/// objectives every weight is the uniform 1/n_seg.
-fn irls_weights(
-    p_ref: &[f64],
-    lin: &[SegmentGravLin],
-    nvars: usize,
-    objective: &str,
-    irls_eps: f64,
-) -> Vec<f64> {
-    let w_seg = 1.0 / lin.len().max(1) as f64;
-    lin.iter()
-        .map(|seg| {
-            if objective != "dv" {
-                return w_seg;
-            }
-            let mut res = [0.0f64; 3];
-            for (d, r) in res.iter_mut().enumerate() {
-                let mut mx = 0.0;
-                for v in 0..nvars {
-                    mx += seg.m_i[d * nvars + v] * p_ref[v];
-                }
-                *r = mx - seg.c_i[d];
-            }
-            let alpha = (res[0] * res[0] + res[1] * res[1] + res[2] * res[2] + irls_eps).sqrt();
-            w_seg / alpha
-        })
-        .collect()
-}
-
-/// Weighted control-acceleration residual energy at `x`, returned as
-/// (model_dv, true_dv): the first uses the *linearized* gravity (M_i x - c_i),
+/// Control-acceleration residual energy at `x`, returned as
+/// (model_res, true_res): the first uses the *linearized* gravity (M_i x - c_i),
 /// the second uses the *true* gravity (a_geom_i(x) - g(r_i(x))). Both use the
-/// same frozen IRLS weights. Their difference is exactly the gravity
-/// linearization error that the SCvx ratio test measures.
-fn eval_dv_terms(
+/// uniform per-segment weight 1/n_lin, matching `build_ctrl_accel_quadratic`.
+/// Their difference is exactly the gravity linearization error that the SCvx
+/// ratio test measures.
+fn eval_residual_terms(
     x: &[f64],
     lin: &[SegmentGravLin],
-    weights: &[f64],
     np1: usize,
     dim: usize,
     t: f64,
@@ -540,9 +483,10 @@ fn eval_dv_terms(
 ) -> (f64, f64) {
     let nvars = np1 * dim;
     let t2_inv = 1.0 / (t * t);
-    let mut model_dv = 0.0f64;
-    let mut true_dv = 0.0f64;
-    for (seg, &w) in lin.iter().zip(weights.iter()) {
+    let w = 1.0 / lin.len().max(1) as f64;
+    let mut model_res = 0.0f64;
+    let mut true_res = 0.0f64;
+    for seg in lin.iter() {
         // Linearized residual: M_i x - c_i
         let mut m_sq = 0.0;
         for d in 0..dim {
@@ -553,7 +497,7 @@ fn eval_dv_terms(
             let r = mx - seg.c_i[d];
             m_sq += r * r;
         }
-        model_dv += w * m_sq;
+        model_res += w * m_sq;
 
         // True residual: a_geom_i(x) - g_true(r_i(x))
         let mut r_i = [0.0f64; 3];
@@ -570,9 +514,9 @@ fn eval_dv_terms(
             let r = a_geom[d] * t2_inv - g[d];
             t_sq += r * r;
         }
-        true_dv += w * t_sq;
+        true_res += w * t_sq;
     }
-    (model_dv, true_dv)
+    (model_res, true_res)
 }
 
 /// Minimum radius of the curve over a dense parameter sweep (KOZ feasibility probe).
@@ -601,9 +545,6 @@ pub fn optimize_orbital_docking(
     tol: f64,
     transfer_time: f64,
     sample_count: usize,
-    objective_mode: &str,
-    irls_eps: f64,
-    geom_reg: f64,
     scp_prox_weight: f64,
     scp_trust_radius: f64,
     v0: Option<&[f64]>,
@@ -771,9 +712,6 @@ pub fn optimize_orbital_docking(
             dim,
             t,
             sample_count,
-            objective_mode,
-            irls_eps,
-            geom_reg,
             &consts,
             Some(lin_for_qp_ref),
         );
@@ -1022,7 +960,9 @@ pub fn optimize_orbital_docking(
                 // Optimality phase: ratio test on the objective, where the only model
                 // error is the gravity linearization. Reject any step that re-enters
                 // the KOZ. predicted = linearized objective drop; actual = true-gravity
-                // objective drop (trueObj = modelObj - model_dv + true_dv).
+                // objective drop (trueObj = modelObj - model_res + true_res: the
+                // smoothness quadratic is exact, so the correction swaps the linearized
+                // residual term for the true-gravity one).
                 if true_v_c > tol_c {
                     trust *= 0.5;
                     if trust < trust_min {
@@ -1033,14 +973,9 @@ pub fn optimize_orbital_docking(
                 let model_p = quad_form(&h_obj, &f_obj, &p, nvars);
                 let model_c = quad_form(&h_obj, &f_obj, cand, nvars);
                 let pred = model_p - model_c;
-                let (corr_p, corr_c) = if objective_mode == "dv" {
-                    let w = irls_weights(&p, lin_for_qp_ref, nvars, objective_mode, irls_eps);
-                    let (mdv_p, tdv_p) = eval_dv_terms(&p, lin_for_qp_ref, &w, np1, dim, t, &consts);
-                    let (mdv_c, tdv_c) = eval_dv_terms(cand, lin_for_qp_ref, &w, np1, dim, t, &consts);
-                    (tdv_p - mdv_p, tdv_c - mdv_c)
-                } else {
-                    (0.0, 0.0)
-                };
+                let (mres_p, tres_p) = eval_residual_terms(&p, lin_for_qp_ref, np1, dim, t, &consts);
+                let (mres_c, tres_c) = eval_residual_terms(cand, lin_for_qp_ref, np1, dim, t, &consts);
+                let (corr_p, corr_c) = (tres_p - mres_p, tres_c - mres_c);
                 let act = (model_p + corr_p) - (model_c + corr_c);
 
                 let pred_floor = 1e-12 * (1.0 + model_p.abs());
@@ -1114,7 +1049,7 @@ pub fn optimize_orbital_docking(
     // Compute final cost (always uses fresh linearization at the final p, so
     // both frozen and unfrozen runs report a self-consistent cost).
     let (hf, ff, cf) = build_ctrl_accel_quadratic(
-        &p, np1, dim, t, sample_count, objective_mode, irls_eps, geom_reg, &consts, None,
+        &p, np1, dim, t, sample_count, &consts, None,
     );
     let mut cost_no_const = 0.0f64;
     for i in 0..nvars {

@@ -104,7 +104,7 @@ def run(scenario_name="phase120"):
     # Rust SCvx solutions per n_seg (energy).
     rust = {}
     for ns in N_SEGS:
-        P, info = H.run_rust(sc, n_seg=ns, objective_mode="energy")
+        P, info = H.run_rust(sc, n_seg=ns)
         rust[ns] = dict(P=P, Jtrue=H.J_true(P, T), min_r=H.min_radius(P),
                         iters=int(info["iterations"]),
                         conv=int(info.get("scvx_converged", -1)))

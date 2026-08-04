@@ -211,9 +211,6 @@ def _build_ctrl_accel_quadratic(
     P_ref: np.ndarray,
     T: float,
     sample_count: int,
-    objective: str = "energy",
-    irls_eps: float = 1e-9,
-    geom_reg: float = 0.0,
 ):
     """
     Build quadratic objective for control acceleration energy with gravity+J2
@@ -262,17 +259,9 @@ def _build_ctrl_accel_quadratic(
     r_e = constants.EARTH_RADIUS_KM
     j2 = constants.EARTH_J2
 
-    objective = str(objective).lower().strip()
-    if objective not in ("energy", "dv"):
-        raise ValueError(f"Unknown objective={objective!r}; expected 'energy' or 'dv'.")
-
-    # 1) Optional geometric regularization term via G_tilde (no sampling).
-    # For 'energy' objective, this is part of the intended surrogate.
-    # For 'dv' objective, keep it as optional stabilization (default 0.0).
+    # 1) Smoothness term via G_tilde (no sampling).
     if curve_ref.G_tilde is not None:
-        w_geom = 1.0 if objective == "energy" else float(geom_reg)
-        if w_geom != 0.0:
-            Q += w_geom * (1.0 / (T**4)) * np.kron(curve_ref.G_tilde, np.eye(dim))
+        Q += (1.0 / (T**4)) * np.kron(curve_ref.G_tilde, np.eye(dim))
 
     # 2) Gravity/J2 linearization via De Casteljau segment centroids.
     n_lin_seg = max(1, int(sample_count))
@@ -301,24 +290,10 @@ def _build_ctrl_accel_quadratic(
         c_i = g_ref - (J_i @ r_ref)
         B_i = J_i @ R_i
 
-        # Add ||A_i x - (B_i x + c_i)||^2 contributions.
-        #
-        # objective='energy':
-        #   minimize Σ ||res_i||^2  (L2 energy)
-        #
-        # objective='dv':
-        #   approximate minimize Σ ||res_i|| (delta-v proxy in tau-domain)
-        #   via IRLS/majorization:
-        #     ||r|| ≈ (1/alpha) ||r||^2 + const,  alpha = sqrt(||r_ref||^2 + eps)
-        #   so weight_i = 1/alpha.
+        # Add ||A_i x - (B_i x + c_i)||^2 contributions (L2 energy):
         # = x^T[(A-B)^T(A-B)]x - 2 c^T(A-B)x + c^T c
         M_i = A_i - B_i
         w_i = w_seg
-        if objective == "dv":
-            r_ref_res = (M_i @ x_ref) - c_i
-            alpha = float(np.sqrt(float(r_ref_res @ r_ref_res) + float(irls_eps)))
-            # Avoid division by 0; alpha >= sqrt(eps)
-            w_i = w_seg * (1.0 / alpha)
 
         Q += w_i * (M_i.T @ M_i)
         q += w_i * (-M_i.T @ c_i)
@@ -330,9 +305,6 @@ def _build_ctrl_accel_quadratic(
         "sample_count": sample_count,
         "n_lin_seg": n_lin_seg,
         "T": float(T),
-        "objective": objective,
-        "irls_eps": float(irls_eps),
-        "geom_reg": float(geom_reg),
     }
     return H, f, c_const, diag
 
@@ -399,9 +371,6 @@ def optimize_orbital_docking(
     a0=None,
     a1=None,
     sample_count=100,
-    objective_mode: str = "energy",
-    dv_irls_eps: float = 1e-9,
-    dv_geom_reg: float = 0.0,
     scp_prox_weight: float = 0.0,
     scp_trust_radius: float = 0.0,
     enforce_prograde: bool = False,
@@ -431,8 +400,6 @@ def optimize_orbital_docking(
             constraint inside the QP and adapts via the ratio-test step acceptance; 0 disables it.
         scp_prox_weight: Optional secondary proximal regularizer; the trust region is the
             primary stabilizer.
-        objective_mode: "energy" (default, QP-native quadratic control-effort) or the deprecated
-            "dv" sum-of-norms surrogate.
         v0, v1: Velocity boundary conditions
         a0, a1: Acceleration boundary conditions
         sample_count: Number of samples for cost evaluation
@@ -462,7 +429,6 @@ def optimize_orbital_docking(
     if use_cache and not ignore_existing_cache:
         cache_key = get_cache_key(
             P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1,
-            objective=objective_mode,
             scp_prox_weight=scp_prox_weight,
             scp_trust_radius=scp_trust_radius,
             freeze_gravity_jacobian=freeze_gravity_jacobian,
@@ -497,9 +463,6 @@ def optimize_orbital_docking(
         a0=a0,
         a1=a1,
         sample_count=sample_count,
-        objective_mode=objective_mode,
-        dv_irls_eps=dv_irls_eps,
-        dv_geom_reg=dv_geom_reg,
         scp_prox_weight=scp_prox_weight,
         scp_trust_radius=scp_trust_radius,
         enforce_prograde=enforce_prograde,
@@ -554,9 +517,6 @@ def optimize_orbital_docking(
         P,
         T=T,
         sample_count=sample_count,
-        objective=objective_mode,
-        irls_eps=dv_irls_eps,
-        geom_reg=dv_geom_reg,
     )
     cost_no_const = 0.5 * float(x_final @ (Hf @ x_final)) + float(ff @ x_final)
     cost_true_energy = cost_no_const + float(cf)
@@ -597,7 +557,14 @@ def optimize_orbital_docking(
             "max_iterations": int(max_iter),
             "termination_reason": termination_reason,
             "final_delta_norm": last_delta,
-            "feasible": min_radius >= r_e - 1e-6,
+            # Feasibility must include the KOZ *hull* constraint the method actually
+            # enforces (koz_linear_max_violation ~ 0), not just the curve's closest
+            # approach. A solve can have min_radius >= r_e yet grossly violate the
+            # convex-hull KOZ constraint (e.g. n_seg=2/4 at aggressive geometry:
+            # koz_linear_max_violation ~ 1000s while min_radius still clears).
+            "feasible": bool(min_radius >= r_e - 1e-6 and koz_linear_max_violation <= 1e-3),
+            "curve_clears_koz": bool(min_radius >= r_e - 1e-6),
+            "hull_feasible": bool(koz_linear_max_violation <= 1e-3),
             "min_radius": min_radius,
             "cost": cost_true_energy,
             "cost_no_const": cost_no_const,
@@ -608,7 +575,6 @@ def optimize_orbital_docking(
             "dv_proxy_m_s": dv_proxy_m_s,
             "T_transfer_s": float(T),
             "sample_count": int(sample_count),
-            "objective": str(objective_mode),
             "scp_prox_weight": float(scp_prox_weight),
             "scp_trust_radius": float(scp_trust_radius),
             "freeze_gravity_jacobian": bool(freeze_gravity_jacobian),
@@ -627,7 +593,6 @@ def optimize_orbital_docking(
     if use_cache:
         cache_key = get_cache_key(
             P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1,
-            objective=objective_mode,
             scp_prox_weight=scp_prox_weight,
             scp_trust_radius=scp_trust_radius,
             freeze_gravity_jacobian=freeze_gravity_jacobian,
@@ -662,9 +627,6 @@ def _optimize_one_segment_count(payload: dict):
         max_iter=payload["max_iter"],
         tol=payload["tol"],
         sample_count=payload["sample_count"],
-        objective_mode=payload.get("objective", "energy"),
-        dv_irls_eps=payload.get("dv_irls_eps", 1e-9),
-        dv_geom_reg=payload.get("dv_geom_reg", 0.0),
         scp_prox_weight=payload.get("scp_prox_weight", 0.0),
         scp_trust_radius=payload.get("scp_trust_radius", 0.0),
         enforce_prograde=payload.get("enforce_prograde", False),
@@ -685,9 +647,6 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                                 max_iter=120, tol=1e-8, verbose=True, debug=False, use_cache=True,
                                 ignore_existing_cache=False,
                                 v0=None, v1=None, a0=None, a1=None,
-                                objective: str = "energy",
-                                dv_irls_eps: float = 1e-9,
-                                dv_geom_reg: float = 0.0,
                                 scp_prox_weight: float = 0.0,
                                 scp_trust_radius: float = 0.0,
                                 enforce_prograde: bool = False,
@@ -743,7 +702,6 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
         for n_seg in segment_counts:
             cache_key = get_cache_key(
                 P_init, n_seg, r_e, max_iter, tol, 100, v0, v1, a0, a1,
-                objective=objective,
                 scp_prox_weight=scp_prox_weight,
                 scp_trust_radius=scp_trust_radius,
             )
@@ -770,9 +728,6 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                 max_iter=max_iter,
                 tol=tol,
                 sample_count=100,
-                objective_mode=objective,
-                dv_irls_eps=dv_irls_eps,
-                dv_geom_reg=dv_geom_reg,
                 scp_prox_weight=scp_prox_weight,
                 scp_trust_radius=scp_trust_radius,
                 enforce_prograde=enforce_prograde,
@@ -814,9 +769,6 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                     "max_iter": max_iter,
                     "tol": tol,
                     "sample_count": 100,
-                    "objective": objective,
-                    "dv_irls_eps": dv_irls_eps,
-                    "dv_geom_reg": dv_geom_reg,
                     "scp_prox_weight": scp_prox_weight,
                     "scp_trust_radius": scp_trust_radius,
                     "enforce_prograde": enforce_prograde,

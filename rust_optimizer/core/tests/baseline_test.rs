@@ -205,11 +205,8 @@ fn test_optimizer_golden_run() {
         1e-6,  // tol
         bl.scenario.t,
         100,   // sample_count
-        "energy",
-        1e-9,
-        0.0,
-        0.0,
-        0.0,
+        0.0,   // scp_prox_weight
+        0.0,   // scp_trust_radius
         None,
         None,
         None,

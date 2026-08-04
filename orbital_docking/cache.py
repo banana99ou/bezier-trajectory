@@ -10,7 +10,7 @@ from pathlib import Path
 
 # Increment to invalidate old caches when the optimization formulation changes.
 # NOTE: the cache key does NOT hash the Rust binary; bump this after any solver rebuild.
-CACHE_VERSION = "7.0-scvx-energy"
+CACHE_VERSION = "8.0-scvx-true-rho"
 
 
 def get_cache_key(
@@ -24,7 +24,6 @@ def get_cache_key(
     v1,
     a0,
     a1,
-    objective: str = "energy",
     scp_prox_weight: float = 0.0,
     scp_trust_radius: float = 0.0,
     freeze_gravity_jacobian: bool = False,
@@ -59,7 +58,6 @@ def get_cache_key(
         'v1': v1.tobytes() if v1 is not None and isinstance(v1, np.ndarray) else str(v1),
         'a0': a0.tobytes() if a0 is not None and isinstance(a0, np.ndarray) else str(a0),
         'a1': a1.tobytes() if a1 is not None and isinstance(a1, np.ndarray) else str(a1),
-        'objective': str(objective),
         'scp_prox_weight': float(scp_prox_weight),
         'scp_trust_radius': float(scp_trust_radius),
         'freeze_gravity_jacobian': bool(freeze_gravity_jacobian),

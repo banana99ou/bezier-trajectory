@@ -56,7 +56,7 @@ def run(scenario_name="phase120"):
     rows = []
     all_pass = True
     for ns in N_SEGS:
-        P, info = H.run_rust(sc, n_seg=ns, objective_mode="energy")
+        P, info = H.run_rust(sc, n_seg=ns)
         x = P.reshape(-1)
 
         # Primal feasibility.
@@ -70,8 +70,7 @@ def run(scenario_name="phase120"):
 
         # Stationarity of the SURROGATE the solver minimizes (gravity linearized at x*):
         #   grad_surrogate = H x + f. Projected onto the equality nullspace ~ 0 at a KKT point.
-        Hm, fm, _, _ = _build_ctrl_accel_quadratic(P, sc["T"], int(info.get("sample_count", 100) or 100),
-                                                   objective="energy")
+        Hm, fm, _, _ = _build_ctrl_accel_quadratic(P, sc["T"], int(info.get("sample_count", 100) or 100))
         g_surr = Hm @ x + fm
         ratio_surr = _proj_ratio(A_eq, g_surr)
 

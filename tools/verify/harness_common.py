@@ -188,14 +188,14 @@ def velocity_endpoints(P, T):
 # Rust solver wrapper (always cache-off to avoid stale-binary hits)
 # ----------------------------------------------------------------------------
 
-def run_rust(scenario, n_seg=16, objective_mode="energy", max_iter=1000,
+def run_rust(scenario, n_seg=16, max_iter=1000,
              tol=1e-6, scp_trust_radius=2000.0, scp_prox_weight=0.0,
              sample_count=100, enforce_prograde=False, **overrides):
     """Run the Rust SCvx solver on a scenario. Returns (P_opt, info)."""
     kwargs = dict(
         n_seg=n_seg, r_e=scenario["r_e"], max_iter=max_iter, tol=tol,
         v0=scenario["v0"], v1=scenario["v1"], sample_count=sample_count,
-        objective_mode=objective_mode, scp_prox_weight=scp_prox_weight,
+        scp_prox_weight=scp_prox_weight,
         scp_trust_radius=scp_trust_radius, transfer_time=scenario["T"],
         enforce_prograde=enforce_prograde, verbose=False,
         use_cache=False, ignore_existing_cache=True,

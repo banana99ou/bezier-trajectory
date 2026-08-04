@@ -48,7 +48,7 @@ def run(scenario_name="phase120"):
     sc = H.make_scenario(scenario_name)
     rows = []
     for label, cfg, max_iter in CELLS:
-        P, info = H.run_rust(sc, n_seg=N_SEG, objective_mode="energy", max_iter=max_iter, **cfg)
+        P, info = H.run_rust(sc, n_seg=N_SEG, max_iter=max_iter, **cfg)
         it = int(info["iterations"])
         conv = int(info.get("scvx_converged", -1))
         capped = it >= max_iter
