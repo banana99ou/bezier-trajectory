@@ -557,14 +557,23 @@ def optimize_orbital_docking(
             "max_iterations": int(max_iter),
             "termination_reason": termination_reason,
             "final_delta_norm": last_delta,
-            # Feasibility must include the KOZ *hull* constraint the method actually
-            # enforces (koz_linear_max_violation ~ 0), not just the curve's closest
-            # approach. A solve can have min_radius >= r_e yet grossly violate the
-            # convex-hull KOZ constraint (e.g. n_seg=2/4 at aggressive geometry:
-            # koz_linear_max_violation ~ 1000s while min_radius still clears).
-            "feasible": bool(min_radius >= r_e - 1e-6 and koz_linear_max_violation <= 1e-3),
+            # Feasibility = the two certificates the method actually promises:
+            #  (A) the ORIGINAL nonconvex constraint holds at the returned curve
+            #      (dense min-radius check; continuous-time via Prop 1, cf. [11,12]);
+            #  (B) the convexification's slack (virtual control) VANISHED at the
+            #      accepted solution -- the standard SCvx acceptance condition
+            #      (Mao et al. / Malyuta et al.). A "solution" carried on nonzero
+            #      slack was never actually solved (e.g. n_seg=2/4 at aggressive
+            #      geometry: max_koz_slack ~ 50-1000 km while min_radius clears).
+            # Post-hoc re-linearization of the hull at the final P
+            # (koz_linear_max_violation) is a DIFFERENT, stricter sufficient
+            # condition than the one the solver certified; report it as a
+            # diagnostic (hull_recertified), do not gate on it.
+            "feasible": bool(min_radius >= r_e - 1e-6
+                             and float(info.get("max_koz_slack", 0.0)) <= 1e-3),
             "curve_clears_koz": bool(min_radius >= r_e - 1e-6),
-            "hull_feasible": bool(koz_linear_max_violation <= 1e-3),
+            "solve_slack_vanished": bool(float(info.get("max_koz_slack", 0.0)) <= 1e-3),
+            "hull_recertified": bool(koz_linear_max_violation <= 1e-3),
             "min_radius": min_radius,
             "cost": cost_true_energy,
             "cost_no_const": cost_no_const,

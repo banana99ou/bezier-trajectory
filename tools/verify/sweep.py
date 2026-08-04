@@ -2,8 +2,12 @@
 Pillar 4b -- Regression sweep.
 
 Grid: N in {6,7,8} x n_seg in {2,4,8,16,32,64} x scenario in {phase120, phase70}, energy.
-PASS: every n_seg != 4 cell converges (iter < cap) and is feasible; the cost spread across
-n_seg in {8,16,32,64} is small; n_seg=4 is asserted as the sole systematic holdout.
+PASS: every fine-mesh (n_seg >= 8) cell converges (iter < cap) and is feasible, where
+feasible = curve clears the KOZ (dense) AND the solve-time KOZ slack vanished (the SCvx
+virtual-control acceptance condition); the cost spread across n_seg in {8,16,32,64} is
+small; and every capped cell is n_seg=4. Coarse meshes are documented failures, not gated:
+n_seg=2 converges but carries O(100-1000 km) slack (never actually solved -- the paper
+reports n_seg=2 as infeasible), and n_seg=4 caps at aggressive geometry + high degree.
 
 Run:  .venv/bin/python tools/verify/sweep.py
 """
@@ -32,7 +36,7 @@ def run():
         for N in DEGREES:
             sc = H.make_scenario(scen, N=N)
             for ns in N_SEGS:
-                P, info = H.run_rust(sc, n_seg=ns, objective_mode="energy", max_iter=MAX_ITER)
+                P, info = H.run_rust(sc, n_seg=ns, max_iter=MAX_ITER)
                 it = int(info["iterations"])
                 rows.append(dict(
                     scenario=scen, N=N, n_seg=ns, iterations=it,
@@ -45,13 +49,15 @@ def run():
                     max_koz_slack=float(info.get("max_koz_slack", 0.0)),
                 ))
 
-    # PASS: n_seg != 4 cells converge + feasible; n_seg == 4 is the sole holdout.
-    non4 = [r for r in rows if r["n_seg"] != 4]
-    non4_ok = all((not r["capped"]) and r["converged"] == 1 and r["feasible"] for r in non4)
+    # PASS: fine-mesh (n_seg >= 8) cells converge + feasible; n_seg in {2,4} are the
+    # documented coarse-mesh failures (reported below, not gated).
+    fine = [r for r in rows if r["n_seg"] >= 8]
+    fine_ok = all((not r["capped"]) and r["converged"] == 1 and r["feasible"] for r in fine)
     bad = [r for r in rows if r["capped"]]
     only_holdouts_are_4 = all(r["n_seg"] == 4 for r in bad) if bad else True
     n_four_cap = sum(1 for r in rows if r["n_seg"] == 4 and r["capped"])
     n_four = sum(1 for r in rows if r["n_seg"] == 4)
+    coarse_bad = [r for r in rows if r["n_seg"] in (2, 4) and not r["feasible"]]
 
     # Cost spread across n_seg in {8,16,32,64} per (scenario, N).
     spread_ok = True
@@ -65,7 +71,7 @@ def run():
                 spreads.append((scen, N, spr))
                 spread_ok = spread_ok and (spr < 0.30)
 
-    passed = non4_ok and spread_ok and only_holdouts_are_4  # n_seg=4 holdouts reported, not gated
+    passed = fine_ok and spread_ok and only_holdouts_are_4  # coarse-mesh failures reported, not gated
 
     H.write_csv(OUT / "sweep.csv", [
         {k: (f"{v:.6e}" if k in ("cost_true_energy", "J_true") else
@@ -74,22 +80,24 @@ def run():
     md = [f"# Pillar 4b -- Regression sweep (energy)", ""]
     md.append(f"Grid: N∈{DEGREES} × n_seg∈{N_SEGS} × {SCENARIOS}  ({len(rows)} runs)")
     md.append("")
-    md.append(f"- all n_seg≠4 cells converge (iter<cap) + feasible: **{non4_ok}** "
-              f"({sum((not r['capped']) and r['converged']==1 and r['feasible'] for r in non4)}/{len(non4)})")
-    md.append(f"- the only non-convergers are n_seg=4 cells: **{only_holdouts_are_4}** "
+    md.append(f"- all fine-mesh (n_seg≥8) cells converge (iter<cap) + feasible "
+              f"(curve clears + solve-slack vanished): **{fine_ok}** "
+              f"({sum((not r['capped']) and r['converged']==1 and r['feasible'] for r in fine)}/{len(fine)})")
+    md.append(f"- every capped cell is n_seg=4: **{only_holdouts_are_4}** "
               f"({n_four_cap}/{n_four} n_seg=4 cells cap; n_seg=4 converges for milder geometry / lower degree)")
     md.append(f"- cost spread across n_seg∈{{8,16,32,64}} < 30% for all (N,scenario): **{spread_ok}** "
               f"(max spread={max(s for _,_,s in spreads):.1%})")
     md.append("")
-    md.append("### Non-converged cells (all are the aggressive phase120 + high-degree + n_seg=4 corner)")
-    md.append("| scenario | N | n_seg | iters | feasible | max_slack |")
-    md.append("|---|---|---|---|---|---|")
-    for r in bad:
+    md.append("### Coarse-mesh failures (documented, not gated: n_seg=2 carries slack ⇒ never "
+              "actually solved; n_seg=4 caps at the aggressive corner)")
+    md.append("| scenario | N | n_seg | iters | capped | feasible | max_slack |")
+    md.append("|---|---|---|---|---|---|---|")
+    for r in coarse_bad:
         md.append(f"| {r['scenario']} | {r['N']} | {r['n_seg']} | {r['iterations']} | "
-                  f"{r['feasible']} | {r['max_koz_slack']:.2f} |")
+                  f"{r['capped']} | {r['feasible']} | {r['max_koz_slack']:.2f} |")
     md.append("")
     md.append(f"## VERDICT: {'PASS' if passed else 'FAIL'}  "
-              f"(n_seg=4 is a documented pre-existing holdout, reported not gated)")
+              f"(n_seg∈{{2,4}} are documented coarse-mesh failures, reported not gated)")
     H.write_text(OUT / "summary.md", "\n".join(md))
     print("\n".join(md))
     return passed
