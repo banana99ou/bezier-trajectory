@@ -5,7 +5,7 @@ Grid: N in {6,7,8} x n_seg in {2,4,8,16,32,64} x scenario in {phase120, phase70}
 PASS: every fine-mesh (n_seg >= 8) cell converges (iter < cap) and is feasible, where
 feasible = curve clears the KOZ (dense) AND the solve-time KOZ slack vanished (the SCvx
 virtual-control acceptance condition); the cost spread across n_seg in {8,16,32,64} is
-small; and every capped cell is n_seg=4. Coarse meshes are documented failures, not gated:
+small; and every capped cell is coarse (n_seg<=4). Coarse meshes are documented failures, not gated:
 n_seg=2 converges but carries O(100-1000 km) slack (never actually solved -- the paper
 reports n_seg=2 as infeasible), and n_seg=4 caps at aggressive geometry + high degree.
 
@@ -54,9 +54,13 @@ def run():
     fine = [r for r in rows if r["n_seg"] >= 8]
     fine_ok = all((not r["capped"]) and r["converged"] == 1 and r["feasible"] for r in fine)
     bad = [r for r in rows if r["capped"]]
-    only_holdouts_are_4 = all(r["n_seg"] == 4 for r in bad) if bad else True
-    n_four_cap = sum(1 for r in rows if r["n_seg"] == 4 and r["capped"])
-    n_four = sum(1 for r in rows if r["n_seg"] == 4)
+    # Caps are acceptable only at the documented coarse meshes (n_seg <= 4), where the
+    # half-space geometry genuinely cannot certify the KOZ. (Under the canonical
+    # certificate-gated acceptance, n_seg=4 now converges everywhere and n_seg=2 runs
+    # honestly to the cap instead of exiting quietly with slack.)
+    only_holdouts_are_coarse = all(r["n_seg"] <= 4 for r in bad) if bad else True
+    n_coarse_cap = sum(1 for r in rows if r["n_seg"] <= 4 and r["capped"])
+    n_coarse = sum(1 for r in rows if r["n_seg"] <= 4)
     coarse_bad = [r for r in rows if r["n_seg"] in (2, 4) and not r["feasible"]]
 
     # Cost spread across n_seg in {8,16,32,64} per (scenario, N).
@@ -71,7 +75,7 @@ def run():
                 spreads.append((scen, N, spr))
                 spread_ok = spread_ok and (spr < 0.30)
 
-    passed = fine_ok and spread_ok and only_holdouts_are_4  # coarse-mesh failures reported, not gated
+    passed = fine_ok and spread_ok and only_holdouts_are_coarse  # coarse-mesh failures reported, not gated
 
     H.write_csv(OUT / "sweep.csv", [
         {k: (f"{v:.6e}" if k in ("cost_true_energy", "J_true") else
@@ -83,8 +87,9 @@ def run():
     md.append(f"- all fine-mesh (n_seg≥8) cells converge (iter<cap) + feasible "
               f"(curve clears + solve-slack vanished): **{fine_ok}** "
               f"({sum((not r['capped']) and r['converged']==1 and r['feasible'] for r in fine)}/{len(fine)})")
-    md.append(f"- every capped cell is n_seg=4: **{only_holdouts_are_4}** "
-              f"({n_four_cap}/{n_four} n_seg=4 cells cap; n_seg=4 converges for milder geometry / lower degree)")
+    md.append(f"- every capped cell is coarse (n_seg<=4): **{only_holdouts_are_coarse}** "
+              f"({n_coarse_cap}/{n_coarse} coarse cells cap; n_seg=4 now converges everywhere, "
+              f"n_seg=2 is a genuine geometric infeasibility that runs to the cap honestly)")
     md.append(f"- cost spread across n_seg∈{{8,16,32,64}} < 30% for all (N,scenario): **{spread_ok}** "
               f"(max spread={max(s for _,_,s in spreads):.1%})")
     md.append("")

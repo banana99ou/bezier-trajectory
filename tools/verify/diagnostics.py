@@ -34,7 +34,7 @@ def run(scenario_name="phase120", n_seg=16):
     merit = np.array(info.get("merit_history", []), float)
     step = np.array(info.get("step_norm_history", []), float)
     slack = np.array(info.get("slack_history", []), float)
-    phase = np.array(info.get("phase_history", []), float)  # 0=restore, 1=optimality
+    phase = np.array(info.get("phase_history", []), float)  # 0=bootstrap/uncertified, 1=certified
     n = len(trust)
 
     rows = [dict(step=i + 1, phase=int(phase[i]),
@@ -75,7 +75,7 @@ def run(scenario_name="phase120", n_seg=16):
             if phase[i] == 0.0:
                 a.axvspan(i + 0.5, i + 1.5, color="orange", alpha=0.08)
     fig.suptitle(f"SCvx per-iteration trace ({scenario_name}, n_seg={n_seg}, energy)\n"
-                 "orange = feasibility-restoration phase")
+                 "orange = bootstrap / uncertified-iterate step")
     fig.tight_layout()
     fig.savefig(OUT / "iter_trace.png", dpi=110)
     plt.close(fig)
