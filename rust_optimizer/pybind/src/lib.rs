@@ -19,7 +19,7 @@ use pyo3::types::{PyDict, PyList};
     scp_trust_radius = 0.0,
     enforce_prograde = false,
     prograde_n_samples = 16,
-    elastic_weight = 1e4,
+    elastic_weight = 1e-2,
     transfer_time = 1500.0,
     freeze_gravity_jacobian = false,
     freeze_after_iter = 1,

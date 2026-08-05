@@ -375,7 +375,7 @@ def optimize_orbital_docking(
     scp_trust_radius: float = 0.0,
     enforce_prograde: bool = False,
     prograde_n_samples: int = 16,
-    elastic_weight: float = 1e4,
+    elastic_weight: float = 1e-2,
     freeze_gravity_jacobian: bool = False,
     freeze_after_iter: int = 1,
     disable_scvx_freeze: bool = False,
@@ -403,9 +403,14 @@ def optimize_orbital_docking(
         v0, v1: Velocity boundary conditions
         a0, a1: Acceleration boundary conditions
         sample_count: Number of samples for cost evaluation
-        elastic_weight: L1 penalty on KOZ slack variables for elastic relaxation.
+        elastic_weight: L1 penalty on KOZ slack variables (SCvx virtual control).
             When > 0, KOZ constraints are softened with slack variables so the QP
-            is always feasible. Set to 0 to disable (original hard-constraint behavior).
+            is always feasible, and the same weight prices constraint violation in
+            the SCvx merit ratio test. Exact-penalty rule: any value above the KOZ
+            dual norm (~1e-6 here) recovers the hard-constrained solution; keep it
+            within a few orders of that so penalty noise cannot drown the
+            objective (~1e-5) in the ratio test — 1e4 demonstrably degrades the
+            optimum by 4-5x. Set to 0 to disable (hard-constraint behavior).
         verbose: Print progress
         use_cache: Whether to use cache (default: True)
         ignore_existing_cache: If True, skip cache reads but still write cache
@@ -494,11 +499,13 @@ def optimize_orbital_docking(
         termination_reason = "stopped_max_iter"
     elif scvx_converged:
         termination_reason = "converged_scvx"
+    elif trust_active and final_trust < 1e-2:  # trust_min in the Rust SCvx loop
+        # Trust collapse without the convergence certificate — regardless of
+        # whether the curve happens to clear the KOZ (hull conservatism can
+        # leave a truly-clear curve uncertified).
+        termination_reason = "trust_collapsed"
     elif not rust_feasible:
-        # Stopped before reaching a feasible iterate — separate the two causes.
-        if trust_active and final_trust < 1e-2:  # trust_min in the Rust SCvx loop
-            termination_reason = "trust_collapsed"
-        elif last_delta is None or last_delta != last_delta:  # NaN: QP gave no step
+        if last_delta is None or last_delta != last_delta:  # NaN: QP gave no step
             termination_reason = "qp_infeasible"
         else:
             termination_reason = "infeasible_early_stop"
@@ -659,7 +666,7 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                                 scp_prox_weight: float = 0.0,
                                 scp_trust_radius: float = 0.0,
                                 enforce_prograde: bool = False,
-                                elastic_weight: float = 1e4,
+                                elastic_weight: float = 1e-2,
                                 n_jobs: int = 1):
     """
     Run optimization for multiple segment counts and return results.

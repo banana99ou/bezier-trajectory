@@ -36,8 +36,11 @@ pub struct OptResult {
     /// Empty when freeze_gravity_jacobian is true (drift is zero by construction).
     pub jacobian_drift_history: Vec<Vec<f64>>,
     /// Per-accepted-outer-step SCvx diagnostics (trust path only). One entry per
-    /// accepted step. `rho_history` is NaN on feasibility-restoration steps.
-    /// `phase_history`: 0 = feasibility restoration, 1 = optimality.
+    /// accepted step. `rho_history` is the penalized-merit ratio (actual/predicted
+    /// reduction; +inf marks a null step where the model saw no improvement).
+    /// `merit_history` is the true penalized merit T(x) after the step.
+    /// `phase_history`: 0 = iterate still violates the KOZ control-point condition,
+    /// 1 = iterate satisfies it (informational; acceptance is single-phase).
     pub rho_history: Vec<f64>,
     pub trust_history: Vec<f64>,
     pub merit_history: Vec<f64>,
@@ -534,6 +537,121 @@ fn min_radius_of(x: &[f64], np1: usize, dim: usize) -> f64 {
     min_r
 }
 
+/// Sum of linearized KOZ row violations at `x`: Σ max(0, lb_r − a_r·x) over the KOZ
+/// rows of the assembled system. This is exactly what the elastic slack absorbs, so
+/// the convex merit built from it matches the penalized objective the QP minimizes.
+fn koz_row_violation(
+    x: &[f64],
+    a_rows: &[f64],
+    lbs: &[f64],
+    koz_row_start: usize,
+    n_koz: usize,
+    nvars: usize,
+) -> f64 {
+    let mut total = 0.0f64;
+    for r in koz_row_start..koz_row_start + n_koz {
+        let lb = lbs[r];
+        if !lb.is_finite() {
+            continue; // empty-KOZ placeholder row
+        }
+        let mut ax = 0.0;
+        for j in 0..nvars {
+            ax += a_rows[r * nvars + j] * x[j];
+        }
+        total += (lb - ax).max(0.0);
+    }
+    total
+}
+
+/// Sum of true (non-linearized) KOZ violations of the subdivided control points at
+/// `x`: Σ_{s,k} max(0, r_e − ‖q_k^(s) − c_koz‖). This is the nonlinear counterpart
+/// of the half-space rows — each supporting hyperplane under-approximates the
+/// distance to the sphere, so this is ≤ the linearized row violation everywhere.
+fn true_cp_violation(
+    x: &[f64],
+    a_list: &[Vec<f64>],
+    np1: usize,
+    dim: usize,
+    r_e: f64,
+    c_koz: &[f64],
+) -> f64 {
+    let mut total = 0.0f64;
+    for a_seg in a_list {
+        for k in 0..np1 {
+            let mut d_sq = 0.0;
+            for d in 0..dim {
+                let mut q = 0.0;
+                for j in 0..np1 {
+                    q += a_seg[k * np1 + j] * x[j * dim + d];
+                }
+                let diff = q - c_koz[d];
+                d_sq += diff * diff;
+            }
+            total += (r_e - d_sq.sqrt()).max(0.0);
+        }
+    }
+    total
+}
+
+/// Solve the elastic (virtual-control) QP: slack s_k ≥ 0 on each KOZ row with L1
+/// penalty `elastic_weight·Σs` — i.e. minimize the penalized convex merit exactly.
+/// Returns (x, total_slack, max_slack).
+fn solve_qp_elastic(
+    h_mat: &[f64],
+    f_vec: &[f64],
+    all_a_rows: &[f64],
+    all_lb: &[f64],
+    all_ub: &[f64],
+    nvars: usize,
+    total_rows: usize,
+    koz_row_start: usize,
+    n_koz: usize,
+    elastic_weight: f64,
+) -> Option<(Vec<f64>, f64, f64)> {
+    let nvars_ext = nvars + n_koz;
+    let ext_nrows = total_rows + n_koz;
+
+    let mut h_ext = vec![0.0; nvars_ext * nvars_ext];
+    for i in 0..nvars {
+        for j in 0..nvars {
+            h_ext[i * nvars_ext + j] = h_mat[i * nvars + j];
+        }
+    }
+
+    let mut f_ext = vec![0.0; nvars_ext];
+    f_ext[..nvars].copy_from_slice(f_vec);
+    for k in 0..n_koz {
+        f_ext[nvars + k] = elastic_weight;
+    }
+
+    let mut a_ext = vec![0.0; ext_nrows * nvars_ext];
+    let mut lb_ext = Vec::with_capacity(ext_nrows);
+    let mut ub_ext = Vec::with_capacity(ext_nrows);
+
+    for r in 0..total_rows {
+        let dst = r * nvars_ext;
+        let src = r * nvars;
+        a_ext[dst..dst + nvars].copy_from_slice(&all_a_rows[src..src + nvars]);
+        if r >= koz_row_start && r < koz_row_start + n_koz {
+            a_ext[dst + nvars + (r - koz_row_start)] = 1.0;
+        }
+        lb_ext.push(all_lb[r]);
+        ub_ext.push(all_ub[r]);
+    }
+
+    for k in 0..n_koz {
+        let r = total_rows + k;
+        a_ext[r * nvars_ext + nvars + k] = 1.0;
+        lb_ext.push(0.0);
+        ub_ext.push(f64::INFINITY);
+    }
+
+    let x_full = solve_qp(&h_ext, &f_ext, &a_ext, &lb_ext, &ub_ext, nvars_ext, ext_nrows)?;
+    let total_slack = x_full[nvars..].iter().sum::<f64>();
+    let max_slack = x_full[nvars..].iter().cloned().fold(0.0f64, f64::max);
+    Some((x_full[..nvars].to_vec(), total_slack, max_slack))
+}
+
 /// Main optimization entry point.
 pub fn optimize_orbital_docking(
     p_init: &[f64],   // (Np1, dim) row-major
@@ -617,7 +735,6 @@ pub fn optimize_orbital_docking(
     // step norm (1e-12) that can never trigger under a moving linearization; for
     // the SCvx path we reinterpret it as a relative merit-change tol with a sane floor.
     let tol_f = if tol > 0.0 { tol.max(1e-7) } else { 1e-6 };
-    let tol_c = 1e-3_f64; // km — feasibility gate for declaring convergence
     let mut converged_scvx = false;
     // SCvx "linearize once, hold constant" snapshot: once the iterate first becomes
     // feasible, freeze BOTH the gravity linearization and the KOZ supporting half-spaces
@@ -706,7 +823,7 @@ pub fn optimize_orbital_docking(
 
         // Build quadratic objective. Keep the unregularized (H_obj, f_obj) for the
         // SCvx merit/ratio computation; the solved system adds proximal damping on top.
-        let (h_obj, f_obj, _c_const) = build_ctrl_accel_quadratic(
+        let (h_obj, f_obj, c_const) = build_ctrl_accel_quadratic(
             &p,
             np1,
             dim,
@@ -848,70 +965,45 @@ pub fn optimize_orbital_docking(
             }
         }
 
-        // Solve QP -- try hard constraints first; if infeasible and elastic
-        // relaxation is enabled, retry with slack variables on KOZ rows.
+        // Solve QP. On the SCvx trust path the elastic (virtual-control) form is
+        // solved *unconditionally*: the subproblem then minimizes exactly the
+        // penalized convex merit L(x) = J^(k)(x) + w_s·viol_lin(x) that the ratio
+        // test measures, which makes the predicted merit reduction nonnegative by
+        // construction (x = p with s = viol_lin(p) is always elastic-feasible).
+        // The legacy path keeps the original hard-first / elastic-fallback order.
         let (x_new, iter_total_slack, iter_max_slack);
+        let elastic_available = elastic_weight > 0.0 && n_koz > 0;
 
-        let hard_sol = solve_qp(
+        if trust_active && elastic_available {
+            match solve_qp_elastic(
+                &h_mat, &f_vec, &all_a_rows, &all_lb, &all_ub, nvars, total_rows,
+                koz_row_start, n_koz, elastic_weight,
+            ) {
+                Some((x, ts, ms)) => {
+                    x_new = x;
+                    iter_total_slack = ts;
+                    iter_max_slack = ms;
+                }
+                None => break,
+            }
+        } else if let Some(x_sol) = solve_qp(
             &h_mat, &f_vec, &all_a_rows, &all_lb, &all_ub, nvars, total_rows,
-        );
-
-        if let Some(x_sol) = hard_sol {
+        ) {
             x_new = x_sol;
             iter_total_slack = 0.0;
             iter_max_slack = 0.0;
-        } else if elastic_weight > 0.0 && n_koz > 0 {
-            // Hard QP infeasible -- retry with elastic relaxation.
-            // Add slack s_k >= 0 to each KOZ row: A_koz x + s >= b_koz,
-            // with L1 penalty M * sum(s) in the objective.
-            let nvars_ext = nvars + n_koz;
-            let ext_nrows = total_rows + n_koz;
-
-            let mut h_ext = vec![0.0; nvars_ext * nvars_ext];
-            for i in 0..nvars {
-                for j in 0..nvars {
-                    h_ext[i * nvars_ext + j] = h_mat[i * nvars + j];
-                }
-            }
-
-            let mut f_ext = vec![0.0; nvars_ext];
-            f_ext[..nvars].copy_from_slice(&f_vec);
-            for k in 0..n_koz {
-                f_ext[nvars + k] = elastic_weight;
-            }
-
-            let mut a_ext = vec![0.0; ext_nrows * nvars_ext];
-            let mut lb_ext = Vec::with_capacity(ext_nrows);
-            let mut ub_ext = Vec::with_capacity(ext_nrows);
-
-            for r in 0..total_rows {
-                let dst = r * nvars_ext;
-                let src = r * nvars;
-                a_ext[dst..dst + nvars].copy_from_slice(&all_a_rows[src..src + nvars]);
-                if r >= koz_row_start && r < koz_row_start + n_koz {
-                    a_ext[dst + nvars + (r - koz_row_start)] = 1.0;
-                }
-                lb_ext.push(all_lb[r]);
-                ub_ext.push(all_ub[r]);
-            }
-
-            for k in 0..n_koz {
-                let r = total_rows + k;
-                a_ext[r * nvars_ext + nvars + k] = 1.0;
-                lb_ext.push(0.0);
-                ub_ext.push(f64::INFINITY);
-            }
-
-            let x_full = match solve_qp(
-                &h_ext, &f_ext, &a_ext, &lb_ext, &ub_ext, nvars_ext, ext_nrows,
+        } else if elastic_available {
+            match solve_qp_elastic(
+                &h_mat, &f_vec, &all_a_rows, &all_lb, &all_ub, nvars, total_rows,
+                koz_row_start, n_koz, elastic_weight,
             ) {
-                Some(x) => x,
+                Some((x, ts, ms)) => {
+                    x_new = x;
+                    iter_total_slack = ts;
+                    iter_max_slack = ms;
+                }
                 None => break,
-            };
-
-            x_new = x_full[..nvars].to_vec();
-            iter_total_slack = x_full[nvars..].iter().sum::<f64>();
-            iter_max_slack = x_full[nvars..].iter().cloned().fold(0.0f64, f64::max);
+            }
         } else {
             break;
         }
@@ -920,12 +1012,21 @@ pub fn optimize_orbital_docking(
         last_max_slack = iter_max_slack;
 
         if trust_active {
-            // ---- SCvx trust-region step acceptance (two-phase merit) ----
-            // The KOZ half-space is a *conservative* convex-hull constraint: a step
-            // that satisfies it is provably KOZ-safe (Prop. 1). So feasibility is a
-            // clean on/off gate, and we use a feasibility-restoration phase followed
-            // by an optimality phase. This avoids mixing the per-control-point
-            // linearized-violation scale with the single true min-radius gap.
+            // ---- Canonical SCvx step acceptance (penalized merit; Mao et al.) ----
+            // Convex merit  L(x) = J^(k)(x) + w_s·Σ max(0, b_r − a_r·x)   — exactly what
+            //                      the elastic QP minimizes over the trust box.
+            // True merit    T(x) = J(x)     + w_s·h(x)
+            // where J(x) swaps the linearized gravity residual for the true one, and
+            // h(x) is the *hull-certifiability* violation: the half-space rows rebuilt
+            // at x itself (h = 0 ⇔ x carries the Prop-1 certificate). The convex rows
+            // are h's partial linearization (normals frozen at the reference), so
+            // rho = actual/predicted measures exactly the two model errors: gravity
+            // linearization and normal re-aiming. Penalizing the sphere distance of the
+            // control points instead would NOT work: the half-space is conservative,
+            // so its violation need not vanish where the sphere constraint holds, and
+            // the mismatch deadlocks the ratio test (pred large, act ≈ 0).
+            // Under an armed freeze the walls are fixed linear constraints — no model
+            // error — so the true measure IS the row violation there.
             let cand = &x_new;
             let step_norm: f64 = (0..nvars)
                 .map(|i| (cand[i] - p[i]).powi(2))
@@ -933,89 +1034,131 @@ pub fn optimize_orbital_docking(
                 .sqrt();
             last_delta = step_norm;
 
-            let true_v_p = (r_e - min_radius_of(&p, np1, dim)).max(0.0);
-            let true_v_c = (r_e - min_radius_of(cand, np1, dim)).max(0.0);
+            let w_s = elastic_weight.max(0.0);
+            let quad_p = quad_form(&h_obj, &f_obj, &p, nvars);
+            let quad_c = quad_form(&h_obj, &f_obj, cand, nvars);
+            let vlin_p =
+                koz_row_violation(&p, &all_a_rows, &all_lb, koz_row_start, n_koz, nvars);
+            let vlin_c =
+                koz_row_violation(cand, &all_a_rows, &all_lb, koz_row_start, n_koz, nvars);
+            let (mres_p, tres_p) = eval_residual_terms(&p, lin_for_qp_ref, np1, dim, t, &consts);
+            let (mres_c, tres_c) = eval_residual_terms(cand, lin_for_qp_ref, np1, dim, t, &consts);
+            let (vtrue_p, vtrue_c) = if scvx_freeze.is_some() {
+                (vlin_p, vlin_c)
+            } else {
+                // Unfrozen: this iteration's rows were built at p, so vlin_p == h(p);
+                // only the candidate needs its own re-aimed walls.
+                let koz_c = constraints::build_koz_constraints(&a_list, cand, np1, dim, r_e, &c_koz);
+                let h_c = koz_row_violation(cand, &koz_c.a, &koz_c.lb, 0, koz_c.n_rows, nvars);
+                (vlin_p, h_c)
+            };
 
-            if true_v_p > tol_c {
-                // Feasibility-restoration phase: accept any step that reduces the true
-                // KOZ violation; otherwise shrink the trust region and re-solve at p.
-                if true_v_c < true_v_p - 1e-9 {
-                    p = x_new;
-                    p_feasible = true_v_c <= tol_c;
-                    trust = (trust * 1.5).min(trust_max);
-                    rho_history.push(f64::NAN);
-                    trust_history.push(trust);
-                    merit_history.push(true_v_c);
-                    step_norm_history.push(step_norm);
-                    slack_history.push(iter_total_slack);
-                    phase_history.push(0.0);
-                } else {
-                    trust *= 0.5;
-                    if trust < trust_min {
-                        break;
-                    }
+
+            // c_const completes the model objective so merit values are absolute
+            // (comparable across iterations); it cancels in both differences.
+            let l_p = quad_p + c_const + w_s * vlin_p;
+            let l_c = quad_c + c_const + w_s * vlin_c;
+            let t_p = quad_p + c_const + (tres_p - mres_p) + w_s * vtrue_p;
+            let t_c = quad_c + c_const + (tres_c - mres_c) + w_s * vtrue_c;
+            // pred ≥ 0 up to solver tolerance PROVIDED x = p is elastic-feasible,
+            // i.e. p satisfies every hard (non-KOZ) row — checked below.
+            let pred = l_p - l_c;
+            let act = t_p - t_c;
+
+            // Hard-row (non-KOZ) violation of the reference: endpoints, boundary
+            // equalities, prograde. These carry no slack, so the pred ≥ 0 argument
+            // requires this to be zero. It is NOT zero at iteration 1 (the
+            // straight-line init violates the velocity-BC equality rows) and can
+            // recur for prograde rows, which re-aim each iteration. (Trust rows are
+            // centred at p and contribute 0.)
+            let mut hard_viol_p = 0.0f64;
+            for r in 0..total_rows {
+                if r >= koz_row_start && r < koz_row_start + n_koz {
                     continue;
+                }
+                let mut ax = 0.0;
+                for j in 0..nvars {
+                    ax += all_a_rows[r * nvars + j] * p[j];
+                }
+                if all_lb[r].is_finite() {
+                    hard_viol_p += (all_lb[r] - ax).max(0.0);
+                }
+                if all_ub[r].is_finite() {
+                    hard_viol_p += (ax - all_ub[r]).max(0.0);
+                }
+            }
+            if hard_viol_p > 1e-9 {
+                // Affine bootstrap: against a reference that violates exact linear
+                // constraints the merit comparison is meaningless (pred can be
+                // negative, and rejecting would loop forever on the repair step).
+                // The candidate satisfies every hard row exactly, so accept it
+                // unconditionally and skip the convergence test.
+                p = x_new;
+                p_feasible = vtrue_c <= 1e-6;
+                rho_history.push(f64::NAN);
+                trust_history.push(trust);
+                merit_history.push(t_c);
+                step_norm_history.push(step_norm);
+                slack_history.push(iter_total_slack);
+                phase_history.push(0.0);
+                continue;
+            }
+
+            let pred_floor = 1e-12 * (1.0 + l_p.abs());
+            let rho = if pred < pred_floor {
+                // Model sees (numerically) no merit improvement: the reference is
+                // stationary for the current subproblem. Treat as a null step —
+                // accept if non-worsening so the convergence test below can fire.
+                // (pred < 0 beyond noise lands here too and can only accept an
+                // *improving* step, never divide by a negative prediction.)
+                if act >= -pred_floor {
+                    f64::INFINITY
+                } else {
+                    -1.0
                 }
             } else {
-                // Optimality phase: ratio test on the objective, where the only model
-                // error is the gravity linearization. Reject any step that re-enters
-                // the KOZ. predicted = linearized objective drop; actual = true-gravity
-                // objective drop (trueObj = modelObj - model_res + true_res: the
-                // smoothness quadratic is exact, so the correction swaps the linearized
-                // residual term for the true-gravity one).
-                if true_v_c > tol_c {
-                    trust *= 0.5;
-                    if trust < trust_min {
-                        break;
-                    }
-                    continue;
-                }
-                let model_p = quad_form(&h_obj, &f_obj, &p, nvars);
-                let model_c = quad_form(&h_obj, &f_obj, cand, nvars);
-                let pred = model_p - model_c;
-                let (mres_p, tres_p) = eval_residual_terms(&p, lin_for_qp_ref, np1, dim, t, &consts);
-                let (mres_c, tres_c) = eval_residual_terms(cand, lin_for_qp_ref, np1, dim, t, &consts);
-                let (corr_p, corr_c) = (tres_p - mres_p, tres_c - mres_c);
-                let act = (model_p + corr_p) - (model_c + corr_c);
+                act / pred
+            };
 
-                let pred_floor = 1e-12 * (1.0 + model_p.abs());
-                let rho = if pred.abs() < pred_floor {
-                    if act >= -pred_floor {
-                        f64::INFINITY // model sees no gain; accept a non-worsening step
-                    } else {
-                        -1.0
-                    }
-                } else {
-                    act / pred
-                };
-
-                if rho > eta_accept {
-                    // Converge on the objective change. A step-norm test cannot work here:
-                    // the KOZ normals re-aim every iteration, so the iterate keeps jittering
-                    // along the moving constraint even after the objective has settled.
-                    let rel = act.abs() / (model_p.abs() + 1.0);
-                    p = x_new;
-                    p_feasible = true_v_c <= tol_c;
-                    if rho > 0.9 {
-                        trust = (trust * 2.0).min(trust_max); // model trustworthy — be bolder
-                    }
-                    rho_history.push(rho);
-                    trust_history.push(trust);
-                    merit_history.push(model_c + corr_c);
-                    step_norm_history.push(step_norm);
-                    slack_history.push(iter_total_slack);
-                    phase_history.push(1.0);
-                    if rel < tol_f {
-                        converged_scvx = true;
-                        break;
-                    }
-                } else {
-                    trust *= 0.5;
-                    if trust < trust_min {
-                        break; // local optimum within the trust region
-                    }
-                    continue;
+            if rho > eta_accept {
+                // Relative merit change against the merit's own magnitude. The
+                // objective is O(1e-4), so a "+1"-style denominator would turn
+                // this into an absolute test 4 orders below the problem scale.
+                let rel = act.abs() / t_p.abs().max(1e-12);
+                p = x_new;
+                // Freeze-arming gate: hull rows at the accepted iterate's own walls
+                // satisfied (≤ 1 µm aggregate) is the Prop-1 certificate that the
+                // whole curve clears the KOZ.
+                p_feasible = vtrue_c <= 1e-6;
+                if rho > 0.9 && rho.is_finite() {
+                    trust = (trust * 2.0).min(trust_max); // model trustworthy — be bolder
                 }
+                rho_history.push(rho);
+                trust_history.push(trust);
+                merit_history.push(t_c);
+                step_norm_history.push(step_norm);
+                slack_history.push(iter_total_slack);
+                phase_history.push(if vtrue_c > 1e-6 { 0.0 } else { 1.0 });
+                // Converged = merit stationary AND the accepted iterate carries the
+                // hull certificate. A penalized-stationary-but-uncertified point
+                // (penalty not exact for this geometry) keeps iterating instead of
+                // reporting a false success.
+                if rel < tol_f && vtrue_c <= 1e-6 {
+                    converged_scvx = true;
+                    break;
+                }
+            } else {
+                trust *= 0.5;
+                if trust < trust_min {
+                    // Trust-radius collapse is the second standard SCvx stopping
+                    // criterion. At a reference satisfying the hull certificate
+                    // (Prop 1) AND every hard row this is convergence to a
+                    // constrained local optimum; otherwise it is a genuine failure
+                    // and converged stays false.
+                    converged_scvx = vlin_p <= 1e-6 && hard_viol_p <= 1e-9;
+                    break;
+                }
+                continue;
             }
         } else {
             // ---- Legacy fixed-point path (no trust region supplied) ----
@@ -1034,17 +1177,21 @@ pub fn optimize_orbital_docking(
         }
     }
 
-    // Final feasibility check
-    let n_check = 1000;
-    let mut min_radius = f64::INFINITY;
-    for i in 0..=n_check {
-        let tau = i as f64 / n_check as f64;
-        let pt = bezier::evaluate(&p, np1, dim, tau);
-        let r: f64 = pt.iter().map(|x| x * x).sum::<f64>().sqrt();
-        if r < min_radius {
-            min_radius = r;
-        }
-    }
+    // Final feasibility check: dense radius probe (diagnostic) plus the exact
+    // Prop-1 certificate — half-spaces rebuilt at the final iterate; if every
+    // subdivided control point satisfies them, the whole curve clears the KOZ.
+    let min_radius = min_radius_of(&p, np1, dim);
+    let c_koz_final = vec![0.0; dim];
+    let koz_final = constraints::build_koz_constraints(&a_list, &p, np1, dim, r_e, &c_koz_final);
+    let final_hull_violation = koz_row_violation(
+        &p,
+        &koz_final.a,
+        &koz_final.lb,
+        0,
+        koz_final.n_rows,
+        nvars,
+    );
+    let final_cp_violation = true_cp_violation(&p, &a_list, np1, dim, r_e, &c_koz_final);
 
     // Compute final cost (always uses fresh linearization at the final p, so
     // both frozen and unfrozen runs report a self-consistent cost).
@@ -1117,6 +1264,9 @@ pub fn optimize_orbital_docking(
     info.insert("final_delta_norm".to_string(), last_delta);
     info.insert("total_koz_slack".to_string(), last_total_slack);
     info.insert("max_koz_slack".to_string(), last_max_slack);
+    // Prop-1 certificate at the final iterate (0 ⇒ curve provably clears the KOZ).
+    info.insert("final_hull_violation_km".to_string(), final_hull_violation);
+    info.insert("final_cp_violation_km".to_string(), final_cp_violation);
     info.insert(
         "freeze_gravity_jacobian".to_string(),
         if freeze_gravity_jacobian { 1.0 } else { 0.0 },
