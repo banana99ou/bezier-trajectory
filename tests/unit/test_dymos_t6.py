@@ -1,4 +1,9 @@
 import numpy as np
+import pytest
+
+# dymos is an optional heavy dependency (OpenMDAO stack). Without this guard a bare
+# `pytest` at the repo root aborts collection entirely, hiding the whole suite.
+pytest.importorskip("dymos", reason="dymos not installed; T6 cross-check skipped")
 
 from orbital_docking import constants
 from orbital_docking.dymos_t6 import (
