@@ -10,7 +10,7 @@ from pathlib import Path
 
 # Increment to invalidate old caches when the optimization formulation changes.
 # NOTE: the cache key does NOT hash the Rust binary; bump this after any solver rebuild.
-CACHE_VERSION = "9.0-canonical-scvx-merit"
+CACHE_VERSION = "11.0-energy-hardcoded-k3"
 
 
 def get_cache_key(

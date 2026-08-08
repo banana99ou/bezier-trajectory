@@ -189,7 +189,7 @@ def velocity_endpoints(P, T):
 # ----------------------------------------------------------------------------
 
 def run_rust(scenario, n_seg=16, max_iter=1000,
-             tol=1e-6, scp_trust_radius=2000.0, scp_prox_weight=0.0,
+             tol=1e-8, scp_trust_radius=2000.0, scp_prox_weight=0.0,
              sample_count=100, enforce_prograde=False, **overrides):
     """Run the Rust SCvx solver on a scenario. Returns (P_opt, info)."""
     kwargs = dict(

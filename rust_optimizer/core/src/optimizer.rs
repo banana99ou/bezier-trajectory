@@ -50,19 +50,14 @@ pub struct OptResult {
 }
 
 /// Per-segment gravity linearization quantities.
-/// For a given reference control-polygon P_ref, each centroid r_i = w_row^T P_ref
-/// has the linearization a_grav(r) ≈ J_i r + c_i around that centroid, and the
-/// QP residual map M_i = A_i - J_i R_i (mapping x -> a_geom_i - g_lin_i).
+/// For a given reference control-polygon P_ref, each segment's centroid r_i has the
+/// affine gravity model g(r) ≈ J_i r + c_i, applied across the segment's whole
+/// parameter subinterval by the exact-integral objective.
 #[derive(Clone)]
 struct SegmentGravLin {
-    j_i: [[f64; 3]; 3],       // gravity Jacobian at r_ref (kept for drift diagnostic)
-    c_i: [f64; 3],            // affine offset: g_ref - J_i r_ref
-    m_i: Vec<f64>,            // (dim, nvars) flattened — A_i - J_i R_i
-    // Per-segment sampling operators (length np1), kept so the true (non-linearized)
-    // control-acceleration residual can be evaluated at any iterate for the SCvx
-    // trust-region merit:  r_i  = w_row^T P,   a_geom_i = (1/T^2) a_row^T P.
-    w_row: Vec<f64>,          // centroid weights:  r_ref = w_row^T P_ref
-    a_row: Vec<f64>,          // geometric-accel weights (pre 1/T^2 scaling)
+    j_i: [[f64; 3]; 3], // gravity Jacobian at r_ref (also drift diagnostic)
+    c_i: [f64; 3],      // affine offset: g_ref - J_i r_ref
+    a_seg: Vec<f64>,    // (np1 x np1) De Casteljau segment matrix for this subinterval
 }
 
 fn frobenius_norm_3x3(a: &[[f64; 3]; 3], b: &[[f64; 3]; 3]) -> f64 {
@@ -81,27 +76,18 @@ fn compute_segment_lin(
     p_ref: &[f64],
     np1: usize,
     dim: usize,
-    t: f64,
+    _t: f64,
     sample_count: usize,
     consts: &OrbitalConstants,
 ) -> Vec<SegmentGravLin> {
     let n = np1 - 1;
-    let nvars = np1 * dim;
     let n_lin_seg = sample_count.max(1);
     let a_seg_list = de_casteljau::segment_matrices_equal_params(n, n_lin_seg);
 
-    // L = E @ D @ E @ D
-    let sz = np1;
-    let d_mat = bezier::get_d_matrix(n);
-    let e_mat = bezier::get_e_matrix(n - 1);
-    let ed = bezier::matmul(&e_mat, sz, n, &d_mat, sz);
-    let l_mat = bezier::matmul(&ed, sz, sz, &ed, sz);
-
-    let t2_inv = 1.0 / (t * t);
     let mut out = Vec::with_capacity(a_seg_list.len());
 
     for a_seg in &a_seg_list {
-        // w_row = mean of rows of A_seg
+        // w_row = mean of rows of A_seg (segment centroid weights)
         let mut w_row = vec![0.0; np1];
         for i in 0..np1 {
             for j in 0..np1 {
@@ -110,16 +96,6 @@ fn compute_segment_lin(
         }
         for j in 0..np1 {
             w_row[j] /= np1 as f64;
-        }
-
-        // a_row[i] = sum_j w_row[j] * L[j, i]
-        let mut a_row = vec![0.0; np1];
-        for i in 0..np1 {
-            let mut s = 0.0;
-            for j in 0..np1 {
-                s += w_row[j] * l_mat[j * np1 + i];
-            }
-            a_row[i] = s;
         }
 
         // r_ref = sum_j w_row[j] * P_ref[j, :]
@@ -142,20 +118,7 @@ fn compute_segment_lin(
             c_i[row] = g_ref[row] - jr;
         }
 
-        // M_i = A_i - J_i R_i, shape (dim, nvars)
-        // A_i[d, j*dim+d] = (1/T^2) * a_row[j]
-        // (J_i R_i)[d, j*dim+dd] = J_i[d][dd] * w_row[j]
-        let mut m_i = vec![0.0f64; dim * nvars];
-        for d in 0..dim {
-            for j in 0..np1 {
-                m_i[d * nvars + j * dim + d] += t2_inv * a_row[j];
-                for dd in 0..dim {
-                    m_i[d * nvars + j * dim + dd] -= j_i[d][dd] * w_row[j];
-                }
-            }
-        }
-
-        out.push(SegmentGravLin { j_i, c_i, m_i, w_row, a_row });
+        out.push(SegmentGravLin { j_i, c_i, a_seg: a_seg.clone() });
     }
     out
 }
@@ -174,27 +137,35 @@ fn build_ctrl_accel_quadratic(
     consts: &OrbitalConstants,
     precomputed_lin: Option<&[SegmentGravLin]>,
 ) -> (Vec<f64>, Vec<f64>, f64) {
-    let n = np1 - 1;
     let nvars = np1 * dim;
 
     let mut big_q = vec![0.0; nvars * nvars];
     let mut q_vec = vec![0.0; nvars];
     let mut c_const = 0.0f64;
 
-    // 1) Smoothness term via G_tilde
-    if let Some(g_tilde) = bezier::get_g_tilde(n) {
-        let scale = 1.0 / (t.powi(4));
-        for i in 0..np1 {
-            for j in 0..np1 {
-                let g_val = g_tilde[i * np1 + j];
-                for d in 0..dim {
-                    big_q[(i * dim + d) * nvars + (j * dim + d)] += scale * g_val;
-                }
-            }
-        }
-    }
+    // DESIGN DECISION (author, 2026-08-07 — do not revisit without explicit user
+    // approval): the objective is control-acceleration energy and NOTHING else,
+    // computed as the EXACT integral (closed form via the Bernstein Gram matrix —
+    // the point of the control-point-space formulation):
+    //     J = ∫₀¹ || a_geom(τ)/T² − g_lin(r(τ)) ||² dτ
+    // with gravity affine per De Casteljau segment (J_s, c_s at the segment
+    // centroid). Per segment, the integrand is a degree-N Bernstein polynomial
+    // squared, so ∫ = Σ_{k,l} G_{kl} f_k·f_l exactly — no sampling, hence no
+    // quadrature soft directions and no aliasing. No mode switches, no flags, no
+    // auxiliary terms (the historical full-weight smoothness term biased the
+    // optimum; its apparent benefit was a premature-stop artifact).
 
-    // 2) Gravity/J2 linearization (computed fresh or reused from precomputed_lin)
+    let n = np1 - 1;
+
+    // Acceleration operator L = E·D·E·D: a(τ) is the degree-N curve with control
+    // points (L P), in units of d²r/dτ² (divide by T² for physical acceleration).
+    let d_mat = bezier::get_d_matrix(n);
+    let e_mat = bezier::get_e_matrix(n - 1);
+    let ed = bezier::matmul(&e_mat, np1, n, &d_mat, np1);
+    let l_mat = bezier::matmul(&ed, np1, np1, &ed, np1);
+    let g_mat = bezier::get_g_matrix(n); // (np1 x np1) Bernstein Gram: ∫ B_k B_l dτ
+
+    // Gravity/J2 linearization (computed fresh or reused from precomputed_lin)
     let owned_lin: Vec<SegmentGravLin>;
     let lin: &[SegmentGravLin] = match precomputed_lin {
         Some(p) => p,
@@ -205,29 +176,107 @@ fn build_ctrl_accel_quadratic(
     };
 
     let n_lin_seg = lin.len().max(1);
-    let w_seg = 1.0 / n_lin_seg as f64;
+    let w_seg = 1.0 / n_lin_seg as f64; // dτ = du / n_seg on each subinterval
+    let t2_inv = 1.0 / (t * t);
 
+    // Per segment s: residual control points f_k = Σ_j (U_kj I − V_kj J_s) p_j − c_s
+    // with U = W_s L / T², V = W_s (W_s = De Casteljau segment matrix). Then
+    //   ∫_seg ‖f(u)‖² du = Σ_{kl} G_{kl} f_k·f_l
+    //     = xᵀ[Σ_{jj'} (P1_{jj'} I − P2_{jj'} J − P2_{j'j} Jᵀ + P3_{jj'} JᵀJ)]x
+    //       − 2 Σ_j (u_j c − v_j Jᵀc)·p_j + (1ᵀG1) cᵀc
+    // where P1 = UᵀGU, P2 = UᵀGV, P3 = VᵀGV, u = gᵀU, v = gᵀV, g_k = Σ_l G_{kl}.
     for seg in lin {
-        let m_i = &seg.m_i;
+        let w_s = &seg.a_seg;
+        let jm = &seg.j_i;
         let c_i = &seg.c_i;
-        let w_i = w_seg;
 
-        // Q += w_i * M_i^T @ M_i;  q += w_i * (-M_i^T @ c_i);  c_const += w_i * c_i^T c_i
-        for v1 in 0..nvars {
-            for v2 in 0..nvars {
-                let mut dot = 0.0;
-                for d in 0..dim {
-                    dot += m_i[d * nvars + v1] * m_i[d * nvars + v2];
+        // U = (W_s · L) / T², V = W_s
+        let wl = bezier::matmul(w_s, np1, np1, &l_mat, np1);
+        let u_mat: Vec<f64> = wl.iter().map(|x| x * t2_inv).collect();
+        let v_mat = w_s;
+
+        // P1 = UᵀGU, P2 = UᵀGV, P3 = VᵀGV  (np1 x np1 each)
+        let gu = bezier::matmul(&g_mat, np1, np1, &u_mat, np1);
+        let gv = bezier::matmul(&g_mat, np1, np1, v_mat, np1);
+        let mut p1 = vec![0.0; np1 * np1];
+        let mut p2 = vec![0.0; np1 * np1];
+        let mut p3 = vec![0.0; np1 * np1];
+        for j in 0..np1 {
+            for jp in 0..np1 {
+                let (mut s1, mut s2, mut s3) = (0.0, 0.0, 0.0);
+                for k in 0..np1 {
+                    s1 += u_mat[k * np1 + j] * gu[k * np1 + jp];
+                    s2 += u_mat[k * np1 + j] * gv[k * np1 + jp];
+                    s3 += v_mat[k * np1 + j] * gv[k * np1 + jp];
                 }
-                big_q[v1 * nvars + v2] += w_i * dot;
+                p1[j * np1 + jp] = s1;
+                p2[j * np1 + jp] = s2;
+                p3[j * np1 + jp] = s3;
             }
-            let mut dot_c = 0.0;
-            for d in 0..dim {
-                dot_c += m_i[d * nvars + v1] * c_i[d];
-            }
-            q_vec[v1] += w_i * (-dot_c);
         }
-        c_const += w_i * (c_i[0] * c_i[0] + c_i[1] * c_i[1] + c_i[2] * c_i[2]);
+
+        // 3x3 helpers: J, Jᵀ, JᵀJ, Jᵀc
+        let mut jtj = [[0.0f64; 3]; 3];
+        for a in 0..3 {
+            for b in 0..3 {
+                let mut s = 0.0;
+                for r in 0..3 {
+                    s += jm[r][a] * jm[r][b];
+                }
+                jtj[a][b] = s;
+            }
+        }
+        let mut jtc = [0.0f64; 3];
+        for a in 0..3 {
+            for r in 0..3 {
+                jtc[a] += jm[r][a] * c_i[r];
+            }
+        }
+
+        // Quadratic blocks
+        for j in 0..np1 {
+            for jp in 0..np1 {
+                let a1 = p1[j * np1 + jp];
+                let b2 = p2[j * np1 + jp];
+                let c2 = p2[jp * np1 + j];
+                let d3 = p3[j * np1 + jp];
+                for a in 0..dim {
+                    for b in 0..dim {
+                        let mut val = 0.0;
+                        if a == b {
+                            val += a1;
+                        }
+                        val -= b2 * jm[a][b];
+                        val -= c2 * jm[b][a];
+                        val += d3 * jtj[a][b];
+                        big_q[(j * dim + a) * nvars + (jp * dim + b)] += w_seg * val;
+                    }
+                }
+            }
+        }
+
+        // Linear + constant terms: g_k = Σ_l G_kl; u_j = Σ_k g_k U_kj; v_j = Σ_k g_k V_kj
+        let mut g_row = vec![0.0; np1];
+        let mut g_total = 0.0;
+        for k in 0..np1 {
+            let mut s = 0.0;
+            for l in 0..np1 {
+                s += g_mat[k * np1 + l];
+            }
+            g_row[k] = s;
+            g_total += s;
+        }
+        for j in 0..np1 {
+            let (mut uj, mut vj) = (0.0, 0.0);
+            for k in 0..np1 {
+                uj += g_row[k] * u_mat[k * np1 + j];
+                vj += g_row[k] * v_mat[k * np1 + j];
+            }
+            for a in 0..dim {
+                q_vec[j * dim + a] += w_seg * (-(uj * c_i[a] - vj * jtc[a]));
+            }
+        }
+        c_const += w_seg * g_total * (c_i[0] * c_i[0] + c_i[1] * c_i[1] + c_i[2] * c_i[2]);
     }
 
     // H = 2Q, f = 2q
@@ -471,11 +520,11 @@ fn quad_form(h: &[f64], f: &[f64], x: &[f64], n: usize) -> f64 {
 }
 
 /// Control-acceleration residual energy at `x`, returned as
-/// (model_res, true_res): the first uses the *linearized* gravity (M_i x - c_i),
-/// the second uses the *true* gravity (a_geom_i(x) - g(r_i(x))). Both use the
-/// uniform per-segment weight 1/n_lin, matching `build_ctrl_accel_quadratic`.
-/// Their difference is exactly the gravity linearization error that the SCvx
-/// ratio test measures.
+/// (model_res, true_res): the first uses the *linearized* per-segment gravity
+/// (J_s r + c_s), the second the *true* gravity g(r). Both are midpoint-rule
+/// quadratures of ∫‖a_geom(τ)/T² − g(r(τ))‖² dτ on the SAME nodes, so their
+/// difference is purely the gravity linearization error the ratio test measures
+/// (the shared quadrature error cancels in the difference).
 fn eval_residual_terms(
     x: &[f64],
     lin: &[SegmentGravLin],
@@ -484,39 +533,34 @@ fn eval_residual_terms(
     t: f64,
     consts: &OrbitalConstants,
 ) -> (f64, f64) {
-    let nvars = np1 * dim;
     let t2_inv = 1.0 / (t * t);
-    let w = 1.0 / lin.len().max(1) as f64;
+    let n_lin = lin.len().max(1);
+    let n_q = 1000usize;
+    let w = 1.0 / n_q as f64;
     let mut model_res = 0.0f64;
     let mut true_res = 0.0f64;
-    for seg in lin.iter() {
-        // Linearized residual: M_i x - c_i
+    for m in 0..n_q {
+        let tau = (m as f64 + 0.5) / n_q as f64;
+        let s = ((tau * n_lin as f64) as usize).min(n_lin - 1);
+        let seg = &lin[s];
+        let r = bezier::evaluate(x, np1, dim, tau);
+        let a = bezier::evaluate_acceleration(x, np1, dim, tau);
+        let r3 = [r[0], r[1], r[2]];
+        let g_true = gravity::accel_total(&r3, consts.mu, consts.r_e_km, consts.j2);
         let mut m_sq = 0.0;
-        for d in 0..dim {
-            let mut mx = 0.0;
-            for v in 0..nvars {
-                mx += seg.m_i[d * nvars + v] * x[v];
+        let mut t_sq = 0.0;
+        for d in 0..3 {
+            let a_phys = a[d] * t2_inv;
+            let mut g_lin = seg.c_i[d];
+            for dd in 0..3 {
+                g_lin += seg.j_i[d][dd] * r[dd];
             }
-            let r = mx - seg.c_i[d];
-            m_sq += r * r;
+            let rm = a_phys - g_lin;
+            let rt = a_phys - g_true[d];
+            m_sq += rm * rm;
+            t_sq += rt * rt;
         }
         model_res += w * m_sq;
-
-        // True residual: a_geom_i(x) - g_true(r_i(x))
-        let mut r_i = [0.0f64; 3];
-        let mut a_geom = [0.0f64; 3];
-        for j in 0..np1 {
-            for d in 0..dim {
-                r_i[d] += seg.w_row[j] * x[j * dim + d];
-                a_geom[d] += seg.a_row[j] * x[j * dim + d];
-            }
-        }
-        let g = gravity::accel_total(&r_i, consts.mu, consts.r_e_km, consts.j2);
-        let mut t_sq = 0.0;
-        for d in 0..dim {
-            let r = a_geom[d] * t2_inv - g[d];
-            t_sq += r * r;
-        }
         true_res += w * t_sq;
     }
     (model_res, true_res)
@@ -734,7 +778,14 @@ pub fn optimize_orbital_docking(
     // Relative-merit convergence tolerance. The legacy `tol` is a nanometre-scale
     // step norm (1e-12) that can never trigger under a moving linearization; for
     // the SCvx path we reinterpret it as a relative merit-change tol with a sane floor.
-    let tol_f = if tol > 0.0 { tol.max(1e-7) } else { 1e-6 };
+    let tol_f = if tol > 0.0 { tol.max(1e-8) } else { 1e-8 };
+    // Convergence requires K consecutive accepted steps below tol_f. A single-step
+    // test cannot distinguish a stationary point from the slow crawl along
+    // re-aimed KOZ walls (measured: the crawl produces isolated sub-tol steps,
+    // then breaks through to a much better value — a one-shot test at 1e-6
+    // stopped 33% above the optimum on phase120).
+    let conv_streak_required = 3usize;
+    let mut conv_streak = 0usize;
     let mut converged_scvx = false;
     // SCvx "linearize once, hold constant" snapshot: once the iterate first becomes
     // feasible, freeze BOTH the gravity linearization and the KOZ supporting half-spaces
@@ -1095,6 +1146,7 @@ pub fn optimize_orbital_docking(
                 // unconditionally and skip the convergence test.
                 p = x_new;
                 p_feasible = vtrue_c <= 1e-6;
+                conv_streak = 0;
                 rho_history.push(f64::NAN);
                 trust_history.push(trust);
                 merit_history.push(t_c);
@@ -1139,15 +1191,22 @@ pub fn optimize_orbital_docking(
                 step_norm_history.push(step_norm);
                 slack_history.push(iter_total_slack);
                 phase_history.push(if vtrue_c > 1e-6 { 0.0 } else { 1.0 });
-                // Converged = merit stationary AND the accepted iterate carries the
-                // hull certificate. A penalized-stationary-but-uncertified point
+                // Converged = merit stationary for conv_streak_required consecutive
+                // accepted steps AND the accepted iterate carries the hull
+                // certificate. A penalized-stationary-but-uncertified point
                 // (penalty not exact for this geometry) keeps iterating instead of
                 // reporting a false success.
                 if rel < tol_f && vtrue_c <= 1e-6 {
-                    converged_scvx = true;
-                    break;
+                    conv_streak += 1;
+                    if conv_streak >= conv_streak_required {
+                        converged_scvx = true;
+                        break;
+                    }
+                } else {
+                    conv_streak = 0;
                 }
             } else {
+                conv_streak = 0;
                 trust *= 0.5;
                 if trust < trust_min {
                     // Trust-radius collapse is the second standard SCvx stopping

@@ -216,17 +216,11 @@ def _build_ctrl_accel_quadratic(
     Build quadratic objective for control acceleration energy with gravity+J2
     linearized about P_ref, without Bernstein sampling in the optimizer core.
 
-    Matrix-only structure:
-      1) Exact geometric acceleration-energy term from precomputed G_tilde
-         (derived from E/D matrices):
-             J_geom = (1/T^4) * x^T (G_tilde ⊗ I_3) x
-
-      2) Gravity/J2 linearization term built on De Casteljau segment centroids:
-             r_i(x)      = R_i x
-             a_geom_i(x) = A_i x
-             g_i(x) ≈ J_i r_i(x) + c_i
-         and approximate:
-             J ≈ J_geom + Σ_i w_i ||a_geom_i - g_i||^2
+    Pure control-acceleration energy as an EXACT integral (closed form via the
+    Bernstein Gram matrix — no sampling):
+        J = ∫₀¹ ||a_geom(τ)/T² − (J_s r(τ) + c_s)||² dτ
+    with gravity affine per De Casteljau segment (J_s, c_s at the segment
+    centroid). Mirror of the Rust build_ctrl_accel_quadratic — keep in sync.
 
     This avoids Bernstein basis evaluation in the optimizer and keeps all mappings
     linear in control points via D/E and De Casteljau segment matrices.
@@ -259,45 +253,45 @@ def _build_ctrl_accel_quadratic(
     r_e = constants.EARTH_RADIUS_KM
     j2 = constants.EARTH_J2
 
-    # 1) Smoothness term via G_tilde (no sampling).
-    if curve_ref.G_tilde is not None:
-        Q += (1.0 / (T**4)) * np.kron(curve_ref.G_tilde, np.eye(dim))
+    # Exact-integral control-energy objective (mirror of the Rust
+    # build_ctrl_accel_quadratic — keep the two in sync):
+    #   J = ∫₀¹ ||a_geom(τ)/T² − (J_s r(τ) + c_s)||² dτ
+    # with gravity affine per De Casteljau segment (J_s, c_s at the segment
+    # centroid). Per segment the integrand is a degree-N Bernstein polynomial
+    # squared, integrated in closed form via the Bernstein Gram matrix G.
+    from .bezier import get_G_matrix
 
-    # 2) Gravity/J2 linearization via De Casteljau segment centroids.
     n_lin_seg = max(1, int(sample_count))
     A_seg_list = segment_matrices_equal_params(N, n_lin_seg)
-    w_seg = 1.0 / float(n_lin_seg)
+    w_seg = 1.0 / float(n_lin_seg)  # dτ = du / n_seg on each subinterval
     x_ref = P_ref.reshape(-1)
+    G = get_G_matrix(N)  # (N+1, N+1): ∫ B_k B_l
+    g_row = G.sum(axis=1)
+    I3 = np.eye(dim)
 
     for Aseg in A_seg_list:
-        # Segment centroid linear map in control-point space:
-        #   c_i = mean(Aseg @ P) = (w_row @ P), w_row shape (N+1,)
-        w_row = Aseg.mean(axis=0)
+        W = np.asarray(Aseg, dtype=float)
+        U = (W @ L) / (T**2)  # residual accel ctrl-pt map (per segment, deg N)
+        V = W
 
-        # r_i(x) = R_i x
-        R_i = np.kron(w_row, np.eye(dim))  # (3, n)
-
-        # a_geom_i(x) = A_i x with a_ctrl = (1/T^2) * (w_row @ L) @ P
-        a_row = (w_row @ L)
-        A_i = (1.0 / (T**2)) * np.kron(a_row, np.eye(dim))  # (3, n)
-
-        # Reference point for gravity/J2 linearization
-        r_ref = (R_i @ x_ref).reshape(3)
+        # Gravity linearization at the segment centroid
+        w_row = W.mean(axis=0)
+        r_ref = (P_ref.T @ w_row).reshape(3)
         g_ref = _accel_total(r_ref, mu, r_e, j2)
-        J_i = _jacobian_numeric(lambda rr: _accel_total(rr, mu, r_e, j2), r_ref)
+        J_s = _jacobian_numeric(lambda rr: _accel_total(rr, mu, r_e, j2), r_ref)
+        c_s = g_ref - (J_s @ r_ref)
 
-        # g_i(x) ≈ J_i R_i x + c_i
-        c_i = g_ref - (J_i @ r_ref)
-        B_i = J_i @ R_i
-
-        # Add ||A_i x - (B_i x + c_i)||^2 contributions (L2 energy):
-        # = x^T[(A-B)^T(A-B)]x - 2 c^T(A-B)x + c^T c
-        M_i = A_i - B_i
-        w_i = w_seg
-
-        Q += w_i * (M_i.T @ M_i)
-        q += w_i * (-M_i.T @ c_i)
-        c_const += w_i * float(c_i @ c_i)
+        # Residual ctrl points f_k = Σ_j (U_kj I − V_kj J_s) p_j − c_s;
+        # ∫_seg ‖f‖² du = Σ_kl G_kl f_k·f_l:
+        P1 = U.T @ G @ U
+        P2 = U.T @ G @ V
+        P3 = V.T @ G @ V
+        Q += w_seg * (np.kron(P1, I3) - np.kron(P2, J_s) - np.kron(P2.T, J_s.T)
+                      + np.kron(P3, J_s.T @ J_s))
+        u = g_row @ U
+        v = g_row @ V
+        q += w_seg * (-(np.kron(u, c_s) - np.kron(v, J_s.T @ c_s)))
+        c_const += w_seg * float(g_row.sum()) * float(c_s @ c_s)
 
     H = 2.0 * Q
     f = 2.0 * q
@@ -365,7 +359,7 @@ def optimize_orbital_docking(
     n_seg=8,
     r_e=None,
     max_iter=20,
-    tol=1e-6,
+    tol=1e-8,
     v0=None,
     v1=None,
     a0=None,

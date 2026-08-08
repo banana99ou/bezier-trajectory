@@ -1,5 +1,5 @@
 {
-  "cost_true_energy": 5.455013603645857e-05,
-  "min_radius": 6593.289625971567,
+  "cost_true_energy": 3.8256108345362163e-07,
+  "min_radius": 6615.999999999999,
   "_comment": "Fixed scenario: N=3, n_seg=4, P_init from conftest, no BC, max_iter=10, tol=1e-6. Update with UPDATE_GOLDEN=1 (see tests/data/README.md)."
 }
