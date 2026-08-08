@@ -27,7 +27,10 @@ TRUST_MIN = 1e-2
 
 def run(scenario_name="phase120", n_seg=16):
     sc = H.make_scenario(scenario_name)
-    P, info = H.run_rust(sc, n_seg=n_seg, scp_trust_radius=2000.0)
+    # Paper-baseline config: canonical SCvx, freeze off (the freeze is a legacy
+    # non-canonical mechanism kept only as an ablation cell in pillar 2).
+    P, info = H.run_rust(sc, n_seg=n_seg, scp_trust_radius=2000.0,
+                         disable_scvx_freeze=True)
 
     rho = np.array(info.get("rho_history", []), float)
     trust = np.array(info.get("trust_history", []), float)
