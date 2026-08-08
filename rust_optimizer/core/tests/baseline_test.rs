@@ -1,5 +1,5 @@
 /// Integration test: validate Rust implementation against Python baseline artifacts.
-use bezier_opt_core::{bezier, de_casteljau, gravity, optimizer};
+use bezier_opt_core::{bezier, constraints, de_casteljau, gravity, optimizer};
 use std::fs;
 
 #[derive(serde::Deserialize)]
@@ -195,28 +195,31 @@ fn test_optimizer_golden_run() {
         }
     }
 
+    // Runs the canonical SCvx path (scp_trust_radius > 0). A zero trust radius here
+    // would route the whole solve through the legacy fixed-point branch and leave the
+    // ratio test, the elastic QP and the convergence streak completely unexercised.
     let result = optimizer::optimize_orbital_docking(
         &p_init,
         np1,
         dim,
         bl.scenario.n_seg,
         bl.scenario.r_e,
-        10,    // max_iter
-        1e-6,  // tol
+        200,    // max_iter -- converges at 115 here; headroom to catch a regression
+        1e-8,   // tol -- locked value
         bl.scenario.t,
-        100,   // sample_count
-        0.0,   // scp_prox_weight
-        0.0,   // scp_trust_radius
+        100,    // sample_count
+        0.0,    // scp_prox_weight
+        2000.0, // scp_trust_radius -- locked r0, must exceed the iter-1 BC repair
         None,
         None,
         None,
         None,
         false,
         16,
-        1e4,   // elastic_weight
+        1e-2,  // elastic_weight -- locked w_s (exact-penalty rule)
         false, // freeze_gravity_jacobian
         1,     // freeze_after_iter
-        false, // disable_scvx_freeze
+        constraints::DegenerateNormal::Skip,
     );
 
     eprintln!("=== Rust optimizer result ===");
@@ -260,5 +263,54 @@ fn test_optimizer_golden_run() {
         "Optimizer should improve min_radius from initial: {} -> {}",
         initial_min_radius,
         result.info["min_radius"]
+    );
+
+    // --- Properties the solve must actually satisfy -------------------------
+    // Stated as properties rather than pinned numbers: a golden value copied from
+    // the run under test only detects change, never correctness.
+
+    assert!(result.feasible, "solve reported infeasible");
+
+    // The curve clears the KOZ (dense sample, independent of the hull rows).
+    assert!(
+        result.info["min_radius"] >= bl.scenario.r_e - 1e-6,
+        "curve enters the KOZ: min_radius {} < r_e {}",
+        result.info["min_radius"],
+        bl.scenario.r_e
+    );
+
+    // Proposition 1 certificate: hull rows rebuilt at the final iterate are satisfied,
+    // which is what licenses the continuous-curve guarantee.
+    assert!(
+        result.info["final_cp_violation_km"] <= 1e-6,
+        "Prop-1 certificate not carried: final_cp_violation_km = {}",
+        result.info["final_cp_violation_km"]
+    );
+    assert!(
+        result.info["final_hull_violation_km"] <= 1e-6,
+        "hull rows violated at final iterate: {}",
+        result.info["final_hull_violation_km"]
+    );
+
+    // No segment may be silently absent from the certificate.
+    assert_eq!(
+        result.info["koz_degenerate_segments"], 0.0,
+        "degenerate KOZ normals were skipped; certificate does not cover the curve"
+    );
+
+    // Every QP that fed the ratio test must have solved to the requested tolerances.
+    assert_eq!(
+        result.info["qp_almost_solved"], 0.0,
+        "{} QP solves terminated on Clarabel's REDUCED tolerances and still fed the \
+         merit/ratio test",
+        result.info["qp_almost_solved"]
+    );
+
+    // The merit-based convergence test must be what stopped the loop -- not the
+    // iteration cap and not trust-region collapse.
+    assert_eq!(
+        result.info["scvx_converged"], 1.0,
+        "SCvx did not converge (iterations={}, final_trust_radius={})",
+        result.iterations, result.info["final_trust_radius"]
     );
 }

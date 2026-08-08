@@ -33,15 +33,14 @@ N_SEG = 16
 CAP = 2000  # max_iter for the legacy crawl cell (caps well before this)
 OUT = H.ARTIFACT_ROOT / "pillar2_ablation"
 
+# The scvx_freeze mechanism was deleted (no literature basis, measurably worse on
+# both objective and wall time, and a permanent config-provenance hazard), so the
+# former freezeON/freezeOFF cells collapse to a single trust-path configuration.
 CELLS = [
     ("(a) trust0 + prox1e-6", dict(scp_trust_radius=0.0, scp_prox_weight=1e-6), CAP),
     ("(a0) trust0 + prox0", dict(scp_trust_radius=0.0, scp_prox_weight=0.0), CAP),
-    ("(b) trust2000 + prox0 + freezeOFF", dict(scp_trust_radius=2000.0, scp_prox_weight=0.0,
-                                               disable_scvx_freeze=True), 1000),
-    ("(c) trust2000 + prox0 + freezeON", dict(scp_trust_radius=2000.0, scp_prox_weight=0.0,
-                                              disable_scvx_freeze=False), 1000),
-    ("(d) trust2000 + prox1e-6 + freezeON", dict(scp_trust_radius=2000.0, scp_prox_weight=1e-6,
-                                                 disable_scvx_freeze=False), 1000),
+    ("(b) trust2000 + prox0", dict(scp_trust_radius=2000.0, scp_prox_weight=0.0), 1000),
+    ("(c) trust2000 + prox1e-6", dict(scp_trust_radius=2000.0, scp_prox_weight=1e-6), 1000),
 ]
 
 
@@ -60,7 +59,7 @@ def run(scenario_name="phase120"):
         ))
 
     # PASS logic.
-    a, a0, b, c, d = rows
+    a, a0, b, c = rows
     a_caps = a["capped"] and a["scvx_converged"] != 1
     # Isolation: trust_radius=0 flips TWO things at once (legacy loop ON + proximal ON).
     # (a0) holds the proximal OFF to expose the legacy loop alone. The trust region is the
@@ -72,8 +71,7 @@ def run(scenario_name="phase120"):
     # at least 3x faster. (The old >10x threshold was calibrated to the two-phase
     # acceptance's 4-5 iter runs; the canonical penalized-merit acceptance takes
     # ~25-30 iters, which changes the ratio but not the isolation conclusion.)
-    # The config under test is (b) — canonical freeze-off, the paper baseline.
-    # (c)/(d) isolate the freeze and prox effects and only need to converge.
+    # The config under test is (b) — the paper baseline. (c) isolates the proximal.
     trust_is_primary = (
         (not b["capped"])
         and b["scvx_converged"] == 1
@@ -81,18 +79,15 @@ def run(scenario_name="phase120"):
         and (a0["iterations"] > 3 * b["iterations"])
     )
     prox_aggravates = a["iterations"] > a0["iterations"]
-    # (b) is the shipped config and must be fast; (c)/(d) are freeze/prox
-    # isolation cells and only need to converge under the cap (the freeze roughly
-    # doubles iterations under the K-consecutive convergence test).
     all_conv = all((not r["capped"]) and r["scvx_converged"] == 1 and r["feasible"]
-                   for r in [b, c, d]) and b["iterations"] < 50
-    # Prox is inert in the trust path: (c) prox0 and (d) prox1e-6 must be identical.
-    prox_inert = (abs(c["J_true"] - d["J_true"]) / c["J_true"] < 1e-6
-                  and abs(c["min_radius"] - d["min_radius"]) < 1e-6)
-    # Freeze changes only mild conservatism (small), not correctness.
-    freeze_gap = abs(b["J_true"] - c["J_true"]) / min(b["J_true"], c["J_true"])
-    freeze_small = freeze_gap < 0.05
-    passed = a_caps and trust_is_primary and prox_aggravates and all_conv and prox_inert and freeze_small
+                   for r in [b, c])
+    # Prox is inert in the trust path: (b) prox0 and (c) prox1e-6 must be identical.
+    # NOTE this gate is structurally unfailable — optimizer.rs skips the proximal
+    # entirely when trust_active, so (b) and (c) execute the same code. It documents
+    # the intent; it is NOT evidence about the proximal.
+    prox_inert = (abs(b["J_true"] - c["J_true"]) / b["J_true"] < 1e-6
+                  and abs(b["min_radius"] - c["min_radius"]) < 1e-6)
+    passed = a_caps and trust_is_primary and prox_aggravates and all_conv and prox_inert
 
     H.write_csv(OUT / "ablation.csv", [
         {k: (f"{v:.6e}" if isinstance(v, float) and k in ("J_true", "cost_true_energy")
@@ -114,25 +109,20 @@ def run(scenario_name="phase120"):
               f"(b={b['iterations']}, c={c['iterations']} iters): **{trust_is_primary}**")
     md.append(f"- the mis-scaled proximal is a SECONDARY aggravator: it pushes the legacy loop "
               f"from {a0['iterations']} iters (a0) to the cap (a): **{prox_aggravates}**")
-    md.append(f"- (b)(c)(d) all converge + feasible, and (b) does so in <50 iters: **{all_conv}**")
-    md.append(f"- proximal is INERT in the trust path: (c) prox0 == (d) prox1e-6 identical: **{prox_inert}**")
-    md.append(f"- freeze effect: (b) freeze-off = {b['iterations']} iters, J_true={b['J_true']:.4e}, "
-              f"min_r={b['min_radius']:.1f}; (c) freeze-on = {c['iterations']} iters, "
-              f"J_true={c['J_true']:.4e}, min_r={c['min_radius']:.1f} "
-              f"(freeze adds {100*freeze_gap:.2f}% cost / {c['min_radius']-b['min_radius']:.1f} km "
-              f"conservatism, saves {b['iterations']-c['iterations']} iter): small={freeze_small}")
+    md.append(f"- (b)(c) both converge + feasible: **{all_conv}**")
+    md.append(f"- proximal is INERT in the trust path: (b) prox0 == (c) prox1e-6 identical: "
+              f"**{prox_inert}** (structurally unfailable — the proximal is skipped when "
+              f"`trust_active`; documents intent, not evidence)")
     md.append("")
     md.append("**Isolation finding (corrected)**: Cell (a) alone conflates two changes -- setting "
               "`scp_trust_radius=0` both reverts to the legacy unconditional-accept loop AND re-enables "
               f"the proximal. The added cell (a0) separates them: with the proximal removed the legacy "
               f"loop still takes {a0['iterations']} iters (it exits via the step-norm tolerance, not the "
-              f"SCvx criterion) -- >3x the trust path's {c['iterations']}. So the **trust region is the "
+              f"SCvx criterion) -- >3x the trust path's {b['iterations']}. So the **trust region is the "
               "primary fix**; the mis-scaled proximal is a **secondary aggravator** that drives the "
               f"already-slow legacy loop from {a0['iterations']} iters to the cap. In the trust path the "
-              "proximal is inert ((c)==(d)). The freeze (c vs b) is NOT free: it saves ~1 iteration but "
-              "locks the KOZ linearization at the first-feasible point, adding ~2.8% conservatism -- "
-              "canonical SCvx (b) is nearly as fast and slightly more optimal, so the freeze is arguably "
-              "droppable.")
+              "proximal is inert ((b)==(c)). The `scvx_freeze` cells were removed with the mechanism "
+              "itself.")
     md.append("")
     md.append(f"## VERDICT: {'PASS' if passed else 'FAIL'}")
     H.write_text(OUT / "summary.md", "\n".join(md))

@@ -1,3 +1,4 @@
+use bezier_opt_core::constraints;
 use bezier_opt_core::optimizer;
 use numpy::{PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;
@@ -23,7 +24,7 @@ use pyo3::types::{PyDict, PyList};
     transfer_time = 1500.0,
     freeze_gravity_jacobian = false,
     freeze_after_iter = 1,
-    disable_scvx_freeze = false,
+    strict_koz_normals = false,
 ))]
 fn optimize_orbital_docking<'py>(
     py: Python<'py>,
@@ -45,7 +46,11 @@ fn optimize_orbital_docking<'py>(
     transfer_time: f64,
     freeze_gravity_jacobian: bool,
     freeze_after_iter: usize,
-    disable_scvx_freeze: bool,
+    // false = Skip (historical): a segment whose centroid sits on the KOZ centre
+    // emits no rows and is invisible to the certificate.
+    // true  = Fallback: deterministic replacement normal, counted in
+    //         info["koz_degenerate_segments"].
+    strict_koz_normals: bool,
 ) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyDict>)> {
     let p_arr = p_init.as_array();
     let np1 = p_arr.shape()[0];
@@ -80,7 +85,11 @@ fn optimize_orbital_docking<'py>(
         elastic_weight,
         freeze_gravity_jacobian,
         freeze_after_iter,
-        disable_scvx_freeze,
+        if strict_koz_normals {
+            constraints::DegenerateNormal::Fallback
+        } else {
+            constraints::DegenerateNormal::Skip
+        },
     );
 
     let p_opt = PyArray2::from_vec2(py, &{

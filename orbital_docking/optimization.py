@@ -372,7 +372,7 @@ def optimize_orbital_docking(
     elastic_weight: float = 1e-2,
     freeze_gravity_jacobian: bool = False,
     freeze_after_iter: int = 1,
-    disable_scvx_freeze: bool = False,
+    strict_koz_normals: bool = False,
     verbose=True,
     debug=False,
     use_cache=True,
@@ -432,6 +432,11 @@ def optimize_orbital_docking(
             scp_trust_radius=scp_trust_radius,
             freeze_gravity_jacobian=freeze_gravity_jacobian,
             freeze_after_iter=freeze_after_iter,
+            elastic_weight=elastic_weight,
+            enforce_prograde=enforce_prograde,
+            prograde_n_samples=prograde_n_samples,
+            transfer_time=transfer_time,
+            strict_koz_normals=strict_koz_normals,
         )
         cache_path = get_cache_path(cache_key, n_seg)
         cached_result = load_from_cache(cache_path)
@@ -470,7 +475,7 @@ def optimize_orbital_docking(
         transfer_time=float(transfer_time),
         freeze_gravity_jacobian=freeze_gravity_jacobian,
         freeze_after_iter=freeze_after_iter,
-        disable_scvx_freeze=disable_scvx_freeze,
+        strict_koz_normals=strict_koz_normals,
     )
 
     P = np.asarray(P_opt, dtype=float)
@@ -607,6 +612,11 @@ def optimize_orbital_docking(
             scp_trust_radius=scp_trust_radius,
             freeze_gravity_jacobian=freeze_gravity_jacobian,
             freeze_after_iter=freeze_after_iter,
+            elastic_weight=elastic_weight,
+            enforce_prograde=enforce_prograde,
+            prograde_n_samples=prograde_n_samples,
+            transfer_time=transfer_time,
+            strict_koz_normals=strict_koz_normals,
         )
         cache_path = get_cache_path(cache_key, n_seg)
         save_to_cache(cache_path, P, info)
@@ -640,7 +650,7 @@ def _optimize_one_segment_count(payload: dict):
         scp_prox_weight=payload.get("scp_prox_weight", 0.0),
         scp_trust_radius=payload.get("scp_trust_radius", 0.0),
         enforce_prograde=payload.get("enforce_prograde", False),
-        elastic_weight=payload.get("elastic_weight", 1e4),
+        elastic_weight=payload.get("elastic_weight", 1e-2),
         verbose=payload["verbose"],
         debug=payload["debug"],
         use_cache=payload["use_cache"],

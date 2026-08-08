@@ -295,9 +295,13 @@ fn solve_qp(
     constraints_ub: &[f64], // (m,)
     n: usize,
     m: usize,
+    // Incremented when Clarabel terminates on its REDUCED tolerances rather than the
+    // requested ones. Such a solution feeds the merit/ratio test as if exact, so the
+    // count must reach the caller instead of being discarded with the solver handle.
+    almost_solved: &mut usize,
 ) -> Option<Vec<f64>> {
     use clarabel::algebra::CscMatrix;
-    use clarabel::solver::{DefaultSettings, DefaultSettingsBuilder, DefaultSolver, IPSolver, SolverStatus};
+    use clarabel::solver::{DefaultSettingsBuilder, DefaultSolver, IPSolver, SolverStatus};
 
     // Build P as upper-triangular CSC
     let mut p_col_ptr = vec![0usize; n + 1];
@@ -485,8 +489,15 @@ fn solve_qp(
 
     let a_csc = CscMatrix::new(total_rows2, n, a_col_ptr, a_row_indices, a_values);
 
+    // EXPERIMENT (2026-08-09): Clarabel's default gap tolerances are ~1e-8 ABSOLUTE,
+    // while the objective here is ~2e-5, i.e. only ~4e-4 relative — four orders
+    // coarser than the 1e-8 RELATIVE merit change the outer convergence test asks
+    // for. Tightened to see whether the endgame is solver-resolution-limited.
     let settings = DefaultSettingsBuilder::default()
         .max_iter(200)
+        .tol_gap_abs(1e-11)
+        .tol_gap_rel(1e-10)
+        .tol_feas(1e-9)
         .verbose(false)
         .build()
         .unwrap();
@@ -498,7 +509,9 @@ fn solve_qp(
     solver.solve();
 
     match solver.solution.status {
-        SolverStatus::Solved | SolverStatus::AlmostSolved => {
+        SolverStatus::Solved => Some(solver.solution.x.clone()),
+        SolverStatus::AlmostSolved => {
+            *almost_solved += 1;
             Some(solver.solution.x.clone())
         }
         _ => None,
@@ -535,7 +548,12 @@ fn eval_residual_terms(
 ) -> (f64, f64) {
     let t2_inv = 1.0 / (t * t);
     let n_lin = lin.len().max(1);
-    let n_q = 1000usize;
+    // The integrand is piecewise: each De Casteljau segment carries its own affine
+    // gravity model, so it jumps at segment boundaries. A midpoint cell straddling a
+    // boundary integrates the wrong model over part of itself, which degrades the
+    // rule from O(h^2) to O(h). Rounding n_q up to a multiple of n_lin keeps every
+    // cell inside one segment and restores second-order accuracy.
+    let n_q = 1000usize.div_ceil(n_lin) * n_lin;
     let w = 1.0 / n_q as f64;
     let mut model_res = 0.0f64;
     let mut true_res = 0.0f64;
@@ -651,6 +669,7 @@ fn solve_qp_elastic(
     koz_row_start: usize,
     n_koz: usize,
     elastic_weight: f64,
+    almost_solved: &mut usize,
 ) -> Option<(Vec<f64>, f64, f64)> {
     let nvars_ext = nvars + n_koz;
     let ext_nrows = total_rows + n_koz;
@@ -690,7 +709,9 @@ fn solve_qp_elastic(
         ub_ext.push(f64::INFINITY);
     }
 
-    let x_full = solve_qp(&h_ext, &f_ext, &a_ext, &lb_ext, &ub_ext, nvars_ext, ext_nrows)?;
+    let x_full = solve_qp(
+        &h_ext, &f_ext, &a_ext, &lb_ext, &ub_ext, nvars_ext, ext_nrows, almost_solved,
+    )?;
     let total_slack = x_full[nvars..].iter().sum::<f64>();
     let max_slack = x_full[nvars..].iter().cloned().fold(0.0f64, f64::max);
     Some((x_full[..nvars].to_vec(), total_slack, max_slack))
@@ -718,7 +739,7 @@ pub fn optimize_orbital_docking(
     elastic_weight: f64,
     freeze_gravity_jacobian: bool,
     freeze_after_iter: usize,
-    disable_scvx_freeze: bool,
+    koz_degenerate_mode: constraints::DegenerateNormal,
 ) -> OptResult {
     let consts = OrbitalConstants::default();
     let n = np1 - 1;
@@ -787,16 +808,17 @@ pub fn optimize_orbital_docking(
     let conv_streak_required = 3usize;
     let mut conv_streak = 0usize;
     let mut converged_scvx = false;
-    // SCvx "linearize once, hold constant" snapshot: once the iterate first becomes
-    // feasible, freeze BOTH the gravity linearization and the KOZ supporting half-spaces
-    // at that good reference and reuse them for the rest of the solve. The convex
-    // subproblem then stops moving (no rotating constraint walls, no relinearization),
-    // so the remaining steps converge in a handful of iterations — the regime the
-    // professor described, anchored at a feasible point rather than the straight-line
-    // init (which sits deep inside the KOZ, where the gravity model is meaningless).
-    let mut scvx_freeze: Option<(Vec<SegmentGravLin>, constraints::LinearConstraint)> = None;
-    let mut p_feasible = false;
-    let mut scvx_freeze_iter: i64 = -1; // diagnostic: iteration at which the snapshot armed
+    // Which criterion actually ended the loop. `converged_scvx` alone cannot say:
+    // both the K-consecutive merit streak and trust-region collapse set it true, and
+    // they are very different claims — the streak asserts merit stationarity, the
+    // collapse only says the ratio test stopped accepting anything.
+    //   0 = iteration cap, 1 = K-consecutive merit streak,
+    //   2 = trust-region collapse, 3 = QP failure
+    let mut stop_reason = 0.0f64;
+    // QP-health counters, surfaced in `info` so a reduced-accuracy or degenerate
+    // solve cannot pass unnoticed into the merit/ratio test.
+    let mut qp_almost_solved = 0usize;
+    let mut koz_degenerate_max = 0usize;
 
     // Per-accepted-step SCvx diagnostics (for the verification harness / paper figures).
     let mut rho_history: Vec<f64> = Vec::new();
@@ -821,50 +843,34 @@ pub fn optimize_orbital_docking(
 
         let c_koz = vec![0.0; dim];
 
-        // Arm the SCvx "linearize once, hold constant" snapshot the first time the
-        // iterate is feasible: capture BOTH the gravity linearization and the KOZ
-        // supporting half-spaces at this good reference, then reuse them so the convex
-        // subproblem stops moving and the remaining steps converge quickly.
-        if trust_active && scvx_freeze.is_none() && p_feasible && !disable_scvx_freeze {
-            let lin_f = compute_segment_lin(&p, np1, dim, t, sample_count, &consts);
-            let koz_f = constraints::build_koz_constraints(&a_list, &p, np1, dim, r_e, &c_koz);
-            scvx_freeze = Some((lin_f, koz_f));
-            scvx_freeze_iter = it as i64;
-        }
-
-        // KOZ + gravity linearization for this iter: reuse the frozen snapshot once
-        // armed; otherwise rebuild fresh (honouring legacy freeze_gravity_jacobian and
-        // updating the Jacobian-drift diagnostic against the iter-1 baseline).
-        let koz;
-        let lin_for_qp_owned: Option<Vec<SegmentGravLin>>;
-        if let Some((ref lin_f, ref koz_f)) = scvx_freeze {
-            koz = koz_f.clone();
-            lin_for_qp_owned = Some(lin_f.clone());
+        // KOZ + gravity linearization, rebuilt fresh at the current reference every
+        // iteration — this is what makes the method successive convexification.
+        // (Honours the legacy freeze_gravity_jacobian knob and updates the
+        // Jacobian-drift diagnostic against the iter-1 baseline.)
+        let (koz, koz_degen) =
+            constraints::build_koz_constraints(&a_list, &p, np1, dim, r_e, &c_koz, koz_degenerate_mode);
+        koz_degenerate_max = koz_degenerate_max.max(koz_degen);
+        let use_frozen =
+            freeze_gravity_jacobian && it > effective_freeze_after && lin_frozen_cache.is_some();
+        let lin_for_qp_owned: Option<Vec<SegmentGravLin>> = if use_frozen {
+            None
         } else {
-            koz = constraints::build_koz_constraints(&a_list, &p, np1, dim, r_e, &c_koz);
-            let use_frozen = freeze_gravity_jacobian
-                && it > effective_freeze_after
-                && lin_frozen_cache.is_some();
-            lin_for_qp_owned = if use_frozen {
-                None
-            } else {
-                let lin_t = compute_segment_lin(&p, np1, dim, t, sample_count, &consts);
-                if it == 1 {
-                    lin_baseline = Some(lin_t.clone());
-                    jacobian_drift_history.push(vec![0.0; lin_t.len()]);
-                } else if let Some(base) = lin_baseline.as_deref() {
-                    let mut drift_row = Vec::with_capacity(lin_t.len());
-                    for (s_t, s_0) in lin_t.iter().zip(base.iter()) {
-                        drift_row.push(frobenius_norm_3x3(&s_t.j_i, &s_0.j_i));
-                    }
-                    jacobian_drift_history.push(drift_row);
+            let lin_t = compute_segment_lin(&p, np1, dim, t, sample_count, &consts);
+            if it == 1 {
+                lin_baseline = Some(lin_t.clone());
+                jacobian_drift_history.push(vec![0.0; lin_t.len()]);
+            } else if let Some(base) = lin_baseline.as_deref() {
+                let mut drift_row = Vec::with_capacity(lin_t.len());
+                for (s_t, s_0) in lin_t.iter().zip(base.iter()) {
+                    drift_row.push(frobenius_norm_3x3(&s_t.j_i, &s_0.j_i));
                 }
-                if freeze_gravity_jacobian && it == effective_freeze_after {
-                    lin_frozen_cache = Some(lin_t.clone());
-                }
-                Some(lin_t)
-            };
-        }
+                jacobian_drift_history.push(drift_row);
+            }
+            if freeze_gravity_jacobian && it == effective_freeze_after {
+                lin_frozen_cache = Some(lin_t.clone());
+            }
+            Some(lin_t)
+        };
         let lin_for_qp_ref: &[SegmentGravLin] = match &lin_for_qp_owned {
             Some(v) => v.as_slice(),
             None => lin_frozen_cache
@@ -1028,17 +1034,21 @@ pub fn optimize_orbital_docking(
         if trust_active && elastic_available {
             match solve_qp_elastic(
                 &h_mat, &f_vec, &all_a_rows, &all_lb, &all_ub, nvars, total_rows,
-                koz_row_start, n_koz, elastic_weight,
+                koz_row_start, n_koz, elastic_weight, &mut qp_almost_solved,
             ) {
                 Some((x, ts, ms)) => {
                     x_new = x;
                     iter_total_slack = ts;
                     iter_max_slack = ms;
                 }
-                None => break,
+                None => {
+                    stop_reason = 3.0;
+                    break;
+                }
             }
         } else if let Some(x_sol) = solve_qp(
             &h_mat, &f_vec, &all_a_rows, &all_lb, &all_ub, nvars, total_rows,
+            &mut qp_almost_solved,
         ) {
             x_new = x_sol;
             iter_total_slack = 0.0;
@@ -1046,14 +1056,17 @@ pub fn optimize_orbital_docking(
         } else if elastic_available {
             match solve_qp_elastic(
                 &h_mat, &f_vec, &all_a_rows, &all_lb, &all_ub, nvars, total_rows,
-                koz_row_start, n_koz, elastic_weight,
+                koz_row_start, n_koz, elastic_weight, &mut qp_almost_solved,
             ) {
                 Some((x, ts, ms)) => {
                     x_new = x;
                     iter_total_slack = ts;
                     iter_max_slack = ms;
                 }
-                None => break,
+                None => {
+                    stop_reason = 3.0;
+                    break;
+                }
             }
         } else {
             break;
@@ -1076,8 +1089,6 @@ pub fn optimize_orbital_docking(
             // control points instead would NOT work: the half-space is conservative,
             // so its violation need not vanish where the sphere constraint holds, and
             // the mismatch deadlocks the ratio test (pred large, act ≈ 0).
-            // Under an armed freeze the walls are fixed linear constraints — no model
-            // error — so the true measure IS the row violation there.
             let cand = &x_new;
             let step_norm: f64 = (0..nvars)
                 .map(|i| (cand[i] - p[i]).powi(2))
@@ -1094,12 +1105,12 @@ pub fn optimize_orbital_docking(
                 koz_row_violation(cand, &all_a_rows, &all_lb, koz_row_start, n_koz, nvars);
             let (mres_p, tres_p) = eval_residual_terms(&p, lin_for_qp_ref, np1, dim, t, &consts);
             let (mres_c, tres_c) = eval_residual_terms(cand, lin_for_qp_ref, np1, dim, t, &consts);
-            let (vtrue_p, vtrue_c) = if scvx_freeze.is_some() {
-                (vlin_p, vlin_c)
-            } else {
-                // Unfrozen: this iteration's rows were built at p, so vlin_p == h(p);
-                // only the candidate needs its own re-aimed walls.
-                let koz_c = constraints::build_koz_constraints(&a_list, cand, np1, dim, r_e, &c_koz);
+            // This iteration's rows were built at p, so vlin_p == h(p); only the
+            // candidate needs its own re-aimed walls.
+            let (vtrue_p, vtrue_c) = {
+                let (koz_c, _) = constraints::build_koz_constraints(
+                    &a_list, cand, np1, dim, r_e, &c_koz, koz_degenerate_mode,
+                );
                 let h_c = koz_row_violation(cand, &koz_c.a, &koz_c.lb, 0, koz_c.n_rows, nvars);
                 (vlin_p, h_c)
             };
@@ -1145,7 +1156,6 @@ pub fn optimize_orbital_docking(
                 // The candidate satisfies every hard row exactly, so accept it
                 // unconditionally and skip the convergence test.
                 p = x_new;
-                p_feasible = vtrue_c <= 1e-6;
                 conv_streak = 0;
                 rho_history.push(f64::NAN);
                 trust_history.push(trust);
@@ -1178,10 +1188,6 @@ pub fn optimize_orbital_docking(
                 // this into an absolute test 4 orders below the problem scale.
                 let rel = act.abs() / t_p.abs().max(1e-12);
                 p = x_new;
-                // Freeze-arming gate: hull rows at the accepted iterate's own walls
-                // satisfied (≤ 1 µm aggregate) is the Prop-1 certificate that the
-                // whole curve clears the KOZ.
-                p_feasible = vtrue_c <= 1e-6;
                 if rho > 0.9 && rho.is_finite() {
                     trust = (trust * 2.0).min(trust_max); // model trustworthy — be bolder
                 }
@@ -1200,6 +1206,7 @@ pub fn optimize_orbital_docking(
                     conv_streak += 1;
                     if conv_streak >= conv_streak_required {
                         converged_scvx = true;
+                        stop_reason = 1.0;
                         break;
                     }
                 } else {
@@ -1215,6 +1222,7 @@ pub fn optimize_orbital_docking(
                     // constrained local optimum; otherwise it is a genuine failure
                     // and converged stays false.
                     converged_scvx = vlin_p <= 1e-6 && hard_viol_p <= 1e-9;
+                    stop_reason = 2.0;
                     break;
                 }
                 continue;
@@ -1241,7 +1249,10 @@ pub fn optimize_orbital_docking(
     // subdivided control point satisfies them, the whole curve clears the KOZ.
     let min_radius = min_radius_of(&p, np1, dim);
     let c_koz_final = vec![0.0; dim];
-    let koz_final = constraints::build_koz_constraints(&a_list, &p, np1, dim, r_e, &c_koz_final);
+    let (koz_final, koz_degen_final) = constraints::build_koz_constraints(
+        &a_list, &p, np1, dim, r_e, &c_koz_final, koz_degenerate_mode,
+    );
+    koz_degenerate_max = koz_degenerate_max.max(koz_degen_final);
     let final_hull_violation = koz_row_violation(
         &p,
         &koz_final.a,
@@ -1335,8 +1346,20 @@ pub fn optimize_orbital_docking(
         "scvx_converged".to_string(),
         if converged_scvx { 1.0 } else { 0.0 },
     );
+    // 0 = iteration cap, 1 = K-consecutive merit streak, 2 = trust-region collapse,
+    // 3 = QP failure. Only 1 asserts merit stationarity.
+    info.insert("scvx_stop_reason".to_string(), stop_reason);
     info.insert("final_trust_radius".to_string(), trust);
-    info.insert("scvx_freeze_iter".to_string(), scvx_freeze_iter as f64);
+    // QP health. qp_almost_solved > 0 means Clarabel hit its reduced tolerances on
+    // that many solves and those solutions still fed the ratio test.
+    info.insert("qp_almost_solved".to_string(), qp_almost_solved as f64);
+    // Segments whose supporting-half-space normal was undefined. Under the default
+    // Skip mode a nonzero value means the Prop-1 certificate does not cover the
+    // whole curve.
+    info.insert(
+        "koz_degenerate_segments".to_string(),
+        koz_degenerate_max as f64,
+    );
     // Drift summary stats (full history is on OptResult.jacobian_drift_history).
     if !jacobian_drift_history.is_empty() {
         let mut max_drift = 0.0f64;
@@ -1388,4 +1411,118 @@ pub fn generate_initial_control_points(degree: usize, p_start: &[f64], p_end: &[
         }
     }
     pts
+}
+
+#[cfg(test)]
+mod objective_tests {
+    use super::*;
+
+    /// Build a plausible non-degenerate control polygon in LEO.
+    fn sample_polygon(np1: usize) -> Vec<f64> {
+        let mut p = vec![0.0; np1 * 3];
+        for i in 0..np1 {
+            let s = i as f64 / (np1 - 1) as f64;
+            let ang = 0.9 * s;
+            let r = 6900.0 + 250.0 * s;
+            p[i * 3] = r * ang.cos();
+            p[i * 3 + 1] = r * ang.sin();
+            p[i * 3 + 2] = 120.0 * s * (1.0 - s);
+        }
+        p
+    }
+
+    /// The Gram-matrix objective must reproduce the integral it claims to compute.
+    ///
+    /// This is the hinge of the whole SCvx loop: the merit is assembled as
+    ///     T = quad_form(H, f, x) + c_const + (tres - mres) + w_s * viol
+    /// which collapses to the true merit ONLY IF
+    ///     quad_form(H, f, x) + c_const == mres(x)
+    /// i.e. only if the closed-form Bernstein-Gram assembly equals the numerically
+    /// integrated model residual. If it does not, every rho and therefore every
+    /// acceptance decision is computed against the wrong model, silently.
+    ///
+    /// `eval_residual_terms` is an INDEPENDENT implementation (midpoint quadrature
+    /// over the curve, n_q = 1000) sharing only the gravity linearization, so it is
+    /// a genuine oracle rather than a self-comparison.
+    #[test]
+    fn gram_integral_matches_numerical_quadrature() {
+        let consts = OrbitalConstants::default();
+        let dim = 3;
+        let t = 1500.0;
+
+        for &np1 in &[4usize, 6, 8] {
+            for &n_lin_seg in &[1usize, 4, 16] {
+                let p_ref = sample_polygon(np1);
+                let nvars = np1 * dim;
+                let lin = compute_segment_lin(&p_ref, np1, dim, t, n_lin_seg, &consts);
+                let (h, f, c_const) =
+                    build_ctrl_accel_quadratic(&p_ref, np1, dim, t, n_lin_seg, &consts, Some(&lin));
+
+                // The identity must hold at ANY x for the fixed linearization, not
+                // just at the reference — the QP moves x away from p_ref.
+                for shift in [0.0f64, 15.0, -40.0] {
+                    let x: Vec<f64> = p_ref.iter().enumerate()
+                        .map(|(i, v)| v + shift * ((i % 7) as f64 - 3.0) / 3.0)
+                        .collect();
+
+                    let closed_form = quad_form(&h, &f, &x, nvars) + c_const;
+                    let (quadrature, _) = eval_residual_terms(&x, &lin, np1, dim, t, &consts);
+
+                    // Tolerance is set by the ORACLE's accuracy, not the Gram form's:
+                    // the closed form is exact, the midpoint rule is O(h^2) and lands
+                    // ~2e-7 here at n_q = 1000. Any real assembly bug (a dropped
+                    // 1/T^2, a missing transpose in P2, a wrong (1'G1)c'c constant,
+                    // the wrong w_seg) shifts the value by order 1 -- six orders above
+                    // this bound -- so the loose-looking threshold still catches them.
+                    let rel = (closed_form - quadrature).abs() / quadrature.abs().max(1e-30);
+                    assert!(
+                        rel < 1e-6,
+                        "Gram closed form disagrees with quadrature: np1={np1} \
+                         n_lin_seg={n_lin_seg} shift={shift} closed={closed_form:.12e} \
+                         quad={quadrature:.12e} rel={rel:.3e}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The assembled Hessian must be symmetric and positive semi-definite, and the
+    /// constant term non-negative -- it is a squared L2 norm.
+    #[test]
+    fn gram_quadratic_is_symmetric_psd() {
+        let consts = OrbitalConstants::default();
+        let (np1, dim, t) = (6usize, 3usize, 1500.0);
+        let nvars = np1 * dim;
+        let p_ref = sample_polygon(np1);
+        let (h, _f, c_const) = build_ctrl_accel_quadratic(&p_ref, np1, dim, t, 4, &consts, None);
+
+        assert!(c_const >= 0.0, "c_const must be >= 0, got {c_const}");
+        for i in 0..nvars {
+            for j in 0..nvars {
+                let a = h[i * nvars + j];
+                let b = h[j * nvars + i];
+                assert!(
+                    (a - b).abs() <= 1e-12 * a.abs().max(b.abs()).max(1.0),
+                    "H not symmetric at ({i},{j}): {a} vs {b}"
+                );
+            }
+        }
+        // PSD via Rayleigh quotients on deterministic pseudo-random directions.
+        for seed in 0..25u64 {
+            let mut s = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let v: Vec<f64> = (0..nvars)
+                .map(|_| {
+                    s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    ((s >> 33) as f64 / (1u64 << 31) as f64) - 1.0
+                })
+                .collect();
+            let mut q = 0.0;
+            for i in 0..nvars {
+                for j in 0..nvars {
+                    q += v[i] * h[i * nvars + j] * v[j];
+                }
+            }
+            assert!(q >= -1e-9 * nvars as f64, "H not PSD: vHv = {q}");
+        }
+    }
 }

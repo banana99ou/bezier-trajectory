@@ -27,10 +27,8 @@ TRUST_MIN = 1e-2
 
 def run(scenario_name="phase120", n_seg=16):
     sc = H.make_scenario(scenario_name)
-    # Paper-baseline config: canonical SCvx, freeze off (the freeze is a legacy
-    # non-canonical mechanism kept only as an ablation cell in pillar 2).
-    P, info = H.run_rust(sc, n_seg=n_seg, scp_trust_radius=2000.0,
-                         disable_scvx_freeze=True)
+    # Paper-baseline config: canonical SCvx. (scvx_freeze has been deleted.)
+    P, info = H.run_rust(sc, n_seg=n_seg, scp_trust_radius=2000.0)
 
     rho = np.array(info.get("rho_history", []), float)
     trust = np.array(info.get("trust_history", []), float)
@@ -53,16 +51,35 @@ def run(scenario_name="phase120", n_seg=16):
     # only a finite rho far from 1 would indicate a bad model.
     rho_opt = rho[opt]
     rho_finite = rho_opt[np.isfinite(rho_opt)]
-    rho_ok = bool(np.all((rho_finite > 0.5) & (rho_finite < 2.0))) if rho_finite.size else True
-    trust_ok = bool(trust[-1] > TRUST_MIN)
+    # Require actual evidence: a solver routing every step through the rho=+inf
+    # null-step branch used to pass this gate on ZERO samples.
+    rho_ok = bool(rho_finite.size >= 3 and np.all((rho_finite > 0.5) & (rho_finite < 2.0)))
+
     # merit monotone within each phase (allow tiny epsilon).
+    # NOTE: near-tautological — acceptance requires rho > eta with pred > 0, hence
+    # act > 0. Kept as an internal-consistency check, NOT as evidence of convergence.
     def monotone(mask):
         m = merit[mask]
         return bool(np.all(np.diff(m) <= 1e-9 * (np.abs(m[:-1]) + 1))) if m.size > 1 else True
     merit_ok = monotone(phase == 0.0) and monotone(phase == 1.0)
+
     slack_ok = bool(slack[-1] < 1e-6) if n else False
-    iters_ok = int(info["iterations"]) < 50
-    passed = rho_ok and trust_ok and merit_ok and slack_ok and iters_ok
+
+    # The loop must have stopped on the merit criterion (K consecutive sub-tol steps
+    # + certificate) rather than on the iteration cap or trust-region collapse.
+    # The old `trust[-1] > TRUST_MIN` gate could not fail: trust_history is appended
+    # only on ACCEPTED steps and the loop breaks as soon as trust < trust_min, so
+    # every recorded value was >= the floor by construction.
+    converged_ok = int(info.get("scvx_converged", 0)) == 1
+    feasible_ok = bool(info["feasible"]) and float(info.get("final_cp_violation_km", 1.0)) <= 1e-6
+    # Clarabel must not have fallen back to its reduced tolerances on any solve that
+    # fed the ratio test.
+    qp_clean = int(info.get("qp_almost_solved", -1)) == 0
+    # No segment may be silently missing from the Prop-1 certificate.
+    no_degenerate = int(info.get("koz_degenerate_segments", -1)) == 0
+
+    passed = (rho_ok and merit_ok and slack_ok and converged_ok
+              and feasible_ok and qp_clean and no_degenerate)
 
     # Plot.
     OUT.mkdir(parents=True, exist_ok=True)
@@ -87,10 +104,21 @@ def run(scenario_name="phase120", n_seg=16):
     md.append(f"- accepted steps: {n} (iterations={int(info['iterations'])})")
     md.append(f"- rho on optimality steps in (0.5,2): **{rho_ok}**  (values: "
               f"{', '.join(f'{v:.3f}' for v in rho[opt]) if opt.any() else '—'})")
-    md.append(f"- trust settles above floor (final={trust[-1]:.1f} > {TRUST_MIN}): **{trust_ok}**")
-    md.append(f"- merit monotone within each phase: **{merit_ok}**")
+    md.append(f"- merit monotone within each phase: **{merit_ok}** "
+              f"(near-tautological; consistency check only)")
     md.append(f"- slack -> 0 (final={slack[-1]:.2e}): **{slack_ok}**")
-    md.append(f"- iterations < 50: **{iters_ok}**")
+    md.append(f"- stopped on the SCvx merit criterion (not the cap, not trust collapse): "
+              f"**{converged_ok}** (iterations={int(info['iterations'])}, "
+              f"final trust={float(info.get('final_trust_radius', float('nan'))):.4g} km, "
+              f"floor={TRUST_MIN})")
+    md.append(f"- feasible + Prop-1 certificate at the final iterate "
+              f"(final_cp_violation_km={float(info.get('final_cp_violation_km', float('nan'))):.2e}): "
+              f"**{feasible_ok}**")
+    md.append(f"- every QP hit the requested tolerances "
+              f"(qp_almost_solved={int(info.get('qp_almost_solved', -1))}): **{qp_clean}**")
+    md.append(f"- no degenerate KOZ normals skipped "
+              f"(koz_degenerate_segments={int(info.get('koz_degenerate_segments', -1))}): "
+              f"**{no_degenerate}**")
     md.append("")
     md.append("See `iter_trace.png` (orange band = feasibility-restoration).")
     md.append("")

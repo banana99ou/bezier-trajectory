@@ -11,12 +11,38 @@ pub struct LinearConstraint {
     pub n_vars: usize,
 }
 
+/// How to handle a segment whose control-point centroid coincides with the KOZ
+/// centre, where the direction `centroid - c_koz` has no defined orientation.
+///
+/// Soundness note: the half-space `n·q >= n·c_koz + r_e` is tangent to the sphere
+/// for EVERY unit `n`, so any unit normal keeps the Prop-1 certificate sound — a
+/// poorly aimed normal can only make the subproblem infeasible (a loud failure),
+/// never certify a curve that intersects the KOZ. Emitting no rows is the only
+/// option that breaks soundness, because the certificate is evaluated on these
+/// same rows and a skipped segment is silently absent from it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DegenerateNormal {
+    /// Emit no rows for the segment. Historical behaviour, kept as the default so
+    /// existing results reproduce bit-for-bit. UNSOUND: the segment is both
+    /// unconstrained and invisible to the feasibility certificate.
+    Skip,
+    /// Fall back to the deterministic direction `c_koz -> the segment control point
+    /// farthest from c_koz`, and report the occurrence via the returned count.
+    /// Deterministic rather than normalizing float noise, which would give a
+    /// platform- and optimization-level-dependent direction.
+    Fallback,
+}
+
 /// Build KOZ (Keep Out Zone) linear constraints for all segments.
 ///
 /// For each segment j:
 /// 1. Compute centroid of control points: Qi = Ai @ P
 /// 2. Generate unit vector nj from c_koz to centroid
 /// 3. Create half-space constraint: nj^T @ Qi >= r_e
+///
+/// Returns the constraint set and the number of segments that hit the degenerate
+/// case (centroid on the KOZ centre); a nonzero count under `Skip` means the
+/// certificate does not cover the whole curve.
 pub fn build_koz_constraints(
     a_list: &[Vec<f64>],
     p: &[f64],     // (Np1, dim) row-major
@@ -24,10 +50,12 @@ pub fn build_koz_constraints(
     dim: usize,
     r_e: f64,
     c_koz: &[f64], // (dim,)
-) -> LinearConstraint {
+    degenerate: DegenerateNormal,
+) -> (LinearConstraint, usize) {
     let n_vars = np1 * dim;
     let mut rows: Vec<Vec<f64>> = Vec::new();
     let mut lbs: Vec<f64> = Vec::new();
+    let mut n_degenerate = 0usize;
 
     for a_seg in a_list {
         // Qi = Ai @ P, shape (Np1, dim)
@@ -58,9 +86,41 @@ pub fn build_koz_constraints(
         for d in 0..dim {
             nj[d] = ci[d] - c_koz[d];
         }
-        let nj_norm: f64 = nj.iter().map(|x| x * x).sum::<f64>().sqrt();
+        let mut nj_norm: f64 = nj.iter().map(|x| x * x).sum::<f64>().sqrt();
         if nj_norm < 1e-12 {
-            continue;
+            n_degenerate += 1;
+            match degenerate {
+                DegenerateNormal::Skip => continue,
+                DegenerateNormal::Fallback => {
+                    // Deterministic replacement: aim at the segment control point
+                    // farthest from the KOZ centre. If every control point sits on
+                    // the centre the segment is genuinely uncoverable by any
+                    // half-space; a fixed axis then yields rows the QP reports as
+                    // infeasible, which is the correct loud outcome.
+                    let mut best = 0usize;
+                    let mut best_d2 = -1.0f64;
+                    for i in 0..np1 {
+                        let d2: f64 = (0..dim)
+                            .map(|d| (qi[i * dim + d] - c_koz[d]).powi(2))
+                            .sum();
+                        if d2 > best_d2 {
+                            best_d2 = d2;
+                            best = i;
+                        }
+                    }
+                    if best_d2 > 1e-24 {
+                        for d in 0..dim {
+                            nj[d] = qi[best * dim + d] - c_koz[d];
+                        }
+                    } else {
+                        nj[0] = 1.0;
+                        for d in 1..dim {
+                            nj[d] = 0.0;
+                        }
+                    }
+                    nj_norm = nj.iter().map(|x| x * x).sum::<f64>().sqrt();
+                }
+            }
         }
         for d in 0..dim {
             nj[d] /= nj_norm;
@@ -85,13 +145,18 @@ pub fn build_koz_constraints(
     }
 
     if rows.is_empty() {
-        return LinearConstraint {
-            a: vec![0.0; n_vars],
-            lb: vec![f64::NEG_INFINITY],
-            ub: vec![f64::INFINITY],
-            n_rows: 1,
-            n_vars,
-        };
+        // Every segment was degenerate and skipped: the KOZ has silently vanished.
+        // n_degenerate carries that fact to the caller.
+        return (
+            LinearConstraint {
+                a: vec![0.0; n_vars],
+                lb: vec![f64::NEG_INFINITY],
+                ub: vec![f64::INFINITY],
+                n_rows: 1,
+                n_vars,
+            },
+            n_degenerate,
+        );
     }
 
     let n_rows = rows.len();
@@ -101,13 +166,16 @@ pub fn build_koz_constraints(
     }
     let ub = vec![f64::INFINITY; n_rows];
 
-    LinearConstraint {
-        a,
-        lb: lbs,
-        ub,
-        n_rows,
-        n_vars,
-    }
+    (
+        LinearConstraint {
+            a,
+            lb: lbs,
+            ub,
+            n_rows,
+            n_vars,
+        },
+        n_degenerate,
+    )
 }
 
 /// Build boundary condition equality constraints.
