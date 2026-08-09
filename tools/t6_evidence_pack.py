@@ -87,7 +87,6 @@ def build_evidence() -> dict:
     control_points, upstream_info = build_demo_bezier_warm_start(
         degree=int(run["upstream_warm_start"]["degree"]),
         n_seg=int(run["upstream_warm_start"]["n_seg"]),
-        objective_mode=str(run["upstream_warm_start"]["objective"]),
         max_iter=int(run["upstream_warm_start"]["optimizer_info"]["iterations"]),
         tol=1e-8,
         use_cache=True,

@@ -152,15 +152,6 @@ def main() -> None:
         "Use 1 for serial; use 0 or negative for auto.",
     )
     parser.add_argument(
-        "--objective",
-        type=str,
-        default="energy",
-        choices=["dv", "energy"],
-        help="Objective to optimize. "
-        "'energy' (default) is the QP-native quadratic control-effort objective; "
-        "'dv' is a deprecated sum-of-norms (SOCP) delta-v proxy.",
-    )
-    parser.add_argument(
         "--enforce-prograde",
         action="store_true",
         help="Enforce prograde motion",
@@ -326,7 +317,6 @@ def main() -> None:
             debug=args.debug,
             use_cache=USE_CACHE,
             ignore_existing_cache=IGNORE_EXISTING_CACHE,
-            objective=args.objective,
             scp_prox_weight=args.scp_prox,
             scp_trust_radius=args.scp_trust_radius,
             enforce_prograde=args.enforce_prograde,

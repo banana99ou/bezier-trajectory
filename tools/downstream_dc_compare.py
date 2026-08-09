@@ -30,7 +30,6 @@ def main() -> None:
     parser.add_argument("--dc-barrier-tol", type=float, default=1e-6)
     parser.add_argument("--upstream-maxiter", type=int, default=120)
     parser.add_argument("--upstream-tol", type=float, default=1e-8)
-    parser.add_argument("--objective", type=str, default="energy", choices=["energy", "dv"])
     parser.add_argument("--ignore-upstream-cache", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
@@ -46,7 +45,6 @@ def main() -> None:
     control_points, upstream_info = build_demo_bezier_warm_start(
         degree=args.degree,
         n_seg=args.n_seg,
-        objective_mode=args.objective,
         max_iter=args.upstream_maxiter,
         tol=args.upstream_tol,
         use_cache=True,
@@ -56,7 +54,6 @@ def main() -> None:
     results["upstream_warm_start"] = {
         "degree": int(args.degree),
         "n_seg": int(args.n_seg),
-        "objective": args.objective,
         "optimizer_info": {
             "iterations": int(upstream_info.get("iterations", -1)),
             "feasible": bool(upstream_info.get("feasible", False)),

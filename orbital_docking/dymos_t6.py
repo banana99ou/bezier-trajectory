@@ -122,7 +122,6 @@ def build_matched_demo_bezier_warm_start_for_time(
     transfer_time_s: float,
     degree: int = 7,
     n_seg: int = 16,
-    objective_mode: str = "dv",
     max_iter: int = 500,
     tol: float = 1e-6,
 ) -> tuple[np.ndarray, dict]:
@@ -130,7 +129,6 @@ def build_matched_demo_bezier_warm_start_for_time(
         return build_matched_demo_bezier_warm_start(
             degree=degree,
             n_seg=n_seg,
-            objective_mode=objective_mode,
             max_iter=max_iter,
             tol=tol,
             use_cache=True,
@@ -139,7 +137,6 @@ def build_matched_demo_bezier_warm_start_for_time(
     nominal_points, upstream_info = build_matched_demo_bezier_warm_start(
         degree=degree,
         n_seg=n_seg,
-        objective_mode=objective_mode,
         max_iter=max_iter,
         tol=tol,
         use_cache=True,
@@ -169,7 +166,6 @@ def warm_start_contract(transfer_time_s: float = constants.TRANSFER_TIME_S) -> d
         "transfer_time_s": float(transfer_time_s),
         "degree": 7,
         "n_seg": 16,
-        "objective_mode": "dv",
         "max_iter": 500,
         "tol": 1e-6,
         "upstream_optimizer_info": {

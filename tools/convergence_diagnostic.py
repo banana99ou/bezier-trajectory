@@ -4,7 +4,7 @@ with truncated max_iter values to verify that solution metrics plateau
 well before the 10,000-iteration budget used in the paper.
 
 Scenario matches paper_execution_state.md:
-  120 deg phase lag, T=1500 s, r_e=6471 km, objective=dv
+  120 deg phase lag, T=1500 s, r_e=6471 km
 """
 
 import json
@@ -80,7 +80,6 @@ def main():
             v0=v0,
             v1=v1,
             sample_count=100,
-            objective_mode="dv",
             scp_prox_weight=1e-6,
             scp_trust_radius=2000.0,
             transfer_time=TRANSFER_TIME,

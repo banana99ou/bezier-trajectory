@@ -70,7 +70,6 @@ def _worker_run_case(
     n_seg: int,
     max_iter: int,
     tol: float,
-    objective: str,
 ) -> Dict[str, Any]:
     try:
         # Avoid BLAS oversubscription per process
@@ -132,7 +131,6 @@ def _worker_run_case(
             tol=tol,
             v0=v0,
             v1=v1,
-            objective_mode=objective,
             verbose=False,
             use_cache=False,
         )
@@ -184,7 +182,6 @@ def run_variant_parallel(
     cases: List[Tuple[int, int]],
     max_iter: int,
     tol: float,
-    objective: str,
     workers: int,
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
@@ -200,7 +197,6 @@ def run_variant_parallel(
                     n_seg,
                     max_iter,
                     tol,
-                    objective,
                 )
             )
         for fut in as_completed(futures):
@@ -215,7 +211,6 @@ def write_outputs(
     rows_b: List[Dict[str, Any]],
     max_iter: int,
     tol: float,
-    objective: str,
 ) -> Tuple[Path, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -295,7 +290,6 @@ def write_outputs(
     lines.append("# A/B Endpoint-Invariance Impact Report")
     lines.append(f"- Max iter: `{max_iter}`")
     lines.append(f"- Tol: `{tol}`")
-    lines.append(f"- Objective: `{objective}`")
     lines.append("")
     lines.append("## Endpoint drift")
     lines.append(f"- A (before fix) max drift: `{max_drift_a:.6e}` km")
@@ -324,7 +318,6 @@ def main():
     ap.add_argument("--outdir", type=Path, default=Path("artifacts/ab_tests_parallel"))
     ap.add_argument("--max-iter", type=int, default=1000)
     ap.add_argument("--tol", type=float, default=1e-3)
-    ap.add_argument("--objective", type=str, default="dv", choices=["dv", "energy"])
     ap.add_argument("--orders", type=str, default="2,3,4")
     ap.add_argument("--seg-counts", type=str, default="2,4,8,16,32,64")
     ap.add_argument("--workers-total", type=int, default=max(1, os.cpu_count() or 1))
@@ -356,21 +349,21 @@ def main():
 
             with ThreadPoolExecutor(max_workers=2) as tx:
                 fut_a = tx.submit(run_variant_parallel, a_dir, "A_before_fix", cases,
-                                  args.max_iter, args.tol, args.objective, w_a)
+                                  args.max_iter, args.tol, w_a)
                 fut_b = tx.submit(run_variant_parallel, b_dir, "B_after_fix", cases,
-                                  args.max_iter, args.tol, args.objective, w_b)
+                                  args.max_iter, args.tol, w_b)
                 rows_a = fut_a.result()
                 rows_b = fut_b.result()
         else:
             print(f"[INFO] Sequential variants: workers per variant={wt}")
             rows_a = run_variant_parallel(a_dir, "A_before_fix", cases,
-                                          args.max_iter, args.tol, args.objective, wt)
+                                          args.max_iter, args.tol, wt)
             rows_b = run_variant_parallel(b_dir, "B_after_fix", cases,
-                                          args.max_iter, args.tol, args.objective, wt)
+                                          args.max_iter, args.tol, wt)
 
         cmp_csv, report_md = write_outputs(
             args.outdir.resolve(), rows_a, rows_b,
-            args.max_iter, args.tol, args.objective
+            args.max_iter, args.tol
         )
 
         print("[DONE] A/B test complete.")

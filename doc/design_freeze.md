@@ -172,10 +172,17 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
   (evidence #5), and a permanent config-provenance hazard.
 - `freeze_gravity_jacobian`/`freeze_after_iter`, `scp_prox_weight`, and the
   legacy fixed-point path (`scp_trust_radius=0`): legacy knobs, unused by the
-  paper configuration. The proximal is skipped entirely when `trust_active`,
-  so the pillar-2 `prox_inert` cell compares identical code paths — it is
-  documentation of intent, NOT evidence. Nine `tools/probe_*.py` still
-  reference the deleted freeze knobs.
+  paper configuration. These two freeze knobs are STILL LIVE — signature
+  `optimization.py:373-374`, forwarded at `:476-477`, declared in
+  `rust_optimizer/pybind/src/lib.rs:25-26`. Only `scvx_freeze` was deleted;
+  earlier wording here wrongly called them deleted. The proximal is skipped
+  entirely when `trust_active`, so the pillar-2 prox cell compares identical
+  code paths — documentation of intent, NOT evidence, and excluded from that
+  pillar's verdict.
+- The nine `tools/probe_*.py` freeze-era investigation scripts were DELETED
+  2026-08-10: they passed the `objective_mode` argument removed in `1581e54`,
+  so they raised on use, and they probed `scvx_freeze`, itself since deleted.
+  History in git.
 
 ## 7. Evidence log (what killed what)
 

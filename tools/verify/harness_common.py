@@ -40,7 +40,8 @@ J2 = constants.EARTH_J2
 
 
 # ----------------------------------------------------------------------------
-# Scenario construction (matches tools/probe_frozen_jacobian.py)
+# Scenario construction — authoritative. (Formerly mirrored from a probe script;
+# those were deleted with the scvx_freeze investigation they belonged to.)
 # ----------------------------------------------------------------------------
 
 def _rotz(theta):

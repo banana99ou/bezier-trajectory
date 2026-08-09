@@ -229,7 +229,6 @@ def build_bezier_warm_start(
 def build_demo_bezier_warm_start(
     degree: int = 4,
     n_seg: int = 16,
-    objective_mode: str = "energy",
     max_iter: int = 120,
     tol: float = 1e-8,
     use_cache: bool = True,
@@ -243,7 +242,6 @@ def build_demo_bezier_warm_start(
         r_e=problem.koz_radius_km,
         max_iter=max_iter,
         tol=tol,
-        objective_mode=objective_mode,
         enforce_prograde=True,
         v0=None,
         v1=None,
@@ -257,7 +255,6 @@ def build_demo_bezier_warm_start(
 def build_matched_demo_bezier_warm_start(
     degree: int = 7,
     n_seg: int = 16,
-    objective_mode: str = "dv",
     max_iter: int = 500,
     tol: float = 1e-6,
     scp_prox_weight: float = 1e-6,
@@ -273,7 +270,6 @@ def build_matched_demo_bezier_warm_start(
         r_e=problem.koz_radius_km,
         max_iter=max_iter,
         tol=tol,
-        objective_mode=objective_mode,
         scp_prox_weight=scp_prox_weight,
         scp_trust_radius=scp_trust_radius,
         enforce_prograde=True,

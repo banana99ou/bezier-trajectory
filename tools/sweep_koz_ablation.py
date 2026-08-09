@@ -86,7 +86,6 @@ def main():
             use_cache=True,
             ignore_existing_cache=False,
             v0=v0, v1=v1,
-            objective="dv",
             scp_prox_weight=1e-6,
             scp_trust_radius=2000.0,
             enforce_prograde=True,

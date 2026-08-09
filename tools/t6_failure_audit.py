@@ -138,7 +138,6 @@ def build_failure_audit() -> dict:
     control_points, upstream_info = build_demo_bezier_warm_start(
         degree=int(gate["upstream_warm_start"]["degree"]),
         n_seg=int(gate["upstream_warm_start"]["n_seg"]),
-        objective_mode=str(gate["upstream_warm_start"]["objective"]),
         max_iter=int(gate["upstream_warm_start"]["optimizer_info"]["iterations"]),
         tol=1e-8,
         use_cache=True,
