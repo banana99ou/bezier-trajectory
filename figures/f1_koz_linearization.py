@@ -1,36 +1,98 @@
 """
-F1. Representative KOZ linearization on one sub-arc.
+F1. Supporting half-space construction on one sub-arc (concept figure for 3.1).
 
-Three-panel 2D figure illustrating the supporting half-space construction
-for conservative spherical-KOZ avoidance.
+  (a) Whole curve, sub-arc junctions, and the sub-arc that violates the KOZ
+  (b) Construction on that sub-arc: centroid c^(s) -> outward normal n^(s)
+      -> supporting half-space H^(s), tangent to the sphere at distance r_e
+  (c) Result of imposing the constraint: every q_k^(s) inside H^(s), and the
+      corrected curve clear of the KOZ
 
-  (a) Whole curve with a violating sub-arc highlighted
-  (b) Geometric construction: centroid, normal, supporting half-space
-  (c) Corrected sub-arc with all control points on the safe side
+The geometry is synthetic 2D, chosen so the sphere's curvature is visible at the
+zoom level of a single sub-arc. It cannot come from the real solver: that code
+path requires dim == 3, and at the real scale (r_e = 6471 km, one sub-arc chord
+~725 km at n_seg=16) the KOZ boundary departs from a straight line by 1.4% of
+the chord -- the half-space and the sphere would draw as the same line, which is
+exactly the distinction this figure exists to show. Real solver output is 4.
+
+The *constraint* is the real one. The corrected control points are not pushed by
+hand; they solve
+
+    min_{P'} ||P' - P||_F^2
+    s.t.     n^(s) . (S^(s) P')_k >= n^(s) . c_KOZ + r_e   for all s, k
+
+over the global control points, with S^(s) taken from the repo's own De
+Casteljau subdivision matrices and the normals frozen at the reference curve P.
+That is one SCvx iteration of the constraint in 3.1, so the corrected curve is
+continuous by construction and the endpoints stay put.
 
 Usage:
-    python figures/f1_koz_linearization.py          # show interactively
-    python figures/f1_koz_linearization.py --save    # save to figures/f1_koz_linearization.pdf
+    python figures/f1_koz_linearization.py           # show interactively
+    python figures/f1_koz_linearization.py --save    # write .pdf and .png
+    python figures/f1_koz_linearization.py --diag    # print geometry diagnostics
 """
 
 import sys
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib.patches import FancyArrowPatch
+from math import comb
 from pathlib import Path
 
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import FancyArrowPatch
+from scipy.optimize import minimize
+from scipy.spatial import ConvexHull
+
+# Real repo subdivision matrices: P^(s) = S^(s) P
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from orbital_docking.de_casteljau import segment_matrices_equal_params
+
+
 # ---------------------------------------------------------------------------
-# Bernstein basis & Bézier evaluation (degree-generic)
+# Palette -- Tableau Colorblind 10, same set adopted for F2.
+#   orange  = the keep-out zone (hazard)
+#   grey    = the reference curve, i.e. "before"
+#   blue    = the corrected curve, i.e. "after"
+#   ink     = the construction itself
 # ---------------------------------------------------------------------------
+C_INK        = "#333333"
+C_KOZ_EDGE   = "#C85200"
+C_KOZ_FILL   = "#FFBC79"
+C_VIOL       = "#FF800E"   # violating sub-arc, before correction
+C_REF        = "#898989"   # reference curve away from the violating sub-arc
+C_GHOST      = "#CFCFCF"   # reference curve, ghosted into the zoomed panels
+C_FIX        = "#006BA4"   # corrected sub-arc
+C_FIX_GHOST  = "#A2C8EC"   # corrected curve either side of the sub-arc
+C_SAFE       = "#A2C8EC"   # safe side of the half-space
+
+FS_TITLE, FS_PANEL, FS_SYM, FS_SYM_SM = 11.5, 12.5, 12.5, 11.0
+
+
+# ---------------------------------------------------------------------------
+# Geometry
+# ---------------------------------------------------------------------------
+C_KOZ = np.array([0.0, 0.0])
+R_KOZ = 3.0
+
+# Degree-5 reference curve. Tuned so that a single interior sub-arc dips well
+# inside the KOZ: its centroid then sits clearly off the sphere surface, which
+# keeps c^(s), the support point and the tangent line from collapsing onto one
+# another in panel (b).
+P_GLOBAL = np.array([
+    [-6.5,  6.5],
+    [-4.2, -0.5],
+    [-1.4,  1.4],
+    [ 1.8,  2.1],
+    [ 4.4, -0.3],
+    [ 6.5,  6.8],
+])
+N_SEG = 8
+
 
 def bernstein(n, i, t):
-    from math import comb
     return comb(n, i) * t**i * (1 - t)**(n - i)
 
 
 def bezier_eval(P, t_arr):
-    """Evaluate a degree-N Bézier curve at an array of parameter values."""
+    """Evaluate a degree-N Bezier curve at an array of parameter values."""
     N = len(P) - 1
     t_arr = np.asarray(t_arr)
     pts = np.zeros((len(t_arr), P.shape[1]))
@@ -39,366 +101,293 @@ def bezier_eval(P, t_arr):
     return pts
 
 
-# ---------------------------------------------------------------------------
-# De Casteljau subdivision (dimension-agnostic)
-# ---------------------------------------------------------------------------
-
-def de_casteljau_split(P, tau):
-    """Split a Bézier curve at parameter tau. Returns (left_P, right_P)."""
-    N = len(P) - 1
-    left = [P[0].copy()]
-    right = [P[-1].copy()]
-    W = P.copy().astype(float)
-    for _ in range(N):
-        W = (1 - tau) * W[:-1] + tau * W[1:]
-        left.append(W[0].copy())
-        right.append(W[-1].copy())
-    return np.array(left), np.array(right[::-1])
+def outward_normal(centroid, center):
+    """n^(s) = (c^(s) - c_KOZ) / ||c^(s) - c_KOZ||, undefined when they coincide
+    (assumption 4 of the proposition)."""
+    v = centroid - center
+    nv = np.linalg.norm(v)
+    if nv < 1e-12:
+        raise ValueError("c^(s) coincides with c_KOZ; normal undefined.")
+    return v / nv
 
 
-def subdivide_equal(P, n_seg):
-    """Equal-parameter subdivision into n_seg sub-arcs."""
-    segments = []
-    remainder = P.copy().astype(float)
-    for k in range(n_seg, 1, -1):
-        tau = 1.0 / k
-        left, remainder = de_casteljau_split(remainder, tau)
-        segments.append(left)
-    segments.append(remainder)
-    return segments
+def supporting_halfspaces(P, S_list, center, radius):
+    """Per-sub-arc supporting half-spaces built from the reference curve P.
+
+    Returns a list of (n_hat, offset) with the half-space being
+    {r : n_hat . r >= offset}, offset = n_hat . c_KOZ + r_e.
+    """
+    out = []
+    for S in S_list:
+        n_hat = outward_normal((S @ P).mean(axis=0), center)
+        out.append((n_hat, float(n_hat @ center + radius)))
+    return out
 
 
-# ---------------------------------------------------------------------------
-# KOZ geometry helpers
-# ---------------------------------------------------------------------------
+def solve_halfspace_projection(P, S_list, half_spaces):
+    """One SCvx iteration of the 3.1 constraint, as a projection.
 
-def segment_violates(seg_P, center, radius, n_samples=200):
-    ts = np.linspace(0, 1, n_samples)
-    pts = bezier_eval(seg_P, ts)
-    dists = np.linalg.norm(pts - center, axis=1)
-    return np.any(dists < radius - 1e-9)
+        min ||P' - P||_F^2   s.t.  n^(s) . (S^(s) P')_k >= n^(s) . c_KOZ + r_e
+
+    Linear in P', so the corrected curve stays a single Bezier curve and the
+    endpoints are held at the boundary conditions.
+    """
+    Np1, dim = P.shape
+
+    def obj(z):
+        return float(np.sum((z.reshape(Np1, dim) - P) ** 2))
+
+    def obj_jac(z):
+        return (2.0 * (z.reshape(Np1, dim) - P)).ravel()
+
+    cons = []
+    for S, (n_hat, off) in zip(S_list, half_spaces):
+        # row k of A is d/dP' of  n . (S P')_k , flattened row-major
+        A = np.kron(S, n_hat.reshape(1, -1))
+        cons.append(dict(type="ineq",
+                         fun=lambda z, A=A, off=off: A @ z - off,
+                         jac=lambda z, A=A: A))
+    for idx in (0, Np1 - 1):                      # boundary conditions
+        E = np.zeros((dim, Np1 * dim))
+        for d in range(dim):
+            E[d, idx * dim + d] = 1.0
+        cons.append(dict(type="eq",
+                         fun=lambda z, E=E, p=P[idx].copy(): E @ z - p,
+                         jac=lambda z, E=E: E))
+
+    res = minimize(obj, P.ravel().copy(), jac=obj_jac, constraints=cons,
+                   method="SLSQP", options=dict(maxiter=500, ftol=1e-12))
+    if not res.success:
+        raise RuntimeError(f"projection failed: {res.message}")
+    return res.x.reshape(Np1, dim)
 
 
-def compute_support(center, radius, seg_P):
-    """Centroid-based supporting half-space construction."""
-    centroid = seg_P.mean(axis=0)
-    vec = centroid - center
-    nrm = np.linalg.norm(vec)
-    if nrm < 1e-12:
-        n_hat = np.array([1.0, 0.0])
-    else:
-        n_hat = vec / nrm
-    support_pt = center + radius * n_hat
-    return centroid, n_hat, support_pt
+def build_geometry():
+    """Reference curve, its sub-arcs, the violating one, and the correction."""
+    S_list = segment_matrices_equal_params(len(P_GLOBAL) - 1, N_SEG)
+    segs = [S @ P_GLOBAL for S in S_list]
+    half_spaces = supporting_halfspaces(P_GLOBAL, S_list, C_KOZ, R_KOZ)
 
+    # The sub-arc that goes deepest into the KOZ is the one worth drawing.
+    t = np.linspace(0, 1, 400)
+    depth = [R_KOZ - np.linalg.norm(bezier_eval(q, t) - C_KOZ, axis=1).min()
+             for q in segs]
+    viol = int(np.argmax(depth))
+    if depth[viol] <= 0:
+        raise RuntimeError("No sub-arc violates the KOZ; retune P_GLOBAL.")
 
-def push_to_safe_side(seg_P, center, radius, n_hat, support_pt, margin=0.15):
-    """Push control points to the safe side of the half-space."""
-    corrected = seg_P.copy()
-    for i in range(len(corrected)):
-        signed_dist = np.dot(corrected[i] - support_pt, n_hat)
-        if signed_dist < margin:
-            corrected[i] += (margin - signed_dist) * n_hat
-    return corrected
+    P_fix = solve_halfspace_projection(P_GLOBAL, S_list, half_spaces)
+    segs_fix = [S @ P_fix for S in S_list]
+
+    n_hat, off = half_spaces[viol]
+    for k, q in enumerate(segs_fix[viol]):
+        assert n_hat @ q - off > -1e-7, f"corrected q_{k} outside H^(s)"
+
+    return dict(S_list=S_list, segs=segs, segs_fix=segs_fix, viol=viol,
+                P_fix=P_fix, n_hat=n_hat, offset=off, depth=depth,
+                centroid=segs[viol].mean(axis=0),
+                support_pt=C_KOZ + R_KOZ * n_hat)
 
 
 # ---------------------------------------------------------------------------
 # Drawing helpers
 # ---------------------------------------------------------------------------
 
-def draw_koz(ax, center, radius, label=True):
-    circle = plt.Circle(center, radius, fc="#ffcccc", ec="#cc0000",
-                        lw=1.8, alpha=0.35, zorder=1)
-    ax.add_patch(circle)
-    outline = plt.Circle(center, radius, fc="none", ec="#cc0000",
-                         lw=1.8, zorder=2)
-    ax.add_patch(outline)
-    if label:
-        ax.annotate(r"$\mathcal{K}$", xy=center, fontsize=14,
-                    ha="center", va="center", color="#990000", zorder=3)
+def draw_koz(ax, label_at=None):
+    ax.add_patch(plt.Circle(C_KOZ, R_KOZ, fc=C_KOZ_FILL, ec="none",
+                            alpha=0.20, zorder=1))
+    ax.add_patch(plt.Circle(C_KOZ, R_KOZ, fc="none", ec=C_KOZ_EDGE, lw=1.9,
+                            zorder=2))
+    if label_at is not None:
+        ax.text(*label_at, r"$\mathcal{K}$", fontsize=FS_SYM + 2,
+                ha="center", va="center", color=C_KOZ_EDGE, zorder=3)
 
 
-def draw_halfspace_line(ax, support_pt, n_hat, length=6.0, **kwargs):
-    tangent = np.array([-n_hat[1], n_hat[0]])
-    p1 = support_pt - tangent * length
-    p2 = support_pt + tangent * length
-    ax.plot([p1[0], p2[0]], [p1[1], p2[1]], **kwargs)
+def draw_halfspace(ax, support_pt, n_hat, reach, faint=False):
+    """Boundary line of H^(s) plus shading on the safe side."""
+    tang = np.array([-n_hat[1], n_hat[0]])
+    a, b = support_pt - tang * reach, support_pt + tang * reach
+    ax.add_patch(plt.Polygon([a, b, b + n_hat * reach, a + n_hat * reach],
+                             fc=C_SAFE, ec="none",
+                             alpha=0.14 if faint else 0.22, zorder=0))
+    ax.plot([a[0], b[0]], [a[1], b[1]], color=C_INK,
+            lw=1.2 if faint else 1.8, alpha=0.45 if faint else 1.0, zorder=4)
 
 
-def draw_safe_region(ax, support_pt, n_hat, length=6.0, depth=4.0):
-    """Shade the safe side of the half-space."""
-    tangent = np.array([-n_hat[1], n_hat[0]])
-    corners = np.array([
-        support_pt - tangent * length,
-        support_pt + tangent * length,
-        support_pt + tangent * length + n_hat * depth,
-        support_pt - tangent * length + n_hat * depth,
-    ])
-    poly = plt.Polygon(corners, fc="#d4edda", ec="none", alpha=0.35, zorder=0)
-    ax.add_patch(poly)
+def style_axes(ax, title, tag):
+    # Square axes box in every panel: the equal aspect is met by widening the
+    # data window, not by shrinking the box, so (a) matches (b) and (c).
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.set_box_aspect(1)
+    ax.set_facecolor("white")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for s in ax.spines.values():
+        s.set_color("#cccccc")
+    ax.set_title(title, fontsize=FS_TITLE, pad=8, color=C_INK)
+    ax.text(0.03, 0.96, tag, transform=ax.transAxes, fontsize=FS_PANEL,
+            fontweight="bold", va="top", color=C_INK)
 
 
-def label_ctrl_points(ax, pts, fmt=r"$q_{%d}^{(s)}$", color="black",
-                      fontsize=9, offsets=None):
-    """Label control points with per-point offset tuning."""
-    default_offset = (0.2, 0.25)
-    for k, p in enumerate(pts):
-        if offsets and k < len(offsets):
-            dx, dy = offsets[k]
-        else:
-            dx, dy = default_offset
-        ax.annotate(fmt % k, xy=p, xytext=(p[0] + dx, p[1] + dy),
-                    fontsize=fontsize, color=color, zorder=10,
-                    arrowprops=dict(arrowstyle="-", color=color, lw=0.5))
-
-
-# ---------------------------------------------------------------------------
-# Synthetic example geometry
-# ---------------------------------------------------------------------------
-
-# KOZ
-C_KOZ = np.array([0.0, 0.0])
-R_KOZ = 3.5
-
-# Degree-5 Bézier curve that dips into the KOZ (hand-tuned for visual clarity).
-# The middle control points are spread enough that the zoomed panels are readable.
-P_GLOBAL = np.array([
-    [-6.5,  5.0],
-    [-3.5,  2.5],
-    [-0.8,  1.0],
-    [ 1.2,  1.2],
-    [ 3.8,  2.8],
-    [ 6.5,  5.0],
-])
-
-N_SEG = 5  # number of sub-arcs
+def label_ctrl_polygon(ax, pts, anchor, offset, color):
+    """Name the control polygon once. Labelling every q_k adds no information
+    and crowds the region where the correction is largest."""
+    p = pts[anchor]
+    ax.annotate(r"$\mathbf{q}^{(s)}_k$", xy=p,
+                xytext=(p[0] + offset[0], p[1] + offset[1]),
+                fontsize=FS_SYM_SM, color=color, ha="center", va="center",
+                zorder=10, arrowprops=dict(arrowstyle="-", color=color, lw=0.7))
 
 
 # ---------------------------------------------------------------------------
-# Build the figure
+# Figure
 # ---------------------------------------------------------------------------
 
 def build_f1(save=False):
-    segments = subdivide_equal(P_GLOBAL, N_SEG)
+    g = build_geometry()
+    segs, segs_fix, viol = g["segs"], g["segs_fix"], g["viol"]
+    n_hat, centroid, support_pt = g["n_hat"], g["centroid"], g["support_pt"]
+    tang = np.array([-n_hat[1], n_hat[0]])
 
-    # Find the most-violating sub-arc
-    viol_idx = None
-    for i, seg in enumerate(segments):
-        if segment_violates(seg, C_KOZ, R_KOZ):
-            viol_idx = i
-            break
-    if viol_idx is None:
-        raise RuntimeError("No violating sub-arc found; adjust P_GLOBAL or R_KOZ.")
+    t = np.linspace(0, 1, 400)
+    curve_ref = bezier_eval(P_GLOBAL, t)
+    curve_fix = bezier_eval(g["P_fix"], t)
+    arc_ref, arc_fix = bezier_eval(segs[viol], t), bezier_eval(segs_fix[viol], t)
 
-    seg_viol = segments[viol_idx]
-    centroid, n_hat, support_pt = compute_support(C_KOZ, R_KOZ, seg_viol)
-    seg_fixed = push_to_safe_side(seg_viol, C_KOZ, R_KOZ, n_hat, support_pt,
-                                   margin=0.25)
+    fig, axes = plt.subplots(1, 3, figsize=(15.0, 5.4), constrained_layout=True)
 
-    # -----------------------------------------------------------------------
-    fig, axes = plt.subplots(1, 3, figsize=(15.0, 5.0), constrained_layout=True)
-    panel_labels = ["(a)", "(b)", "(c)"]
-    panel_titles = [
-        "Curve with violating sub-arc",
-        "Supporting half-space construction",
-        "Corrected sub-arc",
-    ]
+    # Window shared by (b) and (c). It has to hold the whole sphere, not just the
+    # sub-arc: c_KOZ is where the normal is measured from, so cropping it out is
+    # what turns the r_e dimension into a line running off the panel.
+    focus = np.vstack([arc_ref, arc_fix, segs[viol], segs_fix[viol],
+                       [C_KOZ], [centroid], [support_pt]])
+    lo, hi = focus.min(axis=0), focus.max(axis=0)
+    mid = (lo + hi) / 2.0
+    pad = float(np.max(hi - lo)) / 2.0 * 1.32
 
-    t_dense = np.linspace(0, 1, 500)
+    def ghost(ax, pts, color, lw=1.6, zorder=2.5, alpha=1.0):
+        ax.plot(pts[:, 0], pts[:, 1], color=color, lw=lw, alpha=alpha,
+                zorder=zorder, solid_capstyle="round")
 
-    # --- common axis styling --------------------------------------------------
-    for i, (ax, plabel, ptitle) in enumerate(zip(axes, panel_labels, panel_titles)):
-        ax.set_aspect("equal")
-        ax.set_facecolor("white")
-        if i == 0:
-            ax.tick_params(labelsize=8, colors="#888888")
-        else:
-            ax.set_xticks([])
-            ax.set_yticks([])
-        for spine in ax.spines.values():
-            spine.set_color("#cccccc")
-        ax.set_title(ptitle, fontsize=11, pad=8, color="#333333")
-        ax.text(0.02, 0.97, plabel, transform=ax.transAxes,
-                fontsize=12, fontweight="bold", va="top", color="#333333")
-
-    # =======================================================================
-    # Panel (a): whole curve, sub-arcs, violating one highlighted
-    # =======================================================================
+    # ===================================================================== (a)
     ax = axes[0]
-    draw_koz(ax, C_KOZ, R_KOZ)
+    style_axes(ax, "Curve with violating sub-arc", "(a)")
+    draw_koz(ax, label_at=C_KOZ + np.array([-1.45, -1.75]))
 
-    # Radius annotation
-    r_end = C_KOZ + np.array([R_KOZ, 0])
-    ax.annotate("", xy=r_end, xytext=C_KOZ,
-                arrowprops=dict(arrowstyle="<->", color="#990000", lw=1.2))
-    ax.text(C_KOZ[0] + R_KOZ * 0.5, C_KOZ[1] - 0.35, r"$r_e$",
-            fontsize=11, color="#990000", ha="center")
+    # r_e down a clear diagonal, started off-centre so nothing stacks on c_KOZ
+    u = np.array([np.cos(np.deg2rad(-52.0)), np.sin(np.deg2rad(-52.0))])
+    ax.add_patch(FancyArrowPatch(C_KOZ + u * 0.42, C_KOZ + u * R_KOZ,
+                                 arrowstyle="-|>", color=C_KOZ_EDGE, lw=1.2,
+                                 mutation_scale=10, shrinkA=0, shrinkB=0,
+                                 zorder=5))
+    rl = C_KOZ + u * (R_KOZ * 0.62) + np.array([0.62, 0.30])
+    ax.text(*rl, r"$r_e$", fontsize=FS_SYM_SM, color=C_KOZ_EDGE,
+            ha="center", va="center", zorder=6)
 
-    # KOZ center
-    ax.plot(*C_KOZ, "x", color="#990000", ms=6, mew=1.5, zorder=4)
-    ax.annotate(r"$c_{\mathrm{KOZ}}$", xy=C_KOZ,
-                xytext=(C_KOZ[0] + 0.3, C_KOZ[1] - 0.6),
-                fontsize=10, color="#990000",
-                arrowprops=dict(arrowstyle="-", color="#990000", lw=0.6))
+    ax.plot(*C_KOZ, "o", color=C_KOZ_EDGE, ms=4.0, zorder=6)
+    ax.text(C_KOZ[0] - 0.28, C_KOZ[1] + 0.42, r"$\mathbf{c}_{\mathrm{KOZ}}$",
+            fontsize=FS_SYM_SM, color=C_KOZ_EDGE, ha="right", va="bottom",
+            zorder=6)
 
-    # Draw each sub-arc
-    for i, seg in enumerate(segments):
-        pts = bezier_eval(seg, t_dense)
-        color = "#e67e22" if i == viol_idx else "#555555"
-        lw = 2.4 if i == viol_idx else 1.4
-        ax.plot(pts[:, 0], pts[:, 1], color=color, lw=lw, zorder=3)
-        # sub-arc junction tick
-        ax.plot(*seg[0], "o", color="#333333", ms=3.5, zorder=5)
-    ax.plot(*segments[-1][-1], "o", color="#333333", ms=3.5, zorder=5)
+    for i, q in enumerate(segs):
+        pts = bezier_eval(q, t)
+        hot = i == viol
+        ax.plot(pts[:, 0], pts[:, 1], color=C_VIOL if hot else C_REF,
+                lw=2.8 if hot else 1.5, zorder=4 if hot else 3,
+                solid_capstyle="round")
+        ax.plot(*q[0], "o", color=C_INK, ms=3.6, zorder=5)
+    ax.plot(*segs[-1][-1], "o", color=C_INK, ms=3.6, zorder=5)
 
-    # Violating sub-arc control polygon
-    ax.plot(seg_viol[:, 0], seg_viol[:, 1], "--", color="#e67e22",
-            lw=1.2, marker="o", ms=4, zorder=4, alpha=0.7)
+    ax.annotate("sub-arc $s$", xy=arc_ref[len(arc_ref) // 2],
+                xytext=(arc_ref[len(arc_ref) // 2][0] - 0.2, 4.55),
+                fontsize=FS_SYM_SM, color=C_VIOL, ha="center", va="center",
+                zorder=10, arrowprops=dict(arrowstyle="-", color=C_VIOL,
+                                           lw=0.7))
 
-    # Global start/end markers
-    ax.plot(*P_GLOBAL[0], "s", color="#2980b9", ms=7, zorder=6)
-    ax.plot(*P_GLOBAL[-1], "s", color="#2980b9", ms=7, zorder=6)
+    ax.plot(*P_GLOBAL[0], "s", color=C_INK, ms=6.5, zorder=6)
+    ax.plot(*P_GLOBAL[-1], "s", color=C_INK, ms=6.5, zorder=6)
+    ax.set_xlim(-6.9, 6.9)
+    ax.set_ylim(-3.6, 7.6)
 
-    ax.set_xlim(-7.0, 7.5)
-    ax.set_ylim(-5.0, 6.5)
-
-    # =======================================================================
-    # Panel (b): zoomed construction on the violating sub-arc
-    # =======================================================================
+    # ===================================================================== (b)
     ax = axes[1]
+    style_axes(ax, "Supporting half-space construction", "(b)")
+    draw_koz(ax)
+    draw_halfspace(ax, support_pt, n_hat, pad * 2.2)
+    ghost(ax, curve_ref, C_GHOST)
 
-    # Compute zoom bounds from the sub-arc control polygon + corrected points
-    all_pts_b = np.vstack([seg_viol, seg_fixed, [centroid], [support_pt]])
-    mid = all_pts_b.mean(axis=0)
-    extent = np.max(np.abs(all_pts_b - mid), axis=0)
-    pad = max(extent) * 1.0 + 0.8
+    # n^(s) is by definition the c_KOZ -> c^(s) direction, so the whole
+    # construction is collinear. r_e is therefore drawn as an offset dimension
+    # line with extension ticks, not stacked on top of the normal.
+    ax.add_patch(FancyArrowPatch(C_KOZ, support_pt, arrowstyle="<|-|>",
+                                 color=C_KOZ_EDGE, lw=1.1, mutation_scale=8,
+                                 shrinkA=0, shrinkB=0, zorder=3))
+    rl = C_KOZ + n_hat * 0.55 - tang * 0.45
+    ax.text(*rl, r"$r_e$", fontsize=FS_SYM_SM, color=C_KOZ_EDGE,
+            ha="center", va="center", zorder=6)
+    ax.plot(*C_KOZ, "o", color=C_KOZ_EDGE, ms=4.0, zorder=6)
+    ax.text(C_KOZ[0] + 0.18, C_KOZ[1] + 0.16, r"$\mathbf{c}_{\mathrm{KOZ}}$",
+            fontsize=FS_SYM_SM, color=C_KOZ_EDGE, ha="left", va="bottom",
+            zorder=6)
 
-    draw_koz(ax, C_KOZ, R_KOZ, label=False)
+    ghost(ax, arc_ref, C_VIOL, lw=2.8, zorder=4)
+    ax.plot(segs[viol][:, 0], segs[viol][:, 1], "--o", color=C_VIOL, lw=1.3,
+            ms=5, zorder=5)
+    label_ctrl_polygon(ax, segs[viol], anchor=0, offset=(-0.55, -0.85),
+                       color=C_VIOL)
 
-    # Safe region shading
-    draw_safe_region(ax, support_pt, n_hat, length=pad * 2, depth=pad * 2)
+    ax.plot(*centroid, "D", color=C_INK, ms=7, zorder=7)
+    ax.annotate(r"$\mathbf{c}^{(s)}$", xy=centroid,
+                xytext=tuple(centroid + tang * 0.90),
+                fontsize=FS_SYM_SM, color=C_INK, ha="center", va="center",
+                zorder=10, arrowprops=dict(arrowstyle="-", color=C_INK, lw=0.7))
 
-    # Half-space boundary line
-    draw_halfspace_line(ax, support_pt, n_hat, length=pad * 1.8,
-                        color="#2c3e50", lw=1.8, ls="-", zorder=4)
-    # Label H^{(s)} on the upper portion of the half-space line
-    tangent = np.array([-n_hat[1], n_hat[0]])
-    h_label_pos = support_pt + tangent * (pad * 0.65)
-    ax.annotate(r"$H^{(s)}$", xy=h_label_pos, fontsize=12,
-                color="#2c3e50", ha="center", va="bottom",
-                fontweight="bold", zorder=10)
+    # the normal, running from c^(s) out through the point it touches
+    reach = float(n_hat @ (support_pt - centroid)) + 0.40
+    ax.add_patch(FancyArrowPatch(centroid, centroid + n_hat * reach,
+                                 arrowstyle="-|>", color=C_INK, lw=2.0,
+                                 mutation_scale=13, shrinkA=0, shrinkB=0,
+                                 zorder=8))
+    nl = centroid + n_hat * (reach * 0.55) - tang * 0.52
+    ax.text(*nl, r"$\mathbf{n}^{(s)}$", fontsize=FS_SYM_SM, color=C_INK,
+            ha="center", va="center", zorder=10)
 
-    # Sub-arc curve
-    pts_viol = bezier_eval(seg_viol, t_dense)
-    ax.plot(pts_viol[:, 0], pts_viol[:, 1], color="#e67e22", lw=2.2, zorder=3)
+    ax.plot(*support_pt, "o", color=C_INK, ms=5.5, zorder=8)
+    hl = support_pt - tang * (pad * 0.60) + n_hat * 0.52
+    ax.text(*hl, r"$\mathcal{H}^{(s)}$", fontsize=FS_SYM, color=C_INK,
+            ha="center", va="center", fontweight="bold", zorder=10)
 
-    # Control polygon
-    ax.plot(seg_viol[:, 0], seg_viol[:, 1], "--", color="#e67e22",
-            lw=1.4, marker="o", ms=5, zorder=5)
-    # Per-point offsets to avoid overlaps
-    n_cp = len(seg_viol)
-    cp_offsets_b = []
-    for k in range(n_cp):
-        if k < n_cp // 2:
-            cp_offsets_b.append((-0.55, 0.25))
-        elif k == n_cp // 2:
-            cp_offsets_b.append((0.15, -0.45))
-        else:
-            cp_offsets_b.append((0.25, 0.25))
-    label_ctrl_points(ax, seg_viol, color="#b45309", fontsize=9,
-                      offsets=cp_offsets_b)
+    ax.set_xlim(mid[0] - pad, mid[0] + pad)
+    ax.set_ylim(mid[1] - pad, mid[1] + pad)
 
-    # Centroid
-    ax.plot(*centroid, "D", color="#8e44ad", ms=7, zorder=6)
-    ax.annotate(r"$c^{(s)}$", xy=centroid,
-                xytext=(centroid[0] + 0.25, centroid[1] + 0.35),
-                fontsize=11, color="#8e44ad", fontweight="bold",
-                arrowprops=dict(arrowstyle="-", color="#8e44ad", lw=0.7),
-                zorder=10)
-
-    # Normal arrow from KOZ center through centroid
-    arrow_end = support_pt + n_hat * 0.6
-    ax.annotate("", xy=arrow_end, xytext=C_KOZ,
-                arrowprops=dict(arrowstyle="-|>", color="#2c3e50",
-                                lw=1.5, mutation_scale=12),
-                zorder=6)
-    n_label_pos = support_pt + n_hat * 0.7
-    ax.annotate(r"$\hat{n}^{(s)}$", xy=n_label_pos, fontsize=11,
-                color="#2c3e50", ha="left", va="bottom", zorder=10)
-
-    # Support point on sphere surface
-    ax.plot(*support_pt, "o", color="#2c3e50", ms=5, zorder=7)
-
-    # KOZ center
-    ax.plot(*C_KOZ, "x", color="#990000", ms=6, mew=1.5, zorder=4)
-
-    ax.set_xlim(mid[0] - pad * 1.3, mid[0] + pad * 1.3)
-    ax.set_ylim(mid[1] - pad * 1.3, mid[1] + pad * 1.3)
-
-    # =======================================================================
-    # Panel (c): corrected sub-arc, control points on safe side
-    # =======================================================================
+    # ===================================================================== (c)
     ax = axes[2]
+    style_axes(ax, "Corrected sub-arc", "(c)")
+    draw_koz(ax)
+    draw_halfspace(ax, support_pt, n_hat, pad * 2.2, faint=True)
 
-    draw_koz(ax, C_KOZ, R_KOZ, label=False)
-    draw_safe_region(ax, support_pt, n_hat, length=pad * 2, depth=pad * 2)
-    draw_halfspace_line(ax, support_pt, n_hat, length=pad * 1.8,
-                        color="#2c3e50", lw=1.8, ls="-", zorder=4)
+    ghost(ax, curve_ref, C_GHOST)                 # before
+    ghost(ax, arc_ref, C_VIOL, lw=2.4, alpha=0.60, zorder=2.6)
+    ghost(ax, curve_fix, C_FIX_GHOST, lw=2.6, zorder=2.8)   # after, full width
 
-    # Original (faded)
-    ax.plot(pts_viol[:, 0], pts_viol[:, 1], color="#e67e22", lw=1.2,
-            alpha=0.3, zorder=2)
-    ax.plot(seg_viol[:, 0], seg_viol[:, 1], "--", color="#e67e22",
-            lw=0.8, marker="o", ms=3, alpha=0.3, zorder=2)
+    hull = ConvexHull(segs_fix[viol])
+    ax.add_patch(plt.Polygon(segs_fix[viol][hull.vertices], fc=C_FIX,
+                             ec=C_FIX, lw=1.0, ls=":", alpha=0.16, zorder=1.5))
 
-    # Corrected curve
-    pts_fixed = bezier_eval(seg_fixed, t_dense)
-    ax.plot(pts_fixed[:, 0], pts_fixed[:, 1], color="#2980b9", lw=2.4, zorder=3)
+    ghost(ax, arc_fix, C_FIX, lw=2.8, zorder=4)
+    ax.plot(segs_fix[viol][:, 0], segs_fix[viol][:, 1], "--o", color=C_FIX,
+            lw=1.3, ms=5, zorder=5)
+    label_ctrl_polygon(ax, segs_fix[viol], anchor=0, offset=(-0.55, -0.85),
+                       color=C_FIX)
 
-    # Corrected control polygon
-    ax.plot(seg_fixed[:, 0], seg_fixed[:, 1], "--", color="#2980b9",
-            lw=1.4, marker="o", ms=5, zorder=5)
-    n_cp = len(seg_fixed)
-    cp_offsets_c = []
-    for k in range(n_cp):
-        if k == 0:
-            cp_offsets_c.append((-0.6, 0.45))
-        elif k == 1:
-            cp_offsets_c.append((-0.6, -0.45))
-        elif k == n_cp // 2:
-            cp_offsets_c.append((0.15, 0.50))
-        elif k == n_cp - 2:
-            cp_offsets_c.append((0.35, 0.45))
-        elif k == n_cp - 1:
-            cp_offsets_c.append((0.35, -0.35))
-        else:
-            cp_offsets_c.append((0.30, 0.35))
-    label_ctrl_points(ax, seg_fixed, color="#1a5276", fontsize=9,
-                      offsets=cp_offsets_c)
+    ax.plot(*support_pt, "o", color=C_INK, ms=5.5, zorder=8)
+    hl = support_pt - tang * (pad * 0.60) + n_hat * 0.52
+    ax.text(*hl, r"$\mathcal{H}^{(s)}$", fontsize=FS_SYM, color=C_INK,
+            ha="center", va="center", fontweight="bold", alpha=0.55, zorder=10)
 
-    # Convex hull of corrected control polygon (light fill)
-    from scipy.spatial import ConvexHull
-    hull = ConvexHull(seg_fixed)
-    hull_verts = seg_fixed[hull.vertices]
-    hull_poly = plt.Polygon(hull_verts, fc="#aed6f1", ec="#2980b9",
-                            lw=1.2, alpha=0.35, ls=":", zorder=1)
-    ax.add_patch(hull_poly)
+    ax.set_xlim(mid[0] - pad, mid[0] + pad)
+    ax.set_ylim(mid[1] - pad, mid[1] + pad)
 
-    # Normal arrow
-    arrow_end = support_pt + n_hat * 0.6
-    ax.annotate("", xy=arrow_end, xytext=C_KOZ,
-                arrowprops=dict(arrowstyle="-|>", color="#2c3e50",
-                                lw=1.5, mutation_scale=12),
-                zorder=6)
-
-    ax.plot(*C_KOZ, "x", color="#990000", ms=6, mew=1.5, zorder=4)
-    ax.plot(*support_pt, "o", color="#2c3e50", ms=5, zorder=7)
-
-    ax.set_xlim(mid[0] - pad * 1.3, mid[0] + pad * 1.3)
-    ax.set_ylim(mid[1] - pad * 1.3, mid[1] + pad * 1.3)
-
-    # -----------------------------------------------------------------------
-    # Save or show
     # -----------------------------------------------------------------------
     if save:
         out_dir = Path(__file__).resolve().parent
@@ -409,10 +398,34 @@ def build_f1(save=False):
             print(f"Saved {out_path}")
     else:
         plt.show()
-
     plt.close(fig)
 
 
+def diagnostics():
+    g = build_geometry()
+    viol, n_hat = g["viol"], g["n_hat"]
+    c, sp = g["centroid"], g["support_pt"]
+    t = np.linspace(0, 1, 2000)
+    d_ref = np.linalg.norm(bezier_eval(P_GLOBAL, t) - C_KOZ, axis=1).min()
+    d_fix = np.linalg.norm(bezier_eval(g["P_fix"], t) - C_KOZ, axis=1).min()
+    print(f"violating sub-arc      : {viol} of {N_SEG}")
+    print(f"penetration depth      : {g['depth'][viol]:+.3f}  (r_e = {R_KOZ})")
+    print(f"|c^(s) - c_KOZ|        : {np.linalg.norm(c - C_KOZ):.3f}"
+          f"   -> {R_KOZ - np.linalg.norm(c - C_KOZ):.3f} inside the sphere")
+    print(f"|c^(s) - support point|: {np.linalg.norm(c - sp):.3f}"
+          f"   (separation in panel b)")
+    print(f"normal direction       : {np.rad2deg(np.arctan2(*n_hat[::-1])):+.1f} deg")
+    print(f"min |curve - c_KOZ|    : before {d_ref:.3f}   after {d_fix:.3f}"
+          f"   (r_e = {R_KOZ})")
+    print(f"control-point shift    : "
+          f"{np.round(np.linalg.norm(g['P_fix'] - P_GLOBAL, axis=1), 3)}")
+    print(f"endpoints fixed        : "
+          f"{np.allclose(g['P_fix'][[0, -1]], P_GLOBAL[[0, -1]], atol=1e-9)}")
+    print(f"corrected curve C-inf  : single Bezier curve, no splice")
+
+
 if __name__ == "__main__":
-    save = "--save" in sys.argv
-    build_f1(save=save)
+    if "--diag" in sys.argv:
+        diagnostics()
+    else:
+        build_f1(save="--save" in sys.argv)
