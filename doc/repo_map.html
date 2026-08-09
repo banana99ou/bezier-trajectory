@@ -1,0 +1,357 @@
+<title>bezier-trajectory — repo map</title>
+<style>
+  :root {
+    --ground: #F5F8FA;
+    --panel: #FFFFFF;
+    --ink: #101A22;
+    --ink-soft: #465866;
+    --ink-faint: #7B8B96;
+    --rule: #D6DFE5;
+    --accent: #17727F;
+    --accent-wash: #E4F0F2;
+    --ok: #2E7355;
+    --warn: #8A6114;
+    --gone: #97393B;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --serif: ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0B1218; --panel: #121C23; --ink: #DCE6EC; --ink-soft: #9DB0BC;
+      --ink-faint: #6E828F; --rule: #24333D; --accent: #56B6C3; --accent-wash: #14282E;
+      --ok: #63B08A; --warn: #C79A48; --gone: #CF7376;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0B1218; --panel: #121C23; --ink: #DCE6EC; --ink-soft: #9DB0BC;
+    --ink-faint: #6E828F; --rule: #24333D; --accent: #56B6C3; --accent-wash: #14282E;
+    --ok: #63B08A; --warn: #C79A48; --gone: #CF7376;
+  }
+  :root[data-theme="light"] {
+    --ground: #F5F8FA; --panel: #FFFFFF; --ink: #101A22; --ink-soft: #465866;
+    --ink-faint: #7B8B96; --rule: #D6DFE5; --accent: #17727F; --accent-wash: #E4F0F2;
+    --ok: #2E7355; --warn: #8A6114; --gone: #97393B;
+  }
+
+  body {
+    background: var(--ground); color: var(--ink); font-family: var(--sans);
+    font-size: 16px; line-height: 1.6; margin: 0;
+    padding: clamp(1.5rem, 4vw, 3.5rem) clamp(1rem, 4vw, 2rem) 5rem;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1020px; margin: 0 auto; display: flex; flex-direction: column; gap: 2.75rem; }
+
+  header { display: flex; flex-direction: column; gap: .5rem; }
+  .eyebrow {
+    font-family: var(--mono); font-size: .7rem; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--accent);
+  }
+  h1 {
+    font-family: var(--serif); font-size: clamp(1.8rem, 4.2vw, 2.5rem);
+    font-weight: 600; line-height: 1.15; margin: 0; text-wrap: balance;
+    letter-spacing: -0.01em;
+  }
+  .lede { color: var(--ink-soft); max-width: 68ch; margin: 0; font-size: 1.02rem; }
+
+  h2 {
+    font-family: var(--serif); font-size: 1.3rem; font-weight: 600; margin: 0 0 .2rem;
+    letter-spacing: -0.005em; text-wrap: balance;
+  }
+  h2 .num {
+    font-family: var(--mono); font-size: .72rem; color: var(--accent);
+    letter-spacing: .1em; margin-right: .6rem; vertical-align: .18em;
+  }
+  section { display: flex; flex-direction: column; gap: .9rem; }
+  section > p { margin: 0; max-width: 72ch; color: var(--ink-soft); }
+  section > p strong { color: var(--ink); font-weight: 600; }
+
+  code, .path { font-family: var(--mono); font-size: .855em; }
+  .path { color: var(--ink); background: var(--accent-wash); padding: .08em .34em; border-radius: 2px; }
+
+  figure { margin: 0; display: flex; flex-direction: column; gap: .7rem; }
+  .figbox { background: var(--panel); border: 1px solid var(--rule); border-radius: 3px; padding: 1rem; overflow-x: auto; }
+  svg { display: block; max-width: 100%; height: auto; min-width: 640px; }
+  figcaption { color: var(--ink-faint); font-size: .86rem; max-width: 72ch; }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 3px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; font-size: .875rem; }
+  th, td { text-align: left; padding: .6rem .85rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  thead th {
+    font-family: var(--mono); font-size: .68rem; text-transform: uppercase;
+    letter-spacing: .1em; color: var(--ink-faint); font-weight: 500;
+    background: var(--ground); white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.p { font-family: var(--mono); font-size: .8rem; white-space: nowrap; }
+  td.n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .chip {
+    display: inline-block; font-family: var(--mono); font-size: .66rem;
+    letter-spacing: .06em; text-transform: uppercase; padding: .12em .45em;
+    border-radius: 2px; border: 1px solid currentColor; white-space: nowrap;
+  }
+  .chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.gone { color: var(--gone); }
+
+  .note {
+    border-left: 2px solid var(--accent); padding: .1rem 0 .1rem 1rem;
+    color: var(--ink-soft); max-width: 72ch;
+  }
+  .note strong { color: var(--ink); }
+  ul { margin: 0; padding-left: 1.1rem; color: var(--ink-soft); max-width: 72ch; }
+  li { margin-bottom: .3rem; }
+  li strong { color: var(--ink); font-weight: 600; }
+  hr { border: none; border-top: 1px solid var(--rule); margin: 0; }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">bezier-trajectory · repo orientation</div>
+  <h1>One Rust solver, one Python door, four kinds of caller</h1>
+  <p class="lede">A Bézier-curve SCvx trajectory optimizer. The numerics live in Rust; everything
+  Python-side is a shell around it. The layout only makes sense once you see that
+  <em>every</em> caller reaches the solver through a single file.</p>
+</header>
+
+<section>
+  <h2><span class="num">01</span>The shape of it</h2>
+  <figure>
+    <div class="figbox">
+      <svg viewBox="0 0 980 404" role="img" aria-label="Four families of caller — the CLI, the verification pillars, the tools and downstream chain, and the test suites — all import orbital_docking/optimization.py, which is the only file that imports the bezier_opt wheel, which wraps the Rust core crate.">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+          <marker id="ara" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#17727F"/>
+          </marker>
+        </defs>
+
+        <text x="14" y="26" font-family="ui-monospace,Menlo,monospace" font-size="11" letter-spacing="1.4" fill="currentColor" opacity=".55">CALLERS</text>
+        <text x="286" y="26" font-family="ui-monospace,Menlo,monospace" font-size="11" letter-spacing="1.4" fill="#17727F">THE ONE DOOR</text>
+        <text x="566" y="26" font-family="ui-monospace,Menlo,monospace" font-size="11" letter-spacing="1.4" fill="currentColor" opacity=".55">BOUNDARY</text>
+        <text x="766" y="26" font-family="ui-monospace,Menlo,monospace" font-size="11" letter-spacing="1.4" fill="currentColor" opacity=".55">SOLVER</text>
+
+        <g stroke="currentColor" fill="none" opacity=".45"><line x1="14" y1="34" x2="966" y2="34"/></g>
+
+        <!-- callers -->
+        <g font-family="ui-monospace,Menlo,monospace" font-size="11.5">
+          <rect x="14" y="58" width="196" height="52" rx="2" fill="none" stroke="currentColor" opacity=".85"/>
+          <text x="26" y="79" fill="currentColor">Orbital_Docking_</text>
+          <text x="26" y="95" fill="currentColor">Optimizer.py</text>
+          <text x="150" y="79" font-size="10" fill="currentColor" opacity=".55">CLI</text>
+
+          <rect x="14" y="126" width="196" height="52" rx="2" fill="none" stroke="currentColor" opacity=".85"/>
+          <text x="26" y="147" fill="currentColor">tools/verify/</text>
+          <text x="26" y="163" font-size="10" fill="currentColor" opacity=".62">6 pillars + verdict</text>
+
+          <rect x="14" y="194" width="196" height="52" rx="2" fill="none" stroke="currentColor" opacity=".85"/>
+          <text x="26" y="215" fill="currentColor">tools/</text>
+          <text x="26" y="231" font-size="10" fill="currentColor" opacity=".62">26 scripts, figures, t6</text>
+
+          <rect x="14" y="262" width="196" height="52" rx="2" fill="none" stroke="currentColor" opacity=".85"/>
+          <text x="26" y="283" fill="currentColor">tests/</text>
+          <text x="26" y="299" font-size="10" fill="currentColor" opacity=".62">86 passing, 2 skipped</text>
+        </g>
+
+        <!-- converging arrows -->
+        <g stroke="currentColor" fill="none" opacity=".7" marker-end="url(#ar)">
+          <path d="M 210 84  C 246 84, 250 150, 280 172"/>
+          <path d="M 210 152 C 244 152, 250 166, 280 180"/>
+          <path d="M 210 220 C 244 220, 250 206, 280 194"/>
+          <path d="M 210 288 C 246 288, 250 224, 280 202"/>
+        </g>
+        <text x="222" y="336" font-family="ui-monospace,Menlo,monospace" font-size="10" fill="currentColor" opacity=".6">every caller, no exceptions</text>
+
+        <!-- the door -->
+        <rect x="286" y="120" width="212" height="134" rx="3" fill="#17727F" fill-opacity=".08" stroke="#17727F" stroke-width="1.6"/>
+        <g font-family="ui-monospace,Menlo,monospace">
+          <text x="300" y="146" font-size="11.5" fill="#17727F">orbital_docking/</text>
+          <text x="300" y="163" font-size="13" font-weight="600" fill="#17727F">optimization.py</text>
+          <line x1="300" y1="176" x2="484" y2="176" stroke="#17727F" opacity=".35"/>
+          <text x="300" y="195" font-size="10.5" fill="currentColor" opacity=".8">optimize_orbital_docking()</text>
+          <text x="300" y="211" font-size="10.5" fill="currentColor" opacity=".8">optimize_all_segment_counts()</text>
+          <text x="300" y="234" font-size="10" fill="currentColor" opacity=".6">+ disk cache, BC assembly,</text>
+          <text x="300" y="246" font-size="10" fill="currentColor" opacity=".6">metrics, parallel n_seg sweep</text>
+        </g>
+
+        <path d="M 498 187 L 560 187" stroke="#17727F" stroke-width="1.6" fill="none" marker-end="url(#ara)"/>
+        <text x="502" y="178" font-family="ui-monospace,Menlo,monospace" font-size="10" fill="#17727F">the only</text>
+        <text x="502" y="204" font-family="ui-monospace,Menlo,monospace" font-size="10" fill="#17727F">import in the repo</text>
+
+        <!-- boundary -->
+        <rect x="566" y="160" width="150" height="54" rx="2" fill="none" stroke="currentColor" opacity=".85"/>
+        <g font-family="ui-monospace,Menlo,monospace">
+          <text x="578" y="182" font-size="11.5" fill="currentColor">bezier_opt</text>
+          <text x="578" y="198" font-size="10" fill="currentColor" opacity=".62">pybind wheel (PyO3)</text>
+        </g>
+        <path d="M 716 187 L 758 187" stroke="currentColor" fill="none" opacity=".7" marker-end="url(#ar)"/>
+
+        <!-- solver -->
+        <rect x="764" y="58" width="202" height="256" rx="2" fill="none" stroke="currentColor" opacity=".85"/>
+        <g font-family="ui-monospace,Menlo,monospace" font-size="11">
+          <text x="776" y="80" font-size="11.5" fill="currentColor" opacity=".62">rust_optimizer/core/src/</text>
+          <line x1="776" y1="90" x2="954" y2="90" stroke="currentColor" opacity=".3"/>
+          <text x="776" y="112" font-weight="600" fill="#17727F">optimizer.rs</text>
+          <text x="776" y="127" font-size="9.5" fill="currentColor" opacity=".6">SCvx loop, merit, ρ, trust</text>
+          <text x="776" y="150" font-weight="600" fill="#17727F">constraints.rs</text>
+          <text x="776" y="165" font-size="9.5" fill="currentColor" opacity=".6">KOZ half-spaces, BC rows</text>
+          <text x="776" y="188" fill="currentColor">de_casteljau.rs</text>
+          <text x="776" y="203" font-size="9.5" fill="currentColor" opacity=".6">segment subdivision</text>
+          <text x="776" y="226" fill="currentColor">bezier.rs</text>
+          <text x="776" y="241" font-size="9.5" fill="currentColor" opacity=".6">D, E, Gram matrices</text>
+          <text x="776" y="264" fill="currentColor">gravity.rs</text>
+          <text x="776" y="279" font-size="9.5" fill="currentColor" opacity=".6">two-body + J2</text>
+          <text x="776" y="300" font-size="9.5" fill="currentColor" opacity=".5">Clarabel solves the QP</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>Four families of caller, one gateway. Nothing else in the repo imports the wheel —
+    so caching, boundary-condition assembly and the parallel <code>n_seg</code> sweep are
+    unavoidable, and swapping the Rust core means touching exactly one Python file.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2><span class="num">02</span>The solver — Rust</h2>
+  <p>All the mathematics. <span class="path">optimizer.rs</span> is the one that matters:
+  it holds the SCvx loop, the penalized merit, the ρ ratio test, the trust region and every
+  stopping criterion. The rest are supporting kernels it calls.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Module</th><th>Holds</th><th>Touch it when</th></tr></thead>
+      <tbody>
+        <tr><td class="p">optimizer.rs</td><td>SCvx loop, merit + ρ, trust region, stop reasons, exact Gram objective</td><td>Convergence, acceptance, termination</td></tr>
+        <tr><td class="p">constraints.rs</td><td>KOZ supporting half-spaces (exact + self-consistent rows), boundary-condition rows</td><td>Keep-out geometry, Prop 1 certificate</td></tr>
+        <tr><td class="p">de_casteljau.rs</td><td>Segment subdivision matrices</td><td>How the curve is split for the KOZ</td></tr>
+        <tr><td class="p">bezier.rs</td><td>Derivative (D), elevation (E) and Bernstein Gram matrices</td><td>Curve algebra in control-point space</td></tr>
+        <tr><td class="p">gravity.rs</td><td>Two-body + J2 acceleration and its Jacobian</td><td>Physics model</td></tr>
+        <tr><td class="p">pybind/src/lib.rs</td><td>PyO3 wrapper → the <code>bezier_opt</code> wheel</td><td>Adding or removing a solver parameter</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note"><strong>Rebuilding matters.</strong> Editing Rust does nothing until the wheel is
+  rebuilt and force-reinstalled — <code>maturin develop</code> does not work here. Bump
+  <code>CACHE_VERSION</code> in <span class="path">orbital_docking/cache.py</span> too, or you
+  will silently read stale results.</p>
+</section>
+
+<section>
+  <h2><span class="num">03</span>The Python library</h2>
+  <p><span class="path">orbital_docking/</span> is the door plus its furniture. Two modules
+  are a separate concern: they consume the solver's answer as a <em>warm start</em> for a
+  downstream collocation solver rather than optimizing anything themselves.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>File</th><th>Role</th><th></th></tr></thead>
+      <tbody>
+        <tr><td class="p">optimization.py</td><td>The gateway. Only importer of the wheel; owns caching, BC assembly, reported metrics, the parallel sweep</td><td><span class="chip ok">core</span></td></tr>
+        <tr><td class="p">cache.py</td><td>Disk cache keyed by a hash of every solver argument. <code>CACHE_VERSION</code> lives here</td><td></td></tr>
+        <tr><td class="p">constants.py</td><td>Earth μ, radius, J2, KOZ radius, <code>TRANSFER_TIME_S = 1500</code></td><td></td></tr>
+        <tr><td class="p">bezier.py · de_casteljau.py · constraints.py</td><td>NumPy twins of the Rust kernels — used by tests and tools as an independent check</td><td><span class="chip ok">oracle</span></td></tr>
+        <tr><td class="p">visualization.py</td><td>All plotting and the interactive HTML output</td><td></td></tr>
+        <tr><td class="p">j2_validation.py</td><td>Validates the J2 model against reference data</td><td></td></tr>
+        <tr><td class="p">downstream_collocation.py</td><td>Turns a solved curve into a warm start for direct collocation</td><td><span class="chip warn">downstream</span></td></tr>
+        <tr><td class="p">dymos_t6.py</td><td>Dymos/OpenMDAO cross-check built on that warm start. Optional heavy dependency</td><td><span class="chip warn">downstream</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">04</span>Three independent test layers</h2>
+  <p>They are genuinely independent — different languages, different oracles, different failure
+  modes. The Rust suite cannot see a Python regression and the pillars cannot see a Rust unit bug.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Layer</th><th>Where</th><th class="n">Count</th><th>What it would catch</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Rust unit + golden</strong></td><td class="p">core/src/*.rs, core/tests/baseline_test.rs</td><td class="n">24</td><td>Gram integral wrong, KOZ rows not exact at the reference, solver stopping for no stated reason</td></tr>
+        <tr><td><strong>Python suite</strong></td><td class="p">tests/{unit,integration,property,regression}</td><td class="n">86</td><td>Kernel drift between NumPy and Rust, KOZ violated end-to-end, golden run moved</td></tr>
+        <tr><td><strong>Verification pillars</strong></td><td class="p">tools/verify/</td><td class="n">6</td><td>Convergence, optimality and conservatism claims — the numbers that go in the paper</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Run order: <code>cargo test -p bezier_opt_core</code>, then <code>pytest</code>, then the
+  pillars. The pillars are slow and call the real solver many times.</p>
+</section>
+
+<section>
+  <h2><span class="num">05</span>The verification pillars</h2>
+  <p>Each writes <span class="path">artifacts/verify/&lt;pillar&gt;/summary.md</span> ending in a
+  <code>VERDICT</code> line; <span class="path">verdict.py</span> greps those and aggregates. They
+  share one scenario grid and one true-objective oracle in
+  <span class="path">harness_common.py</span> — the single most load-bearing file in the harness.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th></th><th>Script</th><th>Asks</th></tr></thead>
+      <tbody>
+        <tr><td class="p">1</td><td class="p">nlp_crosscheck.py</td><td>Does an independent, solver-blind SciPy NLP reach the same optimum?</td></tr>
+        <tr><td class="p">2</td><td class="p">ablation.py</td><td>Which change was actually the fix? (trust region vs proximal)</td></tr>
+        <tr><td class="p">3</td><td class="p">kkt_check.py</td><td>Is the returned trajectory primal-feasible on a dense grid?</td></tr>
+        <tr><td class="p">4a</td><td class="p">diagnostics.py</td><td>Per-iteration health: ρ, trust, slack — and is the returned iterate the best one visited?</td></tr>
+        <tr><td class="p">4b</td><td class="p">sweep.py</td><td>Does it hold across the N × n_seg × scenario grid?</td></tr>
+        <tr><td class="p">5</td><td class="p">optimality.py</td><td>Is it actually <em>optimal</em>? External KKT residual + a search for any improving feasible direction</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Scenario grid: <code>phase70</code>, <code>phase120</code>, <code>phase135</code>,
+  <code>phase170</code>, <code>planechange</code>. Larger phase lag means the keep-out sphere binds
+  harder. <code>phase170</code> is nearly antipodal and needs its own larger trust radius, which is
+  why <code>r0</code> is a per-scenario field.</p>
+</section>
+
+<section>
+  <h2><span class="num">06</span>Frontends and tools</h2>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Group</th><th>Entry point</th><th>Does</th></tr></thead>
+      <tbody>
+        <tr><td><strong>CLI</strong></td><td class="p">Orbital_Docking_Optimizer.py</td><td>The demo run: solve every <code>n_seg</code> for a given degree, write comparison figures</td></tr>
+        <tr><td><strong>Paper figures</strong></td><td class="p">figures/f1, f2, f7</td><td>KOZ linearization, SCP pipeline, control subdivision</td></tr>
+        <tr><td><strong>Table builders</strong></td><td class="p">tools/build_*.py</td><td>Generate the paper's CSVs and figures from solver output</td></tr>
+        <tr><td><strong>Downstream (T6)</strong></td><td class="p">tools/t6_*.py, downstream_dc_compare.py</td><td>Feed the curve to Dymos collocation and compare</td></tr>
+        <tr><td><strong>Diagnostics</strong></td><td class="p">tools/convergence_diagnostic.py, sweep_koz_ablation.py, ab_endpoint_fix_parallel.py</td><td>One-off investigations</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note"><strong>One genuine exception.</strong>
+  <span class="path">tools/spacetime_optimize.py</span> is a <em>separate solver</em>, not a frontend.
+  It reuses only the Bézier and De Casteljau matrices, then runs its own SCP over (x, y, t) for
+  moving obstacles. It does not touch the Rust core.</p>
+</section>
+
+<section>
+  <h2><span class="num">07</span>Where the authority lives</h2>
+  <ul>
+    <li><span class="path">doc/design_freeze.md</span> — <strong>read this first.</strong> §0 is the
+      exact problem formulation, §9 the KOZ decision, §5 every parameter with the principle that
+      picked it, §7 the evidence log. It outranks the paper.</li>
+    <li><span class="path">CLAUDE.md</span> — the terse rules; the objective is singular and
+      hard-coded, and Δv is never mentioned in the paper.</li>
+    <li><span class="path">doc/paper_draft_korean_rev2.md</span> — currently <em>lags</em> the code
+      and is being rewritten toward it. Never edit code to match the paper.</li>
+    <li><span class="path">artifacts/verify/</span> — pillar output. Gitignored, so it carries no
+      provenance; regenerate before quoting any number.</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="num">08</span>Recently removed — don't go looking</h2>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Gone</th><th>Why</th><th></th></tr></thead>
+      <tbody>
+        <tr><td class="p">objective / objective_mode</td><td>The "dv" sum-of-norms mode. Objective is singular and hard-coded; no modes remain on either side of the FFI</td><td><span class="chip gone">deleted</span></td></tr>
+        <tr><td class="p">scvx_freeze</td><td>No literature basis, measurably worse where the KOZ binds</td><td><span class="chip gone">deleted</span></td></tr>
+        <tr><td class="p">tools/probe_*.py (9)</td><td>Investigated <code>scvx_freeze</code>, itself deleted</td><td><span class="chip gone">deleted</span></td></tr>
+        <tr><td class="p">tools/verify_dv_fix.py</td><td>A/B harness for a mode that no longer exists</td><td><span class="chip gone">deleted</span></td></tr>
+        <tr><td class="p">freeze_gravity_jacobian, freeze_after_iter</td><td><strong>Still live.</strong> Legacy knobs, unused by the paper config — often mistaken for deleted</td><td><span class="chip warn">kept</span></td></tr>
+        <tr><td class="p">dv_proxy_m_s</td><td><strong>Still live.</strong> A reported diagnostic metric, unrelated to the deleted objective mode</td><td><span class="chip warn">kept</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</div>
