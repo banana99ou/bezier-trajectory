@@ -54,12 +54,20 @@ def run(scenario_name="phase120"):
         capped = it >= max_iter
         rows.append(dict(
             cell=label, iterations=it, capped=capped, scvx_converged=conv,
+            stop_reason=int(info.get("scvx_stop_reason", -1)),
             feasible=bool(info["feasible"]), min_radius=float(info["min_radius"]),
             J_true=H.J_true(P, sc["T"]), cost_true_energy=float(info["cost_true_energy"]),
         ))
 
     # PASS logic.
     a, a0, b, c = rows
+    # Gate on scvx_stop_reason, not scvx_converged: that flag is ALSO set by the
+    # trust-collapse exit whenever the iterate happens to be feasible, so it reads
+    # True at a deadlocked point. Principled stops are 1 (K-consecutive merit
+    # streak) and 4 (model stationarity); 0/2/3 all mean "the loop gave up".
+    # The legacy cells (a)/(a0) never enter the SCvx path, so they have no
+    # stop_reason and are judged on the cap alone.
+    principled = lambda r: r["stop_reason"] in (1, 4)
     a_caps = a["capped"] and a["scvx_converged"] != 1
     # Isolation: trust_radius=0 flips TWO things at once (legacy loop ON + proximal ON).
     # (a0) holds the proximal OFF to expose the legacy loop alone. The trust region is the
@@ -74,20 +82,22 @@ def run(scenario_name="phase120"):
     # The config under test is (b) — the paper baseline. (c) isolates the proximal.
     trust_is_primary = (
         (not b["capped"])
-        and b["scvx_converged"] == 1
+        and principled(b)
         and a0["scvx_converged"] == 0
         and (a0["iterations"] > 3 * b["iterations"])
     )
     prox_aggravates = a["iterations"] > a0["iterations"]
-    all_conv = all((not r["capped"]) and r["scvx_converged"] == 1 and r["feasible"]
+    all_conv = all((not r["capped"]) and principled(r) and r["feasible"]
                    for r in [b, c])
-    # Prox is inert in the trust path: (b) prox0 and (c) prox1e-6 must be identical.
-    # NOTE this gate is structurally unfailable — optimizer.rs skips the proximal
-    # entirely when trust_active, so (b) and (c) execute the same code. It documents
-    # the intent; it is NOT evidence about the proximal.
-    prox_inert = (abs(b["J_true"] - c["J_true"]) / b["J_true"] < 1e-6
-                  and abs(b["min_radius"] - c["min_radius"]) < 1e-6)
-    passed = a_caps and trust_is_primary and prox_aggravates and all_conv and prox_inert
+    # (b) prox0 vs (c) prox1e-6 are BIT-IDENTICAL by construction: optimizer.rs
+    # skips the proximal entirely when trust_active, so the two cells execute the
+    # same code on the same inputs. A gate that cannot fail is not evidence, so
+    # this is reported as an identity CHECK and excluded from `passed`. It would
+    # only become informative if the proximal were ever reachable on the trust
+    # path -- at which point it should move back into the pass logic.
+    prox_identical = (abs(b["J_true"] - c["J_true"]) / b["J_true"] < 1e-12
+                      and abs(b["min_radius"] - c["min_radius"]) < 1e-12)
+    passed = a_caps and trust_is_primary and prox_aggravates and all_conv
 
     H.write_csv(OUT / "ablation.csv", [
         {k: (f"{v:.6e}" if isinstance(v, float) and k in ("J_true", "cost_true_energy")
@@ -110,9 +120,9 @@ def run(scenario_name="phase120"):
     md.append(f"- the mis-scaled proximal is a SECONDARY aggravator: it pushes the legacy loop "
               f"from {a0['iterations']} iters (a0) to the cap (a): **{prox_aggravates}**")
     md.append(f"- (b)(c) both converge + feasible: **{all_conv}**")
-    md.append(f"- proximal is INERT in the trust path: (b) prox0 == (c) prox1e-6 identical: "
-              f"**{prox_inert}** (structurally unfailable — the proximal is skipped when "
-              f"`trust_active`; documents intent, not evidence)")
+    md.append(f"- (b) prox0 and (c) prox1e-6 are bit-identical: **{prox_identical}** "
+              f"(NOT A GATE — the proximal is skipped when `trust_active`, so these two "
+              f"cells run the same code; excluded from the verdict because it cannot fail)")
     md.append("")
     md.append("**Isolation finding (corrected)**: Cell (a) alone conflates two changes -- setting "
               "`scp_trust_radius=0` both reverts to the legacy unconditional-accept loop AND re-enables "

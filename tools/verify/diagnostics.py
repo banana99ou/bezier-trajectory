@@ -53,6 +53,9 @@ def run(scenario_name="phase120", n_seg=16):
     rho_finite = rho_opt[np.isfinite(rho_opt)]
     # Require actual evidence: a solver routing every step through the rho=+inf
     # null-step branch used to pass this gate on ZERO samples.
+    # NOT SUFFICIENT ALONE, measured: commit 12b5b06 produced rho = 1.000 on all
+    # 139 accepted steps of a run that ratcheted 0.178% away from its own best
+    # point. rho only compares within one iteration; pair it with best_ok below.
     rho_ok = bool(rho_finite.size >= 3 and np.all((rho_finite > 0.5) & (rho_finite < 2.0)))
 
     # merit monotone within each phase (allow tiny epsilon).
@@ -62,6 +65,21 @@ def run(scenario_name="phase120", n_seg=16):
         m = merit[mask]
         return bool(np.all(np.diff(m) <= 1e-9 * (np.abs(m[:-1]) + 1))) if m.size > 1 else True
     merit_ok = monotone(phase == 0.0) and monotone(phase == 1.0)
+
+    # THE GATE WITH TEETH: the returned iterate must be the best one visited.
+    # Neither rho_ok nor merit_ok can catch a run that drifts away from its own
+    # optimum, because both only ever compare values WITHIN one iteration — and
+    # the merit function itself changes between iterations, since the KOZ rows
+    # re-aim. A run can therefore descend, wander, and return a point worse than
+    # one it already stood on, with every per-iteration signal healthy.
+    # Measured: the 2026-08-09 same-rows variant (commit 12b5b06) did exactly
+    # that on phase120 — minimum at accepted step 26, returned step 139, +0.178%
+    # worse — with rho = 1.000 on all 139 steps and this file reporting PASS.
+    # The bootstrap step is excluded: its merit is pre-BC-repair and ~7 orders
+    # larger, so including it would make the gate unfailable.
+    post = merit[1:] if n > 1 else merit
+    best_ok = bool(post.size > 0 and merit[-1] <= post.min() * (1.0 + 1e-9))
+    drift = float((merit[-1] - post.min()) / abs(post.min())) if post.size else 0.0
 
     slack_ok = bool(slack[-1] < 1e-6) if n else False
 
@@ -84,7 +102,7 @@ def run(scenario_name="phase120", n_seg=16):
     # No segment may be silently missing from the Prop-1 certificate.
     no_degenerate = int(info.get("koz_degenerate_segments", -1)) == 0
 
-    passed = (rho_ok and merit_ok and slack_ok and converged_ok
+    passed = (rho_ok and merit_ok and best_ok and slack_ok and converged_ok
               and feasible_ok and qp_clean and no_degenerate)
 
     # Plot.
@@ -112,6 +130,9 @@ def run(scenario_name="phase120", n_seg=16):
               f"{', '.join(f'{v:.3f}' for v in rho[opt]) if opt.any() else '—'})")
     md.append(f"- merit monotone within each phase: **{merit_ok}** "
               f"(near-tautological; consistency check only)")
+    md.append(f"- returned iterate is the BEST visited (drift {drift:+.3e}): **{best_ok}** "
+              f"— the gate rho and monotonicity cannot provide; catches a run that "
+              f"descends then wanders off its own optimum")
     md.append(f"- slack -> 0 (final={slack[-1]:.2e}): **{slack_ok}**")
     _STOP = {0: "iteration cap", 1: "K-consecutive merit streak", 2: "trust-region collapse",
              3: "QP failure", 4: "model stationarity"}

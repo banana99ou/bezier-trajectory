@@ -23,8 +23,10 @@ separately (`qp_almost_solved`). A fifth, larger defect was found and fixed on
 optimized; see §9. The core Gram-integral mathematics was independently
 re-derived and is CLEAN.
 
-**WHAT IS STILL UNVERIFIED:** no optimality evidence exists for ANY reported
-answer. See §10.
+**OPTIMALITY:** first gated externally on 2026-08-09 by Pillar 5
+(`tools/verify/optimality.py`) — KKT stationarity residual + a feasible-descent
+search, both computed independently of the solver. All five scenarios PASS. The
+exact-penalty condition w_s ≥ ‖λ_KOZ‖_∞ is now MEASURED (§5), not estimated.
 
 ## 0. Exact problem formulation (locked 2026-08-09)
 
@@ -60,19 +62,21 @@ is a fixed input; physical time t = T·τ, physical velocity = r′(τ)/T.
 
 - Gravity affine per segment: J_s, c_s = Jacobian/offset of g at the segment
   centroid of p; the integral is EXACT via the Bernstein Gram matrix (§1).
-- KOZ rows (elastic, L1-penalized by w_s): n_i·(A_i x)_k ≥ n_i·c_KOZ + r_e
-  with witnesses n_i chosen by the centroid rule AT p. With n_i fixed these
-  are linear inequalities — the convexification itself, not a model of
-  anything (§9).
+- KOZ rows (elastic, L1-penalized by w_s): the first-order model about p of
+  the clearance g_k(x) = n(x)·(A x)_k − n(x)·c_KOZ − r_e, with the centroid
+  rule's witness n(x) and ITS rotation included
+  (`build_koz_constraints_linearized`). Freezing n at p instead drops a
+  first-order term and makes the QP's optimum a point the centroid rule will
+  disagree with next iteration — the 2026-08-09 defect (§9).
 
-**Acceptance (formulation of record per §9; code change pending):**
+**Acceptance:**
 
-    ρ = [T(p) − T(x⁺)] / [L(p) − L(x⁺)],  where T(x) = J(x) + w_s·(violation of the SAME KOZ rows as L)
+    ρ = [T(p) − T(x⁺)] / [L(p) − L(x⁺)],  T(x) = J(x) + w_s·h(x)
 
-- T uses TRUE gravity g; L uses the affine model. The penalty rows are
-  IDENTICAL in T and L, so the KOZ contributes zero mismatch between
-  numerator and denominator: ρ tests exactly one thing, the gravity
-  linearization. §3's older rebuilt-rows definition of T is superseded (§9).
+- T uses TRUE gravity g; L uses the affine model. h(x) is the EXACT hull
+  violation with the witnesses rebuilt at x (h = 0 ⇔ x carries the 명제 1
+  certificate), so ρ measures the two model errors that exist: gravity
+  linearization and witness re-aiming. Accept if ρ > η = 0.1.
 
 ## 1. Objective (locked 2026-08-07)
 
@@ -127,8 +131,13 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
   — true at iteration 1, where the straight-line init violates the velocity-BC
   equalities — the merit comparison is meaningless; the repairing candidate is
   accepted unconditionally (ρ recorded as NaN).
-- pred_floor = 1e-12·(1+|L(p)|): pred below it is a null step; accepted iff
-  non-worsening (this is how stationarity terminates the loop).
+- pred_floor = 1e-12·|L(p)|: pred below it is a null step, accepted iff
+  non-worsening. Relative, not `1+|L(p)|` — the old form was absolute in
+  practice (|L(p)| ~ 2e-5) and so depended on the choice of units.
+- Termination is NOT this floor. Two principled exits, both K = 3 consecutive:
+  the merit streak (stop_reason 1) and model stationarity, pred < tol_f·|T(p)|
+  with the certificate held (stop_reason 4). stop_reason 0/2/3 (cap, trust
+  collapse, QP failure) all mean the loop gave up and are gated as failures.
 
 ## 4. Convergence (locked 2026-08-07)
 
@@ -148,7 +157,7 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
 
 | parameter | value | principle |
 |---|---|---|
-| w_s (`elastic_weight`) | 1e-2 | exact-penalty rule: above the KOZ dual scale (~1e-6, estimated), far below objective-swamping — w_s=1e4 measurably degraded optima 4–5× via penalty noise in ρ (evidence #2) |
+| w_s (`elastic_weight`) | 1e-2 | exact-penalty rule: above the KOZ dual scale, far below objective-swamping — w_s=1e4 measurably degraded optima 4–5× via penalty noise in ρ (evidence #2). **‖λ_KOZ‖_∞ MEASURED 2026-08-09 (Pillar 5): max 1.5e-7 across five scenarios, so w_s=1e-2 clears it by 5 orders.** Previously recorded as "estimated ~1e-6" and never measured. |
 | r₀ (`scp_trust_radius`) | 2000 km | must exceed the iteration-1 BC-repair distance (~1650 km in the demo); r₀ ≤ 1000 fails at iteration 1 (known open item) |
 | η | 0.1 | textbook SCvx acceptance threshold [Mao et al.] |
 | grow / shrink | ×2 @ ρ>0.9 / ×0.5 | textbook trust-region schedule |
@@ -192,6 +201,27 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
    baseline is ≈4.2% at n_seg=16. Re-run before quoting any of these numbers —
    see `session_handoff.md` step 2. The `artifacts/verify/` tree is gitignored
    and carries no producing-commit provenance.
+
+7. **2026-08-09** — verification harness defects found and fixed while building
+   Pillar 5: (a) `J_true`, the harness's canonical cross-solver objective, was a
+   uniform-mean Riemann sum converging only as O(1/n) — ~1.6e-3 relative error at
+   its n_dense=1200 default, LARGER than the A/B gap it was being used to resolve.
+   It manufactured 562 phantom descent directions on phase70 whose best step
+   reversed sign (−1.4e-5 → +5.0e-5) once the quadrature converged. Replaced with
+   Gauss-Legendre (exact to f64 at 24 nodes); it now agrees with the Rust exact-Gram
+   integral to 1.8e-6 relative, the cross-implementation check the objective never
+   had. (b) Pillar 4a gained `best_ok` — the returned iterate must be the best
+   visited. rho and per-phase monotonicity CANNOT catch a run that drifts off its
+   own optimum, because both compare only within one iteration while the merit
+   itself changes between them; variant (B) drifted 0.178% with rho = 1.000 on all
+   139 steps and every gate green. (c) Pillar 2's `prox_inert` gate compared two
+   bit-identical code paths and was removed from the verdict; its remaining cells
+   now gate on `scvx_stop_reason`, not the weak `scvx_converged` flag.
+8. **2026-08-09** — scenario grid widened from 2 to 5: phase135, phase170 (nearly
+   antipodal; its straight-line init passes 5420 km INSIDE the KOZ, so it needs
+   r0=4000 — r0 is now a per-scenario field, not a global constant) and
+   `planechange` (23.9° orbit-plane difference, so the two velocity BCs differ in
+   direction, not just phase). All five pass Pillars 1–5 with (A).
 
 ### Caveats on this evidence log (2026-08-08 adversarial review)
 
@@ -256,9 +286,16 @@ measurement does NOT discriminate between them:
 | | (A) | (B) |
 |---|---|---|
 | n_seg=16 | **20 iters**, stop 1 | 172 iters, stop 2 (gave up) |
-| n_seg=16 J_true | **2.265623e-05** | 2.269524e-05 (+0.17%) |
+| n_seg=16 objective | **2.263313e-05** | 2.267205e-05 (+0.172%) |
 | n_seg=32 | **21 iters**, stop 4 | 261 iters, stop 2 |
 | n_seg=64 | — | 445 iters, stop 2 |
+
+Objective values above are the Rust exact-Gram internal merit, deliberately NOT
+the harness `J_true`: the A/B gap (1.7e-3) is the same size as the quadrature
+error the old `J_true` carried, so it could not resolve this comparison. That
+oracle bug was found and fixed the same day (§7 entry 8); the corrected
+Gauss-Legendre `J_true` now agrees with the Rust integral to 1.8e-6 relative,
+which is the cross-implementation check the objective never previously had.
 
 (B) removes the mismatch but replaces a POISONED ratio test with a BLIND one:
 the KOZ term cancels from act−pred, so ρ reads 1.000 on all 139 accepted steps

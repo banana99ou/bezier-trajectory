@@ -20,6 +20,7 @@ PILLARS = [
     ("Pillar 3 -- KKT / feasibility at x*", "pillar3_kkt"),
     ("Pillar 4a -- per-iteration diagnostics", "pillar4_diag"),
     ("Pillar 4b -- regression sweep", "pillar4_sweep"),
+    ("Pillar 5 -- optimality (external KKT + descent search)", "pillar5_optimality"),
 ]
 
 
@@ -40,7 +41,8 @@ def main():
     lines.append(f"## OVERALL: {'PASS' if all_pass else 'FAIL'}")
     lines.append("")
     lines.append("Details in `artifacts/verify/pillar*/summary.md`. Run the whole harness with "
-                 "`tools/verify/{nlp_crosscheck,ablation,kkt_check,diagnostics,sweep}.py` then this.")
+                 "`tools/verify/{nlp_crosscheck,ablation,kkt_check,diagnostics,sweep,"
+                 "optimality}.py` then this.")
     H.write_text(H.ARTIFACT_ROOT / "VERDICT.md", "\n".join(lines))
     print("\n".join(lines))
     return all_pass

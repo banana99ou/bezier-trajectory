@@ -63,13 +63,36 @@ def eci_from_circular(radius_km, inc_deg, raan_deg, u_deg):
     return q @ r_pqw, q @ v_pqw
 
 
+# Scenario grid. `inc`/`raan` set the departure orbit plane; `inc1`/`raan1`
+# default to them (coplanar) and may be given separately for a plane change,
+# which makes the two velocity boundary conditions point in materially
+# different directions. Larger `lag` = the chord passes deeper through the KOZ,
+# so the half-space rows bind harder and the normals re-aim further per step —
+# which is exactly the regime that exposes solver defects (§9).
 _SCENARIOS = {
     # The trust-matters regime studied throughout the fix (120 deg phase lag).
     "phase120": dict(N=7, progress_alt=245.0, iss_alt=400.0, inc=51.64,
-                     raan=0.0, iss_u=45.0, lag=120.0, r_e=6471.0, T=1500.0),
+                     raan=0.0, iss_u=45.0, lag=120.0, r_e=6471.0, T=1500.0, r0=2000.0),
     # A milder geometry (KOZ less aggressively active).
     "phase70": dict(N=7, progress_alt=245.0, iss_alt=400.0, inc=51.64,
-                    raan=0.0, iss_u=45.0, lag=70.0, r_e=6471.0, T=1500.0),
+                    raan=0.0, iss_u=45.0, lag=70.0, r_e=6471.0, T=1500.0, r0=2000.0),
+    # Harder phasings: the KOZ binds over a longer arc than phase120.
+    "phase135": dict(N=7, progress_alt=245.0, iss_alt=400.0, inc=51.64,
+                     raan=0.0, iss_u=45.0, lag=135.0, r_e=6471.0, T=1500.0, r0=2000.0),
+    # 170 deg is nearly antipodal: the straight-line initial guess passes 5420 km
+    # INSIDE the keep-out sphere, so r0 must be large enough to repair that at
+    # iteration 1 (design_freeze section 5). r0=2000 fails with stop_reason=3;
+    # r0>=4000 converges, and to the same answer for every r0 in 4000..12000.
+    "phase170": dict(N=7, progress_alt=245.0, iss_alt=400.0, inc=51.64,
+                     raan=0.0, iss_u=45.0, lag=170.0, r_e=6471.0, T=1500.0, r0=4000.0),
+    # Plane change: same 120 deg phasing, but the target orbit is inclined 20 deg
+    # further and 15 deg off in RAAN, so v0 and v1 differ in DIRECTION as well as
+    # magnitude (~25 deg apart). The transfer is genuinely three-dimensional, and
+    # the segment centroids leave the departure plane — the case where a single
+    # supporting half-space per segment is least representative of the sphere.
+    "planechange": dict(N=7, progress_alt=245.0, iss_alt=400.0, inc=51.64,
+                        raan=0.0, inc1=71.64, raan1=15.0, iss_u=45.0, lag=120.0,
+                        r_e=6471.0, T=1500.0, r0=2000.0),
 }
 
 
@@ -80,10 +103,20 @@ def make_scenario(name, N=None):
     progress_r = R_E_EARTH + s["progress_alt"]
     iss_r = R_E_EARTH + s["iss_alt"]
     P_start, v0 = eci_from_circular(progress_r, s["inc"], s["raan"], s["iss_u"] - s["lag"])
-    P_end, v1 = eci_from_circular(iss_r, s["inc"], s["raan"], s["iss_u"])
+    P_end, v1 = eci_from_circular(iss_r, s.get("inc1", s["inc"]),
+                                  s.get("raan1", s["raan"]), s["iss_u"])
     P_init = generate_initial_control_points(deg, P_start, P_end)
     return dict(name=name, N=deg, P_start=P_start, P_end=P_end, v0=v0, v1=v1,
-                r_e=float(s["r_e"]), T=float(s["T"]), P_init=np.asarray(P_init, float))
+                r_e=float(s["r_e"]), T=float(s["T"]), r0=float(s.get("r0", 2000.0)),
+                P_init=np.asarray(P_init, float))
+
+
+def bc_angle_deg(sc):
+    """Angle between the two velocity boundary conditions (deg) — how much the
+    departure and arrival headings differ. 0 would mean parallel."""
+    a, b = sc["v0"], sc["v1"]
+    c = float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+    return float(np.degrees(np.arccos(np.clip(c, -1.0, 1.0))))
 
 
 # ----------------------------------------------------------------------------
@@ -124,20 +157,31 @@ def grav_total(rs):
     return np.array([_accel_total(r, MU, R_E_EARTH, J2) for r in rs])
 
 
-def J_true(P, T, n_dense=1200):
+def J_true(P, T, n_nodes=192):
     """
-    Canonical true nonconvex objective:
-        mean_k || a_geom(tau_k)/T^2 - a_grav_total(r(tau_k)) ||^2   [ (km/s^2)^2 ]
-    The 1/n_dense mean-normalization mirrors the Rust w_seg = 1/n_lin_seg scaling
-    so magnitudes are comparable to `cost_true_energy` (though NOT identical:
-    Rust uses linearized gravity + segment centroids).
+    Canonical true nonconvex objective, as an INTEGRAL:
+        J = int_0^1 || a_geom(tau)/T^2 - a_grav_total(r(tau)) ||^2 dtau
+    in (km/s^2)^2, matching the normalization of the Rust exact-Gram objective
+    (though NOT identical to it: Rust linearizes gravity per segment).
+
+    Gauss-Legendre, NOT a uniform mean. The former `mean over linspace` form was
+    a Riemann sum with full-weight endpoints and converged only as O(1/n): at its
+    n_dense=1200 default it carried ~1.6e-3 relative error, which is LARGER than
+    differences this harness is routinely asked to resolve (the A/B objective gap
+    is 1.7e-3). It also manufactured phantom descent directions in
+    `tools/verify/optimality.py` -- a "1.4e-5 improvement" that reversed sign to
+    +5.0e-5 once the quadrature converged. Measured convergence of this form:
+    n_nodes 48 -> 96 -> 192 changes J by <1e-12 relative, i.e. it is exact to
+    f64 for this integrand.
     """
     P = np.asarray(P, float)
-    taus = np.linspace(0.0, 1.0, int(n_dense))
+    x, w = np.polynomial.legendre.leggauss(int(n_nodes))
+    taus = 0.5 * (x + 1.0)          # map [-1,1] -> [0,1]
+    wts = 0.5 * w
     r = positions(P, taus)
     a_geom = accels_tau(P, taus) / (T * T)
     u = a_geom - grav_total(r)
-    return float(np.mean(np.sum(u * u, axis=1)))
+    return float(np.sum(wts * np.sum(u * u, axis=1)))
 
 
 def _grav_jacobians(rs, h=1e-3):
@@ -189,9 +233,16 @@ def velocity_endpoints(P, T):
 # ----------------------------------------------------------------------------
 
 def run_rust(scenario, n_seg=16, max_iter=1000,
-             tol=1e-8, scp_trust_radius=2000.0, scp_prox_weight=0.0,
+             tol=1e-8, scp_trust_radius=None, scp_prox_weight=0.0,
              sample_count=100, enforce_prograde=False, **overrides):
-    """Run the Rust SCvx solver on a scenario. Returns (P_opt, info)."""
+    """Run the Rust SCvx solver on a scenario. Returns (P_opt, info).
+
+    scp_trust_radius defaults to the scenario's own r0: it must exceed the
+    iteration-1 boundary-condition repair distance, which is a property of the
+    geometry, not a global constant (design_freeze section 5).
+    """
+    if scp_trust_radius is None:
+        scp_trust_radius = float(scenario.get("r0", 2000.0))
     kwargs = dict(
         n_seg=n_seg, r_e=scenario["r_e"], max_iter=max_iter, tol=tol,
         v0=scenario["v0"], v1=scenario["v1"], sample_count=sample_count,
