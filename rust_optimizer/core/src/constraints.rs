@@ -323,6 +323,166 @@ pub fn koz_clearances(
     out
 }
 
+/// Build SELF-CONSISTENT KOZ rows about the reference `p`.
+///
+/// `build_koz_constraints` fixes the normal at the reference. Those rows are sound
+/// (satisfying them certifies the curve, whoever aimed the normal) but they describe
+/// a half-space that will no longer be the one the centroid rule picks once the
+/// solver has moved. A step optimized against them lands flush on a plane that then
+/// pivots out from under it: measured on phase120/n_seg=16, the accepted iterate
+/// satisfies its rows exactly (violation 0.0) yet misses the rows rebuilt at itself
+/// by 68 m -- while clearing the KOZ sphere by 16.0 km. That phantom violation is
+/// pure pivot: 455 km of lateral reach along the plane times a 31 arcsec rotation.
+///
+/// These rows add the term that makes the subproblem ANTICIPATE the pivot, so its
+/// optimum is a point the centroid rule still agrees with. That is a self-consistency
+/// device for the step, NOT a physical model: the KOZ is a sphere and the half-space
+/// is the convexification of it, so there is no "truer" constraint being approximated
+/// here (design_freeze.md section 9). Its purpose is to keep the point the QP returns
+/// on the same footing as the point the next iteration will grade.
+///
+/// With c = centroid_j, v = c - c_koz, n = v/||v||, d_k = q_k - c_koz, s_k = n.d_k,
+/// and w_m the centroid weights (w_m = mean_i A[i][m]):
+///
+/// ```text
+/// dn/dP[m]    = (w_m/||v||) (I - n n^T)
+/// grad g_k[m] = A[k][m] n + (w_m/||v||) (d_k - s_k n)
+/// ```
+///
+/// The row is grad g_k(p) and the bound is grad g_k(p).p - g_k(p), so the constraint
+/// grad g_k.x >= grad g_k(p).p - g_k(p) reproduces g_k(p) >= 0 exactly at x = p.
+///
+/// NOTE this row is a first-order model, NOT a conservative restriction: a point
+/// satisfying it may have g_k(x) < 0. Soundness of the REPORTED guarantee is
+/// unaffected -- the certificate is always evaluated with the exact rows via
+/// `koz_clearances` / `build_koz_constraints`.
+pub fn build_koz_constraints_linearized(
+    a_list: &[Vec<f64>],
+    p: &[f64],
+    np1: usize,
+    dim: usize,
+    r_e: f64,
+    c_koz: &[f64],
+    degenerate: DegenerateNormal,
+) -> (LinearConstraint, usize) {
+    let n_vars = np1 * dim;
+    let mut rows: Vec<Vec<f64>> = Vec::new();
+    let mut lbs: Vec<f64> = Vec::new();
+    let mut n_degenerate = 0usize;
+
+    for a_seg in a_list {
+        // Segment control points q_i = (A_seg P)_i
+        let mut qi = vec![0.0; np1 * dim];
+        for i in 0..np1 {
+            for d in 0..dim {
+                let mut s = 0.0;
+                for j in 0..np1 {
+                    s += a_seg[i * np1 + j] * p[j * dim + d];
+                }
+                qi[i * dim + d] = s;
+            }
+        }
+        // Centroid weights w_m = mean_i A[i][m], and the centroid itself.
+        let mut w_row = vec![0.0; np1];
+        for i in 0..np1 {
+            for m in 0..np1 {
+                w_row[m] += a_seg[i * np1 + m];
+            }
+        }
+        for m in 0..np1 {
+            w_row[m] /= np1 as f64;
+        }
+        let mut ci = vec![0.0; dim];
+        for i in 0..np1 {
+            for d in 0..dim {
+                ci[d] += qi[i * dim + d];
+            }
+        }
+        for d in 0..dim {
+            ci[d] /= np1 as f64;
+        }
+
+        let mut v: Vec<f64> = (0..dim).map(|d| ci[d] - c_koz[d]).collect();
+        let mut vn = v.iter().map(|t| t * t).sum::<f64>().sqrt();
+        if vn < 1e-12 {
+            n_degenerate += 1;
+            match degenerate {
+                DegenerateNormal::Skip => continue,
+                DegenerateNormal::Fallback => {
+                    let mut best = 0usize;
+                    let mut best_d2 = -1.0f64;
+                    for i in 0..np1 {
+                        let d2: f64 = (0..dim)
+                            .map(|d| (qi[i * dim + d] - c_koz[d]).powi(2))
+                            .sum();
+                        if d2 > best_d2 {
+                            best_d2 = d2;
+                            best = i;
+                        }
+                    }
+                    if best_d2 > 1e-24 {
+                        for d in 0..dim {
+                            v[d] = qi[best * dim + d] - c_koz[d];
+                        }
+                    } else {
+                        v[0] = 1.0;
+                        for d in 1..dim {
+                            v[d] = 0.0;
+                        }
+                    }
+                    vn = v.iter().map(|t| t * t).sum::<f64>().sqrt();
+                }
+            }
+        }
+        let n: Vec<f64> = v.iter().map(|t| t / vn).collect();
+
+        for k in 0..np1 {
+            let d_k: Vec<f64> = (0..dim).map(|d| qi[k * dim + d] - c_koz[d]).collect();
+            let s_k: f64 = (0..dim).map(|d| n[d] * d_k[d]).sum();
+            // t = (d_k - s_k n) / ||v||  -- the normal-rotation contribution
+            let t_vec: Vec<f64> = (0..dim).map(|d| (d_k[d] - s_k * n[d]) / vn).collect();
+
+            let mut row = vec![0.0; n_vars];
+            for m in 0..np1 {
+                let a_km = a_seg[k * np1 + m];
+                let w_m = w_row[m];
+                let base = m * dim;
+                for d in 0..dim {
+                    row[base + d] += a_km * n[d] + w_m * t_vec[d];
+                }
+            }
+            // lb = grad.p - g_k(p), with g_k(p) = s_k - r_e
+            let grad_dot_p: f64 = (0..n_vars).map(|i| row[i] * p[i]).sum();
+            lbs.push(grad_dot_p - (s_k - r_e));
+            rows.push(row);
+        }
+    }
+
+    if rows.is_empty() {
+        return (
+            LinearConstraint {
+                a: vec![0.0; n_vars],
+                lb: vec![f64::NEG_INFINITY],
+                ub: vec![f64::INFINITY],
+                n_rows: 1,
+                n_vars,
+            },
+            n_degenerate,
+        );
+    }
+
+    let n_rows = rows.len();
+    let mut a = vec![0.0; n_rows * n_vars];
+    for (i, row) in rows.iter().enumerate() {
+        a[i * n_vars..(i + 1) * n_vars].copy_from_slice(row);
+    }
+    let ub = vec![f64::INFINITY; n_rows];
+    (
+        LinearConstraint { a, lb: lbs, ub, n_rows, n_vars },
+        n_degenerate,
+    )
+}
+
 #[cfg(test)]
 mod koz_row_tests {
     use super::*;
@@ -361,6 +521,97 @@ mod koz_row_tests {
                 (0..nvars).map(|i| lc.a[r * nvars + i] * p[i]).sum::<f64>() - lc.lb[r];
             let rel = (model - g_p[r]).abs() / g_p[r].abs().max(1.0);
             assert!(rel < 1e-9, "row {r} wrong at reference: {model} vs {}", g_p[r]);
+        }
+    }
+
+    fn direction(nvars: usize, seed: u64) -> Vec<f64> {
+        let mut s = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        (0..nvars)
+            .map(|_| {
+                s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                ((s >> 33) as f64 / (1u64 << 31) as f64) - 1.0
+            })
+            .collect()
+    }
+
+    /// The self-consistent rows must be the actual first-order Taylor model of the
+    /// exact clearance g_k, i.e. the residual must shrink QUADRATICALLY in the step.
+    ///
+    /// This is the discriminating test. The frozen-normal rows of
+    /// `build_koz_constraints` reproduce g_k(p) exactly at p but drop the dn/dx term,
+    /// so their residual shrinks only LINEARLY. Halving t must therefore quarter the
+    /// self-consistent residual while merely halving the frozen-normal one -- and that
+    /// order gap is what decides whether the QP's optimum is a point the centroid rule
+    /// still agrees with after it re-aims.
+    #[test]
+    fn linearized_koz_rows_are_second_order_accurate() {
+        let (np1, dim, r_e) = (8usize, 3usize, 6471.0);
+        let c_koz = vec![0.0; dim];
+        let nvars = np1 * dim;
+        let p = sample_polygon(np1);
+
+        for &n_seg in &[1usize, 4, 8] {
+            let a_list = de_casteljau::segment_matrices_equal_params(np1 - 1, n_seg);
+            let (lin, _) = build_koz_constraints_linearized(
+                &a_list, &p, np1, dim, r_e, &c_koz, DegenerateNormal::Skip,
+            );
+            let (froz, _) = build_koz_constraints(
+                &a_list, &p, np1, dim, r_e, &c_koz, DegenerateNormal::Skip,
+            );
+            let g_p = koz_clearances(&a_list, &p, np1, dim, r_e, &c_koz);
+            assert_eq!(g_p.len(), lin.n_rows, "row count mismatch");
+
+            for seed in 0..3u64 {
+                let e = direction(nvars, seed + 1);
+                let mut prev_lin = f64::NAN;
+                let mut prev_froz = f64::NAN;
+                // Two step sizes a factor of 2 apart. Range matters: the measured
+                // order is a clean 4.000 from t = 5e-2 down to ~1.5e-3, then decays
+                // (3.10 at t = 3.9e-4) as the residual reaches the f64 noise floor
+                // against a ~6900 km coordinate scale. These values sit in the
+                // asymptotic regime with margin at both ends.
+                for &t in &[2.5e-2f64, 1.25e-2] {
+                    let x: Vec<f64> = (0..nvars).map(|i| p[i] + t * e[i]).collect();
+                    let g_x = koz_clearances(&a_list, &x, np1, dim, r_e, &c_koz);
+
+                    let mut err_lin: f64 = 0.0;
+                    let mut err_froz: f64 = 0.0;
+                    for r in 0..lin.n_rows {
+                        let model_lin: f64 = (0..nvars)
+                            .map(|i| lin.a[r * nvars + i] * x[i])
+                            .sum::<f64>()
+                            - lin.lb[r];
+                        let model_froz: f64 = (0..nvars)
+                            .map(|i| froz.a[r * nvars + i] * x[i])
+                            .sum::<f64>()
+                            - froz.lb[r];
+                        err_lin = err_lin.max((model_lin - g_x[r]).abs());
+                        err_froz = err_froz.max((model_froz - g_x[r]).abs());
+                    }
+
+                    if prev_lin.is_finite() {
+                        // Halving t: quadratic error falls ~4x, linear only ~2x.
+                        let ratio_lin = prev_lin / err_lin.max(1e-300);
+                        let ratio_froz = prev_froz / err_froz.max(1e-300);
+                        assert!(
+                            ratio_lin > 3.2,
+                            "self-consistent rows are not 2nd order (n_seg={n_seg} seed={seed}): \
+                             error ratio {ratio_lin:.3} on halving t (expect ~4)"
+                        );
+                        assert!(
+                            ratio_froz < 3.0,
+                            "frozen-normal rows unexpectedly 2nd order (n_seg={n_seg}): \
+                             ratio {ratio_froz:.3} (expect ~2)"
+                        );
+                        assert!(
+                            err_lin < err_froz,
+                            "self-consistent model no better than frozen: {err_lin:.3e} vs {err_froz:.3e}"
+                        );
+                    }
+                    prev_lin = err_lin;
+                    prev_froz = err_froz;
+                }
+            }
         }
     }
 

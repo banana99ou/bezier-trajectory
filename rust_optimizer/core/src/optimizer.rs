@@ -807,11 +807,11 @@ pub fn optimize_orbital_docking(
     // stopped 33% above the optimum on phase120).
     let conv_streak_required = 3usize;
     let mut conv_streak = 0usize;
-    // The model-stationarity test needs the SAME K-consecutive guard, and for a
-    // sharper reason than the merit streak. Since the KOZ penalty cancels from
-    // act − pred (see the merit block), `rel` and `pred` move together, so a
-    // one-shot stationarity exit would fire on the first quiet iteration of the
-    // crawl — reintroducing exactly the premature stop that K = 3 exists to prevent.
+    // The model-stationarity test carries the same K-consecutive guard, for the same
+    // reason: a single quiet `pred` is not evidence of stationarity when the walls
+    // re-aim between iterations, and a one-shot test is exactly the premature-stop
+    // failure K = 3 exists to prevent. Costs a few iterations, removes a whole
+    // failure mode.
     let mut stat_streak = 0usize;
     let mut converged_scvx = false;
     // Which criterion actually ended the loop. `converged_scvx` alone cannot say:
@@ -836,7 +836,7 @@ pub fn optimize_orbital_docking(
     if trace_scvx {
         eprintln!(
             "SCVXTRACE,it,outcome,rho,pred,act,l_p,l_c,t_p,t_c,rel,trust_before,trust_after,\
-step_norm,vlin_p,vlin_c,hown_c,hard_viol_p,conv_streak,pred_floor,total_slack,\
+step_norm,vlin_p,vlin_c,vtrue_c,hard_viol_p,conv_streak,pred_floor,total_slack,\
 quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
         );
     }
@@ -869,21 +869,32 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
         // (Honours the legacy freeze_gravity_jacobian knob and updates the
         // Jacobian-drift diagnostic against the iter-1 baseline.)
         // KOZ rows: one supporting half-space per De Casteljau segment, normal aimed
-        // from the KOZ centre at the segment centroid OF THE REFERENCE. With the normal
-        // fixed these rows are LINEAR in x and, by Prop 1, satisfying them certifies the
-        // continuous curve — for any x, not just for p (the normal is a unit vector, so
-        // a satisfied row lower-bounds the true distance whatever iterate chose it;
-        // `rows_built_at_reference_certify_any_satisfying_point` in constraints.rs).
+        // from the KOZ centre at the segment centroid. The centroid rule re-aims every
+        // iteration, so the half-space the QP optimizes against is NOT the one the next
+        // iteration will grade with — unless the subproblem accounts for the pivot.
         //
-        // These rows ARE the convexification, not a model of some other function: the
-        // certificate is existential ("there exists a witness half-space per segment")
-        // and this is the witness. So there is nothing here for the ratio test to
-        // supervise, and the merit below must grade the candidate on THESE SAME rows.
-        // See design_freeze.md section 9 for the full argument and the rejected
-        // alternative (linearizing the centroid rule's normal rotation).
-        let (koz, koz_degen) = constraints::build_koz_constraints(
-            &a_list, &p, np1, dim, r_e, &c_koz, koz_degenerate_mode,
-        );
+        // On the trust path it does: `build_koz_constraints_linearized` adds the
+        // normal-rotation term, so the QP's optimum is a point the centroid rule still
+        // agrees with after re-aiming. Without it the step lands flush on a plane that
+        // then pivots out from under it (measured phase120/n_seg=16: iterate satisfies
+        // its own rows to 0.0 yet misses the rows rebuilt at itself by 68 m, while
+        // clearing the sphere by 16.0 km), and the solver spends ~100 iterations
+        // negotiating with a phantom violation.
+        //
+        // This is a self-consistency device for the STEP, not a physical model — see
+        // design_freeze.md section 9. Soundness is unaffected: the certificate and the
+        // true merit are always evaluated with the EXACT rows (`build_koz_constraints`).
+        // The legacy fixed-point path accepts unconditionally with no ratio test, so it
+        // keeps the conservative rows.
+        let (koz, koz_degen) = if trust_active {
+            constraints::build_koz_constraints_linearized(
+                &a_list, &p, np1, dim, r_e, &c_koz, koz_degenerate_mode,
+            )
+        } else {
+            constraints::build_koz_constraints(
+                &a_list, &p, np1, dim, r_e, &c_koz, koz_degenerate_mode,
+            )
+        };
         koz_degenerate_max = koz_degenerate_max.max(koz_degen);
         let use_frozen =
             freeze_gravity_jacobian && it > effective_freeze_after && lin_frozen_cache.is_some();
@@ -1200,24 +1211,22 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
             // ---- Canonical SCvx step acceptance (penalized merit; Mao et al.) ----
             // Convex merit  L(x) = J^(k)(x) + w_s·Σ max(0, b_r − a_r·x)   — exactly what
             //                      the elastic QP minimizes over the trust box.
-            // True merit    T(x) = J(x)     + w_s·(violation of THE SAME rows)
-            // where J(x) swaps the linearized gravity residual for the true one.
+            // True merit    T(x) = J(x)     + w_s·h(x)
+            // where J(x) swaps the linearized gravity residual for the true one, and
+            // h(x) is the *hull-certifiability* violation: the half-space rows rebuilt
+            // at x itself (h = 0 ⇔ x carries the Prop-1 certificate, which is the
+            // property actually being claimed at the end of the run). The convex rows
+            // are h's first-order model, so rho = actual/predicted measures the two
+            // model errors that exist: gravity linearization and normal re-aiming.
             //
-            // The KOZ penalty term is IDENTICAL in L and T, so it cancels from
-            // act − pred and rho supervises exactly one thing: the gravity
-            // linearization, the only genuine nonlinearity in the subproblem. This is
-            // deliberate (design_freeze.md section 9). The half-spaces are the chosen
-            // Prop-1 witnesses, not an approximation of a "true" KOZ function, so there
-            // is no honest true-side quantity to put opposite them:
-            //   - rebuilding the rows at the candidate grades a DIFFERENT function from
-            //     the one the QP minimized (measured phase120: rho in [-1.07e5, -1] on
-            //     every rejected step, with candidates clearing the sphere by 15.6 km);
-            //   - penalizing sphere distance instead deadlocks the test, since the
-            //     half-space is conservative and its violation need not vanish where
-            //     the sphere constraint holds (pred large, act ~ 0).
-            // Soundness is unaffected: satisfied rows certify the curve regardless of
-            // which iterate aimed the normals, and the convergence gate below still
-            // re-checks the accepted iterate against its OWN rows.
+            // Grading h at the candidate is what makes the convergence test mean
+            // "carries its own certificate" rather than "satisfied last iteration's
+            // rows". It requires the subproblem to model the re-aim (it does, above);
+            // pairing this merit with frozen-normal rows is the defect that started
+            // this work. Penalizing the sphere distance of the control points instead
+            // would NOT work either: the half-space is conservative, so its violation
+            // need not vanish where the sphere constraint holds, and the mismatch
+            // deadlocks the ratio test (pred large, act ≈ 0).
             let cand = &x_new;
             let trust_before = trust;
             let step_norm: f64 = (0..nvars)
@@ -1235,27 +1244,24 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
                 koz_row_violation(cand, &all_a_rows, &all_lb, koz_row_start, n_koz, nvars);
             let (mres_p, tres_p) = eval_residual_terms(&p, lin_for_qp_ref, np1, dim, t, &consts);
             let (mres_c, tres_c) = eval_residual_terms(cand, lin_for_qp_ref, np1, dim, t, &consts);
-            // Both sides of the ratio test use the SAME rows (built at p this
-            // iteration), so the KOZ penalty enters L and T identically and cancels
-            // from act − pred. vlin_p is exact at p by construction
-            // (`koz_rows_exact_at_reference`).
-            let (vtrue_p, vtrue_c) = (vlin_p, vlin_c);
-
-            // Diagnostics only — never fed to the merit. hown_c = the candidate's
-            // violation of the rows the CENTROID RULE WOULD BUILD AT THE CANDIDATE;
-            // it measures how far the witness re-aims per step, which is the quantity
-            // the convergence gate below has to police. cpviol_c = true sphere
-            // penetration of the candidate's subdivided control points.
-            // kozslack_min_p = tightest KOZ row slack at the reference (is the KOZ
-            // even active?).
-            let hown_c = if trace_scvx {
+            // h(p) and h(cand): EXACT rows rebuilt at each point. The reference's own
+            // rows were already built at p this iteration, and they reproduce the exact
+            // clearance there (`koz_rows_exact_at_reference`), so vlin_p == h(p) and
+            // only the candidate needs its own re-aimed walls.
+            let (vtrue_p, vtrue_c) = {
                 let (koz_c, _) = constraints::build_koz_constraints(
                     &a_list, cand, np1, dim, r_e, &c_koz, koz_degenerate_mode,
                 );
-                koz_row_violation(cand, &koz_c.a, &koz_c.lb, 0, koz_c.n_rows, nvars)
-            } else {
-                f64::NAN
+                let h_c = koz_row_violation(cand, &koz_c.a, &koz_c.lb, 0, koz_c.n_rows, nvars);
+                (vlin_p, h_c)
             };
+
+            // Diagnostics only — never fed to the merit. cpviol_c = true sphere
+            // penetration of the candidate's subdivided control points; if this is 0
+            // while vtrue_c > 0 the step is only failing the algorithm's own re-aimed
+            // supporting half-space, not the actual keep-out sphere.
+            // kozslack_min_p = tightest KOZ row slack at the reference (is the KOZ
+            // even active?).
             let (cpviol_c, minrad_c, kozslack_min_p) = if trace_scvx {
                 let mut smin = f64::INFINITY;
                 for r in koz_row_start..koz_row_start + n_koz {
@@ -1331,7 +1337,7 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
 {:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{},{:.17e},{:.17e},\
 {:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e}",
                         it, f64::NAN, pred, act, l_p, l_c, t_p, t_c, f64::NAN,
-                        trust, trust, step_norm, vlin_p, vlin_c, hown_c, hard_viol_p,
+                        trust, trust, step_norm, vlin_p, vlin_c, vtrue_c, hard_viol_p,
                         0, pred_floor, iter_total_slack, quad_p, quad_c,
                         tres_p - mres_p, tres_c - mres_c, cpviol_c, minrad_c, kozslack_min_p
                     );
@@ -1367,10 +1373,7 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
             // is stationarity of the CONVEX MODEL; it coincides with stationarity of the
             // true problem only where the model is faithful, which is what rho certifies.
             //
-            // K-consecutive, like the merit streak: with the KOZ term cancelling from
-            // act − pred, a single quiet `pred` is not evidence of stationarity — the
-            // crawl along re-aimed witnesses produces isolated quiet iterations and
-            // then breaks through to a materially better value.
+            // K-consecutive, like the merit streak (see `stat_streak`).
             if pred >= 0.0 && pred < tol_f * t_p.abs() && vlin_p <= 1e-6 {
                 stat_streak += 1;
                 if stat_streak >= conv_streak_required {
@@ -1415,7 +1418,7 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
                         it,
                         if pred < pred_floor { "accept_null" } else { "accept" },
                         rho, pred, act, l_p, l_c, t_p, t_c, rel,
-                        trust_before, trust, step_norm, vlin_p, vlin_c, hown_c, hard_viol_p,
+                        trust_before, trust, step_norm, vlin_p, vlin_c, vtrue_c, hard_viol_p,
                         conv_streak, pred_floor, iter_total_slack, quad_p, quad_c,
                         tres_p - mres_p, tres_c - mres_c, cpviol_c, minrad_c, kozslack_min_p
                     );
@@ -1425,38 +1428,22 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
                 merit_history.push(t_c);
                 step_norm_history.push(step_norm);
                 slack_history.push(iter_total_slack);
-                // 0 = the step is still repairing the KOZ rows it was optimized
-                // against (elastic slack in use), 1 = it satisfies them.
+                // 0 = uncertified iterate (feasibility restoration), 1 = the iterate
+                // carries the Prop-1 certificate against its OWN rebuilt rows.
                 phase_history.push(if vtrue_c > 1e-6 { 0.0 } else { 1.0 });
                 // Converged = merit stationary for conv_streak_required consecutive
                 // accepted steps AND the accepted iterate carries the hull certificate.
-                //
-                // The certificate here is checked against the iterate's OWN re-aimed
-                // rows, not the ones it was optimized against. This is a GATE, never a
-                // merit term — it cannot reach `act`, `pred` or rho, so it does not
-                // reintroduce the mismatch. It closes the terminal-step hole: every
-                // accepted step is implicitly re-checked one iteration later (its own
-                // violation shows up in the next subproblem), except the streak's last
-                // one, because the loop exits first. Without this, `final_hull_violation`
-                // — which independently rebuilds the rows — could exceed the tolerance
-                // at a point the loop just declared converged. The trajectory would
-                // still be SAFE (the rows it did satisfy are a valid witness); the
-                // claim "carries the certificate" is what would be false.
+                // vtrue_c is measured against the rows rebuilt AT the candidate, so
+                // this gate already asserts the certificate the run reports at the end
+                // — no separate re-check is needed. A penalized-stationary-but-
+                // uncertified point keeps iterating instead of reporting a false
+                // success.
                 if rel < tol_f && vtrue_c <= 1e-6 {
-                    let (koz_own, _) = constraints::build_koz_constraints(
-                        &a_list, &p, np1, dim, r_e, &c_koz, koz_degenerate_mode,
-                    );
-                    let h_own =
-                        koz_row_violation(&p, &koz_own.a, &koz_own.lb, 0, koz_own.n_rows, nvars);
-                    if h_own <= 1e-6 {
-                        conv_streak += 1;
-                        if conv_streak >= conv_streak_required {
-                            converged_scvx = true;
-                            stop_reason = 1.0;
-                            break;
-                        }
-                    } else {
-                        conv_streak = 0;
+                    conv_streak += 1;
+                    if conv_streak >= conv_streak_required {
+                        converged_scvx = true;
+                        stop_reason = 1.0;
+                        break;
                     }
                 } else {
                     conv_streak = 0;
@@ -1473,7 +1460,7 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
                         it,
                         if pred < pred_floor { "reject_null" } else { "reject" },
                         rho, pred, act, l_p, l_c, t_p, t_c, rel,
-                        trust_before, trust, step_norm, vlin_p, vlin_c, hown_c, hard_viol_p,
+                        trust_before, trust, step_norm, vlin_p, vlin_c, vtrue_c, hard_viol_p,
                         0, pred_floor, iter_total_slack, quad_p, quad_c,
                         tres_p - mres_p, tres_c - mres_c, cpviol_c, minrad_c, kozslack_min_p
                     );
