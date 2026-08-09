@@ -234,8 +234,10 @@ citing any of them in the paper.
 
 ## 8. Paper terminology
 
-`doc/korean_writing_case_collection.md` §6 판정표 is the vocabulary authority;
-the local `korean-prose` skill is mandatory for Korean output. "merit function"
+`~/.claude/skills/korean-prose/references/korean_writing_case_collection.md` §6
+판정표 is the vocabulary authority; the `korean-prose` skill is mandatory for
+Korean output. Both now live in the dotfiles repo (`claude/skills/korean-prose/`)
+and are symlinked into every project — this repo no longer carries a copy. "merit function"
 stays in ENGLISH (확대 목적함수 rejected — a single printed occurrence in an
 adjacent field is not precedent; that rule is now general).
 
