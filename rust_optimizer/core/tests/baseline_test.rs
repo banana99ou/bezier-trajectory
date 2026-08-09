@@ -306,11 +306,60 @@ fn test_optimizer_golden_run() {
         result.info["qp_almost_solved"]
     );
 
-    // The merit-based convergence test must be what stopped the loop -- not the
-    // iteration cap and not trust-region collapse.
-    assert_eq!(
-        result.info["scvx_converged"], 1.0,
-        "SCvx did not converge (iterations={}, final_trust_radius={})",
-        result.iterations, result.info["final_trust_radius"]
+    // NOTE: convergence is deliberately NOT asserted here -- see
+    // `known_defect_scvx_two_cycle_prevents_convergence` below, which documents the
+    // open defect rather than hiding it behind a weakened assertion.
+}
+
+/// The loop must stop for a STATED reason, not by running out of budget or by shrinking
+/// its trust region to nothing.
+///
+/// The assertion is deliberately on `scvx_stop_reason`, NOT on `scvx_converged`. That
+/// flag is also set by the trust-collapse exit whenever the iterate happens to be
+/// feasible, so it reads "true" at a deadlocked point; an earlier version of this test
+/// asserted on it and passed spuriously.
+///
+/// Regression history on this scenario:
+///   200 iters -- accept/reject 2-cycle, 100 `pred < 0` events (QP conditioning: the
+///                variables were ~7e3 km against a Hessian of ~1e-13)
+///    24 iters -- after step-coordinate + power-of-two objective rescaling; 0 negative
+///                pred, but the merit sat frozen to 17 digits for the last 20 iterations
+///                while the ratio test rejected floating-point noise (act ~ -1.1e-15 on
+///                a merit of 3.8e-7) until the trust region collapsed
+///     5 iters -- after adding the predicted-reduction stationarity test; identical
+///                objective to all 17 digits, and the trust region never shrinks
+#[test]
+fn optimizer_stops_for_a_stated_reason() {
+    let bl = load_baseline();
+    let np1 = bl.scenario.n + 1;
+    let dim = 3;
+    let mut p_init = vec![0.0; np1 * dim];
+    for i in 0..np1 {
+        for d in 0..dim {
+            p_init[i * dim + d] = bl.scenario.p_init[i][d];
+        }
+    }
+    let result = optimizer::optimize_orbital_docking(
+        &p_init, np1, dim, bl.scenario.n_seg, bl.scenario.r_e,
+        200, 1e-8, bl.scenario.t, 100, 0.0, 2000.0,
+        None, None, None, None, false, 16, 1e-2, false, 1,
+        constraints::DegenerateNormal::Skip,
+    );
+    // 1 = K-consecutive merit streak, 4 = model stationarity. Both are principled
+    // stops. 0 (iteration cap), 2 (trust collapse) and 3 (QP failure) are the loop
+    // giving up and must fail here.
+    let stop = result.info["scvx_stop_reason"];
+    assert!(
+        stop == 1.0 || stop == 4.0,
+        "loop did not stop for a stated reason: stop_reason={} (0=cap, 2=trust collapse, \
+         3=QP failure), iterations={}, final_trust_radius={}",
+        stop,
+        result.iterations,
+        result.info["final_trust_radius"]
+    );
+    assert!(
+        result.info["final_hull_violation_km"] <= 1e-6,
+        "stopped without the Prop-1 certificate: {}",
+        result.info["final_hull_violation_km"]
     );
 }

@@ -70,7 +70,13 @@ def run(scenario_name="phase120", n_seg=16):
     # The old `trust[-1] > TRUST_MIN` gate could not fail: trust_history is appended
     # only on ACCEPTED steps and the loop breaks as soon as trust < trust_min, so
     # every recorded value was >= the floor by construction.
-    converged_ok = int(info.get("scvx_converged", 0)) == 1
+    # Must be on scvx_stop_reason, NOT scvx_converged: that flag is also set by the
+    # trust-collapse exit whenever the iterate happens to be feasible, so it reads
+    # True at a deadlocked point. 1 = K-consecutive merit streak, 4 = model
+    # stationarity (both principled); 0 = iteration cap, 2 = trust collapse,
+    # 3 = QP failure (all "the loop gave up").
+    stop_reason = int(info.get("scvx_stop_reason", -1))
+    converged_ok = stop_reason in (1, 4)
     feasible_ok = bool(info["feasible"]) and float(info.get("final_cp_violation_km", 1.0)) <= 1e-6
     # Clarabel must not have fallen back to its reduced tolerances on any solve that
     # fed the ratio test.
@@ -107,8 +113,11 @@ def run(scenario_name="phase120", n_seg=16):
     md.append(f"- merit monotone within each phase: **{merit_ok}** "
               f"(near-tautological; consistency check only)")
     md.append(f"- slack -> 0 (final={slack[-1]:.2e}): **{slack_ok}**")
-    md.append(f"- stopped on the SCvx merit criterion (not the cap, not trust collapse): "
-              f"**{converged_ok}** (iterations={int(info['iterations'])}, "
+    _STOP = {0: "iteration cap", 1: "K-consecutive merit streak", 2: "trust-region collapse",
+             3: "QP failure", 4: "model stationarity"}
+    md.append(f"- stopped for a stated reason (not the cap, not trust collapse): "
+              f"**{converged_ok}** (stop_reason={stop_reason} "
+              f"[{_STOP.get(stop_reason, 'unknown')}], iterations={int(info['iterations'])}, "
               f"final trust={float(info.get('final_trust_radius', float('nan'))):.4g} km, "
               f"floor={TRUST_MIN})")
     md.append(f"- feasible + Prop-1 certificate at the final iterate "

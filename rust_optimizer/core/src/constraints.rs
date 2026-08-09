@@ -269,3 +269,167 @@ pub fn build_boundary_constraints(
 
     constraints
 }
+
+/// Exact KOZ clearance values g_k(x) for every (segment, control point) row, in the
+/// same row order as `build_koz_constraints`.
+///
+/// ```text
+/// g_k(x) = n_j(x) . (q_k(x) - c_koz) - r_e,   n_j(x) = v/||v||,
+/// v = centroid_j(x) - c_koz
+/// ```
+///
+/// g_k >= 0 for all k is exactly the Proposition-1 hull certificate. Degenerate
+/// segments (centroid on the KOZ centre) are skipped, matching `DegenerateNormal::Skip`.
+pub fn koz_clearances(
+    a_list: &[Vec<f64>],
+    x: &[f64],
+    np1: usize,
+    dim: usize,
+    r_e: f64,
+    c_koz: &[f64],
+) -> Vec<f64> {
+    let mut out = Vec::new();
+    for a_seg in a_list {
+        let mut qi = vec![0.0; np1 * dim];
+        for i in 0..np1 {
+            for d in 0..dim {
+                let mut s = 0.0;
+                for j in 0..np1 {
+                    s += a_seg[i * np1 + j] * x[j * dim + d];
+                }
+                qi[i * dim + d] = s;
+            }
+        }
+        let mut ci = vec![0.0; dim];
+        for i in 0..np1 {
+            for d in 0..dim {
+                ci[d] += qi[i * dim + d];
+            }
+        }
+        for d in 0..dim {
+            ci[d] /= np1 as f64;
+        }
+        let v: Vec<f64> = (0..dim).map(|d| ci[d] - c_koz[d]).collect();
+        let vn = v.iter().map(|t| t * t).sum::<f64>().sqrt();
+        if vn < 1e-12 {
+            continue;
+        }
+        let n: Vec<f64> = v.iter().map(|t| t / vn).collect();
+        for k in 0..np1 {
+            let s_k: f64 = (0..dim).map(|d| n[d] * (qi[k * dim + d] - c_koz[d])).sum();
+            out.push(s_k - r_e);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod koz_row_tests {
+    use super::*;
+    use crate::de_casteljau;
+
+    fn sample_polygon(np1: usize) -> Vec<f64> {
+        let mut p = vec![0.0; np1 * 3];
+        for i in 0..np1 {
+            let s = i as f64 / (np1 - 1) as f64;
+            let ang = 0.9 * s;
+            let r = 6900.0 + 250.0 * s;
+            p[i * 3] = r * ang.cos();
+            p[i * 3 + 1] = r * ang.sin();
+            p[i * 3 + 2] = 120.0 * s * (1.0 - s);
+        }
+        p
+    }
+
+    /// The rows must reproduce the exact clearance AT the reference point, so the
+    /// merit's KOZ term is exact at x = p (this is what makes `vtrue_p == vlin_p`
+    /// in the ratio test rather than an approximation).
+    #[test]
+    fn koz_rows_exact_at_reference() {
+        let (np1, dim, r_e) = (8usize, 3usize, 6471.0);
+        let c_koz = vec![0.0; dim];
+        let nvars = np1 * dim;
+        let p = sample_polygon(np1);
+        let a_list = de_casteljau::segment_matrices_equal_params(np1 - 1, 4);
+        let g_p = koz_clearances(&a_list, &p, np1, dim, r_e, &c_koz);
+        let lc = build_koz_constraints(
+            &a_list, &p, np1, dim, r_e, &c_koz, DegenerateNormal::Skip,
+        ).0;
+        assert_eq!(g_p.len(), lc.n_rows, "row count mismatch");
+        for r in 0..lc.n_rows {
+            let model: f64 =
+                (0..nvars).map(|i| lc.a[r * nvars + i] * p[i]).sum::<f64>() - lc.lb[r];
+            let rel = (model - g_p[r]).abs() / g_p[r].abs().max(1.0);
+            assert!(rel < 1e-9, "row {r} wrong at reference: {model} vs {}", g_p[r]);
+        }
+    }
+
+    /// SOUNDNESS OF THE WITNESS ARGUMENT (design_freeze section 9).
+    ///
+    /// The whole of Reading B rests on this: rows built at a reference `p` remain a
+    /// valid Proposition-1 certificate for ANY other point `x` that satisfies them.
+    /// The normal is a unit vector, so `n . (q - c_koz) <= ||q - c_koz||`; a satisfied
+    /// row therefore lower-bounds the true distance regardless of which iterate chose
+    /// `n`. If this test fails, grading the candidate on the reference's rows would be
+    /// unsound and the merit must go back to rebuilding rows at the candidate.
+    #[test]
+    fn rows_built_at_reference_certify_any_satisfying_point() {
+        let (np1, dim, r_e) = (8usize, 3usize, 6471.0);
+        let c_koz = vec![0.0; dim];
+        let nvars = np1 * dim;
+        let p = sample_polygon(np1);
+
+        for &n_seg in &[1usize, 4, 16] {
+            let a_list = de_casteljau::segment_matrices_equal_params(np1 - 1, n_seg);
+            let lc = build_koz_constraints(
+                &a_list, &p, np1, dim, r_e, &c_koz, DegenerateNormal::Skip,
+            ).0;
+
+            // Displace far enough that the centroid rule would pick very different
+            // normals at x than it did at p.
+            for scale in [0.0f64, 50.0, 400.0, 2000.0] {
+                let x: Vec<f64> = (0..nvars)
+                    .map(|i| {
+                        let s = (i % 7) as f64 / 7.0 - 0.5;
+                        p[i] + scale * s
+                    })
+                    .collect();
+
+                // Every row of the reference-built set that x satisfies must imply the
+                // corresponding subdivided control point of x clears the sphere.
+                let mut checked = 0usize;
+                for (seg, a_seg) in a_list.iter().enumerate() {
+                    for k in 0..np1 {
+                        let r = seg * np1 + k;
+                        if r >= lc.n_rows {
+                            continue;
+                        }
+                        let ax: f64 = (0..nvars).map(|i| lc.a[r * nvars + i] * x[i]).sum();
+                        if ax < lc.lb[r] {
+                            continue; // row violated: nothing is claimed
+                        }
+                        // q_k(x) for this segment
+                        let mut q = vec![0.0; dim];
+                        for d in 0..dim {
+                            for j in 0..np1 {
+                                q[d] += a_seg[k * np1 + j] * x[j * dim + d];
+                            }
+                        }
+                        let dist = (0..dim)
+                            .map(|d| (q[d] - c_koz[d]).powi(2))
+                            .sum::<f64>()
+                            .sqrt();
+                        assert!(
+                            dist >= r_e - 1e-6,
+                            "reference-built row {r} satisfied at scale {scale} \
+                             (n_seg={n_seg}) but the point is INSIDE the KOZ: \
+                             dist={dist} < r_e={r_e}"
+                        );
+                        checked += 1;
+                    }
+                }
+                assert!(checked > 0, "test vacuous at scale {scale}, n_seg={n_seg}");
+            }
+        }
+    }
+}

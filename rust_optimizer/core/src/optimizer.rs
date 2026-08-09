@@ -807,6 +807,12 @@ pub fn optimize_orbital_docking(
     // stopped 33% above the optimum on phase120).
     let conv_streak_required = 3usize;
     let mut conv_streak = 0usize;
+    // The model-stationarity test needs the SAME K-consecutive guard, and for a
+    // sharper reason than the merit streak. Since the KOZ penalty cancels from
+    // act − pred (see the merit block), `rel` and `pred` move together, so a
+    // one-shot stationarity exit would fire on the first quiet iteration of the
+    // crawl — reintroducing exactly the premature stop that K = 3 exists to prevent.
+    let mut stat_streak = 0usize;
     let mut converged_scvx = false;
     // Which criterion actually ended the loop. `converged_scvx` alone cannot say:
     // both the K-consecutive merit streak and trust-region collapse set it true, and
@@ -819,6 +825,21 @@ pub fn optimize_orbital_docking(
     // solve cannot pass unnoticed into the merit/ratio test.
     let mut qp_almost_solved = 0usize;
     let mut koz_degenerate_max = 0usize;
+
+    // Per-iteration trace of EVERY step, accepted or rejected, to stderr when the
+    // SCVX_TRACE env var is set. The *_history vectors record only ACCEPTED steps,
+    // which hides precisely the rejected steps that collapse the trust radius — the
+    // blind spot that concealed the ratio-test deadlock. Off unless asked for.
+    let trace_scvx = std::env::var("SCVX_TRACE").is_ok();
+    let mut null_step_count = 0usize;
+    let mut reject_count = 0usize;
+    if trace_scvx {
+        eprintln!(
+            "SCVXTRACE,it,outcome,rho,pred,act,l_p,l_c,t_p,t_c,rel,trust_before,trust_after,\
+step_norm,vlin_p,vlin_c,hown_c,hard_viol_p,conv_streak,pred_floor,total_slack,\
+quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
+        );
+    }
 
     // Per-accepted-step SCvx diagnostics (for the verification harness / paper figures).
     let mut rho_history: Vec<f64> = Vec::new();
@@ -847,8 +868,22 @@ pub fn optimize_orbital_docking(
         // iteration — this is what makes the method successive convexification.
         // (Honours the legacy freeze_gravity_jacobian knob and updates the
         // Jacobian-drift diagnostic against the iter-1 baseline.)
-        let (koz, koz_degen) =
-            constraints::build_koz_constraints(&a_list, &p, np1, dim, r_e, &c_koz, koz_degenerate_mode);
+        // KOZ rows: one supporting half-space per De Casteljau segment, normal aimed
+        // from the KOZ centre at the segment centroid OF THE REFERENCE. With the normal
+        // fixed these rows are LINEAR in x and, by Prop 1, satisfying them certifies the
+        // continuous curve — for any x, not just for p (the normal is a unit vector, so
+        // a satisfied row lower-bounds the true distance whatever iterate chose it;
+        // `rows_built_at_reference_certify_any_satisfying_point` in constraints.rs).
+        //
+        // These rows ARE the convexification, not a model of some other function: the
+        // certificate is existential ("there exists a witness half-space per segment")
+        // and this is the witness. So there is nothing here for the ratio test to
+        // supervise, and the merit below must grade the candidate on THESE SAME rows.
+        // See design_freeze.md section 9 for the full argument and the rejected
+        // alternative (linearizing the centroid rule's normal rotation).
+        let (koz, koz_degen) = constraints::build_koz_constraints(
+            &a_list, &p, np1, dim, r_e, &c_koz, koz_degenerate_mode,
+        );
         koz_degenerate_max = koz_degenerate_max.max(koz_degen);
         let use_frozen =
             freeze_gravity_jacobian && it > effective_freeze_after && lin_frozen_cache.is_some();
@@ -1031,13 +1066,99 @@ pub fn optimize_orbital_docking(
         let (x_new, iter_total_slack, iter_max_slack);
         let elastic_available = elastic_weight > 0.0 && n_koz > 0;
 
+        // Solve the subproblem in STEP coordinates d = x − p, not absolute position.
+        //
+        // The absolute form hands the QP variables of order 7e3 (km from the Earth's
+        // centre) with a Hessian of order 1e-13, i.e. ~17 orders of magnitude between
+        // the variable scale and the curvature being minimized. Clarabel loses enough
+        // precision there to return points WORSE than the reference while reporting
+        // `Solved` — measured 26 times on phase120, up to 8% suboptimal. That is
+        // impossible for an exact solve (d = 0 with s = viol(p) is always elastic
+        // feasible), and the giveaway was two iterations sharing a reference,
+        // linearization and rows where the LARGER trust region returned the WORSE
+        // optimum. A superset feasible region cannot have a worse optimum.
+        //
+        // d = x − p is an exact affine change of variables — same feasible set, same
+        // optimum, the constant ½pᵀHp + fᵀp drops out of every difference:
+        //     H' = H,  f' = Hp + f,  lb' = lb − Ap,  ub' = ub − Ap
+        // Measured effect: every negative-pred event disappears, iterations fall
+        // 32–40% at n_seg 16/32, and the objective improves 2.2% at n_seg=8.
+        let (h_use, f_use, lb_use, ub_use, shift_applied): (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, bool) =
+            if trust_active {
+                let mut fs = f_vec.clone();
+                for i in 0..nvars {
+                    let mut hp = 0.0;
+                    for j in 0..nvars {
+                        hp += h_mat[i * nvars + j] * p[j];
+                    }
+                    fs[i] += hp;
+                }
+                let mut lbs = all_lb.clone();
+                let mut ubs = all_ub.clone();
+                for r in 0..total_rows {
+                    let mut ap = 0.0;
+                    for j in 0..nvars {
+                        ap += all_a_rows[r * nvars + j] * p[j];
+                    }
+                    if lbs[r].is_finite() {
+                        lbs[r] -= ap;
+                    }
+                    if ubs[r].is_finite() {
+                        ubs[r] -= ap;
+                    }
+                }
+                (h_mat.clone(), fs, lbs, ubs, true)
+            } else {
+                (h_mat.clone(), f_vec.clone(), all_lb.clone(), all_ub.clone(), false)
+            };
+
+        // Normalize the objective's MAGNITUDE (the step shift above normalized the
+        // variable magnitudes). H is ~1e-13 here and the achievable improvement near
+        // the optimum ~1e-17 against a merit of ~3.8e-7 -- about 11 orders down, past
+        // what f64 resolves at this conditioning. Left unscaled, the QP returns points
+        // WORSE than the reference: measured 100 such events on the migration-baseline
+        // scenario, driving a stable accept/reject 2-cycle to the iteration cap.
+        //
+        // Scaling the objective is mathematically neutral -- argmin(J/s) = argmin(J) --
+        // PROVIDED the elastic penalty is scaled identically so the objective/slack
+        // trade-off is untouched. s is an exact power of two, so the rescaling itself
+        // introduces no rounding: a conditioning artifact must vanish under it, real
+        // mathematics must survive it unchanged.
+        //
+        // Measured: negative-pred events 100 -> 0 and 200 -> 24 iterations on the
+        // baseline scenario; on phase120 the step shift alone already gave 0, and this
+        // holds that at 0 across n_seg 8/16/32.
+        let obj_scale: f64 = if trust_active {
+            let max_h = h_use.iter().fold(0.0f64, |a, v| a.max(v.abs()));
+            if max_h > 0.0 && max_h.is_finite() {
+                (2.0f64).powi(max_h.log2().floor() as i32)
+            } else {
+                1.0
+            }
+        } else {
+            1.0
+        };
+        let (h_use, f_use, w_use) = if obj_scale != 1.0 {
+            (
+                h_use.iter().map(|v| v / obj_scale).collect::<Vec<f64>>(),
+                f_use.iter().map(|v| v / obj_scale).collect::<Vec<f64>>(),
+                elastic_weight / obj_scale,
+            )
+        } else {
+            (h_use, f_use, elastic_weight)
+        };
+
         if trust_active && elastic_available {
             match solve_qp_elastic(
-                &h_mat, &f_vec, &all_a_rows, &all_lb, &all_ub, nvars, total_rows,
-                koz_row_start, n_koz, elastic_weight, &mut qp_almost_solved,
+                &h_use, &f_use, &all_a_rows, &lb_use, &ub_use, nvars, total_rows,
+                koz_row_start, n_koz, w_use, &mut qp_almost_solved,
             ) {
                 Some((x, ts, ms)) => {
-                    x_new = x;
+                    x_new = if shift_applied {
+                        (0..nvars).map(|i| p[i] + x[i]).collect()
+                    } else {
+                        x
+                    };
                     iter_total_slack = ts;
                     iter_max_slack = ms;
                 }
@@ -1079,17 +1200,26 @@ pub fn optimize_orbital_docking(
             // ---- Canonical SCvx step acceptance (penalized merit; Mao et al.) ----
             // Convex merit  L(x) = J^(k)(x) + w_s·Σ max(0, b_r − a_r·x)   — exactly what
             //                      the elastic QP minimizes over the trust box.
-            // True merit    T(x) = J(x)     + w_s·h(x)
-            // where J(x) swaps the linearized gravity residual for the true one, and
-            // h(x) is the *hull-certifiability* violation: the half-space rows rebuilt
-            // at x itself (h = 0 ⇔ x carries the Prop-1 certificate). The convex rows
-            // are h's partial linearization (normals frozen at the reference), so
-            // rho = actual/predicted measures exactly the two model errors: gravity
-            // linearization and normal re-aiming. Penalizing the sphere distance of the
-            // control points instead would NOT work: the half-space is conservative,
-            // so its violation need not vanish where the sphere constraint holds, and
-            // the mismatch deadlocks the ratio test (pred large, act ≈ 0).
+            // True merit    T(x) = J(x)     + w_s·(violation of THE SAME rows)
+            // where J(x) swaps the linearized gravity residual for the true one.
+            //
+            // The KOZ penalty term is IDENTICAL in L and T, so it cancels from
+            // act − pred and rho supervises exactly one thing: the gravity
+            // linearization, the only genuine nonlinearity in the subproblem. This is
+            // deliberate (design_freeze.md section 9). The half-spaces are the chosen
+            // Prop-1 witnesses, not an approximation of a "true" KOZ function, so there
+            // is no honest true-side quantity to put opposite them:
+            //   - rebuilding the rows at the candidate grades a DIFFERENT function from
+            //     the one the QP minimized (measured phase120: rho in [-1.07e5, -1] on
+            //     every rejected step, with candidates clearing the sphere by 15.6 km);
+            //   - penalizing sphere distance instead deadlocks the test, since the
+            //     half-space is conservative and its violation need not vanish where
+            //     the sphere constraint holds (pred large, act ~ 0).
+            // Soundness is unaffected: satisfied rows certify the curve regardless of
+            // which iterate aimed the normals, and the convergence gate below still
+            // re-checks the accepted iterate against its OWN rows.
             let cand = &x_new;
+            let trust_before = trust;
             let step_norm: f64 = (0..nvars)
                 .map(|i| (cand[i] - p[i]).powi(2))
                 .sum::<f64>()
@@ -1105,14 +1235,46 @@ pub fn optimize_orbital_docking(
                 koz_row_violation(cand, &all_a_rows, &all_lb, koz_row_start, n_koz, nvars);
             let (mres_p, tres_p) = eval_residual_terms(&p, lin_for_qp_ref, np1, dim, t, &consts);
             let (mres_c, tres_c) = eval_residual_terms(cand, lin_for_qp_ref, np1, dim, t, &consts);
-            // This iteration's rows were built at p, so vlin_p == h(p); only the
-            // candidate needs its own re-aimed walls.
-            let (vtrue_p, vtrue_c) = {
+            // Both sides of the ratio test use the SAME rows (built at p this
+            // iteration), so the KOZ penalty enters L and T identically and cancels
+            // from act − pred. vlin_p is exact at p by construction
+            // (`koz_rows_exact_at_reference`).
+            let (vtrue_p, vtrue_c) = (vlin_p, vlin_c);
+
+            // Diagnostics only — never fed to the merit. hown_c = the candidate's
+            // violation of the rows the CENTROID RULE WOULD BUILD AT THE CANDIDATE;
+            // it measures how far the witness re-aims per step, which is the quantity
+            // the convergence gate below has to police. cpviol_c = true sphere
+            // penetration of the candidate's subdivided control points.
+            // kozslack_min_p = tightest KOZ row slack at the reference (is the KOZ
+            // even active?).
+            let hown_c = if trace_scvx {
                 let (koz_c, _) = constraints::build_koz_constraints(
                     &a_list, cand, np1, dim, r_e, &c_koz, koz_degenerate_mode,
                 );
-                let h_c = koz_row_violation(cand, &koz_c.a, &koz_c.lb, 0, koz_c.n_rows, nvars);
-                (vlin_p, h_c)
+                koz_row_violation(cand, &koz_c.a, &koz_c.lb, 0, koz_c.n_rows, nvars)
+            } else {
+                f64::NAN
+            };
+            let (cpviol_c, minrad_c, kozslack_min_p) = if trace_scvx {
+                let mut smin = f64::INFINITY;
+                for r in koz_row_start..koz_row_start + n_koz {
+                    if !all_lb[r].is_finite() {
+                        continue;
+                    }
+                    let mut ax = 0.0;
+                    for j in 0..nvars {
+                        ax += all_a_rows[r * nvars + j] * p[j];
+                    }
+                    smin = smin.min(ax - all_lb[r]);
+                }
+                (
+                    true_cp_violation(cand, &a_list, np1, dim, r_e, &c_koz),
+                    min_radius_of(cand, np1, dim),
+                    smin,
+                )
+            } else {
+                (f64::NAN, f64::NAN, f64::NAN)
             };
 
 
@@ -1126,6 +1288,14 @@ pub fn optimize_orbital_docking(
             // i.e. p satisfies every hard (non-KOZ) row — checked below.
             let pred = l_p - l_c;
             let act = t_p - t_c;
+            // Null-step floor, scaled to the merit's own magnitude. The previous form
+            // 1e-12*(1.0 + |L(p)|) was absolute in practice (|L(p)| ~ 2.3e-5, so the
+            // `1.0 +` dominated), which made the threshold depend on the choice of
+            // units rather than on the problem. Measured: purely cosmetic here — the
+            // branch fires only where pred < 0, which is below any positive floor, so
+            // both forms give bit-identical results on every tested configuration.
+            // Kept in the relative form so no arbitrary absolute constant remains.
+            let pred_floor = 1e-12 * l_p.abs().max(1e-30);
 
             // Hard-row (non-KOZ) violation of the reference: endpoints, boundary
             // equalities, prograde. These carry no slack, so the pred ≥ 0 argument
@@ -1155,6 +1325,17 @@ pub fn optimize_orbital_docking(
                 // negative, and rejecting would loop forever on the repair step).
                 // The candidate satisfies every hard row exactly, so accept it
                 // unconditionally and skip the convergence test.
+                if trace_scvx {
+                    eprintln!(
+                        "SCVXTRACE,{},bootstrap,{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},\
+{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{},{:.17e},{:.17e},\
+{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e}",
+                        it, f64::NAN, pred, act, l_p, l_c, t_p, t_c, f64::NAN,
+                        trust, trust, step_norm, vlin_p, vlin_c, hown_c, hard_viol_p,
+                        0, pred_floor, iter_total_slack, quad_p, quad_c,
+                        tres_p - mres_p, tres_c - mres_c, cpviol_c, minrad_c, kozslack_min_p
+                    );
+                }
                 p = x_new;
                 conv_streak = 0;
                 rho_history.push(f64::NAN);
@@ -1166,8 +1347,43 @@ pub fn optimize_orbital_docking(
                 continue;
             }
 
-            let pred_floor = 1e-12 * (1.0 + l_p.abs());
+            // Stationarity test (standard trust-region "predicted reduction" criterion;
+            // Conn/Gould/Toint Ch. 8, Nocedal & Wright Ch. 4). `pred` is the model's own
+            // estimate of the improvement available from this reference. Once that is
+            // negligible relative to the merit, the model reports no achievable progress
+            // and the iterate is stationary FOR THE MODEL — continuing only feeds the
+            // ratio test differences smaller than the merit's numerical resolution,
+            // which it then rejects forever until the trust region collapses.
+            //
+            // Measured on the migration-baseline scenario: the merit is frozen to all 17
+            // digits from iteration 5 onward, yet the loop ran to 24 — 83% of iterations
+            // accomplishing nothing. pred/|T| there is 1.4e-11, against 2.8e-7 on the
+            // last productive step and 1.2e-5 on phase120's (genuinely non-stationary)
+            // deadlock, so tol_f = 1e-8 separates all three with >25x margin either way.
+            //
+            // Guarded on the certificate (vlin_p) so a penalized-stationary but
+            // UNCERTIFIED point cannot report success. Reaching here already implies
+            // hard_viol_p <= 1e-9 — the bootstrap above `continue`s otherwise. Note this
+            // is stationarity of the CONVEX MODEL; it coincides with stationarity of the
+            // true problem only where the model is faithful, which is what rho certifies.
+            //
+            // K-consecutive, like the merit streak: with the KOZ term cancelling from
+            // act − pred, a single quiet `pred` is not evidence of stationarity — the
+            // crawl along re-aimed witnesses produces isolated quiet iterations and
+            // then breaks through to a materially better value.
+            if pred >= 0.0 && pred < tol_f * t_p.abs() && vlin_p <= 1e-6 {
+                stat_streak += 1;
+                if stat_streak >= conv_streak_required {
+                    converged_scvx = true;
+                    stop_reason = 4.0;
+                    break;
+                }
+            } else {
+                stat_streak = 0;
+            }
+
             let rho = if pred < pred_floor {
+                null_step_count += 1;
                 // Model sees (numerically) no merit improvement: the reference is
                 // stationary for the current subproblem. Treat as a null step —
                 // accept if non-worsening so the convergence test below can fire.
@@ -1182,39 +1398,86 @@ pub fn optimize_orbital_docking(
                 act / pred
             };
 
+            // Relative merit change against the merit's own magnitude. The
+            // objective is O(1e-4), so a "+1"-style denominator would turn
+            // this into an absolute test 4 orders below the problem scale.
+            let rel = act.abs() / t_p.abs().max(1e-12);
             if rho > eta_accept {
-                // Relative merit change against the merit's own magnitude. The
-                // objective is O(1e-4), so a "+1"-style denominator would turn
-                // this into an absolute test 4 orders below the problem scale.
-                let rel = act.abs() / t_p.abs().max(1e-12);
                 p = x_new;
                 if rho > 0.9 && rho.is_finite() {
                     trust = (trust * 2.0).min(trust_max); // model trustworthy — be bolder
+                }
+                if trace_scvx {
+                    eprintln!(
+                        "SCVXTRACE,{},{},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},\
+{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{},{:.17e},{:.17e},\
+{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e}",
+                        it,
+                        if pred < pred_floor { "accept_null" } else { "accept" },
+                        rho, pred, act, l_p, l_c, t_p, t_c, rel,
+                        trust_before, trust, step_norm, vlin_p, vlin_c, hown_c, hard_viol_p,
+                        conv_streak, pred_floor, iter_total_slack, quad_p, quad_c,
+                        tres_p - mres_p, tres_c - mres_c, cpviol_c, minrad_c, kozslack_min_p
+                    );
                 }
                 rho_history.push(rho);
                 trust_history.push(trust);
                 merit_history.push(t_c);
                 step_norm_history.push(step_norm);
                 slack_history.push(iter_total_slack);
+                // 0 = the step is still repairing the KOZ rows it was optimized
+                // against (elastic slack in use), 1 = it satisfies them.
                 phase_history.push(if vtrue_c > 1e-6 { 0.0 } else { 1.0 });
                 // Converged = merit stationary for conv_streak_required consecutive
-                // accepted steps AND the accepted iterate carries the hull
-                // certificate. A penalized-stationary-but-uncertified point
-                // (penalty not exact for this geometry) keeps iterating instead of
-                // reporting a false success.
+                // accepted steps AND the accepted iterate carries the hull certificate.
+                //
+                // The certificate here is checked against the iterate's OWN re-aimed
+                // rows, not the ones it was optimized against. This is a GATE, never a
+                // merit term — it cannot reach `act`, `pred` or rho, so it does not
+                // reintroduce the mismatch. It closes the terminal-step hole: every
+                // accepted step is implicitly re-checked one iteration later (its own
+                // violation shows up in the next subproblem), except the streak's last
+                // one, because the loop exits first. Without this, `final_hull_violation`
+                // — which independently rebuilds the rows — could exceed the tolerance
+                // at a point the loop just declared converged. The trajectory would
+                // still be SAFE (the rows it did satisfy are a valid witness); the
+                // claim "carries the certificate" is what would be false.
                 if rel < tol_f && vtrue_c <= 1e-6 {
-                    conv_streak += 1;
-                    if conv_streak >= conv_streak_required {
-                        converged_scvx = true;
-                        stop_reason = 1.0;
-                        break;
+                    let (koz_own, _) = constraints::build_koz_constraints(
+                        &a_list, &p, np1, dim, r_e, &c_koz, koz_degenerate_mode,
+                    );
+                    let h_own =
+                        koz_row_violation(&p, &koz_own.a, &koz_own.lb, 0, koz_own.n_rows, nvars);
+                    if h_own <= 1e-6 {
+                        conv_streak += 1;
+                        if conv_streak >= conv_streak_required {
+                            converged_scvx = true;
+                            stop_reason = 1.0;
+                            break;
+                        }
+                    } else {
+                        conv_streak = 0;
                     }
                 } else {
                     conv_streak = 0;
                 }
             } else {
                 conv_streak = 0;
+                reject_count += 1;
                 trust *= 0.5;
+                if trace_scvx {
+                    eprintln!(
+                        "SCVXTRACE,{},{},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},\
+{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{},{:.17e},{:.17e},\
+{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e},{:.17e}",
+                        it,
+                        if pred < pred_floor { "reject_null" } else { "reject" },
+                        rho, pred, act, l_p, l_c, t_p, t_c, rel,
+                        trust_before, trust, step_norm, vlin_p, vlin_c, hown_c, hard_viol_p,
+                        0, pred_floor, iter_total_slack, quad_p, quad_c,
+                        tres_p - mres_p, tres_c - mres_c, cpviol_c, minrad_c, kozslack_min_p
+                    );
+                }
                 if trust < trust_min {
                     // Trust-radius collapse is the second standard SCvx stopping
                     // criterion. At a reference satisfying the hull certificate
@@ -1347,12 +1610,18 @@ pub fn optimize_orbital_docking(
         if converged_scvx { 1.0 } else { 0.0 },
     );
     // 0 = iteration cap, 1 = K-consecutive merit streak, 2 = trust-region collapse,
-    // 3 = QP failure. Only 1 asserts merit stationarity.
+    // 3 = QP failure, 4 = model-stationarity (predicted reduction negligible).
+    // 1 and 4 are principled stops; 0 and 2 are the loop giving up.
     info.insert("scvx_stop_reason".to_string(), stop_reason);
     info.insert("final_trust_radius".to_string(), trust);
     // QP health. qp_almost_solved > 0 means Clarabel hit its reduced tolerances on
     // that many solves and those solutions still fed the ratio test.
     info.insert("qp_almost_solved".to_string(), qp_almost_solved as f64);
+    // TEMPORARY INSTRUMENTATION (2026-08-09): how many iterations took the
+    // pred < pred_floor "null step" branch (no ratio test), and how many were
+    // rejected by the ratio test (invisible in the accepted-only *_history vectors).
+    info.insert("scvx_null_steps".to_string(), null_step_count as f64);
+    info.insert("scvx_rejects".to_string(), reject_count as f64);
     // Segments whose supporting-half-space normal was undefined. Under the default
     // Skip mode a nonzero value means the Prop-1 certificate does not cover the
     // whole curve.
