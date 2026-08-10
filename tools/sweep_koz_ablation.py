@@ -100,7 +100,8 @@ def main():
         row_data = []
         for n_seg, P_opt, info in results:
             cost = info.get("cost")
-            dv = info.get("dv_proxy_m_s")
+            J, T = info.get("cost_true_energy"), info.get("T_transfer_s")
+            effort = J * T * 1e6 if (J is not None and T is not None) else None
             min_r = info.get("min_radius")
             clearance = (min_r - koz_r) if min_r is not None else None
             feas = info.get("feasible")
@@ -108,7 +109,7 @@ def main():
             term = info.get("termination_reason", "?")
 
             cost_s = f"{cost:.6e}" if cost is not None else "N/A"
-            dv_s = f"{dv:.2f}" if dv is not None else "N/A"
+            dv_s = f"{effort:.4g}" if effort is not None else "N/A"
             cl_s = f"{clearance:.2f}" if clearance is not None else "N/A"
             f_s = "Y" if feas else "N"
 

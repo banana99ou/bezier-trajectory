@@ -1536,7 +1536,6 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
     let t2_inv = 1.0 / (t * t);
     let mut max_ctrl_accel = 0.0f64;
     let mut sum_ctrl_accel = 0.0f64;
-    let mut a_u_samples = Vec::with_capacity(n_metrics + 1);
 
     for i in 0..=n_metrics {
         let tau = i as f64 / n_metrics as f64;
@@ -1553,21 +1552,12 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
         ];
         let a_u_m_s2 =
             (a_u_km_s2[0].powi(2) + a_u_km_s2[1].powi(2) + a_u_km_s2[2].powi(2)).sqrt() * 1e3;
-        a_u_samples.push(a_u_m_s2);
         if a_u_m_s2 > max_ctrl_accel {
             max_ctrl_accel = a_u_m_s2;
         }
         sum_ctrl_accel += a_u_m_s2;
     }
     let mean_ctrl_accel = sum_ctrl_accel / (n_metrics + 1) as f64;
-
-    // Delta-v proxy (trapezoidal)
-    let mut dv_proxy = 0.0f64;
-    let dt_tau = 1.0 / n_metrics as f64;
-    for i in 0..n_metrics {
-        dv_proxy += 0.5 * (a_u_samples[i] + a_u_samples[i + 1]) * dt_tau;
-    }
-    dv_proxy *= t; // scale to physical time
 
     let feasible = min_radius >= r_e - 1e-6;
 
@@ -1580,7 +1570,6 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
     info.insert("cost".to_string(), cost_true_energy);
     info.insert("max_control_accel_ms2".to_string(), max_ctrl_accel);
     info.insert("mean_control_accel_ms2".to_string(), mean_ctrl_accel);
-    info.insert("dv_proxy_m_s".to_string(), dv_proxy);
     info.insert("final_delta_norm".to_string(), last_delta);
     info.insert("total_koz_slack".to_string(), last_total_slack);
     info.insert("max_koz_slack".to_string(), last_max_slack);

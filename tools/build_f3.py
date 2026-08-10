@@ -62,8 +62,6 @@ def _eci(radius, inc_deg, raan_deg, u_deg):
     return q @ r, q @ v
 
 
-# Cache files identified by matching T2 delta-v values exactly.
-# N=6 (7 ctrl pts, dv=6693.886), N=7 (8 ctrl pts, dv=6411.942), N=8 (9 ctrl pts, dv=6286.886)
 CACHE_FILES = {
     6: ROOT / "cache" / "opt_6e47e495_nseg16.pkl",
     7: ROOT / "cache" / "opt_2fe97d12_nseg16.pkl",
@@ -79,7 +77,8 @@ def load_result(N):
         print(f"  ✗ cache miss for N={N} ({path})")
         return None
     P_opt, info = result
-    print(f"  ✓ N={N}: {path.name}  (dv={info.get('dv_proxy_m_s', '?'):.3f} m/s)")
+    print(f"  ✓ N={N}: {path.name}  "
+          f"(effort={info['cost_true_energy'] * info['T_transfer_s'] * 1e6:.4g} m2/s3)")
     return result
 
 
@@ -158,11 +157,15 @@ def main():
 
         # Title
         feasible = bool(info.get("feasible", False))
-        dv = info.get("dv_proxy_m_s") or info.get("cost")
-        dv_str = f"{dv:,.0f}" if dv is not None else "n/a"
+        # No `or` fallback: it fired on 0.0 as well as on a missing key and
+        # silently substituted a ~1e-8 cost for a ~6400 m/s quantity.
+        J = info.get("cost_true_energy")
+        T = info.get("T_transfer_s")
+        effort = J * T * 1e6 if (J is not None and T is not None) else None
+        effort_str = f"{effort:,.4g}" if effort is not None else "n/a"
         ax.set_title(
             f"{labels[i]}  N = {N}, {n_seg} segments\n"
-            f"Δv proxy ≈ {dv_str} m/s",
+            f"$\\int\\|u\\|^2 dt$ = {effort_str} m$^2$/s$^3$",
             fontsize=11, pad=12,
         )
 

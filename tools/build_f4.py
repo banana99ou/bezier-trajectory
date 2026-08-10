@@ -4,7 +4,7 @@ Build F4: Subdivision-count tradeoff figure for N=7.
 
 Two-panel figure showing:
   Left:  Runtime vs subdivision count
-  Right: Delta-v proxy and safety margin vs subdivision count
+  Right: Control-effort energy and safety margin vs subdivision count
 
 Uses the 120-deg phase-lag cache files (same as build_f3.py / build_csv.py).
 
@@ -36,7 +36,7 @@ SEGS = [2, 4, 8, 16, 32, 64]
 def main():
     P_start, v0, P_end, v1 = get_120deg_endpoints()
 
-    segs, runtimes, dvs, margins = [], [], [], []
+    segs, runtimes, efforts, margins = [], [], [], []
     for n_seg in SEGS:
         path = get_cache_path_120(N, n_seg, P_start, v0, P_end, v1)
         result = load_from_cache(path)
@@ -48,15 +48,16 @@ def main():
         safety = min_r - constants.KOZ_RADIUS
         segs.append(n_seg)
         runtimes.append(info["elapsed_time"])
-        dvs.append(info["dv_proxy_m_s"])
+        efforts.append(info["cost_true_energy"] * info["T_transfer_s"] * 1e6)
         margins.append(safety)
         tag = "INFEAS" if not info["feasible"] else "OK"
-        print(f"  {tag}: seg={n_seg:2d}  dv={info['dv_proxy_m_s']:10.3f}  "
+        print(f"  {tag}: seg={n_seg:2d}  "
+              f"effort={info['cost_true_energy'] * info['T_transfer_s'] * 1e6:10.4g}  "
               f"safety={safety:8.3f} km  rt={info['elapsed_time']:.1f}s")
 
     segs = np.array(segs)
     runtimes = np.array(runtimes)
-    dvs = np.array(dvs)
+    efforts = np.array(efforts)
     margins = np.array(margins)
 
     # ── Figure ────────────────────────────────────────────────────────
@@ -72,17 +73,17 @@ def main():
     ax1.set_title("Runtime vs subdivision count")
     ax1.grid(True, alpha=0.3)
 
-    # Right panel: dv proxy + safety margin (dual y-axis)
+    # Right panel: optimized objective + safety margin (dual y-axis)
     color_dv = "tab:blue"
     color_sm = "tab:green"
 
-    ax2.plot(segs, dvs, "o-", color=color_dv, linewidth=2, markersize=7,
-             label="$\\Delta v$ proxy (m/s)")
+    ax2.plot(segs, efforts, "o-", color=color_dv, linewidth=2, markersize=7,
+             label="$\\int\\|u\\|^2 dt$ (m$^2$/s$^3$)")
     ax2.set_xscale("log", base=2)
     ax2.set_xticks(SEGS)
     ax2.set_xticklabels([f"$2^{{{int(np.log2(s))}}}$" for s in SEGS])
     ax2.set_xlabel("Subdivision count $n_{\\mathrm{seg}}$")
-    ax2.set_ylabel("$\\Delta v$ proxy (m/s)", color=color_dv)
+    ax2.set_ylabel("$\\int\\|u\\|^2 dt$  (m$^2$/s$^3$)", color=color_dv)
     ax2.tick_params(axis="y", labelcolor=color_dv)
     ax2.set_title("Outcome metrics vs subdivision count")
     ax2.grid(True, alpha=0.3)

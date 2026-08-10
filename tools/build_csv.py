@@ -55,15 +55,27 @@ def get_120deg_endpoints():
     return P_start, v0, P_end, v1
 
 
+# Single source for the solve settings: the SAME values go into the cache key and
+# into the reported provenance, so the JSON cannot claim a setting the key never
+# encoded (it previously hardcoded tol=1e-12 / max_iter=10000 independently).
+MAX_ITER = 10000
+TOL = 1e-12
+SAMPLE_COUNT = 100
+SCP_PROX_WEIGHT = 1e-6
+SCP_TRUST_RADIUS = 2000.0
+ENFORCE_PROGRADE = True
+
+
 def get_cache_path_120(N, n_seg, P_start, v0, P_end, v1):
     """Compute the cache path for a 120-deg run with given degree and seg count."""
     P_init = generate_initial_control_points(N, P_start, P_end)
     key = get_cache_key(
         P_init, n_seg,
         r_e=constants.KOZ_RADIUS,
-        max_iter=10000, tol=1e-12, sample_count=100,
+        max_iter=MAX_ITER, tol=TOL, sample_count=SAMPLE_COUNT,
         v0=v0, v1=v1, a0=None, a1=None,
-        objective="dv", scp_prox_weight=1e-6, scp_trust_radius=2000.0,
+        scp_prox_weight=SCP_PROX_WEIGHT, scp_trust_radius=SCP_TRUST_RADIUS,
+        enforce_prograde=ENFORCE_PROGRADE,
     )
     return get_cache_path(key, n_seg)
 
@@ -73,10 +85,9 @@ SEGS = [2, 4, 8, 16, 32, 64]
 
 CSV_FIELDS = [
     "degree", "n_seg", "solve_success", "min_radius_km", "safety_margin_km",
-    "dv_proxy_m_s", "max_control_accel_ms2", "mean_control_accel_ms2",
-    "runtime_s", "outer_iterations", "termination_reason",
-    "objective_mode", "velocity_bc_enforced", "tol", "max_iter",
-    "solver_backend",
+    "control_effort_m2_s3", "max_control_accel_ms2", "mean_control_accel_ms2",
+    "runtime_s", "outer_iterations", "termination_reason", "scvx_stop_reason",
+    "velocity_bc_enforced", "tol", "max_iter", "solver_backend",
 ]
 
 
@@ -106,21 +117,26 @@ def main():
                 "solve_success": info["feasible"],
                 "min_radius_km": min_r,
                 "safety_margin_km": safety,
-                "dv_proxy_m_s": info["dv_proxy_m_s"],
+                # The optimized objective over physical time (m^2/s^3), from
+                # the solver's own cost. Replaces the deleted dv proxy column.
+                "control_effort_m2_s3": info["cost_true_energy"] * info["T_transfer_s"] * 1e6,
                 "max_control_accel_ms2": info["max_control_accel_ms2"],
                 "mean_control_accel_ms2": info["mean_control_accel_ms2"],
                 "runtime_s": info["elapsed_time"],
                 "outer_iterations": info["iterations"],
                 "termination_reason": info["termination_reason"],
-                "objective_mode": "dv",
-                "velocity_bc_enforced": True,
-                "tol": 1e-12,
-                "max_iter": 10000,
-                "solver_backend": "rust",
+                "scvx_stop_reason": info.get("scvx_stop_reason"),
+                # Provenance READ BACK from the solve, not asserted. These used
+                # to be hardcoded literals that could disagree with the run.
+                "velocity_bc_enforced": v0 is not None and v1 is not None,
+                "tol": info.get("tol", TOL),
+                "max_iter": info["max_iterations"],
+                "solver_backend": info["solver_backend"],
             }
             rows.append(row)
             status = "OK" if info["feasible"] else "INFEASIBLE"
-            print(f"  {status}: N={N} seg={n_seg:2d}  dv={info['dv_proxy_m_s']:10.3f}  "
+            print(f"  {status}: N={N} seg={n_seg:2d}  "
+                  f"effort={row['control_effort_m2_s3']:10.4g} m2/s3  "
                   f"safety={safety:8.3f} km  rt={info['elapsed_time']:.1f}s")
 
     # Write CSV
@@ -138,12 +154,11 @@ def main():
         "configuration": {
             "degrees": DEGREES,
             "segment_counts": SEGS,
-            "objective": "dv",
-            "max_iter": 10000,
-            "tol": 1e-12,
-            "scp_prox_weight": 1e-6,
-            "scp_trust_radius": 2000.0,
-            "enforce_prograde": True,
+            "max_iter": MAX_ITER,
+            "tol": TOL,
+            "scp_prox_weight": SCP_PROX_WEIGHT,
+            "scp_trust_radius": SCP_TRUST_RADIUS,
+            "enforce_prograde": ENFORCE_PROGRADE,
             "v0_enforced": True,
             "v1_enforced": True,
             "transfer_time_s": constants.TRANSFER_TIME_S,

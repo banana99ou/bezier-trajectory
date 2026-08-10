@@ -66,7 +66,7 @@ def main():
     results = []
 
     print(f"Convergence diagnostic: N={N}, n_seg={N_SEG}, 120 deg phase lag")
-    print(f"{'max_iter':>10} {'dv_proxy (m/s)':>16} {'safety (km)':>14} "
+    print(f"{'max_iter':>10} {'effort (m2/s3)':>16} {'safety (km)':>14} "
           f"{'runtime (s)':>12} {'final_delta':>14} {'feasible':>10}")
     print("-" * 80)
 
@@ -87,7 +87,7 @@ def main():
             use_cache=False,
         )
 
-        dv = info["dv_proxy_m_s"]
+        effort = info["cost_true_energy"] * info["T_transfer_s"] * 1e6
         safety = info["min_radius"] - KOZ_RADIUS
         runtime = info["elapsed_time"]
         delta = info.get("final_delta_norm", float("nan"))
@@ -95,28 +95,29 @@ def main():
 
         results.append({
             "max_iter": mi,
-            "dv_proxy_m_s": dv,
+            "control_effort_m2_s3": effort,
             "safety_margin_km": safety,
             "runtime_s": runtime,
             "final_delta_norm": delta,
             "feasible": feasible,
         })
 
-        print(f"{mi:>10} {dv:>16.3f} {safety:>14.3f} "
+        print(f"{mi:>10} {effort:>16.6g} {safety:>14.3f} "
               f"{runtime:>12.3f} {delta:>14.2e} {str(feasible):>10}")
 
     # Summary: relative change from 10k baseline
     baseline = results[-1]
     print("\n--- Relative change vs 10,000-iteration baseline ---")
-    print(f"{'max_iter':>10} {'dv_delta (%)':>14} {'safety_delta (%)':>18}")
+    print(f"{'max_iter':>10} {'effort_delta (%)':>18} {'safety_delta (%)':>18}")
     print("-" * 46)
     for r in results:
-        dv_pct = (r["dv_proxy_m_s"] - baseline["dv_proxy_m_s"]) / baseline["dv_proxy_m_s"] * 100
+        dv_pct = ((r["control_effort_m2_s3"] - baseline["control_effort_m2_s3"])
+                  / baseline["control_effort_m2_s3"] * 100)
         if baseline["safety_margin_km"] > 0:
             s_pct = (r["safety_margin_km"] - baseline["safety_margin_km"]) / baseline["safety_margin_km"] * 100
         else:
             s_pct = float("nan")
-        print(f"{r['max_iter']:>10} {dv_pct:>+14.4f} {s_pct:>+18.4f}")
+        print(f"{r['max_iter']:>10} {dv_pct:>+18.4f} {s_pct:>+18.4f}")
 
     # Save
     out_path = Path("artifacts/convergence_diagnostic.json")

@@ -147,7 +147,6 @@ def _worker_run_case(
             "feasible": bool(info.get("feasible", False)),
             "min_radius": float(info.get("min_radius", math.nan)),
             "cost_true_energy": float(info.get("cost_true_energy", info.get("cost", math.nan))),
-            "dv_proxy_m_s": float(info.get("dv_proxy_m_s", math.nan)),
             "max_control_accel_ms2": float(info.get("max_control_accel_ms2", info.get("accel", math.nan))),
             "mean_control_accel_ms2": float(info.get("mean_control_accel_ms2", math.nan)),
             "elapsed_solver_s": float(info.get("elapsed_time", math.nan)),
@@ -165,7 +164,6 @@ def _worker_run_case(
             "feasible": False,
             "min_radius": math.nan,
             "cost_true_energy": math.nan,
-            "dv_proxy_m_s": math.nan,
             "max_control_accel_ms2": math.nan,
             "mean_control_accel_ms2": math.nan,
             "elapsed_solver_s": math.nan,
@@ -222,7 +220,7 @@ def write_outputs(
     # Raw CSV
     raw_fields = [
         "variant", "N", "n_seg", "iterations", "feasible", "min_radius",
-        "cost_true_energy", "dv_proxy_m_s", "max_control_accel_ms2",
+        "cost_true_energy", "max_control_accel_ms2",
         "mean_control_accel_ms2", "elapsed_solver_s", "elapsed_wall_s",
         "endpoint_drift_start_km", "endpoint_drift_end_km", "error"
     ]
@@ -238,7 +236,6 @@ def write_outputs(
 
     metrics = [
         "cost_true_energy",
-        "dv_proxy_m_s",
         "max_control_accel_ms2",
         "mean_control_accel_ms2",
         "min_radius",
@@ -296,14 +293,13 @@ def write_outputs(
     lines.append(f"- B (after fix)  max drift: `{max_drift_b:.6e}` km")
     lines.append("")
     lines.append("## Per-case key metrics")
-    lines.append("| N | n_seg | cost A | cost B | dv A | dv B | max_u A | max_u B | min_r A | min_r B |")
-    lines.append("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("| N | n_seg | cost A | cost B | max_u A | max_u B | min_r A | min_r B |")
+    lines.append("|---:|---:|---:|---:|---:|---:|---:|---:|")
     for k in keys:
         ra, rb = idx_a[k], idx_b[k]
         lines.append(
             f"| {k[0]} | {k[1]} | "
             f"{float(ra['cost_true_energy']):.6e} | {float(rb['cost_true_energy']):.6e} | "
-            f"{float(ra['dv_proxy_m_s']):.6e} | {float(rb['dv_proxy_m_s']):.6e} | "
             f"{float(ra['max_control_accel_ms2']):.6e} | {float(rb['max_control_accel_ms2']):.6e} | "
             f"{float(ra['min_radius']):.6e} | {float(rb['min_radius']):.6e} |"
         )

@@ -2,8 +2,9 @@
 Orbital Rendezvous Optimizer using Bézier Curves
 
 This package implements an optimization framework for designing orbital rendezvous trajectories
-using Bézier curves. The optimizer finds trajectories that minimize a delta-v surrogate
-(control acceleration minus gravity) while satisfying Keep Out Zone (KOZ) constraints.
+using Bézier curves. The optimizer minimizes control-acceleration energy,
+J = integral ||r''(tau)/T^2 - g(r(tau))||^2 dtau, while satisfying Keep Out Zone
+(KOZ) constraints.
 """
 
 from .bezier import BezierCurve, get_D_matrix, get_E_matrix, get_G_matrix

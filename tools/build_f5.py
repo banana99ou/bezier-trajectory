@@ -3,7 +3,7 @@
 Build F5: Multi-order performance trends for N=6,7,8.
 
 Two-panel figure showing:
-  Left:  Delta-v proxy vs subdivision count, stratified by degree
+  Left:  Control-effort energy vs subdivision count, stratified by degree
   Right: Runtime vs subdivision count, stratified by degree
 
 Uses the 120-deg phase-lag cache files (same as build_f3.py / build_csv.py).
@@ -38,9 +38,9 @@ MARKERS = {6: "o", 7: "s", 8: "^"}
 def main():
     P_start, v0, P_end, v1 = get_120deg_endpoints()
 
-    data = {}  # data[N] = {"segs": [], "dvs": [], "runtimes": [], "feasible": []}
+    data = {}  # data[N] = {"segs": [], "efforts": [], "runtimes": [], "feasible": []}
     for N in DEGREES:
-        segs, dvs, rts, feas = [], [], [], []
+        segs, efforts, rts, feas = [], [], [], []
         for n_seg in SEGS:
             path = get_cache_path_120(N, n_seg, P_start, v0, P_end, v1)
             result = load_from_cache(path)
@@ -48,11 +48,11 @@ def main():
                 continue
             _, info = result
             segs.append(n_seg)
-            dvs.append(info["dv_proxy_m_s"])
+            efforts.append(info["cost_true_energy"] * info["T_transfer_s"] * 1e6)
             rts.append(info["elapsed_time"])
             feas.append(info["feasible"])
         data[N] = {
-            "segs": np.array(segs), "dvs": np.array(dvs),
+            "segs": np.array(segs), "efforts": np.array(efforts),
             "runtimes": np.array(rts), "feasible": np.array(feas),
         }
         print(f"N={N}: {len(segs)} points loaded")
@@ -60,15 +60,21 @@ def main():
     # ── Figure ────────────────────────────────────────────────────────
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5))
 
+    omitted = []
     for N in DEGREES:
         d = data[N]
         mask = d["feasible"]
 
-        # Effort panel: feasible points only (infeasible seg=2 values
-        # are 10x larger and destroy the y-axis scale)
-        ax1.plot(d["segs"][mask], d["dvs"][mask],
+        # Effort panel: feasible points only. Infeasible coarse-mesh solves carry
+        # nonzero virtual-control slack, so their "effort" is not an effort for a
+        # trajectory that exists; plotting them would also compress the y-axis by
+        # ~10x. The omission is ANNOTATED below rather than silent — an absent
+        # point otherwise reads as missing data.
+        ax1.plot(d["segs"][mask], d["efforts"][mask],
                  f"{MARKERS[N]}-", color=COLORS[N], linewidth=2,
                  markersize=7, label=f"$N={N}$")
+        omitted += [f"$N={N}$, $n_{{\\mathrm{{seg}}}}={int(s)}$"
+                    for s in d["segs"][~np.asarray(mask, dtype=bool)]]
 
         # Runtime panel: all points
         ax2.plot(d["segs"], d["runtimes"],
@@ -83,8 +89,13 @@ def main():
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=10, framealpha=0.8, title="Degree")
 
-    ax1.set_ylabel("$\\Delta v$ proxy (m/s)")
+    ax1.set_ylabel("$\\int\\|u\\|^2 dt$  (m$^2$/s$^3$)")
     ax1.set_title("Effort trend across degree")
+    if omitted:
+        ax1.text(0.02, 0.02,
+                 "infeasible, omitted: " + ", ".join(omitted),
+                 transform=ax1.transAxes, fontsize=7.5, va="bottom",
+                 color="#C0392B")
 
     ax2.set_ylabel("Runtime (s)")
     ax2.set_title("Runtime trend across degree")

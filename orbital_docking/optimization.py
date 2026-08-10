@@ -537,7 +537,6 @@ def optimize_orbital_docking(
     a_u_m_s2 = np.linalg.norm(a_geom_km_s2 - a_grav_km_s2, axis=1) * 1e3
     max_control_accel_ms2 = float(np.max(a_u_m_s2))
     mean_control_accel_ms2 = float(np.mean(a_u_m_s2))
-    dv_proxy_m_s = float(T) * float(np.trapezoid(a_u_m_s2, ts_metrics))
 
     A_list = segment_matrices_equal_params(N, n_seg)
     koz_constraint = build_koz_constraints(A_list, P, r_e, dim)
@@ -587,7 +586,6 @@ def optimize_orbital_docking(
             "accel": max_control_accel_ms2,
             "max_control_accel_ms2": max_control_accel_ms2,
             "mean_control_accel_ms2": mean_control_accel_ms2,
-            "dv_proxy_m_s": dv_proxy_m_s,
             "T_transfer_s": float(T),
             "sample_count": int(sample_count),
             "scp_prox_weight": float(scp_prox_weight),
