@@ -6,6 +6,12 @@ handoff docs (`scvx_fix_handoff.md`, `paper_revision_handoff.md` — deleted;
 history in git). Terse rules live in `CLAUDE.md`; this file holds the full
 design and the evidence. In-flight work lives in `doc/session_handoff.md`._
 
+**NOTATION: `doc/notation.md` is the single source of truth for every
+mathematical symbol, and it outranks this file.** Symbols here were aligned to
+it on 2026-08-10 (`R_KOZ`, `Δ_k`, `μ`, `∇g_j`, `c_j`, `φ`/`φ⁽ᵏ⁾`, `γ⁽ˢ⁾_m`,
+`n_conv`, sub-arc index `s` vs gravity interval `j`). Enforce with
+`python3 tools/check_notation.py`.
+
 **PRECEDENCE: the code + the 5-pillar verification are ground truth.** The
 paper (`doc/paper_draft_korean_rev2.md`) currently LAGS the code at
 §2 roadmap / §2.3 / §3.2 (it still shows the removed smoothness term and the
@@ -26,7 +32,7 @@ re-derived and is CLEAN.
 **OPTIMALITY:** first gated externally on 2026-08-09 by Pillar 5
 (`tools/verify/optimality.py`) — KKT stationarity residual + a feasible-descent
 search, both computed independently of the solver. All five scenarios PASS. The
-exact-penalty condition w_s ≥ ‖λ_KOZ‖_∞ is now MEASURED (§5), not estimated.
+exact-penalty condition μ ≥ ‖λ_KOZ‖_∞ is now MEASURED (§5), not estimated.
 
 ## 0. Exact problem formulation (locked 2026-08-09)
 
@@ -42,7 +48,7 @@ is a fixed input; physical time t = T·τ, physical velocity = r′(τ)/T.
                 (N/T)(P_N − P_{N−1}) = v_f                 (velocity BC, optional)
                 (N(N−1)/T²)(P₀ − 2P₁ + P₂) = a₀            (acceleration BC, optional)
                 (N(N−1)/T²)(P_{N−2} − 2P_{N−1} + P_N) = a_f (acceleration BC, optional)
-                ‖ r(τ) − c_KOZ ‖ ≥ r_e   for all τ ∈ [0,1] (keep-out sphere)
+                ‖ r(τ) − c_KOZ ‖ ≥ R_KOZ   for all τ ∈ [0,1] (keep-out sphere)
 
 - g = true gravity (two-body + J2) — the ONLY non-linear ingredient.
 - r″(τ)/T² is physical geometric acceleration, so the integrand is the
@@ -50,30 +56,32 @@ is a fixed input; physical time t = T·τ, physical velocity = r′(τ)/T.
 - All BC rows are linear equalities in x (verified against
   `constraints.rs:184-266`; endpoints pinned at `optimizer.rs:945`).
 - The continuous KOZ constraint is never imposed directly. It is replaced by
-  the 명제 1 sufficient condition: De Casteljau subdivision Q_i = A_i x into
-  n_seg segments; segment i is certified iff some unit witness n_i has
-  n_i·(q − c_KOZ) ≥ r_e for EVERY control point q of Q_i. Witness-based and
+  the 명제 1 sufficient condition: De Casteljau subdivision Q⁽ˢ⁾ = S⁽ˢ⁾ x into
+  n_seg sub-arcs; sub-arc s is certified iff some unit witness n⁽ˢ⁾ has
+  n⁽ˢ⁾·(q − c_KOZ) ≥ R_KOZ for EVERY control point q of Q⁽ˢ⁾. Witness-based and
   existential — see §9.
 
-**Convex subproblem at iterate k (reference p, trust radius r_k):**
+**Convex subproblem at iterate k (reference x⁽ᵏ⁾, trust radius Δ_k):**
 
-    minimize    L(x) = ∫₀¹ ‖ r″/T² − (J_s r + c_s) ‖² dτ + w_s·Σ_rows max(0, b_row − a_row·x)
-    subject to  BC rows,  ‖x − p‖_∞ ≤ r_k
+    minimize    φ⁽ᵏ⁾(x) = ∫₀¹ ‖ r″/T² − (∇g_j r + c_j) ‖² dτ + μ·Σ_rows max(0, b_row − a_row·x)
+    subject to  BC rows,  ‖x − x⁽ᵏ⁾‖_∞ ≤ Δ_k
 
-- Gravity affine per segment: J_s, c_s = Jacobian/offset of g at the segment
-  centroid of p; the integral is EXACT via the Bernstein Gram matrix (§1).
-- KOZ rows (elastic, L1-penalized by w_s): the first-order model about p of
-  the clearance g_k(x) = n(x)·(A x)_k − n(x)·c_KOZ − r_e, with the centroid
-  rule's witness n(x) and ITS rotation included
-  (`build_koz_constraints_linearized`). Freezing n at p instead drops a
+- Gravity affine per sub-arc j: ∇g_j, c_j = Jacobian/offset of g at the sub-arc
+  centroid of x⁽ᵏ⁾; the integral is EXACT via the Bernstein Gram matrix (§1).
+  Note the two subdivisions are DISTINCT: KOZ uses n_seg sub-arcs indexed by s
+  (matrices S⁽ˢ⁾), gravity uses n_lin intervals indexed by j (matrices Ŝ⁽ʲ⁾).
+- KOZ rows (elastic, L1-penalized by μ): the first-order model about x⁽ᵏ⁾ of
+  the clearance γ⁽ˢ⁾_m(x) = n⁽ˢ⁾(x)·(q⁽ˢ⁾_m − c_KOZ) − R_KOZ, with the centroid
+  rule's witness n⁽ˢ⁾(x) and ITS rotation included
+  (`build_koz_constraints_linearized`). Freezing n at x⁽ᵏ⁾ instead drops a
   first-order term and makes the QP's optimum a point the centroid rule will
   disagree with next iteration — the 2026-08-09 defect (§9).
 
 **Acceptance:**
 
-    ρ = [T(p) − T(x⁺)] / [L(p) − L(x⁺)],  T(x) = J(x) + w_s·h(x)
+    ρ = [φ(x⁽ᵏ⁾) − φ(x⁺)] / [φ⁽ᵏ⁾(x⁽ᵏ⁾) − φ⁽ᵏ⁾(x⁺)],  φ(x) = J(x) + μ·h(x)
 
-- T uses TRUE gravity g; L uses the affine model. h(x) is the EXACT hull
+- φ uses TRUE gravity g; φ⁽ᵏ⁾ uses the affine model. h(x) is the EXACT hull
   violation with the witnesses rebuilt at x (h = 0 ⇔ x carries the 명제 1
   certificate), so ρ measures the two model errors that exist: gravity
   linearization and witness re-aiming. Accept if ρ > η = 0.1.
@@ -82,9 +90,9 @@ is a fixed input; physical time t = T·τ, physical velocity = r′(τ)/T.
 
 Singular, hard-coded — the exact integral of control-acceleration energy:
 
-    J = ∫₀¹ ‖ a_geom(τ)/T² − (J_s r(τ) + c_s) ‖² dτ
+    J = ∫₀¹ ‖ a_geom(τ)/T² − (∇g_j r(τ) + c_j) ‖² dτ
 
-- Gravity = two-body + J2, affine per De Casteljau segment (J_s, c_s at the
+- Gravity = two-body + J2, affine per De Casteljau segment (∇g_j, c_j at the
   segment centroid); `sample_count` = number of linearization segments.
 - Computed in CLOSED FORM per segment via the degree-N Bernstein Gram matrix:
   residual control points f_k are linear in x, ∫ = Σ_{kl} G_{kl} f_k·f_l.
@@ -109,16 +117,16 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
   (rows rebuilt at the final iterate) = 0 ⇒ certified. The dense min-radius
   sweep (1001 samples) is a diagnostic, not the guarantee.
 - Boundary conditions are hard equality rows; the trust region is a hard box
-  ‖x−p‖_∞ ≤ r_k inside the QP.
+  ‖x−p‖_∞ ≤ Δ_k inside the QP.
 
 ## 3. Acceptance (canonical SCvx, Mao et al.)
 
 - The elastic (virtual-control) QP is solved UNCONDITIONALLY on the trust
-  path: slack on KOZ rows with L1 penalty w_s. The QP therefore minimizes
-  exactly the convex merit L(x) = J⁽ᵏ⁾(x) + w_s·Σ max(0, b − a·x), so the
+  path: slack on KOZ rows with L1 penalty μ. The QP therefore minimizes
+  exactly the convex merit φ⁽ᵏ⁾(x) = J⁽ᵏ⁾(x) + μ·Σ max(0, b − a·x), so the
   predicted merit reduction is ≥ 0 by construction (given a reference feasible
   for the hard rows — see bootstrap).
-- True merit T(x) = J_true(x) + w_s·h(x), where h(x) = hull-row violation with
+- True merit φ(x) = J_true(x) + μ·h(x), where h(x) = hull-row violation with
   rows REBUILT AT x (the certifiability function; h=0 ⇔ 명제 1 certificate).
   Penalizing sphere-distance instead deadlocks the ratio test (conservatism gap
   never closes) — measured, do not revisit. The rows-rebuilt-at-x definition of
@@ -131,17 +139,18 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
   — true at iteration 1, where the straight-line init violates the velocity-BC
   equalities — the merit comparison is meaningless; the repairing candidate is
   accepted unconditionally (ρ recorded as NaN).
-- pred_floor = 1e-12·|L(p)|: pred below it is a null step, accepted iff
-  non-worsening. Relative, not `1+|L(p)|` — the old form was absolute in
-  practice (|L(p)| ~ 2e-5) and so depended on the choice of units.
-- Termination is NOT this floor. Two principled exits, both K = 3 consecutive:
-  the merit streak (stop_reason 1) and model stationarity, pred < tol_f·|T(p)|
+- pred_floor = 1e-12·|φ⁽ᵏ⁾(x⁽ᵏ⁾)|: pred below it is a null step, accepted iff
+  non-worsening. Relative, not `1+|φ⁽ᵏ⁾(x⁽ᵏ⁾)|` — the old form was absolute in
+  practice (|φ⁽ᵏ⁾(x⁽ᵏ⁾)| ~ 2e-5) and so depended on the choice of units.
+- Termination is NOT this floor. Two principled exits, both n_conv = 3
+  consecutive: the merit streak (stop_reason 1) and model stationarity,
+  pred < tol_f·|φ(x⁽ᵏ⁾)|
   with the certificate held (stop_reason 4). stop_reason 0/2/3 (cap, trust
   collapse, QP failure) all mean the loop gave up and are gated as failures.
 
 ## 4. Convergence (locked 2026-08-07)
 
-- Converged ⇔ relative merit change |ΔT|/|T(p)| < tol_f on K = 3 CONSECUTIVE
+- Converged ⇔ relative merit change |Δφ|/|φ(x⁽ᵏ⁾)| < tol_f on n_conv = 3 CONSECUTIVE
   accepted steps AND the accepted iterate carries the certificate
   (h ≤ 1e-6 km aggregate). tol_f = max(tol, 1e-8); defaults tol = 1e-8
   (Python signature and verify harness).
@@ -157,7 +166,7 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
 
 | parameter | value | principle |
 |---|---|---|
-| w_s (`elastic_weight`) | 1e-2 | exact-penalty rule: above the KOZ dual scale, far below objective-swamping — w_s=1e4 measurably degraded optima 4–5× via penalty noise in ρ (evidence #2). **‖λ_KOZ‖_∞ MEASURED 2026-08-09 (Pillar 5): max 1.5e-7 across five scenarios, so w_s=1e-2 clears it by 5 orders.** Previously recorded as "estimated ~1e-6" and never measured. |
+| μ (`elastic_weight`) | 1e-2 | exact-penalty rule: above the KOZ dual scale, far below objective-swamping — μ=1e4 measurably degraded optima 4–5× via penalty noise in ρ (evidence #2). **‖λ_KOZ‖_∞ MEASURED 2026-08-09 (Pillar 5): max 1.5e-7 across five scenarios, so μ=1e-2 clears it by 5 orders.** Previously recorded as "estimated ~1e-6" and never measured. |
 | r₀ (`scp_trust_radius`) | 2000 km | must exceed the iteration-1 BC-repair distance (~1650 km in the demo); r₀ ≤ 1000 fails at iteration 1 (known open item) |
 | η | 0.1 | textbook SCvx acceptance threshold [Mao et al.] |
 | grow / shrink | ×2 @ ρ>0.9 / ×0.5 | textbook trust-region schedule |
@@ -188,9 +197,9 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
 
 1. **2026-08-05** — two-phase acceptance → canonical merit. Three adversarial
    agents + literature survey: the scale-mismatch justification was
-   self-contradicted by w_s; pred<0 hole confirmed; real precedent family is
+   self-contradicted by μ; pred<0 hole confirmed; real precedent family is
    phase-I/II, CCP, and 2024–26 two-phase SCP — not filter methods.
-2. **2026-08-05** — w_s grid: 1e4 → +460% optimality gap; 1e-2 → +3.4%;
+2. **2026-08-05** — μ grid: 1e4 → +460% optimality gap; 1e-2 → +3.4%;
    robustness 12/12 configs. Exact-penalty rule adopted.
 3. **2026-08-06** — smoothness term removed → apparent 33% degradation → basin
    forensics: a restart FROM the "second minimum" escaped it; tol sweep
@@ -234,7 +243,7 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
 
 Entries #2–#5 were measured in scratchpad scripts whose outputs were not
 persisted to `artifacts/`, and #2's numbers predate the exact-integral
-objective. The conclusions they support (w_s scale, smoothness removal, freeze
+objective. The conclusions they support (μ scale, smoothness removal, freeze
 harmfulness) are believed sound and were each reproduced at the time, but the
 numbers are not currently reproducible from a clean checkout. Re-derive before
 citing any of them in the paper.
@@ -260,7 +269,7 @@ change is pending explicit approval and is NOT yet in the tree.
   control point beyond the supporting half-space, certifies the whole segment.
   ANY unit normal is a valid witness — a single satisfied row is already a
   distance guarantee on its own (unit n ⇒ n·(q−c) ≤ ‖q−c‖, so a satisfied row
-  gives ‖q−c‖ ≥ r_e). The normal choice affects conservatism, never validity.
+  gives ‖q−c‖ ≥ R_KOZ). The normal choice affects conservatism, never validity.
   Verified against the as-built rows (`constraints.rs:125-144`; adversarial
   check 2026-08-09: SURVIVES).
 - The centroid rule is the heuristic that PICKS the witness each iteration.
@@ -290,7 +299,7 @@ measurement does NOT discriminate between them:
   optimized (vtrue_c := vlin_c) and delete (A). Preserved in commit `12b5b06`
   for reproducibility.
 
-### Why (A), on measurement (2026-08-09, phase120, trust=2000, w_s=1e-2)
+### Why (A), on measurement (2026-08-09, phase120, trust=2000, μ=1e-2)
 
 | | (A) | (B) |
 |---|---|---|
@@ -342,8 +351,8 @@ publication.
 
 A single plane per segment against a round sphere forces the trajectory
 further out than the constraint requires. Measured minimum clearance above
-r_e at the converged iterate, phase120: 63.9 km (n_seg=8), 15.6 km (16),
+R_KOZ at the converged iterate, phase120: 63.9 km (n_seg=8), 15.6 km (16),
 3.9 km (32), 0.97 km (64) — falling as ~1/n_seg², exactly the tangent-plane
-geometry (lateral reach L per segment ⇒ over-clearance ≈ L²/2r_e). This is
+geometry (lateral reach L per segment ⇒ over-clearance ≈ L²/2R_KOZ). This is
 the real cost of the sufficient condition and belongs in the paper as a
 quantitative characterization, not a footnote.

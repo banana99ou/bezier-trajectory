@@ -53,13 +53,13 @@ $$
 여기서 $B_i^N$은 Bernstein 기저다항식이고, $\mathbf{p}_i \in \mathbb{R}^3$은 $i$번째 제어점이다. 제어점을 행렬로 모으면
 
 $$
-P = [\mathbf{p}_0^{\mathsf{T}}, \mathbf{p}_1^{\mathsf{T}}, \ldots, \mathbf{p}_N^{\mathsf{T}}]^{\mathsf{T}} \in \mathbb{R}^{(N+1)\times 3}
+P = [\mathbf{p}_0, \mathbf{p}_1, \ldots, \mathbf{p}_N]^{\mathsf{T}} \in \mathbb{R}^{(N+1)\times 3}
 $$
 
 가 되고, 이를 하나의 벡터로 쌓으면
 
 $$
-\mathbf{x} = [\mathbf{p}_0^{\mathsf{T}}, \mathbf{p}_1^{\mathsf{T}}, \ldots, \mathbf{p}_N^{\mathsf{T}}]^{\mathsf{T}} \in \mathbb{R}^{3(N+1)}
+\mathbf{x} = \mathrm{vec}\!\left(P^{\mathsf{T}}\right) = [\mathbf{p}_0^{\mathsf{T}}, \mathbf{p}_1^{\mathsf{T}}, \ldots, \mathbf{p}_N^{\mathsf{T}}]^{\mathsf{T}} \in \mathbb{R}^{3(N+1)}
 $$
 
 를 얻는다. 본 논문에서 최적화의 결정 변수는 $\mathbf{x}$이며, 이후의 미분 연산, 분할, KOZ 제약은 모두 이 벡터에 대한 선형 연산으로 표현된다.
@@ -74,7 +74,7 @@ $$
 
 ### 2.2 미분 연산자와 경계조건
 
-속도와 가속도를 제어점에 대한 선형 연산으로 표현하기 위해, 먼저 Bézier 곡선의 미분 구조를 정리한다. 이는 차분 행렬(difference matrix) $D_N$으로 나타낼 수 있으며, 여기서 $D_N = N[d_{ij}] \in \mathbb{R}^{N\times(N+1)}$이고 $d_{i,i}=-1$, $d_{i,i+1}=1$, 그 밖의 항은 0이다.
+속도와 가속도를 제어점에 대한 선형 연산으로 표현하기 위해, 먼저 Bézier 곡선의 미분 구조를 정리한다. 이는 차분 행렬(difference matrix) $D_N$으로 나타낼 수 있으며, 여기서 $D_N = N[d_{il}] \in \mathbb{R}^{N\times(N+1)}$이고 $d_{i,i}=-1$, $d_{i,i+1}=1$, 그 밖의 항은 0이다.
 
 
 $$
@@ -90,7 +90,7 @@ N
 \in \mathbb{R}^{N\times(N+1)}
 $$
 
-또한 미분으로 얻은 제어점을 다시 원래 차수의 기저로 표현하기 위해 차수 상승 행렬(degree elevation matrix) $E_M$을 사용한다. 이를 이용하면 차수를 보존하는 속도·가속도 연산자를
+또한 미분으로 얻은 제어점을 다시 원래 차수의 기저로 표현하기 위해 차수 상승 행렬(degree elevation matrix) $E_M \in \mathbb{R}^{(M+2)\times(M+1)}$을 사용한다. 이 행렬은 차수 $M$의 제어점을 차수 $M+1$의 기저로 옮긴다. 이를 이용하면 차수를 보존하는 속도·가속도 연산자를
 
 $$
 L_{1,N} = E_{N-1}D_N, \qquad L_{2,N} = E_{N-1}D_N E_{N-1}D_N
@@ -99,7 +99,7 @@ $$
 로 쓸 수 있고, 대응하는 제어점은
 
 $$
-P^{(1)} = L_{1,N}P, \qquad P^{(2)} = L_{2,N}P
+P^{[1]} = L_{1,N}P, \qquad P^{[2]} = L_{2,N}P
 $$
 
 이다.
@@ -123,21 +123,21 @@ $$
 3절의 목적함수는 곡선을 따라 정의된 벡터값 함수의 크기를 제곱하여 적분한 양이다. 이러한 적분을 결정 변수 $\mathbf{x}$에 대한 이차형식으로 옮기기 위해, Bernstein 기저다항식 사이의 내적을 모은 행렬을 마련한다. 이 행렬을 Gram 행렬이라 하며, Bernstein 기저에 대해서는 닫힌 형태로 계산할 수 있다.
 
 $$
-[G_N]_{ij} = \frac{\binom{N}{i}\binom{N}{j}}{\binom{2N}{i+j}(2N+1)}, \qquad i,j=0,\ldots,N
+[G_N]_{il} = \frac{\binom{N}{i}\binom{N}{l}}{\binom{2N}{i+l}(2N+1)}, \qquad i,l=0,\ldots,N
 $$
 
-차수 $N$의 Bézier 곡선 $\mathbf{f}(\tau) = \sum_{k=0}^{N}B_k^N(\tau)\,\mathbf{f}_k$에 대해, 그 크기를 제곱하여 적분한 값은 제어점만으로
+차수 $N$의 Bézier 곡선 $\mathbf{f}(\tau) = \sum_{i=0}^{N}B_i^N(\tau)\,\mathbf{f}_i$에 대해, 그 크기를 제곱하여 적분한 값은 제어점만으로
 
 $$
-\int_0^1 \|\mathbf{f}(\tau)\|_2^2\,d\tau = \sum_{k=0}^{N}\sum_{l=0}^{N}[G_N]_{kl}\,\mathbf{f}_k^\top\mathbf{f}_l = \mathrm{tr}(F^\top G_N F), \qquad F = [\mathbf{f}_0^{\mathsf{T}},\ldots,\mathbf{f}_N^{\mathsf{T}}]^{\mathsf{T}}
+\int_0^1 \|\mathbf{f}(\tau)\|_2^2\,d\tau = \sum_{i=0}^{N}\sum_{l=0}^{N}[G_N]_{il}\,\mathbf{f}_i^{\mathsf{T}}\mathbf{f}_l = \mathrm{tr}(F^{\mathsf{T}} G_N F), \qquad F = [\mathbf{f}_0,\ldots,\mathbf{f}_N]^{\mathsf{T}} \in \mathbb{R}^{(N+1)\times 3}
 $$
 
-로 정리된다. 이 식에는 이산화나 수치 적분이 들어 있지 않다. 따라서 제어점 $\mathbf{f}_k$가 결정 변수 $\mathbf{x}$에 대한 1차 함수이기만 하면, 위 적분은 $\mathbf{x}$에 대한 볼록 이차형식이 되고 그 값은 근사 없이 정확하다.
+로 정리된다. 이 식에는 이산화나 수치 적분이 들어 있지 않다. 따라서 제어점 $\mathbf{f}_i$가 결정 변수 $\mathbf{x}$에 대한 1차 함수이기만 하면, 위 적분은 $\mathbf{x}$에 대한 볼록 이차형식이 되고 그 값은 근사 없이 정확하다.
 
-이 항등식은 2.2절의 미분 연산자와 결합하여 사용한다. $\mathbf{f}$를 가속도 곡선으로 두면 $F = L_{2,N}P$이므로, $\tilde G_N = L_{2,N}^\top G_N L_{2,N}$을 써서
+이 항등식은 2.2절의 미분 연산자와 결합하여 사용한다. $\mathbf{f}$를 가속도 곡선으로 두면 $F = L_{2,N}P$이므로, $\tilde G_N = L_{2,N}^{\mathsf{T}} G_N L_{2,N}$을 써서
 
 $$
-\int_0^1 \left\|\frac{d^2\mathbf{r}}{d\tau^2}\right\|_2^2 d\tau = \mathrm{tr}(P^\top \tilde G_N P) = \mathbf{x}^\top (\tilde G_N \otimes I_3)\mathbf{x}
+\int_0^1 \left\|\frac{d^2\mathbf{r}}{d\tau^2}\right\|_2^2 d\tau = \mathrm{tr}(P^{\mathsf{T}} \tilde G_N P) = \mathbf{x}^{\mathsf{T}} (\tilde G_N \otimes I_3)\mathbf{x}
 $$
 
 를 얻는다. 3.2절의 목적함수는 $\mathbf{f}$를 제어 가속도의 잔차 곡선으로 두어 같은 항등식을 적용한 것이다. 곡선을 따라 정의된 양의 적분을 제어점에 대한 이차형식으로 정확히 옮길 수 있다는 점은 제어점 공간에서 정식화하여 얻는 이점 가운데 하나이다.
@@ -153,12 +153,12 @@ $$
 제안 기법의 첫 과제는 비볼록인 구형 KOZ 회피 조건을 제어점에 대한 볼록 제약으로 바꾸는 것이다. 먼저 구형 KOZ를 다음과 같이 정의한다.
 
 $$
-\mathcal{K} = \left\{\mathbf{r}\in\mathbb{R}^3 : \|\mathbf{r}-\mathbf{c}_{\mathrm{KOZ}}\|_2 \le r_e \right\}
+\mathcal{K} = \left\{\mathbf{r}\in\mathbb{R}^3 : \|\mathbf{r}-\mathbf{c}_{\mathrm{KOZ}}\|_2 \le R_{\mathrm{KOZ}} \right\}
 $$
 
 여기서 $\mathbf{c}_{\mathrm{KOZ}}$는 KOZ의 중심이며, 본 논문에서는 KOZ 중심을 원점에 둔다.
 
-궤적 $\mathbf{r}(\tau)$가 KOZ 제약을 연속시간에서 만족한다는 것은, 모든 $\tau \in [0,1]$에 대해 $\mathbf{r}(\tau) \notin \operatorname{int}\mathcal{K}$, 즉 $\|\mathbf{r}(\tau)-\mathbf{c}_{\mathrm{KOZ}}\|_2 \ge r_e$가 성립함을 뜻한다. 이는 유한개의 노드에서만 회피를 요구하는 점별 제약 만족보다 강한 조건이다. 본 논문에서는 전이 시간 $T$가 고정되어 물리 시간 $t$와 매개변수 $\tau$가 일대일로 대응하므로, $\tau$ 전 구간에서의 만족은 곧 연속시간 만족과 같다. 제안 기법은 이 비볼록 조건을 직접 부과하는 대신, 이를 함의하는 볼록 충분조건(명제 1)을 부과한다.
+궤적 $\mathbf{r}(\tau)$가 KOZ 제약을 연속시간에서 만족한다는 것은, 모든 $\tau \in [0,1]$에 대해 $\mathbf{r}(\tau) \notin \operatorname{int}\mathcal{K}$, 즉 $\|\mathbf{r}(\tau)-\mathbf{c}_{\mathrm{KOZ}}\|_2 \ge R_{\mathrm{KOZ}}$가 성립함을 뜻한다. 이는 유한개의 노드에서만 회피를 요구하는 점별 제약 만족보다 강한 조건이다. 본 논문에서는 전이 시간 $T$가 고정되어 물리 시간 $t$와 매개변수 $\tau$가 일대일로 대응하므로, $\tau$ 전 구간에서의 만족은 곧 연속시간 만족과 같다. 제안 기법은 이 비볼록 조건을 직접 부과하는 대신, 이를 함의하는 볼록 충분조건(명제 1)을 부과한다.
 
 제안 기법에서는 곡선을 $n_{\mathrm{seg}}$개의 분할구간으로 등분하기 위해 De Casteljau 분할 행렬 $S^{(s)}$를 사용한다. 그러면 $s$번째 분할구간의 제어점은
 
@@ -169,7 +169,7 @@ $$
 가 된다. 이 분할구간의 제어점을 $\mathbf{q}^{(s)}_0, \ldots, \mathbf{q}^{(s)}_N$이라 하면, 대표점으로는 제어점의 중심점
 
 $$
-\mathbf{c}^{(s)} = \frac{1}{N+1}\sum_{k=0}^{N}\mathbf{q}^{(s)}_k
+\mathbf{c}^{(s)} = \frac{1}{N+1}\sum_{m=0}^{N}\mathbf{q}^{(s)}_m
 $$
 
 를 사용한다. 분할 전후의 제어점과 그 볼록 껍질의 관계는 [그림 1](#fig-ctrl-subdivision)에 나타내었다.
@@ -187,7 +187,7 @@ $$
 로 정의하며, $\mathbf{c}^{(s)} = \mathbf{c}_{\mathrm{KOZ}}$인 경우에는 법선 방향이 정의되지 않으므로 그 분할구간은 제약 구성에서 제외한다. 이에 따라 구의 지지 반공간은
 
 $$
-\mathcal{H}^{(s)} = \left\{\mathbf{r} : (\mathbf{n}^{(s)})^\top \mathbf{r} \ge (\mathbf{n}^{(s)})^\top \mathbf{c}_{\mathrm{KOZ}} + r_e \right\}
+\mathcal{H}^{(s)} = \left\{\mathbf{r} : (\mathbf{n}^{(s)})^{\mathsf{T}} \mathbf{r} \ge (\mathbf{n}^{(s)})^{\mathsf{T}} \mathbf{c}_{\mathrm{KOZ}} + R_{\mathrm{KOZ}} \right\}
 $$
 
 로 쓸 수 있다.
@@ -195,12 +195,12 @@ $$
 본 논문에서는 각 분할구간의 모든 제어점이 이 반공간 안에 놓이도록 다음 부등식을 부과한다.
 
 $$
-(\mathbf{n}^{(s)})^\top \mathbf{q}^{(s)}_k \ge (\mathbf{n}^{(s)})^\top \mathbf{c}_{\mathrm{KOZ}} + r_e, \qquad k=0,\ldots,N
+(\mathbf{n}^{(s)})^{\mathsf{T}} \mathbf{q}^{(s)}_m \ge (\mathbf{n}^{(s)})^{\mathsf{T}} \mathbf{c}_{\mathrm{KOZ}} + R_{\mathrm{KOZ}}, \qquad m=0,\ldots,N
 $$
 
 이 제약 구성이 연속시간 제약 만족을 보장한다는 사실은 다음 명제로 정리할 수 있다.
 
-> **명제 1.** 분할구간 $s$의 제어점을 $P^{(s)} = S^{(s)}P$라 하고, 구형 KOZ를 $\mathcal{K} = \{\mathbf{r}\in\mathbb{R}^3 : \|\mathbf{r}-\mathbf{c}_{\mathrm{KOZ}}\|_2 \le r_e\}$라 하자. 위에서 정의한 지지 반공간 $\mathcal{H}^{(s)}$에 대해, 해당 분할구간의 모든 제어점 $\mathbf{q}^{(s)}_0, \ldots, \mathbf{q}^{(s)}_N$이 $\mathcal{H}^{(s)}$ 안에 놓이면, 그 분할구간의 Bézier 곡선 전체도 $\mathcal{H}^{(s)}$ 안에 놓이고, 따라서 $\mathcal{K}$ 바깥에 놓인다.
+> **명제 1.** 분할구간 $s$의 제어점을 $P^{(s)} = S^{(s)}P$라 하고, 구형 KOZ를 $\mathcal{K} = \{\mathbf{r}\in\mathbb{R}^3 : \|\mathbf{r}-\mathbf{c}_{\mathrm{KOZ}}\|_2 \le R_{\mathrm{KOZ}}\}$라 하자. 위에서 정의한 지지 반공간 $\mathcal{H}^{(s)}$에 대해, 해당 분할구간의 모든 제어점 $\mathbf{q}^{(s)}_0, \ldots, \mathbf{q}^{(s)}_N$이 $\mathcal{H}^{(s)}$ 안에 놓이면, 그 분할구간의 Bézier 곡선 전체도 $\mathcal{H}^{(s)}$ 안에 놓이고, 따라서 $\mathcal{K}$ 바깥에 놓인다.
 
 > **가정.** 이 명제는 다음 가정 하에서 성립한다.
 > 1. 장애물은 구형이다.
@@ -210,17 +210,17 @@ $$
 
 > **증명.** Bézier 곡선은 제어점의 볼록 껍질 안에 놓인다. 구의 지지 반공간은 구의 내부를 배제하면서 경계에 접한다. 따라서 모든 제어점이 $\mathcal{H}^{(s)}$ 안에 있으면 볼록 껍질 전체도 $\mathcal{H}^{(s)}$ 안에 있고, 곡선도 $\mathcal{H}^{(s)} \cap \mathcal{K}^c$ 안에 놓인다. $\square$
 
-각 $\mathbf{q}^{(s)}_k$는 원래 제어점의 선형결합이므로, 법선 $\mathbf{n}^{(s)}$을 하나의 방향으로 고정해 두면 위 부등식은 결정 변수 $\mathbf{x}$에 대해 선형이다. 그러나 법선 자체가 중심점 $\mathbf{c}^{(s)}$을 통해 $\mathbf{x}$에 의존한다. 명제 1의 조건을 $\mathbf{x}$의 함수로 적으면
+각 $\mathbf{q}^{(s)}_m$는 원래 제어점의 선형결합이므로, 법선 $\mathbf{n}^{(s)}$을 하나의 방향으로 고정해 두면 위 부등식은 결정 변수 $\mathbf{x}$에 대해 선형이다. 그러나 법선 자체가 중심점 $\mathbf{c}^{(s)}$을 통해 $\mathbf{x}$에 의존한다. 명제 1의 조건을 $\mathbf{x}$의 함수로 적으면
 
 $$
-h(\mathbf{x}) = \sum_{s}\sum_{k=0}^{N}\max\left\{0,\ r_e + \left(\mathbf{n}^{(s)}(\mathbf{x})\right)^\top\mathbf{c}_{\mathrm{KOZ}} - \left(\mathbf{n}^{(s)}(\mathbf{x})\right)^\top\mathbf{q}^{(s)}_k(\mathbf{x})\right\}
+h(\mathbf{x}) = \sum_{s}\sum_{m=0}^{N}\max\left\{0,\ R_{\mathrm{KOZ}} + \left(\mathbf{n}^{(s)}(\mathbf{x})\right)^{\mathsf{T}}\mathbf{c}_{\mathrm{KOZ}} - \left(\mathbf{n}^{(s)}(\mathbf{x})\right)^{\mathsf{T}}\mathbf{q}^{(s)}_m(\mathbf{x})\right\}
 $$
 
 가 되며, 이 양은 $\mathbf{x}$에 대해 비볼록이다. 비볼록성은 법선을 만들 때의 정규화 $\mathbf{v}\mapsto\mathbf{v}/\|\mathbf{v}\|_2$에서만 나온다. $h(\mathbf{x}) = 0$이면 명제 1에 의해 곡선 전체가 KOZ 바깥에 놓이므로, $h$는 제안한 제약 구성의 실현 가능성을 그대로 재는 양이다. 3.3절의 하위 문제는 이 $h$를 기준점에서 1차 전개하여 볼록 제약으로 옮긴다. 반공간은 각 SCvx 반복에서 현재 해를 기준으로 다시 구성되므로, 이렇게 얻은 볼록 제약은 현재 해 주변에서 작동하는 보수적이고 국소적인 회피 제약 조건으로 이해할 수 있다.
 
-명제 1은 법선의 선택과 무관하게 성립한다. 단위 벡터 $\mathbf{n}$에 대해 $\mathbf{n}^\top(\mathbf{q}-\mathbf{c}_{\mathrm{KOZ}}) \le \|\mathbf{q}-\mathbf{c}_{\mathrm{KOZ}}\|_2$이므로, 부등식이 성립하는 것만으로 거리 $\|\mathbf{q}-\mathbf{c}_{\mathrm{KOZ}}\|_2 \ge r_e$가 이미 보장된다. 즉 중심점에서 법선을 만드는 규칙은 명제 1의 보수성만을 좌우하며, 타당성에는 영향을 주지 않는다.
+명제 1은 법선의 선택과 무관하게 성립한다. 단위 벡터 $\mathbf{n}$에 대해 $\mathbf{n}^{\mathsf{T}}(\mathbf{q}-\mathbf{c}_{\mathrm{KOZ}}) \le \|\mathbf{q}-\mathbf{c}_{\mathrm{KOZ}}\|_2$이므로, 부등식이 성립하는 것만으로 거리 $\|\mathbf{q}-\mathbf{c}_{\mathrm{KOZ}}\|_2 \ge R_{\mathrm{KOZ}}$가 이미 보장된다. 즉 중심점에서 법선을 만드는 규칙은 명제 1의 보수성만을 좌우하며, 타당성에는 영향을 주지 않는다.
 
-보수성은 분할 수에 대해 정량적으로 예측할 수 있다. 지지 반공간은 구에 접하는 평면이므로, 접점에서 평면을 따라 거리 $L$만큼 떨어진 점은 구면보다 약 $L^2/2r_e$만큼 더 바깥에 놓여야 부등식을 만족한다. 분할구간이 평면을 따라 뻗는 폭 $L$은 분할 수에 반비례하므로, 곡선이 KOZ 경계로부터 필요 이상으로 떨어지는 정도는 $n_{\mathrm{seg}}^{-2}$에 비례하여 줄어든다. 이 예측은 5.2절에서 측정 결과와 함께 확인한다.
+보수성은 분할 수에 대해 정량적으로 예측할 수 있다. 지지 반공간은 구에 접하는 평면이므로, 접점에서 평면을 따라 거리 $L_{\mathrm{seg}}$만큼 떨어진 점은 구면보다 약 $L_{\mathrm{seg}}^2/2R_{\mathrm{KOZ}}$만큼 더 바깥에 놓여야 부등식을 만족한다. 분할구간이 평면을 따라 뻗는 폭 $L_{\mathrm{seg}}$은 분할 수에 반비례하므로, 곡선이 KOZ 경계로부터 필요 이상으로 떨어지는 정도는 $n_{\mathrm{seg}}^{-2}$에 비례하여 줄어든다. 이 예측은 5.2절에서 측정 결과와 함께 확인한다.
 
 이상의 구성은 하나의 분할구간에 대해 [그림 2](#fig-subdivision)에 단계별로 나타내었다. (a)는 곡선 전체와 KOZ를 침범하는 분할구간을, (b)는 그 분할구간의 중심점에서 외향 법선과 지지 반공간을 구성하는 과정을, (c)는 모든 제어점이 반공간 안에 놓이도록 수정된 결과를 보인다. 이 그림은 회피 제약이 곡선 전체가 아니라 분할구간 단위로, 현재 해를 기준으로 국소적으로 구성됨을 보이기 위한 것이다. 그림이 보여 주는 것은 하나의 제어점 배치에서 명제 1의 조건 자체이며, 하위 문제가 실제로 푸는 볼록 제약은 이 조건을 기준점에서 1차 전개한 것이다(3.3절).
 
@@ -242,27 +242,27 @@ $$
 J(\mathbf{x}) = \int_0^1 \left\| \frac{1}{T^2}\frac{d^2\mathbf{r}}{d\tau^2} - \mathbf{g}(\mathbf{r}(\tau)) \right\|_2^2 d\tau
 $$
 
-중력 가속도는 위치에 대해 비선형이므로 이 적분은 $\mathbf{x}$에 대해 비볼록이다. 하위 문제를 볼록하게 유지하기 위해, KOZ 분할과 별도로 곡선을 $n_{\mathrm{lin}}$개의 구간으로 나누고 각 구간에서 중력을 1차 테일러(Taylor) 전개로 근사한다. 구간 $i$에서 전개의 기준점은 SCvx 반복 $k$의 기준 제어점이 정하는 그 구간의 중심점 $\mathbf{r}_i^{(k)}$이며,
+중력 가속도는 위치에 대해 비선형이므로 이 적분은 $\mathbf{x}$에 대해 비볼록이다. 하위 문제를 볼록하게 유지하기 위해, KOZ 분할과 별도로 곡선을 $n_{\mathrm{lin}}$개의 구간으로 나누고 각 구간에서 중력을 1차 테일러(Taylor) 전개로 근사한다. 이때 구간을 나누는 De Casteljau 분할 행렬은 KOZ 분할의 $S^{(s)}$와 구분하여 $\hat S^{(j)}$로 쓴다. 구간 $j$에서 전개의 기준점은 SCvx 반복 $k$의 기준 제어점이 정하는 그 구간의 중심점 $\mathbf{r}_j^{(k)}$이며,
 
 $$
-\mathbf{g}(\mathbf{r}) \approx J_i^{(k)}\mathbf{r} + \mathbf{c}_i^{(k)}, \qquad \mathbf{c}_i^{(k)} = \mathbf{g}\!\left(\mathbf{r}_i^{(k)}\right) - J_i^{(k)}\mathbf{r}_i^{(k)}
+\mathbf{g}(\mathbf{r}) \approx \nabla\mathbf{g}_j^{(k)}\mathbf{r} + \mathbf{c}_j^{(k)}, \qquad \mathbf{c}_j^{(k)} = \mathbf{g}\!\left(\mathbf{r}_j^{(k)}\right) - \nabla\mathbf{g}_j^{(k)}\mathbf{r}_j^{(k)}
 $$
 
-로 쓴다. 여기서 $J_i^{(k)} = \partial\mathbf{g}/\partial\mathbf{r}$는 기준점에서 계산한 중력 Jacobian이다. 구간을 나누는 목적은 중력 전개의 기준점을 곡선을 따라 여러 개 두는 데 있으며, 적분의 이산화와는 무관하다. 각 구간 안에서 중력은 위치에 대한 1차 함수로 고정된다.
+로 쓴다. 여기서 $\nabla\mathbf{g}_j^{(k)} = \partial\mathbf{g}/\partial\mathbf{r}$는 기준점에서 계산한 중력 Jacobian이다. 구간을 나누는 목적은 중력 전개의 기준점을 곡선을 따라 여러 개 두는 데 있으며, 적분의 이산화와는 무관하다. 각 구간 안에서 중력은 위치에 대한 1차 함수로 고정된다.
 
-구간 $i$를 $u \in [0,1]$로 다시 매개화하면, 그 구간에서 피적분 함수는 기하학적 가속도에서 선형화한 중력을 뺀 잔차
-
-$$
-\mathbf{f}^{(i)}(u) = \frac{1}{T^2}\frac{d^2\mathbf{r}}{d\tau^2} - \left(J_i^{(k)}\mathbf{r} + \mathbf{c}_i^{(k)}\right)
-$$
-
-이다. 우변은 $u$에 대응하는 $\tau$에서 평가하며, 두 항은 모두 $u$에 대한 차수 $N$의 Bézier 곡선이다. 그 제어점은 De Casteljau 분할 행렬과 2.2절의 가속도 연산자를 통해 결정 변수 $\mathbf{x}$에 대한 1차 함수로 얻어진다. 따라서 $\mathbf{f}^{(i)}$ 역시 제어점이 $\mathbf{x}$에 대한 1차 함수인 차수 $N$의 Bézier 곡선이고, 2.3절의 항등식을 그대로 적용할 수 있다. 구간별 적분을 더하면
+구간 $j$를 $\xi \in [0,1]$로 다시 매개화하면, 그 구간에서 피적분 함수는 기하학적 가속도에서 선형화한 중력을 뺀 잔차
 
 $$
-J^{(k)}(\mathbf{x}) = \sum_{i=1}^{n_{\mathrm{lin}}} \frac{1}{n_{\mathrm{lin}}}\int_0^1 \left\|\mathbf{f}^{(i)}(u)\right\|_2^2 du = \sum_{i=1}^{n_{\mathrm{lin}}} \frac{1}{n_{\mathrm{lin}}}\,\mathrm{tr}\!\left(F_i(\mathbf{x})^\top G_N F_i(\mathbf{x})\right)
+\mathbf{f}^{(j)}(\xi) = \frac{1}{T^2}\frac{d^2\mathbf{r}}{d\tau^2} - \left(\nabla\mathbf{g}_j^{(k)}\mathbf{r} + \mathbf{c}_j^{(k)}\right)
 $$
 
-를 얻는다. 여기서 $1/n_{\mathrm{lin}}$은 매개화에 따르는 척도 인자이고, $F_i(\mathbf{x})$는 $\mathbf{f}^{(i)}$의 제어점을 모은 행렬이다.
+이다. 우변은 $\xi$에 대응하는 $\tau$에서 평가하며, 두 항은 모두 $\xi$에 대한 차수 $N$의 Bézier 곡선이다. 그 제어점은 분할 행렬 $\hat S^{(j)}$와 2.2절의 가속도 연산자를 통해 결정 변수 $\mathbf{x}$에 대한 1차 함수로 얻어진다. 따라서 $\mathbf{f}^{(j)}$ 역시 제어점이 $\mathbf{x}$에 대한 1차 함수인 차수 $N$의 Bézier 곡선이고, 2.3절의 항등식을 그대로 적용할 수 있다. 구간별 적분을 더하면
+
+$$
+J^{(k)}(\mathbf{x}) = \sum_{j=1}^{n_{\mathrm{lin}}} \frac{1}{n_{\mathrm{lin}}}\int_0^1 \left\|\mathbf{f}^{(j)}(\xi)\right\|_2^2 d\xi = \sum_{j=1}^{n_{\mathrm{lin}}} \frac{1}{n_{\mathrm{lin}}}\,\mathrm{tr}\!\left(F_j(\mathbf{x})^{\mathsf{T}} G_N F_j(\mathbf{x})\right)
+$$
+
+를 얻는다. 여기서 $1/n_{\mathrm{lin}}$은 매개화에 따르는 척도 인자이고, $F_j(\mathbf{x})$는 $\mathbf{f}^{(j)}$의 제어점을 모은 행렬이다.
 
 이 목적함수는 $\mathbf{x}$에 대한 볼록 이차형식이므로 각 SCvx 반복에서 볼록 QP의 목적함수로 그대로 사용한다. 적분은 표본점에서 근사한 값이 아니라 닫힌 형태로 정확히 계산된 값이며, $J^{(k)}$가 원래 목적함수 $J$와 다른 유일한 이유는 중력을 구간별로 선형화한 데 있다. 이 차이는 3.3절의 비 $\rho_k$가 재는 근사 오차의 하나가 된다.
 
@@ -273,46 +273,46 @@ $$
 SCvx 반복 $k$의 하위 문제는 다음의 볼록 QP이다.
 
 $$
-\min_{\mathbf{x},\,\mathbf{s}} \ \frac{1}{2}\mathbf{x}^{\mathsf{T}} H^{(k)}\mathbf{x} + (\boldsymbol{\ell}^{(k)})^{\mathsf{T}}\mathbf{x} + w_s\,\mathbf{1}^{\mathsf{T}}\mathbf{s}
+\min_{\mathbf{x},\,\boldsymbol{\nu}} \ \frac{1}{2}\mathbf{x}^{\mathsf{T}} H^{(k)}\mathbf{x} + (\boldsymbol{\ell}^{(k)})^{\mathsf{T}}\mathbf{x} + \mu\,\mathbf{1}^{\mathsf{T}}\boldsymbol{\nu}
 $$
 
 $$
-A_{\mathrm{KOZ}}^{(k)}\mathbf{x} + \mathbf{s} \ge \mathbf{b}_{\mathrm{KOZ}}^{(k)}, \quad \mathbf{s} \ge \mathbf{0}, \qquad
+A_{\mathrm{KOZ}}^{(k)}\mathbf{x} + \boldsymbol{\nu} \ge \mathbf{b}_{\mathrm{KOZ}}^{(k)}, \quad \boldsymbol{\nu} \ge \mathbf{0}, \qquad
 A_{\mathrm{bc}}\mathbf{x} = \mathbf{b}_{\mathrm{bc}}, \qquad
-\|\mathbf{x} - \mathbf{x}^{(k)}\|_\infty \le r_k
+\|\mathbf{x} - \mathbf{x}^{(k)}\|_\infty \le \Delta_k
 $$
 
 여기서 $H^{(k)}$와 $\boldsymbol{\ell}^{(k)}$는 3.2절의 목적함수 $J^{(k)}$를 $\mathbf{x}$에 대해 전개하여 얻는 행렬과 벡터이며, 해에 영향을 주지 않는 상수항은 생략하였다.
 
-KOZ 행 $A_{\mathrm{KOZ}}^{(k)}$, $\mathbf{b}_{\mathrm{KOZ}}^{(k)}$는 3.1절의 조건을 기준점 $\mathbf{x}^{(k)}$에서 1차 전개하여 얻는다. 분할구간 $s$의 제어점 $\mathbf{q}^{(s)}_k$에 대한 여유 거리를
+KOZ 행 $A_{\mathrm{KOZ}}^{(k)}$, $\mathbf{b}_{\mathrm{KOZ}}^{(k)}$는 3.1절의 조건을 기준점 $\mathbf{x}^{(k)}$에서 1차 전개하여 얻는다. 분할구간 $s$의 제어점 $\mathbf{q}^{(s)}_m$에 대한 여유 거리를
 
 $$
-\gamma^{(s)}_k(\mathbf{x}) = \left(\mathbf{n}^{(s)}(\mathbf{x})\right)^\top\!\left(\mathbf{q}^{(s)}_k(\mathbf{x}) - \mathbf{c}_{\mathrm{KOZ}}\right) - r_e
+\gamma^{(s)}_m(\mathbf{x}) = \left(\mathbf{n}^{(s)}(\mathbf{x})\right)^{\mathsf{T}}\!\left(\mathbf{q}^{(s)}_m(\mathbf{x}) - \mathbf{c}_{\mathrm{KOZ}}\right) - R_{\mathrm{KOZ}}
 $$
 
-로 두면, 그 기울기는 분할 행렬 $S^{(s)}$와 중심점 가중치 $w^{(s)}_m = \frac{1}{N+1}\sum_{j} S^{(s)}_{jm}$을 써서
+로 두면, 그 기울기는 분할 행렬 $S^{(s)}$와 중심점 가중치 $w^{(s)}_i = \frac{1}{N+1}\sum_{m=0}^{N} S^{(s)}_{mi}$를 써서
 
 $$
-\frac{\partial \gamma^{(s)}_k}{\partial \mathbf{p}_m} = S^{(s)}_{km}\,\mathbf{n}^{(s)} + \frac{w^{(s)}_m}{\left\|\mathbf{c}^{(s)}-\mathbf{c}_{\mathrm{KOZ}}\right\|_2}\left(I_3 - \mathbf{n}^{(s)}(\mathbf{n}^{(s)})^\top\right)\!\left(\mathbf{q}^{(s)}_k - \mathbf{c}_{\mathrm{KOZ}}\right)
+\frac{\partial \gamma^{(s)}_m}{\partial \mathbf{p}_i} = S^{(s)}_{mi}\,\mathbf{n}^{(s)} + \frac{w^{(s)}_i}{\left\|\mathbf{c}^{(s)}-\mathbf{c}_{\mathrm{KOZ}}\right\|_2}\left(I_3 - \mathbf{n}^{(s)}(\mathbf{n}^{(s)})^{\mathsf{T}}\right)\!\left(\mathbf{q}^{(s)}_m - \mathbf{c}_{\mathrm{KOZ}}\right)
 $$
 
-로 쓸 수 있다. 첫째 항은 법선을 고정했을 때의 기울기이고, 둘째 항은 제어점이 움직이면서 중심점이, 따라서 법선의 방향이 함께 도는 효과이다. 사영 $I_3 - \mathbf{n}^{(s)}(\mathbf{n}^{(s)})^\top$이 붙어 있으므로 둘째 항은 제어점이 반공간의 경계면을 따라 접점에서 멀리 놓일수록 커지고, 접점 위에 놓인 제어점에서는 사라진다. 이 기울기를 써서 각 KOZ 행을
+로 쓸 수 있다. 첫째 항은 법선을 고정했을 때의 기울기이고, 둘째 항은 제어점이 움직이면서 중심점이, 따라서 법선의 방향이 함께 도는 효과이다. 사영 $I_3 - \mathbf{n}^{(s)}(\mathbf{n}^{(s)})^{\mathsf{T}}$이 붙어 있으므로 둘째 항은 제어점이 반공간의 경계면을 따라 접점에서 멀리 놓일수록 커지고, 접점 위에 놓인 제어점에서는 사라진다. 이 기울기를 써서 각 KOZ 행을
 
 $$
-\gamma^{(s)}_k\!\left(\mathbf{x}^{(k)}\right) + \sum_{m=0}^{N}\left(\frac{\partial \gamma^{(s)}_k}{\partial \mathbf{p}_m}\right)^{\!\top}\!\left(\mathbf{p}_m - \mathbf{p}^{(k)}_m\right) + s^{(s)}_k \ \ge\ 0
+\gamma^{(s)}_m\!\left(\mathbf{x}^{(k)}\right) + \sum_{i=0}^{N}\left(\frac{\partial \gamma^{(s)}_m}{\partial \mathbf{p}_i}\right)^{\!\mathsf{T}}\!\left(\mathbf{p}_i - \mathbf{p}^{(k)}_i\right) + \nu^{(s)}_m \ \ge\ 0
 $$
 
 으로 부과한다. 둘째 항을 빼고 법선을 기준점 값으로 고정하면 하위 문제의 최적해는 다음 반복에서 다시 구성한 반공간을 만족하지 않는 점이 되며, 아래의 비 $\rho_k$가 그 불일치를 실제 개선으로 잘못 읽는다.
 
-여유 변수(slack variable) $\mathbf{s}$는 선형화된 KOZ 제약의 실현 가능성을 보완해주는 항으로, SCvx의 virtual control [6, 7]에 해당한다. 기준점이 KOZ 안쪽에 놓이는 초기 단계에서는 선형화된 제약이 그 자체로 실현 불가능할 수 있으므로, 여유 변수로 이를 흡수하되 페널티 계수 $w_s$를 두어 수렴한 해에서는 $\mathbf{s} = \mathbf{0}$이 되도록 한다. $w_s$의 선택 기준은 4.1절에 제시한다. 신뢰 구간 제약 $\|\mathbf{x} - \mathbf{x}^{(k)}\|_\infty \le r_k$은 선형화가 유효한 범위 밖으로 벗어나는 해를 막으며, 신뢰 구간의 크기 $r_k$는 아래의 기준과 연동하여 반복마다 조절된다.
+여유 변수(slack variable) $\boldsymbol{\nu}$는 선형화된 KOZ 제약의 실현 가능성을 보완해주는 항으로, SCvx의 virtual control [6, 7]에 해당한다. 기준점이 KOZ 안쪽에 놓이는 초기 단계에서는 선형화된 제약이 그 자체로 실현 불가능할 수 있으므로, 여유 변수로 이를 흡수하되 페널티 계수 $\mu$를 두어 수렴한 해에서는 $\boldsymbol{\nu} = \mathbf{0}$이 되도록 한다. $\mu$의 선택 기준은 4.1절에 제시한다. 신뢰 구간 제약 $\|\mathbf{x} - \mathbf{x}^{(k)}\|_\infty \le \Delta_k$은 선형화가 유효한 범위 밖으로 벗어나는 해를 막으며, 신뢰 구간의 크기 $\Delta_k$는 아래의 기준과 연동하여 반복마다 조절된다.
 
 하위 문제의 해 $\hat{\mathbf{x}}$를 새로운 기준점으로 삼을지는, 목적함수와 제약 조건 위반을 결합한 merit function으로 평가한다 [6, 7].
 
 $$
-\phi(\mathbf{x}) = J(\mathbf{x}) + w_s\,h(\mathbf{x})
+\phi(\mathbf{x}) = J(\mathbf{x}) + \mu\,h(\mathbf{x})
 $$
 
-여기서 $J$는 중력을 비선형 그대로 둔 3.2절의 목적함수이고, $h$는 3.1절에서 정의한 실현 가능성 척도, 즉 $\mathbf{x}$ 자신에서 다시 구성한 지지 반공간에 대한 위반의 합이다. 앞의 볼록 QP가 최소화하는 목적함수는 $\phi$의 두 비볼록 요소를 각각 볼록 근사로 바꾼 $\phi^{(k)} = J^{(k)} + w_s h^{(k)}$와 일치한다. $J^{(k)}$는 중력을 구간별로 선형화한 목적함수이고, $h^{(k)}$는 $h$를 기준점에서 1차 전개한 양으로 하위 문제에서는 여유 변수의 합 $\mathbf{1}^{\mathsf{T}}\mathbf{s}$로 나타난다. 따라서 하위 문제가 계산한 예측 감소량에 대한 실제 감소량의 비
+여기서 $J$는 중력을 비선형 그대로 둔 3.2절의 목적함수이고, $h$는 3.1절에서 정의한 실현 가능성 척도, 즉 $\mathbf{x}$ 자신에서 다시 구성한 지지 반공간에 대한 위반의 합이다. 앞의 볼록 QP가 최소화하는 목적함수는 $\phi$의 두 비볼록 요소를 각각 볼록 근사로 바꾼 $\phi^{(k)} = J^{(k)} + \mu h^{(k)}$와 일치한다. $J^{(k)}$는 중력을 구간별로 선형화한 목적함수이고, $h^{(k)}$는 $h$를 기준점에서 1차 전개한 양으로 하위 문제에서는 여유 변수의 합 $\mathbf{1}^{\mathsf{T}}\boldsymbol{\nu}$로 나타난다. 따라서 하위 문제가 계산한 예측 감소량에 대한 실제 감소량의 비
 
 $$
 \rho_k = \frac{\phi(\mathbf{x}^{(k)}) - \phi(\hat{\mathbf{x}})}{\phi^{(k)}(\mathbf{x}^{(k)}) - \phi^{(k)}(\hat{\mathbf{x}})}
@@ -320,23 +320,23 @@ $$
 
 는 두 근사가 실제 개선을 얼마나 정확히 예측했는지를 잰다. $\rho_k$가 반영하는 근사 오차는 중력 선형화와 법선의 회전 두 가지이며, 어느 한쪽만 1차 근사로 두고 다른 쪽을 고정하면 $\phi$와 $\phi^{(k)}$가 서로 다른 제약을 재게 되어 이 비가 근사 오차를 재는 의미를 잃는다. $\rho_k$가 기준값 $\eta$를 넘으면 $\hat{\mathbf{x}}$를 새로운 기준점으로 간주하고, 1에 가까우면 신뢰 구간의 크기를 늘려 더 큰 이동을 허용한다. 반대로 $\rho_k \le \eta$이면 $\hat{\mathbf{x}}$를 버리고 신뢰 구간의 크기를 줄여 같은 기준점에서 다시 푼다. 한편 직선 보간으로 만든 초기 제어점은 속도 경계조건을 만족하지 않으므로, 이 등식 제약을 처음으로 만족하게 되는 첫 반복의 해는 위 비교 없이 새로운 기준점으로 삼는다.
 
-수렴 조건은 두 가지를 함께 요구한다. 첫째는 새로운 기준점에서 merit function의 상대 변화가 허용오차보다 작다는 것이고, 둘째는 그 기준점이 $h = 0$, 즉 명제 1의 조건을 만족한다는 것이다. 두 조건을 연속된 $K$번의 반복에서 모두 만족할 때 수렴으로 간주한다. 한 번의 반복만으로 가리면, 법선이 반복마다 다시 구성되면서 제어점이 제약면을 따라 느리게 이동하는 구간에서 상대 변화가 일시적으로 작아지는 것을 수렴으로 잘못 읽을 수 있다. 같은 이유로 제어점 변화의 크기 자체는 수렴 조건으로 쓰지 않는다.
+수렴 조건은 두 가지를 함께 요구한다. 첫째는 새로운 기준점에서 merit function의 상대 변화가 허용오차보다 작다는 것이고, 둘째는 그 기준점이 $h = 0$, 즉 명제 1의 조건을 만족한다는 것이다. 두 조건을 연속된 $n_{\mathrm{conv}}$번의 반복에서 모두 만족할 때 수렴으로 간주한다. 한 번의 반복만으로 가리면, 법선이 반복마다 다시 구성되면서 제어점이 제약면을 따라 느리게 이동하는 구간에서 상대 변화가 일시적으로 작아지는 것을 수렴으로 잘못 읽을 수 있다. 같은 이유로 제어점 변화의 크기 자체는 수렴 조건으로 쓰지 않는다.
 
-하위 문제가 더 이상 개선을 예측하지 못하는 경우도 같은 방식으로 처리한다. 예측 감소량이 $\phi$의 크기에 대해 허용오차보다 작고 기준점이 명제 1의 조건을 만족하는 반복이 연속 $K$번 나타나면 종료한다. 두 종료 조건은 모두 하위 문제가 정지점에 도달했다는 사실을 근거로 삼는다. 반면 신뢰 구간의 크기가 하한까지 줄어드는 것은 반복이 더 진행되지 못한 경우이므로, 수렴으로 보지 않고 실패로 기록한다.
+하위 문제가 더 이상 개선을 예측하지 못하는 경우도 같은 방식으로 처리한다. 예측 감소량이 $\phi$의 크기에 대해 허용오차보다 작고 기준점이 명제 1의 조건을 만족하는 반복이 연속 $n_{\mathrm{conv}}$번 나타나면 종료한다. 두 종료 조건은 모두 하위 문제가 정지점에 도달했다는 사실을 근거로 삼는다. 반면 신뢰 구간의 크기가 하한까지 줄어드는 것은 반복이 더 진행되지 못한 경우이므로, 수렴으로 보지 않고 실패로 기록한다.
 
 이로써 제안 기법은 매 반복에서 볼록 QP 하나를 풀고 그 해를 merit function으로 평가하는, 신뢰 구간 기반의 국소 최적화 알고리즘으로 이해할 수 있다.
 
 > **Algorithm 1** — 신뢰 구간 기반 궤적 초기화 (SCvx)
-> 1. 초기 제어점 $\mathbf{x}^{(0)}$(직선 보간)과 신뢰 구간의 초기 크기 $r_0$를 둔다
+> 1. 초기 제어점 $\mathbf{x}^{(0)}$(직선 보간)과 신뢰 구간의 초기 크기 $\Delta_0$를 둔다
 > 2. **for** $k = 0, 1, 2, \ldots$:
 > 3. &nbsp;&nbsp; $\mathbf{x}^{(k)}$에서 De Casteljau 분할로 지지 반공간을 다시 구성하고, 그 조건을 1차 전개하여 $A_{\mathrm{KOZ}}^{(k)}$, $\mathbf{b}_{\mathrm{KOZ}}^{(k)}$를 얻는다 (3.1절)
 > 4. &nbsp;&nbsp; 각 구간의 중심점에서 중력을 1차 전개하여 $H^{(k)}$, $\boldsymbol{\ell}^{(k)}$를 구성한다 (3.2절)
-> 5. &nbsp;&nbsp; 볼록 QP를 풀어 해 $\hat{\mathbf{x}}$와 여유 변수 $\mathbf{s}$를 얻는다
+> 5. &nbsp;&nbsp; 볼록 QP를 풀어 해 $\hat{\mathbf{x}}$와 여유 변수 $\boldsymbol{\nu}$를 얻는다
 > 6. &nbsp;&nbsp; $\rho_k$를 계산하여, $\rho_k > \eta$이면 $\hat{\mathbf{x}}$를 새로운 기준점으로 간주하고 $\rho_k$가 1에 가까우면 신뢰 구간의 크기를 늘린다; 그렇지 않으면 $\hat{\mathbf{x}}$를 버리고 크기를 줄인다
-> 7. &nbsp;&nbsp; **수렴 판정**: merit function의 상대 변화가 허용오차보다 작은 반복, 또는 예측 감소량이 허용오차보다 작은 반복이 $h = 0$인 기준점에서 연속 $K$번 나타나면 종료한다
+> 7. &nbsp;&nbsp; **수렴 판정**: merit function의 상대 변화가 허용오차보다 작은 반복, 또는 예측 감소량이 허용오차보다 작은 반복이 $h = 0$인 기준점에서 연속 $n_{\mathrm{conv}}$번 나타나면 종료한다
 > 8. &nbsp;&nbsp; 신뢰 구간의 크기가 하한 미만으로 줄어들면 실패로 기록하고 중단한다
 
-신뢰 구간의 초기 크기와 조절 계수, 기준값 $\eta$, 페널티 계수 $w_s$, 허용오차와 연속 만족 횟수 $K$의 값은 4.1절에 제시한다.
+신뢰 구간의 초기 크기와 조절 계수, 기준값 $\eta$, 페널티 계수 $\mu$, 허용오차와 연속 만족 횟수 $n_{\mathrm{conv}}$의 값은 4.1절에 제시한다.
 
 (이상의 절차를 [그림 3](#fig-scp-pipeline)에 도식화하였다. 그림에서는 한 번만 만들어 재사용하는 연산자와 매 반복에서 다시 구성하는 부분, 즉 지지 반공간과 중력 선형화를 구분하여 표시하였다. 또한 비 $\rho_k$가 기준값을 넘지 못하면 같은 기준점에서 신뢰 구간의 크기를 줄여 다시 푸는 경로와, 새로운 기준점으로 옮긴 뒤에도 수렴 조건을 만족하지 못하면 다음 반복으로 넘어가는 경로를 나누어 그렸다. 이 그림은 매 반복의 계산량이 어디에서 발생하는지와, 해를 새로운 기준점으로 간주하는 단계가 반복 구조의 어느 지점에 놓이는지를 함께 보이기 위한 것이다.)[[this but shorter. like we visualized this process to fig 3. or smh. it def can be shorter and def should be more organic.]]
 
@@ -350,17 +350,17 @@ $$
 
 ### 4.1 시연 문제와 평가 지표
 
-실험에는 단순화된 3차원 궤도전이 문제를 사용하였다. 우주선은 지구 중심의 구형 KOZ를 회피하면서 주어진 초기 위치와 최종 위치 사이를 이동해야 한다. KOZ 반경은 $r_e = 6471$ km, 전이 시간은 $T = 1500$ s로 고정하였다. 양 끝점에서 위치를 고정하고, 초기 및 최종 속도 제약도 함께 부과하였다. 중력장은 이체 문제 항과 J2 섭동을 포함한다. 목적함수를 계산할 때 중력장은 각 구간의 중심점에서 1차 테일러 전개로 근사하지만, 그렇게 얻은 피적분 함수의 적분 자체는 2.3절의 항등식으로 정확히 계산한다.
+실험에는 단순화된 3차원 궤도전이 문제를 사용하였다. 우주선은 지구 중심의 구형 KOZ를 회피하면서 주어진 초기 위치와 최종 위치 사이를 이동해야 한다. KOZ 반경은 $R_{\mathrm{KOZ}} = 6471$ km, 전이 시간은 $T = 1500$ s로 고정하였다. 양 끝점에서 위치를 고정하고, 초기 및 최종 속도 제약도 함께 부과하였다. 중력장은 이체 문제 항과 J2 섭동을 포함한다. 목적함수를 계산할 때 중력장은 각 구간의 중심점에서 1차 테일러 전개로 근사하지만, 그렇게 얻은 피적분 함수의 적분 자체는 2.3절의 항등식으로 정확히 계산한다.
 
 시연 시나리오는 Progress 우주선의 ISS 접근 문제를 단순화한 단일 arc 궤도전이 시나리오로, 실제 궤도를 기반으로 하지만 분석 편의상 단순화하였다. (chaser는 고도 245 km의 원궤도, target은 고도 400 km 원궤도에서 시작하며, 두 궤도는 동일 평면(경사각 51.64 deg) 내에서 120 deg의 초기 위상차를 갖는다고 가정한다.)[[단순 궤도전이 문제인데 target/chaser 가 왜 나오는지?]]
 
 이러한 시나리오를 선택한 이유는, 120 deg 위상차 시나리오에서는 초기 궤적이 KOZ 경계 근처까지 접근하는 경로가 자연스럽게 형성되기 때문이다. 즉, 분할 수 변화에 따른 수치적 보수성 차이가 실제로 뚜렷하게 드러나는 사례이다.
 
-최적화에는 Rust로 구현한 QP solver를 사용하였다. SCvx 반복은 직선 보간으로 만든 초기 제어점에서 시작하며, 신뢰 구간의 초기 크기는 2000 km로 두고 $\rho_k$에 따라 2배로 늘리거나 절반으로 줄인다. 기준값은 $\eta = 0.1$, merit function의 상대 변화와 예측 감소량에 공통으로 적용하는 수렴 허용오차는 $10^{-8}$, 연속 만족 횟수는 $K = 3$, 신뢰 구간 크기의 하한은 $10^{-2}$ km, 반복 한도는 1000회로 두었다.
+최적화에는 Rust로 구현한 QP solver를 사용하였다. SCvx 반복은 직선 보간으로 만든 초기 제어점에서 시작하며, 신뢰 구간의 초기 크기는 2000 km로 두고 $\rho_k$에 따라 2배로 늘리거나 절반으로 줄인다. 기준값은 $\eta = 0.1$, merit function의 상대 변화와 예측 감소량에 공통으로 적용하는 수렴 허용오차는 $10^{-8}$, 연속 만족 횟수는 $n_{\mathrm{conv}} = 3$, 신뢰 구간 크기의 하한은 $10^{-2}$ km, 반복 한도는 1000회로 두었다.
 
-페널티 계수는 $w_s = 10^{-2}$로 두었다. L1 페널티 항이 정확한 페널티(exact penalty)로 작동하여 수렴한 해에서 여유 변수가 0이 되려면, 계수가 해당 제약의 쌍대변수 크기를 넘어야 한다 [13, 14]. 본 문제에서 KOZ 제약 쌍대변수의 크기는 약 $1.5\times10^{-7}$ 수준으로 측정되었으므로, $w_s = 10^{-2}$는 이 조건을 약 $10^5$배의 여유를 두고 만족한다. 동시에 이 값은 목적함수의 규모를 압도하지 않으므로 $\rho_k$가 목적 개선에 둔감해지지 않는다.
+페널티 계수는 $\mu = 10^{-2}$로 두었다. L1 페널티 항이 정확한 페널티(exact penalty)로 작동하여 수렴한 해에서 여유 변수가 0이 되려면, 계수가 해당 제약의 쌍대변수 크기를 넘어야 한다 [13, 14]. 본 문제에서 KOZ 제약 쌍대변수의 크기는 약 $1.5\times10^{-7}$ 수준으로 측정되었으므로, $\mu = 10^{-2}$는 이 조건을 약 $10^5$배의 여유를 두고 만족한다. 동시에 이 값은 목적함수의 규모를 압도하지 않으므로 $\rho_k$가 목적 개선에 둔감해지지 않는다.
 
-본 논문에서 사용하는 평가 지표는 다음과 같다. 성공 여부(solve success)는 최종 해가 모든 제약 조건을 만족하는지를, 안전 여유(safety margin)는 최종 궤적의 최소 반경에서 KOZ 반경을 뺀 값을 나타낸다. 제어 비용은 최종 궤적을 따라 요구되는 제어 가속도 $\lVert\mathbf{u}\rVert$의 평균 크기(m/s²)로 측정한다. 계산 시간(runtime)은 SCvx 반복 전체에 소요된 시간이며, 반복 횟수(iterations)는 종료 시점까지 수행된 횟수이다.
+본 논문에서 사용하는 평가 지표는 다음과 같다. 성공 여부(solve success)는 최종 해가 모든 제약 조건을 만족하는지를, 안전 여유(safety margin)는 최종 궤적의 최소 반경에서 KOZ 반경을 뺀 값을 나타낸다. 제어 비용은 최종 궤적을 따라 요구되는 제어 가속도 $\|\mathbf{u}\|_2$의 평균 크기(m/s²)로 측정한다. 계산 시간(runtime)은 SCvx 반복 전체에 소요된 시간이며, 반복 횟수(iterations)는 종료 시점까지 수행된 횟수이다.
 
 ### 4.2 분할 수와 차수에 대한 비교 실험 설정
 
@@ -428,7 +428,7 @@ $$
 
 분할 수가 충분히 크면 안전 여유와 제어 비용이 분할 수에 대해 단조 감소한다. 가장 큰 개선 폭은 분할 수가 작은 쪽에서 나타나고, 분할 수가 커지면 개선이 미미해진다. 계산 시간은 분할 수에 따라 증가하므로, 보수성 감소와 계산 비용 사이의 상충 관계가 존재한다.
 
-여기서 보수성(conservatism)이란, 지지 반공간 구성이 부과하는 안전 여유와 곡선의 실제 최소 접근 거리 사이의 차이를 가리킨다. 이 차이는 제어점의 볼록 껍질이 곡선 자체보다 넓은 영역을 차지하기 때문에 발생한다. 분할 수가 증가하면 각 분할구간이 짧아지고 제어점이 곡선에 더 가까워지므로, 지지 반공간 제약이 실제 곡선-KOZ 거리를 보다 정밀하게 반영하게 된다. 3.1절에서는 이 차이가 분할구간이 평면을 따라 뻗는 폭 $L$에 대해 약 $L^2/2r_e$이고, 따라서 분할 수에 대해 $n_{\mathrm{seg}}^{-2}$로 줄어든다고 예측하였다. 표 3의 안전 여유 열은 이 보수성의 직접적인 척도이며, KOZ 제약이 작동하는 구간에서 분할 수를 두 배로 늘릴 때마다 안전 여유가 약 4분의 1로 줄어드는 경향이 이 예측과 일치한다.
+여기서 보수성(conservatism)이란, 지지 반공간 구성이 부과하는 안전 여유와 곡선의 실제 최소 접근 거리 사이의 차이를 가리킨다. 이 차이는 제어점의 볼록 껍질이 곡선 자체보다 넓은 영역을 차지하기 때문에 발생한다. 분할 수가 증가하면 각 분할구간이 짧아지고 제어점이 곡선에 더 가까워지므로, 지지 반공간 제약이 실제 곡선-KOZ 거리를 보다 정밀하게 반영하게 된다. 3.1절에서는 이 차이가 분할구간이 평면을 따라 뻗는 폭 $L_{\mathrm{seg}}$에 대해 약 $L_{\mathrm{seg}}^2/2R_{\mathrm{KOZ}}$이고, 따라서 분할 수에 대해 $n_{\mathrm{seg}}^{-2}$로 줄어든다고 예측하였다. 표 3의 안전 여유 열은 이 보수성의 직접적인 척도이며, KOZ 제약이 작동하는 구간에서 분할 수를 두 배로 늘릴 때마다 안전 여유가 약 4분의 1로 줄어드는 경향이 이 예측과 일치한다.
 
 <a id="fig-subdivision-tradeoff"></a>
 ![그림 5. 분할 수에 따른 계산 시간 및 결과 추세](../figures/f4_subdivision_tradeoff_N7.png)
@@ -464,7 +464,7 @@ $$
 
 **표 5 [T5]. 1단계 대체 비교 결과 (작동 영역 경계 탐색에서 두 파이프라인이 모두 수렴한 7개 원궤도 사례).**
 
-| Case | $T_{\mathrm{normed}}$ | $h_0$ (km) | $\Delta a$ (km) | $\Delta i$ (deg) | Baseline (s) | Bézier (s) | Pass 2 (s) | Proposed total (s) | 전체 시간 비 | $\|\Delta \mathrm{cost}\|$ | Peaks |
+| Case | $T_{\mathrm{normed}}$ | 초기 고도 (km) | $\Delta a$ (km) | $\Delta i$ (deg) | Baseline (s) | Bézier (s) | Pass 2 (s) | Proposed total (s) | 전체 시간 비 | $\|\Delta \mathrm{cost}\|$ | Peaks |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---|
 | 2   | 0.280 | 400 | −2.49  | 13.85 | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
 | 4   | 0.280 | 400 | −2.49  | 3.00  | TODO | TODO | TODO | TODO | TODO | TODO | TODO |

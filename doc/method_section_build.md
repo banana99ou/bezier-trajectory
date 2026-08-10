@@ -46,10 +46,10 @@ where `B_i^N` denotes the Bernstein basis polynomial of degree `N`, and `\mathbf
 $$
 P =
 \begin{bmatrix}
-\mathbf{p}_0^\top \\
-\mathbf{p}_1^\top \\
+\mathbf{p}_0^{\mathsf{T}} \\
+\mathbf{p}_1^{\mathsf{T}} \\
 \vdots \\
-\mathbf{p}_N^\top
+\mathbf{p}_N^{\mathsf{T}}
 \end{bmatrix}
 \in \mathbb{R}^{(N+1)\times 3},
 $$
@@ -60,11 +60,11 @@ $$
 \mathbf{x}
 =
 \begin{bmatrix}
-\mathbf{p}_0^\top &
-\mathbf{p}_1^\top &
+\mathbf{p}_0^{\mathsf{T}} &
+\mathbf{p}_1^{\mathsf{T}} &
 \cdots &
-\mathbf{p}_N^\top
-\end{bmatrix}^\top
+\mathbf{p}_N^{\mathsf{T}}
+\end{bmatrix}^{\mathsf{T}}
 \in \mathbb{R}^{3(N+1)}.
 $$
 
@@ -119,9 +119,9 @@ $$
 the degree-preserving velocity and acceleration control-point maps are
 
 $$
-P^{(1)} = L_{1,N} P,
+P^{[1]} = L_{1,N} P,
 \qquad
-P^{(2)} = L_{2,N} P.
+P^{[2]} = L_{2,N} P.
 $$
 
 Physical derivatives then follow from the fixed time scaling:
@@ -162,7 +162,7 @@ $$
 Together with `L_{2,N}`, it yields the exact quadratic matrix
 
 $$
-\tilde G_N = L_{2,N}^\top G_N L_{2,N},
+\tilde G_N = L_{2,N}^{\mathsf{T}} G_N L_{2,N},
 $$
 
 which satisfies
@@ -170,9 +170,9 @@ which satisfies
 $$
 \int_0^1 \left\|\frac{d^2 \mathbf{r}}{d\tau^2}\right\|_2^2 d\tau
 =
-\mathrm{tr}(P^\top \tilde G_N P)
+\mathrm{tr}(P^{\mathsf{T}} \tilde G_N P)
 =
-\mathbf{x}^\top (\tilde G_N \otimes I_3)\mathbf{x}.
+\mathbf{x}^{\mathsf{T}} (\tilde G_N \otimes I_3)\mathbf{x}.
 $$
 
 This Gram-matrix construction is part of the reusable operator framework used by the implementation. Under the locked objective choice below, it is not the primary paper objective, but it remains mathematically useful because it defines the legacy L2 energy mode and the optional geometric regularization term.
@@ -188,7 +188,7 @@ $$
 =
 \left\{
 \mathbf{r} \in \mathbb{R}^3 :
-\|\mathbf{r} - \mathbf{c}_{\mathrm{KOZ}}\|_2 \le r_e
+\|\mathbf{r} - \mathbf{c}_{\mathrm{KOZ}}\|_2 \le R_{\mathrm{KOZ}}
 \right\}.
 $$
 
@@ -204,8 +204,8 @@ $$
 \mathbf{c}^{(s)}
 =
 \frac{1}{N+1}
-\sum_{k=0}^{N}
-\mathbf{q}^{(s)}_k,
+\sum_{m=0}^{N}
+\mathbf{q}^{(s)}_m,
 $$
 
 that is, the centroid of the subdivided control polygon. The supporting-half-space normal is then
@@ -224,23 +224,23 @@ $$
 =
 \left\{
 \mathbf{r} :
-(\mathbf{n}^{(s)})^\top \mathbf{r}
+(\mathbf{n}^{(s)})^{\mathsf{T}} \mathbf{r}
 \ge
-(\mathbf{n}^{(s)})^\top \mathbf{c}_{\mathrm{KOZ}} + r_e
+(\mathbf{n}^{(s)})^{\mathsf{T}} \mathbf{c}_{\mathrm{KOZ}} + R_{\mathrm{KOZ}}
 \right\}.
 $$
 
 The method then constrains every control point of every sub-arc to lie in its corresponding supporting half-space:
 
 $$
-(\mathbf{n}^{(s)})^\top \mathbf{q}^{(s)}_k
+(\mathbf{n}^{(s)})^{\mathsf{T}} \mathbf{q}^{(s)}_m
 \ge
-(\mathbf{n}^{(s)})^\top \mathbf{c}_{\mathrm{KOZ}} + r_e,
+(\mathbf{n}^{(s)})^{\mathsf{T}} \mathbf{c}_{\mathrm{KOZ}} + R_{\mathrm{KOZ}},
 \qquad
 k = 0,\ldots,N.
 $$
 
-Since `\mathbf{q}^{(s)}_k = \sum_{j=0}^{N} S^{(s)}_{kj}\mathbf{p}_j`, each of these inequalities is linear in the stacked decision vector `\mathbf{x}`. The half-spaces are rebuilt at every SCP iteration from the current iterate, so the KOZ constraints are conservative and local rather than globally exact (see planned `F1`).
+Since `\mathbf{q}^{(s)}_m = \sum_{j=0}^{N} S^{(s)}_{kj}\mathbf{p}_j`, each of these inequalities is linear in the stacked decision vector `\mathbf{x}`. The half-spaces are rebuilt at every SCP iteration from the current iterate, so the KOZ constraints are conservative and local rather than globally exact (see planned `F1`).
 
 Proposition. Fix a sub-arc `s` and a supporting half-space `\mathcal{H}^{(s)}` constructed as above. If all control points of `P^{(s)}` lie in `\mathcal{H}^{(s)}`, then the entire Bézier sub-arc lies in `\mathcal{H}^{(s)}` and therefore outside `\mathcal{K}`.
 
@@ -256,24 +256,24 @@ $$
 
 where `\mathbf{g}` denotes the orbital gravity model. In the present implementation, `\mathbf{g}` includes a two-body term plus a J2 perturbation term. Because the paper is not primarily about gravity modeling, it is sufficient in the method section to state only how this field enters the optimization: through an affine linearization at representative sub-arc positions.
 
-The objective linearization uses `n_lin` equal-parameter sub-arcs, which are distinct from the KOZ subdivision count `n_seg` in the implementation. Let `\hat S^{(i)}` denote the corresponding segment matrices, and let
+The objective linearization uses `n_lin` equal-parameter sub-arcs, which are distinct from the KOZ subdivision count `n_seg` in the implementation. Let `\hat S^{(j)}` denote the corresponding segment matrices, and let
 
 $$
-\mathbf{w}^{(i)} = \frac{1}{N+1}\mathbf{1}^\top \hat S^{(i)}
+\mathbf{w}^{(j)} = \frac{1}{N+1}\mathbf{1}^{\mathsf{T}} \hat S^{(j)}
 $$
 
 be the row vector that averages the control points of the `i`th sub-arc. The representative position and geometric acceleration are then linear maps of `\mathbf{x}`:
 
 $$
-\mathbf{r}_i(\mathbf{x}) = R_i \mathbf{x},
+\mathbf{r}_j(\mathbf{x}) = R_j \mathbf{x},
 \qquad
-R_i = \mathbf{w}^{(i)} \otimes I_3,
+R_j = \mathbf{w}^{(j)} \otimes I_3,
 $$
 
 $$
-\mathbf{a}_i(\mathbf{x}) = A_i \mathbf{x},
+\mathbf{a}_j(\mathbf{x}) = \Lambda_j \mathbf{x},
 \qquad
-A_i = \frac{1}{T^2}\bigl(\mathbf{w}^{(i)} L_{2,N}\bigr)\otimes I_3.
+\Lambda_j = \frac{1}{T^2}\bigl(\mathbf{w}^{(j)} L_{2,N}\bigr)\otimes I_3.
 $$
 
 At SCP iteration `k`, the gravity field is linearized affinely about the reference position `\mathbf{r}_i(\mathbf{x}^{(k)})`:
@@ -281,28 +281,28 @@ At SCP iteration `k`, the gravity field is linearized affinely about the referen
 $$
 \mathbf{g}_i^{(k)}(\mathbf{x})
 \approx
-B_i^{(k)} \mathbf{x} + \mathbf{c}_i^{(k)},
+\Gamma_j^{(k)} \mathbf{x} + \mathbf{c}_j^{(k)},
 $$
 
-where `B_i^{(k)} = J_i^{(k)} R_i`, `J_i^{(k)}` is the Jacobian of the gravity model evaluated numerically at `\mathbf{r}_i(\mathbf{x}^{(k)})`, and
+where `\Gamma_j^{(k)} = \nabla\mathbf{g}_j^{(k)} R_j`, `\nabla\mathbf{g}_j^{(k)}` is the Jacobian of the gravity model evaluated numerically at `\mathbf{r}_i(\mathbf{x}^{(k)})`, and
 
 $$
-\mathbf{c}_i^{(k)}
+\mathbf{c}_j^{(k)}
 =
 \mathbf{g}\bigl(\mathbf{r}_i(\mathbf{x}^{(k)})\bigr)
 -
-J_i^{(k)} \mathbf{r}_i(\mathbf{x}^{(k)}).
+\nabla\mathbf{g}_j^{(k)} \mathbf{r}_i(\mathbf{x}^{(k)}).
 $$
 
 Define the linearized control-effort residual by
 
 $$
-\boldsymbol{\rho}_i^{(k)}(\mathbf{x})
+\mathbf{f}_j^{(k)}(\mathbf{x})
 =
-A_i \mathbf{x}
+\Lambda_j \mathbf{x}
 -
 \left(
-B_i^{(k)} \mathbf{x} + \mathbf{c}_i^{(k)}
+\Gamma_j^{(k)} \mathbf{x} + \mathbf{c}_j^{(k)}
 \right).
 $$
 
@@ -314,7 +314,7 @@ $$
 \frac{1/n_{\mathrm{lin}}}
 {\sqrt{
 \left\|
-\boldsymbol{\rho}_i^{(k)}(\mathbf{x}^{(k)})
+\mathbf{f}_j^{(k)}(\mathbf{x}^{(k)})
 \right\|_2^2
 
 + \varepsilon}},
@@ -326,13 +326,13 @@ J_{\mathrm{dv}}^{(k)}(\mathbf{x})
 \sum_{i=1}^{n_{\mathrm{lin}}}
 \omega_i^{(k)}
 \left\|
-\boldsymbol{\rho}_i^{(k)}(\mathbf{x})
+\mathbf{f}_j^{(k)}(\mathbf{x})
 \right\|_2^2.
 $$
 
 This is the manuscript-safe description of the primary objective: it is an iterative quadratic majorization of an L1-style proxy for control effort. It is not exact mission delta-v optimization, and the paper should not imply otherwise.
 
-For completeness, the implementation also retains an L2-style energy mode based on the same residual structure, together with the Gram-matrix-based quadratic form `\mathbf{x}^\top (\tilde G_N \otimes I_3)\mathbf{x}/T^4`. Under the locked paper decisions, that alternative mode should be mentioned only briefly as implementation context or optional regularization, not as a parallel paper claim.
+For completeness, the implementation also retains an L2-style energy mode based on the same residual structure, together with the Gram-matrix-based quadratic form `\mathbf{x}^{\mathsf{T}} (\tilde G_N \otimes I_3)\mathbf{x}/T^4`. Under the locked paper decisions, that alternative mode should be mentioned only briefly as implementation context or optional regularization, not as a parallel paper claim.
 
 #### 4.3 SCP subproblem and update loop
 
@@ -341,9 +341,9 @@ At SCP iteration `k`, the method fixes the KOZ supporting half-spaces and the af
 $$
 \begin{aligned}
 \min_{\mathbf{x}} \quad &
-\frac{1}{2}\mathbf{x}^\top H^{(k)} \mathbf{x}
+\frac{1}{2}\mathbf{x}^{\mathsf{T}} H^{(k)} \mathbf{x}
 +
-\bigl(\mathbf{f}^{(k)}\bigr)^\top \mathbf{x} \\
+\bigl(\mathbf{f}^{(k)}\bigr)^{\mathsf{T}} \mathbf{x} \\
 \text{s.t.} \quad &
 A_{\mathrm{KOZ}}^{(k)} \mathbf{x} \ge \mathbf{b}_{\mathrm{KOZ}}^{(k)}, \\
 &

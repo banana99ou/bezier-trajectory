@@ -15,10 +15,10 @@ where $B_i^N$ denotes the Bernstein basis polynomial of degree $N$, and $\mathbf
 $$
 P =
 \begin{bmatrix}
-\mathbf{p}_0^\top \\
-\mathbf{p}_1^\top \\
+\mathbf{p}_0^{\mathsf{T}} \\
+\mathbf{p}_1^{\mathsf{T}} \\
 \vdots \\
-\mathbf{p}_N^\top
+\mathbf{p}_N^{\mathsf{T}}
 \end{bmatrix}
 \in \mathbb{R}^{(N+1)\times 3},
 $$
@@ -29,11 +29,11 @@ $$
 \mathbf{x}
 =
 \begin{bmatrix}
-\mathbf{p}_0^\top &
-\mathbf{p}_1^\top &
+\mathbf{p}_0^{\mathsf{T}} &
+\mathbf{p}_1^{\mathsf{T}} &
 \cdots &
-\mathbf{p}_N^\top
-\end{bmatrix}^\top
+\mathbf{p}_N^{\mathsf{T}}
+\end{bmatrix}^{\mathsf{T}}
 \in \mathbb{R}^{3(N+1)}.
 $$
 
@@ -90,9 +90,9 @@ $$
 Then the degree-preserving velocity and acceleration control-point maps are
 
 $$
-P^{(1)} = L_{1,N}P,
+P^{[1]} = L_{1,N}P,
 \qquad
-P^{(2)} = L_{2,N}P.
+P^{[2]} = L_{2,N}P.
 $$
 
 Physical derivatives follow from the fixed-time scaling:
@@ -133,7 +133,7 @@ $$
 Together with $L_{2,N}$, it gives the exact quadratic form
 
 $$
-\tilde G_N = L_{2,N}^\top G_N L_{2,N},
+\tilde G_N = L_{2,N}^{\mathsf{T}} G_N L_{2,N},
 $$
 
 which satisfies
@@ -141,9 +141,9 @@ which satisfies
 $$
 \int_0^1 \left\|\frac{d^2\mathbf{r}}{d\tau^2}\right\|_2^2 d\tau
 =
-\mathrm{tr}(P^\top \tilde G_N P)
+\mathrm{tr}(P^{\mathsf{T}} \tilde G_N P)
 =
-\mathbf{x}^\top (\tilde G_N \otimes I_3)\mathbf{x}.
+\mathbf{x}^{\mathsf{T}} (\tilde G_N \otimes I_3)\mathbf{x}.
 $$
 
 In the present paper this Gram-matrix construction is part of the reusable operator framework rather than the primary paper-level objective. It remains relevant because it defines the legacy L2 control-acceleration energy mode in the implementation and, under the current `dv` mode, can be used as an optional geometric regularizer.
@@ -170,7 +170,7 @@ $$
 =
 \left\{
 \mathbf{r}\in\mathbb{R}^3 :
-\|\mathbf{r}-\mathbf{c}_{\mathrm{KOZ}}\|_2 \le r_e
+\|\mathbf{r}-\mathbf{c}_{\mathrm{KOZ}}\|_2 \le R_{\mathrm{KOZ}}
 \right\}.
 $$
 
@@ -187,7 +187,7 @@ Writing the control points of this sub-arc as $\mathbf{q}^{(s)}_0,\ldots,\mathbf
 $$
 \mathbf{c}^{(s)}
 =
-\frac{1}{N+1}\sum_{k=0}^{N}\mathbf{q}^{(s)}_k,
+\frac{1}{N+1}\sum_{m=0}^{N}\mathbf{q}^{(s)}_m,
 $$
 
 that is, the centroid of the subdivided control polygon. The outward normal is then
@@ -206,23 +206,23 @@ $$
 =
 \left\{
 \mathbf{r} :
-(\mathbf{n}^{(s)})^\top \mathbf{r}
+(\mathbf{n}^{(s)})^{\mathsf{T}} \mathbf{r}
 \ge
-(\mathbf{n}^{(s)})^\top \mathbf{c}_{\mathrm{KOZ}} + r_e
+(\mathbf{n}^{(s)})^{\mathsf{T}} \mathbf{c}_{\mathrm{KOZ}} + R_{\mathrm{KOZ}}
 \right\}.
 $$
 
 The method enforces this half-space on every control point of every sub-arc:
 
 $$
-(\mathbf{n}^{(s)})^\top \mathbf{q}^{(s)}_k
+(\mathbf{n}^{(s)})^{\mathsf{T}} \mathbf{q}^{(s)}_m
 \ge
-(\mathbf{n}^{(s)})^\top \mathbf{c}_{\mathrm{KOZ}} + r_e,
+(\mathbf{n}^{(s)})^{\mathsf{T}} \mathbf{c}_{\mathrm{KOZ}} + R_{\mathrm{KOZ}},
 \qquad
 k=0,\ldots,N.
 $$
 
-Because each $\mathbf{q}^{(s)}_k$ is a linear combination of the original control points, these inequalities are linear in $\mathbf{x}$. The half-spaces are rebuilt at each outer iteration from the current iterate, so the KOZ treatment is conservative and local rather than globally exact.
+Because each $\mathbf{q}^{(s)}_m$ is a linear combination of the original control points, these inequalities are linear in $\mathbf{x}$. The half-spaces are rebuilt at each outer iteration from the current iterate, so the KOZ treatment is conservative and local rather than globally exact.
 
 The key guarantee is narrow but useful. If all control points of a given sub-arc lie in its supporting half-space $\mathcal{H}^{(s)}$, then the entire Bezier sub-arc lies in $\mathcal{H}^{(s)}$ and therefore outside the spherical KOZ. This follows from the convex-hull property of Bezier curves together with the fact that $\mathcal{H}^{(s)}$ is a supporting half-space of the sphere. The statement should not be generalized beyond the spherical-KOZ setting or beyond the stated subdivision-and-half-space construction.
 
@@ -238,49 +238,49 @@ $$
 
 where $\mathbf{g}$ is the orbital gravity model. In the implementation, $\mathbf{g}$ consists of a two-body term plus a J2 perturbation term. Rather than enforcing these dynamics exactly along the full continuous curve, the optimization uses an affine linearization of $\mathbf{g}$ at representative sub-arc positions.
 
-The objective linearization uses $n_{\mathrm{lin}}$ equal-parameter sub-arcs, distinct from the KOZ subdivision count $n_{\mathrm{seg}}$. In the code this count is passed as `sample_count`. Let $\hat S^{(i)}$ denote the corresponding segment matrices and define the centroid row
+The objective linearization uses $n_{\mathrm{lin}}$ equal-parameter sub-arcs, distinct from the KOZ subdivision count $n_{\mathrm{seg}}$. In the code this count is passed as `sample_count`. Let $\hat S^{(j)}$ denote the corresponding segment matrices and define the centroid row
 
 $$
-\mathbf{w}^{(i)} = \frac{1}{N+1}\mathbf{1}^\top \hat S^{(i)}.
+\mathbf{w}^{(j)} = \frac{1}{N+1}\mathbf{1}^{\mathsf{T}} \hat S^{(j)}.
 $$
 
 Then the representative position and geometric acceleration are linear functions of the stacked control-point vector:
 
 $$
-\mathbf{r}_i(\mathbf{x}) = R_i\mathbf{x},
+\mathbf{r}_j(\mathbf{x}) = R_j\mathbf{x},
 \qquad
-R_i = \mathbf{w}^{(i)} \otimes I_3,
+R_j = \mathbf{w}^{(j)} \otimes I_3,
 $$
 
 $$
-\mathbf{a}_i(\mathbf{x}) = A_i\mathbf{x},
+\mathbf{a}_j(\mathbf{x}) = \Lambda_j\mathbf{x},
 \qquad
-A_i = \frac{1}{T^2}\bigl(\mathbf{w}^{(i)}L_{2,N}\bigr)\otimes I_3.
+\Lambda_j = \frac{1}{T^2}\bigl(\mathbf{w}^{(j)}L_{2,N}\bigr)\otimes I_3.
 $$
 
-At SCP iteration $k$, the gravity field is linearized affinely about the reference position $\mathbf{r}_i(\mathbf{x}^{(k)})$:
+At SCP iteration $k$, the gravity field is linearized affinely about the reference position $\mathbf{r}_j(\mathbf{x}^{(k)})$:
 
 $$
-\mathbf{g}_i^{(k)}(\mathbf{x})
+\mathbf{g}_j^{(k)}(\mathbf{x})
 \approx
-B_i^{(k)}\mathbf{x} + \mathbf{c}_i^{(k)},
+\Gamma_j^{(k)}\mathbf{x} + \mathbf{c}_j^{(k)},
 $$
 
-where $B_i^{(k)} = J_i^{(k)}R_i$, $J_i^{(k)}$ is the Jacobian of the gravity model evaluated numerically at the reference point, and
+where $\Gamma_j^{(k)} = \nabla\mathbf{g}_j^{(k)}R_j$, $\nabla\mathbf{g}_j^{(k)}$ is the Jacobian of the gravity model evaluated numerically at the reference point, and
 
 $$
-\mathbf{c}_i^{(k)}
+\mathbf{c}_j^{(k)}
 =
-\mathbf{g}\bigl(\mathbf{r}_i(\mathbf{x}^{(k)})\bigr)
-- J_i^{(k)}\mathbf{r}_i(\mathbf{x}^{(k)}).
+\mathbf{g}\bigl(\mathbf{r}_j(\mathbf{x}^{(k)})\bigr)
+- \nabla\mathbf{g}_j^{(k)}\mathbf{r}_j(\mathbf{x}^{(k)}).
 $$
 
 Define the linearized control-effort residual
 
 $$
-\boldsymbol{\rho}_i^{(k)}(\mathbf{x})
+\mathbf{f}_j^{(k)}(\mathbf{x})
 =
-A_i\mathbf{x} - \left(B_i^{(k)}\mathbf{x} + \mathbf{c}_i^{(k)}\right).
+\Lambda_j\mathbf{x} - \left(\Gamma_j^{(k)}\mathbf{x} + \mathbf{c}_j^{(k)}\right).
 $$
 
 The implementation then builds an iteratively reweighted quadratic majorization of an L1-style objective:
@@ -289,7 +289,7 @@ $$
 \omega_i^{(k)}
 =
 \frac{1/n_{\mathrm{lin}}}
-{\sqrt{\left\|\boldsymbol{\rho}_i^{(k)}(\mathbf{x}^{(k)})\right\|_2^2 + \varepsilon}},
+{\sqrt{\left\|\mathbf{f}_j^{(k)}(\mathbf{x}^{(k)})\right\|_2^2 + \varepsilon}},
 $$
 
 $$
@@ -298,7 +298,7 @@ J_{\mathrm{dv}}^{(k)}(\mathbf{x})
 \sum_{i=1}^{n_{\mathrm{lin}}}
 \omega_i^{(k)}
 \left\|
-\boldsymbol{\rho}_i^{(k)}(\mathbf{x})
+\mathbf{f}_j^{(k)}(\mathbf{x})
 \right\|_2^2.
 $$
 
@@ -313,8 +313,8 @@ At SCP iteration $k$, the method fixes the KOZ supporting half-spaces and the af
 $$
 \begin{aligned}
 \min_{\mathbf{x}} \quad &
-\frac{1}{2}\mathbf{x}^\top H^{(k)}\mathbf{x}
-+ \bigl(\mathbf{f}^{(k)}\bigr)^\top \mathbf{x} \\
+\frac{1}{2}\mathbf{x}^{\mathsf{T}} H^{(k)}\mathbf{x}
++ \bigl(\mathbf{f}^{(k)}\bigr)^{\mathsf{T}} \mathbf{x} \\
 \text{s.t.} \quad &
 A_{\mathrm{KOZ}}^{(k)}\mathbf{x} \ge \mathbf{b}_{\mathrm{KOZ}}^{(k)}, \\
 &
@@ -337,14 +337,14 @@ which preserves convexity and acts as an outer-loop stabilizer.
 The current driver script used for the orbital experiments also enables an additional prograde-preservation constraint. Let $\hat{\mathbf{h}}$ denote the normalized initial angular-momentum direction, and define
 
 $$
-c(\tau;\mathbf{x}) = \hat{\mathbf{h}}^\top \bigl(\mathbf{r}(\tau;\mathbf{x}) \times \dot{\mathbf{r}}(\tau;\mathbf{x})\bigr).
+c(\tau;\mathbf{x}) = \hat{\mathbf{h}}^{\mathsf{T}} \bigl(\mathbf{r}(\tau;\mathbf{x}) \times \dot{\mathbf{r}}(\tau;\mathbf{x})\bigr).
 $$
 
 At a fixed set of interior parameter samples, the implementation linearizes this quantity at $\mathbf{x}^{(k)}$ and appends inequalities of the form
 
 $$
 c(\tau_j;\mathbf{x}^{(k)}) +
-\nabla_{\mathbf{x}} c(\tau_j;\mathbf{x}^{(k)})^\top
+\nabla_{\mathbf{x}} c(\tau_j;\mathbf{x}^{(k)})^{\mathsf{T}}
 (\mathbf{x}-\mathbf{x}^{(k)})
 \ge 0.
 $$
