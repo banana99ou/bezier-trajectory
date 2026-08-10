@@ -28,30 +28,9 @@ ISS_MARKER = "P"     # station-like filled-plus marker
 # Earth 3D model (NASA): under repo assets/models, used when available
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EARTH_GLB_PATH = os.path.join(_REPO_ROOT, "assets", "models", "earth_nasa.glb")
-DEBUG_LOG_PATH = os.path.join(_REPO_ROOT, ".cursor", "debug-90cb20.log")
-DEBUG_SESSION_ID = "90cb20"
 _EARTH_MESH_CACHE = None
 
 
-def _debug_log(run_id, hypothesis_id, location, message, data):
-    """Append one NDJSON debug log line for this debug session."""
-    try:
-        os.makedirs(os.path.dirname(DEBUG_LOG_PATH), exist_ok=True)
-        timestamp = int(time.time() * 1000)
-        payload = {
-            "sessionId": DEBUG_SESSION_ID,
-            "id": f"{run_id}:{hypothesis_id}:{timestamp}",
-            "timestamp": timestamp,
-            "location": location,
-            "message": message,
-            "data": data,
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-        }
-        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, separators=(",", ":"), default=str) + "\n")
-    except Exception:
-        pass
 
 
 def _infer_texture_up_axis(mesh, verts) -> dict | None:
@@ -151,26 +130,6 @@ def _sample_texture_face_colors(mesh, faces, run_id=None) -> np.ndarray | None:
                     factor = factor / 255.0
                 face_colors = np.clip(face_colors * factor, 0.0, 1.0)
 
-        if run_id is not None:
-            unique_face_colors = int(
-                np.unique((face_colors[:, :3] * 255).astype(np.uint8), axis=0).shape[0]
-            )
-            # region agent log
-            _debug_log(
-                run_id,
-                "H2",
-                "orbital_docking/visualization.py:_sample_texture_face_colors",
-                "Sampled Earth texture into per-face colors",
-                {
-                    "texture_size_px": [int(w), int(h)],
-                    "mesh_faces": int(faces.shape[0]),
-                    "mesh_vertices": int(uv.shape[0]),
-                    "unique_face_colors": unique_face_colors,
-                    "sampling_mode": "triangle_centroid_uv",
-                },
-            )
-            # endregion
-
         return face_colors
     except Exception as exc:
         print(f"[Earth mesh] Could not sample GLB texture; continuing without textured colors. Error: {exc!r}")
@@ -253,23 +212,6 @@ def _load_earth_mesh(radius_km=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0), run_id=N
     if _EARTH_MESH_CACHE is not None:
         unit_verts, faces, face_colors, orientation, rotation_label = _EARTH_MESH_CACHE
         verts = unit_verts * float(radius_km) + np.asarray(center, dtype=float)
-        if run_id is not None:
-            # region agent log
-            _debug_log(
-                run_id,
-                "H5",
-                "orbital_docking/visualization.py:_load_earth_mesh",
-                "Using cached UV-mapped Earth mesh",
-                {
-                    "render_mode": "cached_uv_mesh",
-                    "cache_hit": True,
-                    "mesh_faces": int(faces.shape[0]),
-                    "rotation_applied": rotation_label,
-                    "dominant_up_axis": None if orientation is None else orientation["dominant_axis"],
-                    "north_positive": None if orientation is None else orientation["north_positive"],
-                },
-            )
-            # endregion
         return verts, faces, face_colors
 
     if not os.path.isfile(EARTH_GLB_PATH):
@@ -341,38 +283,6 @@ def _load_earth_mesh(radius_km=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0), run_id=N
         unit_verts = verts / r_max
         _EARTH_MESH_CACHE = (unit_verts, faces, face_colors, orientation, rotation_label)
         verts = unit_verts * float(radius_km) + np.asarray(center, dtype=float)
-        if run_id is not None:
-            orientation = _infer_texture_up_axis(mesh, verts - np.asarray(center, dtype=float))
-            # region agent log
-            _debug_log(
-                run_id,
-                "H1",
-                "orbital_docking/visualization.py:_load_earth_mesh",
-                "Inferred Earth texture orientation",
-                {
-                    "face_colors_available": bool(face_colors is not None),
-                    "dominant_up_axis": None if orientation is None else orientation["dominant_axis"],
-                    "north_positive": None if orientation is None else orientation["north_positive"],
-                    "axis_correlations": None if orientation is None else orientation["correlations"],
-                    "rotation_applied": rotation_label,
-                },
-            )
-            # endregion
-            # region agent log
-            _debug_log(
-                run_id,
-                "H5",
-                "orbital_docking/visualization.py:_load_earth_mesh",
-                "Prepared Earth mesh from GLB UV atlas",
-                {
-                    "render_mode": "cached_uv_mesh",
-                    "cache_hit": False,
-                    "mesh_faces": int(faces.shape[0]),
-                    "mesh_vertices": int(verts.shape[0]),
-                    "rotation_applied": rotation_label,
-                },
-            )
-            # endregion
         return verts, faces, face_colors
     except Exception as exc:
         print(f"[Earth mesh] Exception while loading GLB; falling back. Error: {exc!r}")
@@ -384,7 +294,6 @@ def add_earth_mesh(ax, radius=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0), color='#2
     Add Earth as a 3D mesh from assets/models/earth_nasa.glb when available.
     Falls back to wireframe sphere if model is missing or trimesh unavailable.
     """
-    run_id = getattr(getattr(ax, "figure", None), "_debug_run_id", "earth-standalone")
     data = _load_earth_mesh(radius_km=radius, center=center, run_id=run_id)
     if data is None:
         print("[Earth mesh] Falling back to wireframe Earth in add_earth_mesh().")
@@ -426,7 +335,6 @@ def add_earth_mesh(ax, radius=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0), color='#2
         )
 
     ax.add_collection3d(coll)
-    ax._earth_debug_mesh_faces = int(faces.shape[0])
 
 
 def add_wire_sphere(ax, radius=3.0, center=(0.0, 0.0, 0.0), color='gray', alpha=0.25, resolution=40):
@@ -604,9 +512,7 @@ def create_trajectory_comparison_figure_matplotlib(P_init, r_e, results, curve_o
     Returns:
         matplotlib Figure object
     """
-    build_started = time.perf_counter()
     fig = plt.figure(figsize=(16, 12), constrained_layout=True)
-    fig._debug_run_id = f"earth-debug-{int(time.time() * 1000)}"
     if window_title is None and curve_order is not None:
         window_title = f"Orbital Docking — Trajectory Comparison (N={curve_order})"
     _safe_set_window_title(fig, window_title)
@@ -619,22 +525,6 @@ def create_trajectory_comparison_figure_matplotlib(P_init, r_e, results, curve_o
 
     manager = getattr(fig.canvas, "manager", None)
     toolbar = getattr(manager, "toolbar", None) if manager is not None else None
-    # region agent log
-    _debug_log(
-        fig._debug_run_id,
-        "H3",
-        "orbital_docking/visualization.py:create_trajectory_comparison_figure",
-        "Figure interactivity backend state",
-        {
-            "backend": str(plt.get_backend()),
-            "interactive": bool(plt.isinteractive()),
-            "canvas_class": type(fig.canvas).__name__,
-            "manager_class": None if manager is None else type(manager).__name__,
-            "toolbar_class": None if toolbar is None else type(toolbar).__name__,
-            "axes_count": int(len(axes)),
-        },
-    )
-    # endregion
 
     # Plot trajectories for different segment counts
     segment_counts = [2, 4, 8, 16, 32, 64]
@@ -743,7 +633,6 @@ def create_trajectory_comparison_figure_matplotlib(P_init, r_e, results, curve_o
     # Link all axes to share zoom - when one zooms, all zoom together
     # Use a flag to prevent infinite recursion
     _syncing = False
-    sync_debug_state = {"count": 0}
     
     def sync_limits(ax_source):
         """Sync limits from source axis to all other axes."""
@@ -767,24 +656,7 @@ def create_trajectory_comparison_figure_matplotlib(P_init, r_e, results, curve_o
                     ax_target.set_zlim3d(zlim, emit=False)
         finally:
             _syncing = False
-        if sync_debug_state["count"] < 6:
-            sync_debug_state["count"] += 1
-            # region agent log
-            _debug_log(
-                fig._debug_run_id,
-                "H7",
-                "orbital_docking/visualization.py:create_trajectory_comparison_figure",
-                "Synced axis limits across comparison panels",
-                {
-                    "sync_index": int(sync_debug_state["count"]),
-                    "source_axis_index": int(axes.index(ax_source)),
-                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
-                    "xlim": [float(xlim[0]), float(xlim[1])],
-                    "ylim": [float(ylim[0]), float(ylim[1])],
-                    "zlim": [float(zlim[0]), float(zlim[1])],
-                },
-            )
-            # endregion
+
     
     # Connect the callback to each axis for all three dimensions
     for ax in axes:
@@ -792,72 +664,6 @@ def create_trajectory_comparison_figure_matplotlib(P_init, r_e, results, curve_o
         ax.callbacks.connect('xlim_changed', lambda event, ax=ax: sync_limits(ax))
         ax.callbacks.connect('ylim_changed', lambda event, ax=ax: sync_limits(ax))
         ax.callbacks.connect('zlim_changed', lambda event, ax=ax: sync_limits(ax))
-
-    total_earth_faces = int(sum(getattr(ax, "_earth_debug_mesh_faces", 0) for ax in axes))
-    build_ms = int((time.perf_counter() - build_started) * 1000)
-    # region agent log
-    _debug_log(
-        fig._debug_run_id,
-        "H4",
-        "orbital_docking/visualization.py:create_trajectory_comparison_figure",
-        "Figure build complete",
-        {
-            "build_ms": build_ms,
-            "total_earth_faces": total_earth_faces,
-            "sync_callback_count": int(len(axes) * 3),
-            "earth_render_mode": "cached_uv_mesh",
-            "view_radius_km": float(view_radius),
-        },
-    )
-    # endregion
-
-    ui_debug_state = {"draws": 0, "mouse": 0}
-
-    def _axis_index(event):
-        return None if getattr(event, "inaxes", None) is None else axes.index(event.inaxes) if event.inaxes in axes else "other"
-
-    def _log_mouse_event(event):
-        if ui_debug_state["mouse"] >= 4:
-            return
-        ui_debug_state["mouse"] += 1
-        step = getattr(event, "step", None)
-        # region agent log
-        _debug_log(
-            fig._debug_run_id,
-            "H3",
-            "orbital_docking/visualization.py:create_trajectory_comparison_figure",
-            "Mouse event received by Matplotlib canvas",
-            {
-                "event_name": str(getattr(event, "name", "unknown")),
-                "axis_index": _axis_index(event),
-                "button": None if getattr(event, "button", None) is None else str(event.button),
-                "step": None if step is None else float(step),
-                "xdata": None if getattr(event, "xdata", None) is None else float(event.xdata),
-                "ydata": None if getattr(event, "ydata", None) is None else float(event.ydata),
-            },
-        )
-        # endregion
-
-    def _log_draw_event(_event):
-        if ui_debug_state["draws"] >= 4:
-            return
-        ui_debug_state["draws"] += 1
-        # region agent log
-        _debug_log(
-            fig._debug_run_id,
-            "H4",
-            "orbital_docking/visualization.py:create_trajectory_comparison_figure",
-            "Draw event completed",
-            {
-                "draw_index": int(ui_debug_state["draws"]),
-                "elapsed_since_build_ms": int((time.perf_counter() - build_started) * 1000),
-            },
-        )
-        # endregion
-
-    fig.canvas.mpl_connect("button_press_event", _log_mouse_event)
-    fig.canvas.mpl_connect("scroll_event", _log_mouse_event)
-    fig.canvas.mpl_connect("draw_event", _log_draw_event)
 
     return fig
 
