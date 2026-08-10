@@ -154,56 +154,34 @@ def accel_gravity_total_km_s2(r_km: np.ndarray) -> np.ndarray:
 
 def control_effort_metrics(info: dict):
     """
-    Express the optimizer's own objective in physical units. No re-derivation:
-    every input is a value the solver reported.
+    Convert optimizer cost into objective-consistent physical metrics.
 
     Returns:
-        (rms_objective_m_s2, l2_effort_m2_s3)
-        - rms_objective_m_s2 = sqrt(cost_true_energy)*1e3.  This is the RMS of the
-          objective's residual, i.e. of ||a_geom/T^2 - g_model(r)|| where g_model
-          is the solver's PER-SEGMENT AFFINE gravity, not true gravity. It is the
-          quantity being minimized. It is NOT the RMS of the control-acceleration
-          curve drawn by create_acceleration_figure, which uses true gravity --
-          for that, use info['mean_control_accel_ms2'] / ['max_control_accel_ms2'],
-          which the solver computes directly (optimization.py:532-540).
-        - l2_effort_m2_s3 = cost_true_energy * T * 1e6 = the objective integral
-          over physical time, integral ||u||^2 dt (m^2/s^3).
+        (rms_control_accel_m_s2, l2_effort_m2_s3, dv_proxy_m_s)
+        - RMS control accel: sqrt(cost_true_energy) converted to m/s^2 (only meaningful for 'energy' objective).
+        - Energy surrogate over physical time: cost_true_energy * T (m^2/s^3).
+        - Δv proxy: info['dv_proxy_m_s'] if available (m/s).
     """
     if info is None:
-        return None, None
+        return None, None, None
 
     J_tau = info.get('cost_true_energy', info.get('cost', None))
     if J_tau is None:
-        return None, None
+        return None, None, None
 
     J_tau = float(J_tau)
     if not np.isfinite(J_tau) or J_tau < 0.0:
-        return None, None
+        return None, None, None
 
     T = float(info.get('T_transfer_s', TRANSFER_TIME_S))
-    rms_objective_m_s2 = np.sqrt(J_tau) * 1e3
+    rms_control_accel_m_s2 = np.sqrt(J_tau) * 1e3
     l2_effort_m2_s3 = J_tau * T * 1e6
-    return float(rms_objective_m_s2), float(l2_effort_m2_s3)
-
-
-def solver_control_accel(info: dict):
-    """The solver's OWN exact-gravity control-acceleration scalars, verbatim.
-
-    (mean, max) in m/s^2 from info['mean_control_accel_ms2'] /
-    ['max_control_accel_ms2']. These match the curve create_acceleration_figure
-    draws (true gravity, same 300-point grid), unlike sqrt(cost_true_energy),
-    which is the linearized-gravity objective. Nothing is recomputed here.
-    """
-    if info is None:
-        return None, None
-    def _f(key):
-        v = info.get(key)
-        try:
-            v = float(v)
-        except (TypeError, ValueError):
-            return None
-        return v if np.isfinite(v) else None
-    return _f('mean_control_accel_ms2'), _f('max_control_accel_ms2')
+    dv_proxy_m_s = info.get("dv_proxy_m_s", None)
+    try:
+        dv_proxy_m_s = float(dv_proxy_m_s) if dv_proxy_m_s is not None else None
+    except Exception:
+        dv_proxy_m_s = None
+    return float(rms_control_accel_m_s2), float(l2_effort_m2_s3), dv_proxy_m_s
 
 
 def _load_earth_mesh(radius_km=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0), run_id=None):
@@ -576,7 +554,7 @@ def create_trajectory_comparison_figure_matplotlib(P_init, r_e, results, curve_o
                 mags.append(float(np.linalg.norm(v1)))
             vmax = max(mags) if mags else 0.0
             # Scale so the largest arrow is ~30% of the orbital radius
-            scale = (0.3 * base_radius / vmax) if vmax > 1e-9 else 0.0
+            scale = (1 * base_radius / vmax) if vmax > 1e-9 else 0.0
 
             if v0 is not None and scale > 0.0:
                 dv0 = np.asarray(v0, dtype=float) * scale
@@ -605,16 +583,29 @@ def create_trajectory_comparison_figure_matplotlib(P_init, r_e, results, curve_o
         beautify_3d_axes(ax, show_ticks=True, show_grid=True)
 
         # Title with optimizer-consistent control-effort metric and termination reason.
-        _rms, l2_effort_m2_s3 = control_effort_metrics(info)
-        effort_str = "n/a" if l2_effort_m2_s3 is None else format_number(l2_effort_m2_s3, '.4g')
+        rms_control_accel_m_s2, _l2, dv_proxy_m_s = control_effort_metrics(info)
+        accel_str = "n/a" if rms_control_accel_m_s2 is None else format_number(rms_control_accel_m_s2, '.2f')
+        dv_str = "n/a" if dv_proxy_m_s is None else format_number(dv_proxy_m_s, '.1f')
         feasible = bool(info.get('feasible', False))
-        status = 'FEASIBLE' if feasible else 'INFEASIBLE'
+        status = 'Feasible' if feasible else 'Infeasible'
         title_color = 'black' if feasible else 'red'
+
+        term = str(info.get("termination_reason", "") or "").strip().lower()
+        if term == "converged_delta_below_tol":
+            term_label = "converged (ΔP < tol)"
+        elif term == "stopped_max_iter":
+            term_label = "stopped (max_iter)"
+        elif term == "not_run":
+            term_label = "not run"
+        elif term:
+            term_label = term
+        else:
+            term_label = "termination: n/a"
 
         ax.set_title(
             f'{n_seg} Segments — {status}\n'
-            f'{_solver_info_line(info, r_e)}\n'
-            f'∫‖u‖²dt: {effort_str} m²/s³',
+            f'Δv proxy: {dv_str} m/s | RMS u: {accel_str} m/s²\n'
+            f'{term_label}',
             fontsize=10,
             pad=10,
             color=title_color,
@@ -667,85 +658,34 @@ def _require_plotly() -> None:
         )
 
 
-# scvx_stop_reason is the authoritative exit code from the Rust SCvx loop.
-# 1 and 4 are principled convergence; 0, 2 and 3 all mean the loop gave up.
-_STOP_REASON = {
-    0: "iteration cap",
-    1: "merit streak",
-    2: "trust collapse",
-    3: "QP failure",
-    4: "stationary",
-}
-
-
-def _solver_info_line(info: dict, r_e: float | None = None) -> str:
-    """One-line readout of the solver's OWN scalar diagnostics (no re-derivation).
-
-    Every field is read verbatim from `info`; nothing here is recomputed.
-
-    Termination comes from `scvx_stop_reason`, NOT `termination_reason`. The
-    latter is derived (optimization.py:493) from `scvx_converged`, which the
-    trust-collapse exit also sets whenever the iterate happens to be feasible —
-    so a deadlocked run can print "converged_scvx". stop_reason distinguishes
-    the two principled exits (1 merit streak, 4 model stationarity) from the
-    three give-up exits (0 cap, 2 trust collapse, 3 QP failure).
-
-    Precision matters here and used to be wrong: min_radius was printed to 0
-    decimals, so a curve 0.4 km INSIDE the keep-out zone rendered as sitting
-    exactly on the boundary; and the hull violation was printed to 1 decimal
-    while the solver certifies at 1e-3 km, so 50x the certification threshold
-    displayed as "0.0". Both now resolve past the decision point.
-    """
-    parts = []
-
-    sr = info.get("scvx_stop_reason")
-    if sr is not None:
-        sr = int(sr)
-        parts.append(f"stop={sr} ({_STOP_REASON.get(sr, 'unknown')})")
-    else:
-        # Legacy/non-SCvx path (scp_trust_radius=0) reports no stop_reason.
-        parts.append(f"term={str(info.get('termination_reason', 'n/a') or 'n/a')}")
-
-    parts.append(f"iter={info.get('iterations', '?')}")
-
-    mr = info.get("min_radius")
-    if mr is not None:
-        if r_e is not None:
-            parts.append(f"min_r={mr:.3f}km ({mr - float(r_e):+.3f} vs r_e)")
-        else:
-            parts.append(f"min_r={mr:.3f}km")
-
-    kv = info.get("koz_linear_max_violation")
-    if kv is not None:
-        parts.append(f"KOZ_viol={kv:.2e}km")
-
-    # Health flags the solver reports and no figure used to surface: a solve that
-    # fell back to reduced QP tolerances, or silently skipped a KOZ segment, is
-    # not the same as a clean one.
-    qp = info.get("qp_almost_solved")
-    if qp:
-        parts.append(f"QP_degraded={int(qp)}")
-    kd = info.get("koz_degenerate_segments")
-    if kd:
-        parts.append(f"KOZ_skipped={int(kd)}")
-
-    return " | ".join(parts)
-
-
-def _trajectory_comparison_panel_title(n_seg: int, info: dict,
-                                       r_e: float | None = None) -> tuple[str, str]:
+def _trajectory_comparison_panel_title(n_seg: int, info: dict) -> tuple[str, str]:
     """Build a per-panel title and semantic color."""
-    _rms, l2_effort_m2_s3 = control_effort_metrics(info)
-    effort_str = "n/a" if l2_effort_m2_s3 is None else format_number(l2_effort_m2_s3, ".4g")
+    rms_control_accel_m_s2, _l2, dv_proxy_m_s = control_effort_metrics(info)
+    accel_str = "n/a" if rms_control_accel_m_s2 is None else format_number(rms_control_accel_m_s2, ".2f")
+    dv_str = "n/a" if dv_proxy_m_s is None else format_number(dv_proxy_m_s, ".1f")
 
     feasible = bool(info.get("feasible", False))
-    status = "FEASIBLE" if feasible else "INFEASIBLE"
+    status = "Feasible" if feasible else "Infeasible"
     title_color = "#222222" if feasible else "#C0392B"
+
+    term = str(info.get("termination_reason", "") or "").strip().lower()
+    it = info.get("iterations", None)
+    if term == "converged_delta_below_tol":
+        iter_str = f"{it:>3d}" if isinstance(it, int) else "n/a"
+        term_label = f"converged (ΔP < tol) @ iter={iter_str}"
+    elif term == "stopped_max_iter":
+        term_label = "stopped (max_iter)"
+    elif term == "not_run":
+        term_label = "not run"
+    elif term:
+        term_label = term
+    else:
+        term_label = "termination: n/a"
 
     title = (
         f"{n_seg} Segments - {status}<br>"
-        f"{_solver_info_line(info, r_e)}<br>"
-        f"∫‖u‖²dt: {effort_str} m²/s³"
+        f"Δv proxy: {dv_str} m/s | RMS u: {accel_str} m/s²<br>"
+        f"{term_label}"
     )
     return title, title_color
 
@@ -1015,7 +955,7 @@ def create_trajectory_comparison_figure(P_init, r_e, results, curve_order=None, 
     panel_titles = []
     panel_title_colors = []
     for n_seg, P_opt, info in results:
-        panel_title, panel_title_color = _trajectory_comparison_panel_title(n_seg, info, r_e)
+        panel_title, panel_title_color = _trajectory_comparison_panel_title(n_seg, info)
         panel_titles.append(panel_title)
         panel_title_colors.append(panel_title_color)
         panel_data.append(
@@ -1255,15 +1195,9 @@ def compute_profile_ylims(results, segcounts):
         delta = (hi - lo) * pad_ratio
         return (lo - delta, hi + delta)
 
-    # Pad by a fraction of the RANGE, not by scaling the extremum: `hi*1.3`
-    # moves the bound DOWNWARD when hi < 0 and clips the curve off the axes.
-    if not np.isfinite(pos_min) or not np.isfinite(vel_min):
-        return None, None, None
-    pos_ylim = pad_limits(pos_min, pos_max, pad_ratio=0.30)
-    vel_ylim = pad_limits(vel_min, vel_max, pad_ratio=0.30)
-    # No fabricated axis when there is no acceleration data — an invented 1.0
-    # m/s^2 range makes an empty panel look populated.
-    acc_ylim = (0.0, acc_max * 1.8) if acc_max > 0 else None
+    pos_ylim = pad_limits(pos_min, pos_max*1.3)
+    vel_ylim = pad_limits(vel_min, vel_max*1.3)
+    acc_ylim = (0.0, acc_max * 1.8 if acc_max > 0 else 1.0)
     return pos_ylim, vel_ylim, acc_ylim
 
 
@@ -1283,43 +1217,41 @@ def create_performance_figure(results, curve_order=None, window_title=None):
     _safe_set_window_title(fig, window_title)
     ax = fig.add_subplot(111)
 
-    # The optimized objective in physical units: integral ||u||^2 dt (m^2/s^3),
-    # i.e. cost_true_energy * T. This is what the solver minimizes, so refining
-    # the mesh should drive it down; nothing here is recomputed plot-side.
+    # Extract delta-v proxy (preferred) and RMS u as a secondary diagnostic.
     segment_counts = []
-    efforts = []
+    dv_proxies = []
 
     for n_seg, P_opt, info in results:
         if P_opt is None or info is None:
             continue
-        _rms, l2_effort_m2_s3 = control_effort_metrics(info)
-        if l2_effort_m2_s3 is None:
+        _rms_u, _l2, dv_proxy_m_s = control_effort_metrics(info)
+        if dv_proxy_m_s is None:
             continue
 
         segment_counts.append(n_seg)
-        efforts.append(l2_effort_m2_s3)
+        dv_proxies.append(dv_proxy_m_s)
 
     # Create performance graph
-    ax.plot(segment_counts, efforts, 'bo-', linewidth=3, markersize=10)
+    ax.plot(segment_counts, dv_proxies, 'bo-', linewidth=3, markersize=10)
     ax.set_xlabel('Number of Segments', fontsize=14)
-    ax.set_ylabel('Control-effort energy  \u222b\u2016u\u2016\u00b2dt  (m\u00b2/s\u00b3)', fontsize=14)
-    ax.set_title('Optimized objective vs Segment Count', fontsize=16, pad=20)
+    ax.set_ylabel('Δv proxy (m/s)', fontsize=14)
+    ax.set_title('Δv proxy vs Segment Count', fontsize=16, pad=20)
     ax.grid(True, alpha=0.3)
     ax.set_xscale('log', base=2)  # Log scale for segment counts
 
     # Add data point labels
-    for seg, eff in zip(segment_counts, efforts):
-        ax.annotate(format_number(eff, '.4g'), (seg, eff), textcoords="offset points",
-                    xytext=(0, 10), ha='center', fontsize=10,
-                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8))
+    for i, (seg, dv) in enumerate(zip(segment_counts, dv_proxies)):
+        dv_str = format_number(dv, '.2f')
+        ax.annotate(dv_str, (seg, dv), textcoords="offset points", xytext=(0,10), ha='center',
+                   fontsize=10, bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8))
 
     return fig
 
 
 def create_multi_order_performance_figure(results_by_order, window_title=None):
     """
-    Create a single performance figure showing the optimized objective vs
-    segment count for multiple curve orders simultaneously.
+    Create a single performance figure showing Δv proxy vs segment count
+    for multiple curve orders simultaneously.
 
     Args:
         results_by_order: Dict mapping curve order N -> list of (n_seg, P_opt, info)
@@ -1341,15 +1273,15 @@ def create_multi_order_performance_figure(results_by_order, window_title=None):
 
     for N, results in sorted(results_by_order.items()):
         segment_counts = []
-        efforts = []
+        dv_proxies = []
         for n_seg, P_opt, info in results:
             if P_opt is None or info is None:
                 continue
-            _rms, l2_effort_m2_s3 = control_effort_metrics(info)
-            if l2_effort_m2_s3 is None:
+            _rms_u, _l2, dv_proxy_m_s = control_effort_metrics(info)
+            if dv_proxy_m_s is None:
                 continue
             segment_counts.append(n_seg)
-            efforts.append(l2_effort_m2_s3)
+            dv_proxies.append(dv_proxy_m_s)
 
         if not segment_counts:
             continue
@@ -1358,7 +1290,7 @@ def create_multi_order_performance_figure(results_by_order, window_title=None):
         label = f"N={N}"
         ax.plot(
             segment_counts,
-            efforts,
+            dv_proxies,
             marker="o",
             linewidth=3,
             markersize=9,
@@ -1367,10 +1299,11 @@ def create_multi_order_performance_figure(results_by_order, window_title=None):
         )
 
         # Annotate points for this order.
-        for seg, eff in zip(segment_counts, efforts):
+        for seg, dv in zip(segment_counts, dv_proxies):
+            dv_str = format_number(dv, ".2f")
             ax.annotate(
-                format_number(eff, ".4g"),
-                (seg, eff),
+                dv_str,
+                (seg, dv),
                 textcoords="offset points",
                 xytext=(0, 7),
                 ha="center",
@@ -1379,8 +1312,8 @@ def create_multi_order_performance_figure(results_by_order, window_title=None):
             )
 
     ax.set_xlabel("Number of Segments", fontsize=14)
-    ax.set_ylabel("Control-effort energy  \u222b\u2016u\u2016\u00b2dt  (m\u00b2/s\u00b3)", fontsize=14)
-    ax.set_title("Optimized objective vs Segment Count (multi-order)", fontsize=16, pad=20)
+    ax.set_ylabel("Δv proxy (m/s)", fontsize=14)
+    ax.set_title("Δv proxy vs Segment Count (multi-order)", fontsize=16, pad=20)
     ax.grid(True, alpha=0.3)
     ax.set_xscale("log", base=2)
     ax.legend(title="Curve order", fontsize=11)
@@ -1410,46 +1343,39 @@ def create_acceleration_figure(
         matplotlib Figure object
     """
     fig = plt.figure(figsize=(12, 10), constrained_layout=True)
-
-    # Select the data FIRST, then title from what was actually selected. The
-    # titles used to be built from the `segcount` argument while the data silently
-    # fell back to results[-1], so a figure captioned "64 Segments" could contain
-    # the n_seg=32 curve.
-    P_opt, info, shown_segcount = None, None, None
-    for seg_count, P_opt_iter, info_iter in results:
-        if seg_count == segcount:
-            P_opt, info, shown_segcount = P_opt_iter, info_iter, seg_count
-            break
-
-    if P_opt is None and len(results) > 0:
-        shown_segcount, P_opt, info = results[-1]
-
-    if P_opt is None:
-        return fig
-
-    seg_label = f"{shown_segcount} Segments"
-    if shown_segcount != segcount:
-        seg_label += f" (requested {segcount}, not available)"
-
     if curve_order is None:
-        fig.suptitle(f'Position, Velocity, and Acceleration Profiles for {seg_label}', fontsize=16)
+        fig.suptitle(f'Position, Velocity, and Acceleration Profiles for {segcount} Segments', fontsize=16)
     else:
         fig.suptitle(
-            f'Position, Velocity, and Acceleration Profiles (N={curve_order}) for {seg_label}',
+            f'Position, Velocity, and Acceleration Profiles (N={curve_order}) for {segcount} Segments',
             fontsize=16,
         )
 
     if window_title is None:
         if curve_order is None:
-            window_title = f"Orbital Docking — Profiles ({shown_segcount} seg)"
+            window_title = f"Orbital Docking — Profiles ({segcount} seg)"
         else:
-            window_title = f"Orbital Docking — Profiles (N={curve_order}, {shown_segcount} seg)"
+            window_title = f"Orbital Docking — Profiles (N={curve_order}, {segcount} seg)"
     _safe_set_window_title(fig, window_title)
 
     # Create 3x1 subplot layout
     ax1 = fig.add_subplot(3, 1, 1)  # Position plot
     ax2 = fig.add_subplot(3, 1, 2)  # Velocity plot
     ax3 = fig.add_subplot(3, 1, 3)  # Acceleration plot
+
+    # Find the result for the specified segment count
+    P_opt, info = None, None
+    for seg_count, P_opt_iter, info_iter in results:
+        if seg_count == segcount:
+            P_opt, info = P_opt_iter, info_iter
+            break
+
+    # Fallback to last result if specified segment count not found
+    if P_opt is None and len(results) > 0:
+        P_opt, info = results[-1][1], results[-1][2]
+
+    if P_opt is None:
+        return fig
 
     # Create Bezier curve
     curve = BezierCurve(P_opt)
@@ -1517,19 +1443,20 @@ def create_acceleration_figure(
     ax3.set_xlabel('Parameter τ', fontsize=12)
     ax3.set_ylabel('Acceleration (m/s²)', fontsize=12)
 
-    # Summary metrics for THIS axes. The purple line above is the true-gravity
-    # control acceleration, so its summary must be the solver's true-gravity
-    # scalars — not sqrt(cost_true_energy), which is the linearized-gravity
-    # objective and therefore a different quantity from the curve it labelled.
-    _rms_objective, l2_effort_m2_s3 = control_effort_metrics(info)
-    mean_u, max_u = solver_control_accel(info)
-    if mean_u is not None and max_u is not None:
-        ax3.set_title(
-            f'Acceleration Components '
-            f'(mean ‖u‖: {format_number(mean_u, ".3f")} | '
-            f'max ‖u‖: {format_number(max_u, ".3f")} m/s², solver-reported)',
-            fontsize=14, pad=15,
-        )
+    # Summary metrics aligned with optimizer objective.
+    rms_control_accel_m_s2, l2_effort_m2_s3, dv_proxy_m_s = control_effort_metrics(info)
+    if rms_control_accel_m_s2 is not None:
+        rms_str = format_number(rms_control_accel_m_s2, '.2f')
+        if dv_proxy_m_s is not None:
+            dv_str = format_number(dv_proxy_m_s, '.1f')
+            ax3.set_title(
+                f'Acceleration Components (Δv proxy: {dv_str} m/s | RMS u: {rms_str} m/s²)',
+                fontsize=14,
+                pad=15,
+            )
+        else:
+            ax3.set_title(f'Acceleration Components (RMS Control Accel: {rms_str} m/s²)',
+                     fontsize=14, pad=15)
     else:
         ax3.set_title('Acceleration Components', fontsize=14, pad=15)
     ax3.grid(True, alpha=0.3)
@@ -1603,17 +1530,16 @@ def create_acceleration_figure(
         except Exception:
             pass
 
-    # Control-effort statistics, all read from the solver. The objective and the
-    # drawn curve use different gravity models (affine-per-segment vs true), so
-    # both are labelled for what they are rather than conflated under "RMS u".
-    lines = []
-    lines.append(f'mean ‖u‖: {format_number(mean_u, ".3f")} m/s²'
-                 if mean_u is not None else 'mean ‖u‖: n/a')
-    lines.append(f'max ‖u‖: {format_number(max_u, ".3f")} m/s²'
-                 if max_u is not None else 'max ‖u‖: n/a')
-    lines.append(f'∫‖u‖²dt: {format_number(l2_effort_m2_s3, ".4g")} m²/s³'
-                 if l2_effort_m2_s3 is not None else '∫‖u‖²dt: n/a')
-    stats_text = '\n'.join(lines)
+    # Add objective-consistent control-effort statistics.
+    if rms_control_accel_m_s2 is not None and l2_effort_m2_s3 is not None:
+        rms_str = format_number(rms_control_accel_m_s2, '.2f')
+        if dv_proxy_m_s is not None:
+            dv_str = format_number(dv_proxy_m_s, '.1f')
+            stats_text = f'Δv proxy: {dv_str} m/s\nRMS accel: {rms_str} m/s²'
+        else:
+            stats_text = f'Δv proxy: n/a\nRMS accel: {rms_str} m/s²'
+    else:
+        stats_text = 'Δv proxy: n/a\nRMS accel: n/a'
     ax3.text(0.02, 0.98, stats_text,
             transform=ax3.transAxes, fontsize=10, verticalalignment='top',
             bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
@@ -1636,32 +1562,26 @@ def create_time_vs_order_figure(calculation_times, optimization_results):
     ax = fig.add_subplot(111)
 
     # Extract data
-    # `calculation_times[N]` is the caller's wall time for the WHOLE sweep over
-    # every n_seg; `info['elapsed_time']` is one representative single solve.
-    # These are different quantities and were previously silently substituted for
-    # one another, so the bar could be either while the axis claimed the other.
-    # Plot the caller's total, say so on the axis, and drop any order whose time
-    # is unavailable rather than drawing a 0.00s bar indistinguishable from a
-    # genuinely instantaneous solve.
-    orders = []
+    orders = sorted(calculation_times.keys())
     times = []
-    dropped = []
-    for N in sorted(calculation_times.keys()):
-        t_calc = calculation_times.get(N)
-        try:
-            t = float(t_calc)
-        except (TypeError, ValueError):
-            t = float('nan')
-        if not np.isfinite(t) or t <= 0.0:
-            dropped.append(N)
-            continue
-        orders.append(N)
-        times.append(t)
+    for N in orders:
+        # Prefer the persisted optimization compute time (cached metadata) when available.
+        # This avoids near-zero bars when the caller measured wall-time during a cache-hit run.
+        t_info = None
+        if N in optimization_results:
+            _, info = optimization_results[N]
+            if info is not None:
+                try:
+                    t_info = float(info.get('elapsed_time', 0.0))
+                except Exception:
+                    t_info = None
 
-    if not orders:
-        ax.text(0.5, 0.5, 'no timing data', transform=ax.transAxes,
-                ha='center', va='center', fontsize=14)
-        return fig
+        t_calc = calculation_times.get(N, 0.0)
+        if t_info is not None and np.isfinite(t_info) and t_info > 0.0:
+            t = t_info
+        else:
+            t = 0.0 if t_calc is None else float(t_calc)
+        times.append(t)
 
     palette = ["#3498DB", "#E74C3C", "#F39C12", "#2CA02C", "#9467BD", "#8C564B"]
     bar_colors = [palette[i % len(palette)] for i in range(len(orders))]
@@ -1676,27 +1596,27 @@ def create_time_vs_order_figure(calculation_times, optimization_results):
                ha='center', va='bottom', fontsize=12, fontweight='bold')
 
     ax.set_xlabel('Curve Order (N)', fontsize=14)
-    ax.set_ylabel('Total solve time over all n_seg (seconds)', fontsize=14)
+    ax.set_ylabel('Calculation Time (seconds)', fontsize=14)
     ax.set_title('Optimization Time vs Bézier Curve Order', fontsize=16, pad=20)
     ax.grid(True, alpha=0.3, axis='y')
     ax.set_xticks(orders)
     ax.set_xticklabels([f'N={N}' for N in orders])
 
-    # Optimized objective per order, read from the solver.
+    # Add optimizer-consistent control-effort info as text.
     accel_info = []
     for N in orders:
-        P_opt, info = optimization_results.get(N, (None, None))
+        P_opt, info = optimization_results[N]
         if P_opt is None or info is None:
             continue
-        _rms, l2_effort_m2_s3 = control_effort_metrics(info)
-        if l2_effort_m2_s3 is None:
+        rms_control_accel_m_s2, l2_effort_m2_s3, dv_proxy_m_s = control_effort_metrics(info)
+        if rms_control_accel_m_s2 is None or l2_effort_m2_s3 is None:
             continue
-        accel_info.append(
-            f'N={N}: \u222b\u2016u\u2016\u00b2dt = '
-            f'{format_number(l2_effort_m2_s3, ".4g")} m\u00b2/s\u00b3'
-        )
-    if dropped:
-        accel_info.append('no timing: ' + ', '.join(f'N={N}' for N in dropped))
+        accel_str = format_number(rms_control_accel_m_s2, '.2f')
+        if dv_proxy_m_s is not None:
+            dv_str = format_number(dv_proxy_m_s, '.1f')
+            accel_info.append(f'N={N}: Δv={dv_str} m/s, RMS={accel_str} m/s²')
+        else:
+            accel_info.append(f'N={N}: Δv=n/a, RMS={accel_str} m/s²')
 
     info_text = '\n'.join(accel_info)
     if info_text:
