@@ -1562,26 +1562,32 @@ def create_time_vs_order_figure(calculation_times, optimization_results):
     ax = fig.add_subplot(111)
 
     # Extract data
-    orders = sorted(calculation_times.keys())
+    # `calculation_times[N]` is the caller's wall time for the WHOLE sweep over
+    # every n_seg; `info['elapsed_time']` is one representative single solve.
+    # These are different quantities and were previously silently substituted for
+    # one another, so the bar could be either while the axis claimed the other.
+    # Plot the caller's total, say so on the axis, and drop any order whose time
+    # is unavailable rather than drawing a 0.00s bar indistinguishable from a
+    # genuinely instantaneous solve.
+    orders = []
     times = []
-    for N in orders:
-        # Prefer the persisted optimization compute time (cached metadata) when available.
-        # This avoids near-zero bars when the caller measured wall-time during a cache-hit run.
-        t_info = None
-        if N in optimization_results:
-            _, info = optimization_results[N]
-            if info is not None:
-                try:
-                    t_info = float(info.get('elapsed_time', 0.0))
-                except Exception:
-                    t_info = None
-
-        t_calc = calculation_times.get(N, 0.0)
-        if t_info is not None and np.isfinite(t_info) and t_info > 0.0:
-            t = t_info
-        else:
-            t = 0.0 if t_calc is None else float(t_calc)
+    dropped = []
+    for N in sorted(calculation_times.keys()):
+        t_calc = calculation_times.get(N)
+        try:
+            t = float(t_calc)
+        except (TypeError, ValueError):
+            t = float('nan')
+        if not np.isfinite(t) or t <= 0.0:
+            dropped.append(N)
+            continue
+        orders.append(N)
         times.append(t)
+
+    if not orders:
+        ax.text(0.5, 0.5, 'no timing data', transform=ax.transAxes,
+                ha='center', va='center', fontsize=14)
+        return fig
 
     palette = ["#3498DB", "#E74C3C", "#F39C12", "#2CA02C", "#9467BD", "#8C564B"]
     bar_colors = [palette[i % len(palette)] for i in range(len(orders))]
@@ -1596,7 +1602,7 @@ def create_time_vs_order_figure(calculation_times, optimization_results):
                ha='center', va='bottom', fontsize=12, fontweight='bold')
 
     ax.set_xlabel('Curve Order (N)', fontsize=14)
-    ax.set_ylabel('Calculation Time (seconds)', fontsize=14)
+    ax.set_ylabel('Total solve time over all n_seg (seconds)', fontsize=14)
     ax.set_title('Optimization Time vs Bézier Curve Order', fontsize=16, pad=20)
     ax.grid(True, alpha=0.3, axis='y')
     ax.set_xticks(orders)
