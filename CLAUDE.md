@@ -11,6 +11,12 @@
 
 ## Locked design decisions (author, 2026-08-07 — do not revisit without explicit user approval)
 
+**Before touching solver code or the paper, read `doc/design_freeze.md`** — it
+holds the full design, the principle behind every parameter, and the evidence
+log. It outranks the paper: the code plus the 5-pillar verification are ground
+truth, and the paper is being rewritten toward them, never the reverse.
+In-flight work is in `doc/session_handoff.md`.
+
 - **The cost function is control-acceleration energy, hard-coded, singular,
   computed as the EXACT integral** (closed form via the Bernstein Gram matrix —
   computing curve derivatives/integrals in control-point space is the whole
