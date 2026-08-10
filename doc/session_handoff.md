@@ -2,7 +2,8 @@
 
 _Ephemeral: rewrite this file each session. Design and locked decisions live in
 `doc/design_freeze.md` — READ IT FIRST; it outranks the paper. Rules are in
-`CLAUDE.md`._
+`CLAUDE.md`. Mathematical symbols are locked in `doc/notation.md` — read it
+before writing any equation, and verify with `python3 tools/check_notation.py`._
 
 ## State (2026-08-10)
 

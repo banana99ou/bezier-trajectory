@@ -56,6 +56,11 @@ If every control point `q_k^{(s)}` of the subdivided control polygon lies in `H^
 
 ## T1 draft: Control-point-space objects and linear maps
 
+> **Notation superseded 2026-08-10 by `doc/notation.md`.** The table below is
+> kept for its dimensions and roles, but where a symbol here disagrees with
+> `doc/notation.md`, that file wins — notably `f^{(k)}` → `\boldsymbol{\ell}^{(k)}`
+> (freed because `\mathbf{f}` is the residual curve) and `r_e` → `R_{\mathrm{KOZ}}`.
+
 | Object / operator | Dimensions | Definition | Role in the optimization |
 |---|---|---|---|
 | `P` | `(N+1) x 3` | control-point matrix | convenient matrix form of the decision variables |

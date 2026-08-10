@@ -85,6 +85,15 @@ Explicitly not in the current evidence package:
 
 ## Frozen method notation lock
 
+> **SUPERSEDED 2026-08-10 — do not use. See `doc/notation.md`.**
+>
+> This block is retained as historical record only. It is stale in two ways:
+> it covers only the §2 control-point objects (none of the SCvx symbols, where
+> every actual collision was), and its wording lock still mandates Δv / IRLS
+> language that `CLAUDE.md` forbids. It also disagrees with `T1` in
+> `doc/method_artifact_pack.md` (`f^{(k)}` vs `ℓ^{(k)}`). Duplication is what
+> let it drift; `doc/notation.md` is now the only copy.
+
 Use the following symbols consistently in Sections 3 and 4 and in all method-facing artifact captions:
 
 - `P in R^{(N+1) x 3}`: control-point matrix
