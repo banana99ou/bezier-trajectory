@@ -13,6 +13,7 @@ from orbital_docking.j2_validation import (
     spherical_to_cartesian_km,
 )
 from orbital_docking.optimization import _accel_j2, _accel_total, _jacobian_numeric
+from orbital_docking import visualization
 from orbital_docking.visualization import accel_gravity_total_km_s2
 
 
@@ -47,22 +48,41 @@ def test_numeric_gradient_reference_matches_closed_form_j2():
         assert err["rel_norm"] < 5e-9, f"{case.sample_id}: rel error {err['rel_norm']}"
 
 
-def test_visualization_total_gravity_matches_optimizer_total_gravity(rng):
-    """The visualization helper must stay numerically identical to the optimizer model."""
-    for _ in range(8):
-        altitude_km = float(rng.uniform(245.0, 20000.0))
-        latitude_deg = float(rng.uniform(-85.0, 85.0))
-        longitude_deg = float(rng.uniform(-180.0, 180.0))
-        radius_km = constants.EARTH_RADIUS_KM + altitude_km
-        r_km = spherical_to_cartesian_km(radius_km, latitude_deg, longitude_deg)
-        a_opt = _accel_total(
-            r_km,
-            constants.EARTH_MU_SCALED,
-            constants.EARTH_RADIUS_KM,
-            constants.EARTH_J2,
+def test_visualization_gravity_delegates_to_the_solver_model():
+    """The plotting layer must not carry its own gravity implementation.
+
+    This replaces a numeric `assert a_viz == a_opt` comparison. Since 2026-08-10
+    `visualization.accel_gravity_total_km_s2` delegates to
+    `optimization._accel_total`, so comparing their outputs is a tautology — a
+    check that cannot fail is not evidence. What still CAN fail, and is what
+    actually matters, is someone reintroducing a private copy in the plotting
+    module: a figure would then be drawn against a different gravity model than
+    the trajectory was optimized against.
+
+    Guards that by source inspection, and keeps one numeric sample so a broken
+    delegation (wrong constants, swapped argument order) is still caught.
+    """
+    import inspect
+
+    src = inspect.getsource(accel_gravity_total_km_s2)
+    assert "_accel_total" in src, (
+        "visualization.accel_gravity_total_km_s2 no longer delegates to the "
+        "solver's _accel_total — the plotting layer has reacquired its own "
+        "gravity model and can now silently disagree with the solver."
+    )
+    for name in ("accel_two_body_km_s2", "accel_j2_km_s2"):
+        assert not hasattr(visualization, name), (
+            f"visualization.{name} is back; the duplicate gravity implementation "
+            "was deliberately removed."
         )
-        a_viz = accel_gravity_total_km_s2(r_km)
-        np.testing.assert_allclose(a_viz, a_opt, rtol=0.0, atol=1e-15)
+
+    r_km = spherical_to_cartesian_km(constants.EARTH_RADIUS_KM + 400.0, 30.0, 45.0)
+    np.testing.assert_allclose(
+        accel_gravity_total_km_s2(r_km),
+        _accel_total(r_km, constants.EARTH_MU_SCALED,
+                     constants.EARTH_RADIUS_KM, constants.EARTH_J2),
+        rtol=0.0, atol=0.0,
+    )
 
 
 def test_j2_direction_changes_between_equator_and_pole():

@@ -18,6 +18,7 @@ except ImportError:
 from .bezier import BezierCurve
 from .de_casteljau import segment_matrices_equal_params
 from .constants import EARTH_RADIUS_KM, EARTH_MU_SCALED, EARTH_J2, TRANSFER_TIME_S
+from .optimization import _accel_total
 from .utils import format_number
 
 PROGRESS_LABEL = "Progress"
@@ -136,39 +137,19 @@ def _sample_texture_face_colors(mesh, faces, run_id=None) -> np.ndarray | None:
         return None
 
 
-def accel_two_body_km_s2(r_km: np.ndarray) -> np.ndarray:
-    """Two-body gravity acceleration in km/s^2."""
-    r = np.asarray(r_km, dtype=float)
-    rn = np.linalg.norm(r)
-    if rn < 1e-12:
-        return np.zeros(3)
-    return (-EARTH_MU_SCALED / (rn**3)) * r
-
-
-def accel_j2_km_s2(r_km: np.ndarray) -> np.ndarray:
-    """
-    J2 perturbation acceleration in km/s^2.
-    Simplified model: Earth symmetry axis aligned with ECI Z.
-    """
-    r = np.asarray(r_km, dtype=float)
-    x, y, z = r
-    r2 = float(x*x + y*y + z*z)
-    rn = np.sqrt(r2)
-    if rn < 1e-12:
-        return np.zeros(3)
-    z2 = z*z
-    r5 = rn**5
-    factor = 1.5 * EARTH_J2 * EARTH_MU_SCALED * (EARTH_RADIUS_KM**2) / r5
-    k = 5.0 * z2 / r2
-    ax = factor * x * (k - 1.0)
-    ay = factor * y * (k - 1.0)
-    az = factor * z * (k - 3.0)
-    return np.array([ax, ay, az], dtype=float)
-
-
 def accel_gravity_total_km_s2(r_km: np.ndarray) -> np.ndarray:
-    """Two-body + J2 gravity acceleration in km/s^2."""
-    return accel_two_body_km_s2(r_km) + accel_j2_km_s2(r_km)
+    """Two-body + J2 gravity acceleration in km/s^2 — THE SOLVER'S OWN model.
+
+    Delegates to `optimization._accel_total`. This module used to carry its own
+    formula-identical copy, which meant a figure could be drawn against a
+    different gravity model than the trajectory was optimized against. There is
+    now one implementation; a plot cannot silently disagree with the solver.
+
+    Kept as a named function (rather than importing `_accel_total` at each call
+    site) because it binds the module-level constants, and because
+    `tools/verify_j2_logic.py` and two tests import this name.
+    """
+    return _accel_total(r_km, EARTH_MU_SCALED, EARTH_RADIUS_KM, EARTH_J2)
 
 
 def control_effort_metrics(info: dict):
