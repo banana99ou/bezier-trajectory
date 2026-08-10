@@ -1195,9 +1195,15 @@ def compute_profile_ylims(results, segcounts):
         delta = (hi - lo) * pad_ratio
         return (lo - delta, hi + delta)
 
-    pos_ylim = pad_limits(pos_min, pos_max*1.3)
-    vel_ylim = pad_limits(vel_min, vel_max*1.3)
-    acc_ylim = (0.0, acc_max * 1.8 if acc_max > 0 else 1.0)
+    # Pad by a fraction of the RANGE, not by scaling the extremum: `hi*1.3`
+    # moves the bound DOWNWARD when hi < 0 and clips the curve off the axes.
+    if not np.isfinite(pos_min) or not np.isfinite(vel_min):
+        return None, None, None
+    pos_ylim = pad_limits(pos_min, pos_max, pad_ratio=0.30)
+    vel_ylim = pad_limits(vel_min, vel_max, pad_ratio=0.30)
+    # No fabricated axis when there is no acceleration data — an invented 1.0
+    # m/s^2 range makes an empty panel look populated.
+    acc_ylim = (0.0, acc_max * 1.8) if acc_max > 0 else None
     return pos_ylim, vel_ylim, acc_ylim
 
 
