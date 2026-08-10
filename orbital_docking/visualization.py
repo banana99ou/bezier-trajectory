@@ -1343,39 +1343,46 @@ def create_acceleration_figure(
         matplotlib Figure object
     """
     fig = plt.figure(figsize=(12, 10), constrained_layout=True)
+
+    # Select the data FIRST, then title from what was actually selected. The
+    # titles used to be built from the `segcount` argument while the data silently
+    # fell back to results[-1], so a figure captioned "64 Segments" could contain
+    # the n_seg=32 curve.
+    P_opt, info, shown_segcount = None, None, None
+    for seg_count, P_opt_iter, info_iter in results:
+        if seg_count == segcount:
+            P_opt, info, shown_segcount = P_opt_iter, info_iter, seg_count
+            break
+
+    if P_opt is None and len(results) > 0:
+        shown_segcount, P_opt, info = results[-1]
+
+    if P_opt is None:
+        return fig
+
+    seg_label = f"{shown_segcount} Segments"
+    if shown_segcount != segcount:
+        seg_label += f" (requested {segcount}, not available)"
+
     if curve_order is None:
-        fig.suptitle(f'Position, Velocity, and Acceleration Profiles for {segcount} Segments', fontsize=16)
+        fig.suptitle(f'Position, Velocity, and Acceleration Profiles for {seg_label}', fontsize=16)
     else:
         fig.suptitle(
-            f'Position, Velocity, and Acceleration Profiles (N={curve_order}) for {segcount} Segments',
+            f'Position, Velocity, and Acceleration Profiles (N={curve_order}) for {seg_label}',
             fontsize=16,
         )
 
     if window_title is None:
         if curve_order is None:
-            window_title = f"Orbital Docking — Profiles ({segcount} seg)"
+            window_title = f"Orbital Docking — Profiles ({shown_segcount} seg)"
         else:
-            window_title = f"Orbital Docking — Profiles (N={curve_order}, {segcount} seg)"
+            window_title = f"Orbital Docking — Profiles (N={curve_order}, {shown_segcount} seg)"
     _safe_set_window_title(fig, window_title)
 
     # Create 3x1 subplot layout
     ax1 = fig.add_subplot(3, 1, 1)  # Position plot
     ax2 = fig.add_subplot(3, 1, 2)  # Velocity plot
     ax3 = fig.add_subplot(3, 1, 3)  # Acceleration plot
-
-    # Find the result for the specified segment count
-    P_opt, info = None, None
-    for seg_count, P_opt_iter, info_iter in results:
-        if seg_count == segcount:
-            P_opt, info = P_opt_iter, info_iter
-            break
-
-    # Fallback to last result if specified segment count not found
-    if P_opt is None and len(results) > 0:
-        P_opt, info = results[-1][1], results[-1][2]
-
-    if P_opt is None:
-        return fig
 
     # Create Bezier curve
     curve = BezierCurve(P_opt)
