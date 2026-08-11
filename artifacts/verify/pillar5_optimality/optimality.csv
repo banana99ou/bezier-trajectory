@@ -1,0 +1,6 @@
+scenario,stop,iters,J_true,kkt_rel_resid,n_active,lambda_koz_inf,descent_hits,descent_tested,best_improvement,passed
+phase70,4,6,3.347149e-05,3.059623e-06,0,0.000000e+00,0,1600,0.000000e+00,True
+phase120,4,8,2.263317e-05,1.131423e-05,2,2.655359e-08,0,644,0.000000e+00,True
+phase135,4,9,8.490308e-05,5.585144e-06,3,6.403107e-08,0,496,0.000000e+00,True
+phase170,4,12,4.626229e-04,4.408373e-06,4,1.895370e-07,0,333,0.000000e+00,True
+planechange,4,10,6.148523e-05,4.866419e-06,3,4.481484e-08,0,552,0.000000e+00,True
