@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-Build F4: Subdivision-count tradeoff figure for N=7.
+Subdivision-count trade-off figure for N = 7 (paper 그림 5).
 
-Two-panel figure showing:
-  Left:  Runtime vs subdivision count
-  Right: Control-effort energy and safety margin vs subdivision count
-
-Uses the 120-deg phase-lag cache files (same as build_representative_trajectories.py / build_csv.py).
+Plots the three quantities the caption names -- safety margin, control cost and
+runtime -- against the subdivision count, read from the SAME committed CSV that
+fills 표 3. Reading `doc/results/paper_tables.csv` rather than the solver cache is
+the point of this script: the previous version loaded `cache/opt_*.pkl` written
+before the canonical-SCvx change, so it plotted runtimes three orders of
+magnitude away from the table printed beside it, and it plotted
+`cost_true_energy * T * 1e6` labelled as an energy integral where 표 3 reports
+mean control acceleration in m/s^2. Both are fixed by reading the CSV.
 
 Usage:
     python tools/build_subdivision_tradeoff.py
@@ -18,94 +21,82 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 
-from orbital_docking import constants, generate_initial_control_points
-from orbital_docking.cache import get_cache_key, get_cache_path, load_from_cache
+from tools.paper_tables_csv import T3_SIGNATURE, block, endpoint_attained
 
-# ── Reuse 120-deg geometry from build_csv.py ─────────────────────────
-from build_csv import get_120deg_endpoints, get_cache_path_120
+# Tableau Colorblind 10, the palette the concept figures use.
+C_INK, C_DATA, C_FLAG, C_GRID = "#333333", "#006BA4", "#C85200", "#CFCFCF"
 
-N = 7
-SEGS = [2, 4, 8, 16, 32, 64]
+PANELS = [
+    ("margin_km",     "Safety margin (km)",     "Safety margin", True),
+    ("ctrl_cost_ms2", "Control cost (m/s$^2$)", "Control cost",  True),
+    ("runtime_s",     "Runtime (s)",            "Runtime",       True),
+]
 
 
 def main():
-    P_start, v0, P_end, v1 = get_120deg_endpoints()
+    rows = block(T3_SIGNATURE, "그림 5 (subdivision sweep, N=7)")
+    segs = np.array([r["n_seg"] for r in rows])
+    certified = np.array([r["certified"] for r in rows])
+    endpoint = np.array(endpoint_attained(rows))
 
-    segs, runtimes, efforts, margins = [], [], [], []
-    for n_seg in SEGS:
-        path = get_cache_path_120(N, n_seg, P_start, v0, P_end, v1)
-        result = load_from_cache(path)
-        if result is None:
-            print(f"  MISSING N={N} seg={n_seg}")
-            continue
-        _, info = result
-        min_r = info["min_radius"]
-        safety = min_r - constants.KOZ_RADIUS
-        segs.append(n_seg)
-        runtimes.append(info["elapsed_time"])
-        efforts.append(info["cost_true_energy"] * info["T_transfer_s"] * 1e6)
-        margins.append(safety)
-        tag = "INFEAS" if not info["feasible"] else "OK"
-        print(f"  {tag}: seg={n_seg:2d}  "
-              f"effort={info['cost_true_energy'] * info['T_transfer_s'] * 1e6:10.4g}  "
-              f"safety={safety:8.3f} km  rt={info['elapsed_time']:.1f}s")
+    fig, axes = plt.subplots(1, 3, figsize=(14.0, 4.3), constrained_layout=True)
 
-    segs = np.array(segs)
-    runtimes = np.array(runtimes)
-    efforts = np.array(efforts)
-    margins = np.array(margins)
+    for ax, (key, ylabel, title, logy) in zip(axes, PANELS):
+        y = np.array([r[key] for r in rows])
+        ax.plot(segs, y, "-", color=C_DATA, lw=1.8, zorder=3)
+        # Certified runs are filled; the uncertified one is hollow, so the
+        # reader can see at a glance which points the guarantee covers.
+        ax.plot(segs[certified], y[certified], "o", color=C_DATA, ms=7, zorder=4)
+        ax.plot(segs[~certified], y[~certified], "o", mfc="white", mec=C_FLAG,
+                mew=1.8, ms=8, zorder=5)
 
-    # ── Figure ────────────────────────────────────────────────────────
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5))
+        ax.set_xscale("log", base=2)
+        ax.set_xticks(segs)
+        ax.set_xticklabels([str(int(s)) for s in segs])
+        ax.set_xlabel("Subdivision count $n_{\\mathrm{seg}}$", fontsize=10)
+        ax.set_ylabel(ylabel, fontsize=10)
+        ax.set_title(title, fontsize=11, color=C_INK, pad=8)
+        if logy:
+            ax.set_yscale("log")
+        ax.grid(True, which="both", color=C_GRID, lw=0.6, alpha=0.8)
+        ax.set_axisbelow(True)
+        for sp in ax.spines.values():
+            sp.set_color("#cccccc")
+        ax.tick_params(labelsize=9, colors="#666666")
 
-    # Left panel: Runtime
-    ax1.plot(segs, runtimes, "o-", color="tab:red", linewidth=2, markersize=7)
-    ax1.set_xscale("log", base=2)
-    ax1.set_xticks(SEGS)
-    ax1.set_xticklabels([f"$2^{{{int(np.log2(s))}}}$" for s in SEGS])
-    ax1.set_xlabel("Subdivision count $n_{\\mathrm{seg}}$")
-    ax1.set_ylabel("Runtime (s)")
-    ax1.set_title("Runtime vs subdivision count")
-    ax1.grid(True, alpha=0.3)
+        if key == "margin_km" and endpoint.any():
+            # Where the minimum radius sits at an endpoint the margin measures
+            # the departure orbit, not the method -- see section 5.2.
+            ax.plot(segs[endpoint], y[endpoint], "x", color=C_FLAG, ms=9,
+                    mew=1.8, zorder=6)
+            ax.text(0.04, 0.72,
+                    "\u00d7  minimum at an endpoint:\n"
+                    "    departure altitude, not clearance",
+                    transform=ax.transAxes, fontsize=8, color=C_FLAG,
+                    ha="left", va="center")
 
-    # Right panel: optimized objective + safety margin (dual y-axis)
-    color_dv = "tab:blue"
-    color_sm = "tab:green"
-
-    ax2.plot(segs, efforts, "o-", color=color_dv, linewidth=2, markersize=7,
-             label="$\\int\\|u\\|^2 dt$ (m$^2$/s$^3$)")
-    ax2.set_xscale("log", base=2)
-    ax2.set_xticks(SEGS)
-    ax2.set_xticklabels([f"$2^{{{int(np.log2(s))}}}$" for s in SEGS])
-    ax2.set_xlabel("Subdivision count $n_{\\mathrm{seg}}$")
-    ax2.set_ylabel("$\\int\\|u\\|^2 dt$  (m$^2$/s$^3$)", color=color_dv)
-    ax2.tick_params(axis="y", labelcolor=color_dv)
-    ax2.set_title("Outcome metrics vs subdivision count")
-    ax2.grid(True, alpha=0.3)
-
-    ax2b = ax2.twinx()
-    ax2b.plot(segs, margins, "s--", color=color_sm, linewidth=2, markersize=7,
-              label="Safety margin (km)")
-    ax2b.set_ylabel("Safety margin (km)", color=color_sm)
-    ax2b.tick_params(axis="y", labelcolor=color_sm)
-
-    # Combined legend
-    lines1, labels1 = ax2.get_legend_handles_labels()
-    lines2, labels2 = ax2b.get_legend_handles_labels()
-    ax2.legend(lines1 + lines2, labels1 + labels2, loc="upper right",
-               fontsize=9, framealpha=0.8)
-
-    fig.tight_layout()
+    n_unc = int((~certified).sum())
+    if n_unc:
+        bad = ", ".join(f"$n_{{\\mathrm{{seg}}}}={int(s)}$" for s in segs[~certified])
+        fig.text(0.005, -0.02,
+                 f"hollow marker: Proposition 1 certificate not attained ({bad})",
+                 fontsize=8.5, color=C_FLAG, ha="left", va="top")
 
     out = ROOT / "figures" / "subdivision_tradeoff_N7.png"
     fig.savefig(out, dpi=200, bbox_inches="tight", facecolor="white")
-    print(f"\nSaved -> {out}  ({out.stat().st_size / 1024:.0f} KB)")
     plt.close(fig)
+
+    print(f"rows read from doc/results/paper_tables.csv ({len(rows)}):")
+    for r in rows:
+        print(f"  n_seg={r['n_seg']:2d}  certified={str(r['certified']):5s}  "
+              f"margin={r['margin_km']:8.2f} km  cost={r['ctrl_cost_ms2']:8.3f} "
+              f"m/s^2  runtime={r['runtime_s']:.3f} s")
+    print(f"\nSaved -> {out}  ({out.stat().st_size / 1024:.0f} KB)")
 
 
 if __name__ == "__main__":

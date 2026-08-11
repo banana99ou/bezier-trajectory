@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """
-Build F5: Multi-order performance trends for N=6,7,8.
+Degree trade-off figure at n_seg = 16 (paper 그림 6).
 
-Two-panel figure showing:
-  Left:  Control-effort energy vs subdivision count, stratified by degree
-  Right: Runtime vs subdivision count, stratified by degree
+Plots control cost and runtime against the Bezier degree, read from the SAME
+committed CSV that fills 표 4.
 
-Uses the 120-deg phase-lag cache files (same as build_representative_trajectories.py / build_csv.py).
+The previous version disagreed with its own caption. The caption says
+"$N=6,7,8$ 차수에 대한 제어 비용(좌)과 계산 시간(우)의 추세" and section 5.3 says
+"제어 비용은 차수에 대해 단조 감소하고 계산 시간은 단조 증가한다" -- a trend
+against DEGREE. The figure instead drew three curves against n_seg, from a
+pre-canonical-SCvx cache, using `cost_true_energy * T * 1e6` where 표 4 reports
+mean control acceleration in m/s^2. Reading the CSV fixes the source, the
+quantity, and the independent variable at once.
 
 Usage:
     python tools/build_multi_order_tradeoff.py
@@ -18,94 +23,73 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 
-from orbital_docking import constants, generate_initial_control_points
-from orbital_docking.cache import get_cache_key, get_cache_path, load_from_cache
+from tools.paper_tables_csv import T4_SIGNATURE, block
 
-# ── Reuse 120-deg geometry from build_csv.py ─────────────────────────
-from build_csv import get_120deg_endpoints, get_cache_path_120
+# Tableau Colorblind 10, the palette the concept figures use.
+C_INK, C_COST, C_TIME, C_GRID = "#333333", "#006BA4", "#C85200", "#CFCFCF"
 
-DEGREES = [6, 7, 8]
-SEGS = [2, 4, 8, 16, 32, 64]
-COLORS = {6: "tab:blue", 7: "tab:red", 8: "tab:green"}
-MARKERS = {6: "o", 7: "s", 8: "^"}
+PANELS = [
+    ("ctrl_cost_ms2", "Control cost (m/s$^2$)", "Control cost vs degree", C_COST),
+    ("runtime_s",     "Runtime (s)",            "Runtime vs degree",      C_TIME),
+]
 
 
 def main():
-    P_start, v0, P_end, v1 = get_120deg_endpoints()
+    rows = block(T4_SIGNATURE, "그림 6 (degree sweep, n_seg=16)")
+    degrees = np.array([r["degree"] for r in rows])
+    n_ctrl = np.array([r["n_ctrl"] for r in rows])
+    n_seg = rows[0]["n_seg"]
 
-    data = {}  # data[N] = {"segs": [], "efforts": [], "runtimes": [], "feasible": []}
-    for N in DEGREES:
-        segs, efforts, rts, feas = [], [], [], []
-        for n_seg in SEGS:
-            path = get_cache_path_120(N, n_seg, P_start, v0, P_end, v1)
-            result = load_from_cache(path)
-            if result is None:
-                continue
-            _, info = result
-            segs.append(n_seg)
-            efforts.append(info["cost_true_energy"] * info["T_transfer_s"] * 1e6)
-            rts.append(info["elapsed_time"])
-            feas.append(info["feasible"])
-        data[N] = {
-            "segs": np.array(segs), "efforts": np.array(efforts),
-            "runtimes": np.array(rts), "feasible": np.array(feas),
-        }
-        print(f"N={N}: {len(segs)} points loaded")
+    fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.3), constrained_layout=True)
 
-    # ── Figure ────────────────────────────────────────────────────────
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.5))
+    for ax, (key, ylabel, title, color) in zip(axes, PANELS):
+        y = np.array([r[key] for r in rows])
+        ax.plot(degrees, y, "-o", color=color, lw=1.8, ms=8, zorder=3)
 
-    omitted = []
-    for N in DEGREES:
-        d = data[N]
-        mask = d["feasible"]
+        # Three points is few enough that the reader should see the values.
+        span = y.max() - y.min()
+        for d, v in zip(degrees, y):
+            ax.annotate(f"{v:.3f}", xy=(d, v), xytext=(0, 11),
+                        textcoords="offset points", ha="center", fontsize=9,
+                        color=color)
+        ax.set_ylim(y.min() - 0.30 * span, y.max() + 0.55 * span)
 
-        # Effort panel: feasible points only. Infeasible coarse-mesh solves carry
-        # nonzero virtual-control slack, so their "effort" is not an effort for a
-        # trajectory that exists; plotting them would also compress the y-axis by
-        # ~10x. The omission is ANNOTATED below rather than silent — an absent
-        # point otherwise reads as missing data.
-        ax1.plot(d["segs"][mask], d["efforts"][mask],
-                 f"{MARKERS[N]}-", color=COLORS[N], linewidth=2,
-                 markersize=7, label=f"$N={N}$")
-        omitted += [f"$N={N}$, $n_{{\\mathrm{{seg}}}}={int(s)}$"
-                    for s in d["segs"][~np.asarray(mask, dtype=bool)]]
+        # Each panel auto-zooms to its own range, which makes a 0.4% change look
+        # as steep as a 43% one. Section 5.3's claim is precisely that the cost
+        # difference is the SMALLER of the two, so state both relative spans.
+        rel = 100.0 * (y[-1] - y[0]) / y[0]
+        ax.text(0.5, 0.94, f"$N=6 \\rightarrow 8$:  {rel:+.1f}%",
+                transform=ax.transAxes, ha="center", va="top", fontsize=9.5,
+                color=color)
 
-        # Runtime panel: all points
-        ax2.plot(d["segs"], d["runtimes"],
-                 f"{MARKERS[N]}-", color=COLORS[N], linewidth=2,
-                 markersize=7, label=f"$N={N}$")
+        ax.set_xticks(degrees)
+        ax.set_xticklabels([f"$N={d}$\n({c} ctrl pts)" for d, c in zip(degrees, n_ctrl)])
+        ax.set_xlabel("Bézier degree", fontsize=10)
+        ax.set_ylabel(ylabel, fontsize=10)
+        ax.set_title(title, fontsize=11, color=C_INK, pad=8)
+        ax.grid(True, axis="y", color=C_GRID, lw=0.6, alpha=0.8)
+        ax.set_axisbelow(True)
+        for sp in ax.spines.values():
+            sp.set_color("#cccccc")
+        ax.tick_params(labelsize=9, colors="#666666")
 
-    for ax in (ax1, ax2):
-        ax.set_xscale("log", base=2)
-        ax.set_xticks(SEGS)
-        ax.set_xticklabels([f"$2^{{{int(np.log2(s))}}}$" for s in SEGS])
-        ax.set_xlabel("Subdivision count $n_{\\mathrm{seg}}$")
-        ax.grid(True, alpha=0.3)
-        ax.legend(fontsize=10, framealpha=0.8, title="Degree")
-
-    ax1.set_ylabel("$\\int\\|u\\|^2 dt$  (m$^2$/s$^3$)")
-    ax1.set_title("Effort trend across degree")
-    if omitted:
-        ax1.text(0.02, 0.02,
-                 "infeasible, omitted: " + ", ".join(omitted),
-                 transform=ax1.transAxes, fontsize=7.5, va="bottom",
-                 color="#C0392B")
-
-    ax2.set_ylabel("Runtime (s)")
-    ax2.set_title("Runtime trend across degree")
-
-    fig.tight_layout()
+    fig.suptitle(f"120 deg phase lag, $n_{{\\mathrm{{seg}}}}={n_seg}$",
+                 fontsize=10, color="#666666")
 
     out = ROOT / "figures" / "multi_order_tradeoff_N678.png"
     fig.savefig(out, dpi=200, bbox_inches="tight", facecolor="white")
-    print(f"\nSaved -> {out}  ({out.stat().st_size / 1024:.0f} KB)")
     plt.close(fig)
+
+    print(f"rows read from doc/results/paper_tables.csv ({len(rows)}):")
+    for r in rows:
+        print(f"  N={r['degree']}  n_ctrl={r['n_ctrl']}  n_seg={r['n_seg']}  "
+              f"cost={r['ctrl_cost_ms2']:.3f} m/s^2  runtime={r['runtime_s']:.3f} s")
+    print(f"\nSaved -> {out}  ({out.stat().st_size / 1024:.0f} KB)")
 
 
 if __name__ == "__main__":
