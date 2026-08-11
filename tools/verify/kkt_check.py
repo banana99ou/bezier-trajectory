@@ -51,11 +51,11 @@ def _proj_ratio(A_eq, g):
     return np.linalg.norm(g_proj) / (np.linalg.norm(g) + 1e-30)
 
 
-def run(scenario_name="phase120"):
-    sc = H.make_scenario(scenario_name)
+def run(scenarios=H.ALL_SCENARIOS):
     rows = []
     all_pass = True
-    for ns in N_SEGS:
+    for scenario_name, ns in ((s, n) for s in scenarios for n in N_SEGS):
+        sc = H.make_scenario(scenario_name)
         P, info = H.run_rust(sc, n_seg=ns)
         x = P.reshape(-1)
 
@@ -94,7 +94,7 @@ def run(scenario_name="phase120"):
         ))
 
     H.write_csv(OUT / "kkt.csv", rows)
-    md = [f"# Pillar 3 -- KKT / feasibility at x* ({scenario_name})", ""]
+    md = [f"# Pillar 3 -- KKT / feasibility at x* ({', '.join(scenarios)})", ""]
     md.append("**PASS gate = primal feasibility**: dense-grid min‖r‖ ≥ r_e and velocity-BC "
               "residuals < 1e-6 (endpoints fixed by construction). Optimality is certified "
               "separately by **Pillar 1** (an independent COLD-start NLP, Rust-blind, reaches the "
@@ -104,18 +104,24 @@ def run(scenario_name="phase120"):
               "omits the active convex-hull KOZ half-spaces (which hold the sampled curve ~11–60 km "
               "clear), so the projection intentionally excludes part of the true active set.")
     md.append("")
-    md.append("| n_seg | min_r | clearance | bc_v0 | bc_v1 | ratio_surrogate | ratio_true | feasible |")
-    md.append("|---|---|---|---|---|---|---|---|")
+    md.append("| scenario | n_seg | min_r | clearance | bc_v0 | bc_v1 | ratio_surrogate | "
+              "ratio_true | feasible |")
+    md.append("|---|---|---|---|---|---|---|---|---|")
     for r in rows:
-        md.append(f"| {r['n_seg']} | {r['min_r']} | {r['clearance']} | {r['bc_v0_err']} | "
-                  f"{r['bc_v1_err']} | {r['ratio_surrogate']} | {r['ratio_true']} | {r['PASS']} |")
+        md.append(f"| {r['scenario']} | {r['n_seg']} | {r['min_r']} | {r['clearance']} | "
+                  f"{r['bc_v0_err']} | {r['bc_v1_err']} | {r['ratio_surrogate']} | "
+                  f"{r['ratio_true']} | {r['PASS']} |")
     md.append("")
+    failed = [f"{r['scenario']}/n_seg={r['n_seg']}" for r in rows if not r["PASS"]]
+    md.append(f"- primal feasibility on all {len(rows)} cells "
+              f"({len(scenarios)} scenarios x {len(N_SEGS)} meshes): **{all_pass}**"
+              + ("" if all_pass else f" -- infeasible: {', '.join(failed)}"))
     md.append("")
     md.append(f"## VERDICT: {'PASS' if all_pass else 'FAIL'}")
-    H.write_text(OUT / "summary.md", "\n".join(md))
+    H.write_text(OUT / "summary.md", "\n".join(md) + H.provenance())
     print("\n".join(md))
     return all_pass
 
 
 if __name__ == "__main__":
-    run("phase120")
+    sys.exit(0 if run() else 1)

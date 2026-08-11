@@ -25,10 +25,16 @@ OUT = H.ARTIFACT_ROOT / "pillar4_diag"
 TRUST_MIN = 1e-2
 
 
-def run(scenario_name="phase120", n_seg=16):
+def _run_one(scenario_name, n_seg=16):
+    """The per-iteration trace on one geometry. Returns (md_lines, passed).
+
+    Trust radius comes from the scenario, not a literal 2000 km: phase170 needs
+    4000 to repair its boundary conditions at iteration 1 (design_freeze
+    section 5), and a hardcoded value would fail it for the wrong reason.
+    """
     sc = H.make_scenario(scenario_name)
     # Paper-baseline config: canonical SCvx. (scvx_freeze has been deleted.)
-    P, info = H.run_rust(sc, n_seg=n_seg, scp_trust_radius=2000.0)
+    P, info = H.run_rust(sc, n_seg=n_seg)
 
     rho = np.array(info.get("rho_history", []), float)
     trust = np.array(info.get("trust_history", []), float)
@@ -42,7 +48,7 @@ def run(scenario_name="phase120", n_seg=16):
                  rho=(f"{rho[i]:.4f}" if np.isfinite(rho[i]) else "nan"),
                  trust=f"{trust[i]:.3f}", merit=f"{merit[i]:.6e}",
                  step_norm=f"{step[i]:.4e}", slack=f"{slack[i]:.4e}") for i in range(n)]
-    H.write_csv(OUT / "iter_trace.csv", rows)
+    H.write_csv(OUT / f"iter_trace_{scenario_name}.csv", rows)
 
     # Correct-run signature checks.
     opt = phase == 1.0
@@ -121,10 +127,10 @@ def run(scenario_name="phase120", n_seg=16):
     fig.suptitle(f"SCvx per-iteration trace ({scenario_name}, n_seg={n_seg}, energy)\n"
                  "orange = bootstrap / uncertified-iterate step")
     fig.tight_layout()
-    fig.savefig(OUT / "iter_trace.png", dpi=110)
+    fig.savefig(OUT / f"iter_trace_{scenario_name}.png", dpi=110)
     plt.close(fig)
 
-    md = [f"# Pillar 4a -- Diagnostics ({scenario_name}, n_seg={n_seg}, energy)", ""]
+    md = [f"## {scenario_name} (n_seg={n_seg}, r0={sc['r0']:.0f} km)", ""]
     md.append(f"- accepted steps: {n} (iterations={int(info['iterations'])})")
     md.append(f"- rho on optimality steps in (0.5,2): **{rho_ok}**  (values: "
               f"{', '.join(f'{v:.3f}' for v in rho[opt]) if opt.any() else '—'})")
@@ -150,13 +156,38 @@ def run(scenario_name="phase120", n_seg=16):
               f"(koz_degenerate_segments={int(info.get('koz_degenerate_segments', -1))}): "
               f"**{no_degenerate}**")
     md.append("")
-    md.append("See `iter_trace.png` (orange band = feasibility-restoration).")
+    md.append(f"See `iter_trace_{scenario_name}.png` (orange band = feasibility-restoration).")
     md.append("")
-    md.append(f"## VERDICT: {'PASS' if passed else 'FAIL'}")
-    H.write_text(OUT / "summary.md", "\n".join(md))
+    return md, passed, dict(n=n, stop=stop_reason, drift=drift, slack=float(slack[-1]) if n else float("nan"))
+
+
+def run(scenarios=H.ALL_SCENARIOS, n_seg=16):
+    sections, results, stats = [], {}, {}
+    for name in scenarios:
+        md, passed, st = _run_one(name, n_seg)
+        sections.extend(md)
+        results[name] = passed
+        stats[name] = st
+
+    all_pass = all(results.values())
+    _STOP = {0: "iteration cap", 1: "merit streak", 2: "trust collapse",
+             3: "QP failure", 4: "model stationarity"}
+    md = [f"# Pillar 4a -- Diagnostics (n_seg={n_seg}, energy, {len(scenarios)} geometries)", "",
+          "A correct SCvx run shows rho ~ 1 on optimality steps, slack -> 0, a stated",
+          "stop reason, and -- the gate the others cannot provide -- a returned iterate",
+          "that is the best one visited.", "",
+          "| scenario | steps | stop reason | merit drift | final slack | verdict |",
+          "|---|---|---|---|---|---|"]
+    for name in results:
+        s = stats[name]
+        md.append(f"| {name} | {s['n']} | {_STOP.get(s['stop'], '?')} ({s['stop']}) | "
+                  f"{s['drift']:+.2e} | {s['slack']:.2e} | "
+                  f"**{'PASS' if results[name] else 'FAIL'}** |")
+    md += ["", f"## VERDICT: {'PASS' if all_pass else 'FAIL'}", "", "---", ""] + sections
+    H.write_text(OUT / "summary.md", "\n".join(md) + H.provenance())
     print("\n".join(md))
-    return passed
+    return all_pass
 
 
 if __name__ == "__main__":
-    run("phase120", 16)
+    sys.exit(0 if run() else 1)

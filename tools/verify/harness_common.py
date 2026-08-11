@@ -8,8 +8,10 @@ SCvx optimizer, independent of what the Rust solver internally minimizes.
 Key idea (do not violate): the Rust `cost_true_energy` is a *linearized
 surrogate*. The single source of truth for cross-solver comparison is
 `J_true(P)` below, which evaluates the true nonconvex control-effort functional
-    J = mean_k || a_geom(tau_k)/T^2  -  a_grav_total(r(tau_k)) ||^2
-on a dense tau grid with the TRUE (non-linearized) two-body + J2 gravity.
+    J = int_0^1 || a_geom(tau)/T^2  -  a_grav_total(r(tau)) ||^2 dtau
+by Gauss-Legendre quadrature with the TRUE (non-linearized) two-body + J2
+gravity. (It was a uniform mean over a dense grid until 2026-08-09; see
+`J_true` for why that form was not accurate enough to be an oracle.)
 """
 
 from __future__ import annotations
@@ -81,8 +83,17 @@ _SCENARIOS = {
     "phase70": dict(N=7, progress_alt=245.0, iss_alt=400.0, inc=51.64,
                     raan=0.0, iss_u=45.0, lag=70.0, r_e=6471.0, T=1500.0, r0=2000.0),
     # Harder phasings: the KOZ binds over a longer arc than phase120.
+    # r0=4000, not 2000: the iteration-1 boundary-condition repair distance
+    # depends on the DEGREE as well as the geometry -- fewer control points means
+    # each must move further -- and at N=6 a 2000 km box makes the first QP fail
+    # (stop_reason 3, iterations 1, the iterate still 3910 km inside the KOZ).
+    # This is a threshold, not a tuning knob: above it the answer does not move.
+    # Measured, r0 in {4000, 8000} x N in {6, 7, 8}, n_seg=16 -- clearance
+    # 19.811 / 19.935 / 19.910 km and J 8.497359e-05 / 8.490308e-05 /
+    # 8.486337e-05, identical in every digit, and identical at N=7,8 to what
+    # r0=2000 already produced.
     "phase135": dict(N=7, progress_alt=245.0, iss_alt=400.0, inc=51.64,
-                     raan=0.0, iss_u=45.0, lag=135.0, r_e=6471.0, T=1500.0, r0=2000.0),
+                     raan=0.0, iss_u=45.0, lag=135.0, r_e=6471.0, T=1500.0, r0=4000.0),
     # 170 deg is nearly antipodal: the straight-line initial guess passes 5420 km
     # INSIDE the keep-out sphere, so r0 must be large enough to repair that at
     # iteration 1 (design_freeze section 5). r0=2000 fails with stop_reason=3;
@@ -98,6 +109,14 @@ _SCENARIOS = {
                         raan=0.0, inc1=71.64, raan1=15.0, iss_u=45.0, lag=120.0,
                         r_e=6471.0, T=1500.0, r0=2000.0),
 }
+
+
+# Every pillar runs this set. A pillar that only ever runs the geometry it was
+# debugged against reports whether that geometry still works, not whether the
+# solver does; the four harder cases are where the KOZ binds over a long arc,
+# where the normals re-aim most per step, and where the transfer leaves the
+# departure plane.
+ALL_SCENARIOS = ("phase70", "phase120", "phase135", "phase170", "planechange")
 
 
 def make_scenario(name, N=None):
