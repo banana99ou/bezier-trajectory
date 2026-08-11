@@ -273,7 +273,7 @@ def run(scenarios=("phase70", "phase120", "phase135", "phase170", "planechange")
            f"(design_freeze section 5 recorded this as 'estimated ~1e-6'; it is now MEASURED)",
            "",
            f"## VERDICT: {'PASS' if (all_ok and penalty_ok) else 'FAIL'}"]
-    H.write_text(OUT / "summary.md", "\n".join(md))
+    H.write_text(OUT / "summary.md", "\n".join(md) + H.provenance())
     print("\n".join(md))
     return all_ok and penalty_ok
 

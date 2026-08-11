@@ -15,6 +15,9 @@ on a dense tau grid with the TRUE (non-linearized) two-body + J2 gravity.
 from __future__ import annotations
 
 import csv
+import hashlib
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -301,3 +304,78 @@ def write_text(path, text):
 
 
 ARTIFACT_ROOT = _REPO_ROOT / "artifacts" / "verify"
+
+
+# ----------------------------------------------------------------------------
+# Provenance
+#
+# artifacts/verify/ is COMMITTED, so every number in it has to be traceable to
+# the code that produced it from a clean checkout. Three facts are needed and
+# no fewer:
+#
+#   commit  which source tree,
+#   dirty   whether that tree is what actually ran -- but only changes under
+#           _CODE_PATHS can alter a result, so an edited paper draft must not
+#           flag the run,
+#   ext     the sha256 of the compiled Rust extension, because the .so does NOT
+#           rebuild when rust_optimizer/ changes. A clean source tree can still
+#           be running a stale binary, and that failure mode has bitten this
+#           project before (design_freeze section 7).
+#
+# `verdict.py` parses the stamp back out and refuses an overall PASS across
+# pillars whose stamps disagree -- six pillars run at six code versions are six
+# results, not one verdict.
+# ----------------------------------------------------------------------------
+
+_CODE_PATHS = ("tools/verify", "orbital_docking", "rust_optimizer")
+
+_STAMP_RE = re.compile(
+    r"<!--\s*provenance:\s*commit=(\S+)\s+dirty=([01])\s+ext=(\S+)\s*-->")
+
+
+def _git(*args, default=""):
+    try:
+        return subprocess.run(["git", *args], capture_output=True, text=True,
+                              check=True, cwd=_REPO_ROOT).stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return default
+
+
+def _ext_digest():
+    """sha256 (first 12 hex) of the compiled Rust extension actually imported."""
+    try:
+        import bezier_opt
+        sos = sorted(Path(bezier_opt.__file__).parent.glob("*.so"))
+        if not sos:
+            return "none"
+        h = hashlib.sha256()
+        for p in sos:
+            h.update(p.read_bytes())
+        return h.hexdigest()[:12]
+    except Exception:
+        return "unknown"
+
+
+def provenance():
+    """Markdown block naming the code that produced the artifact being written.
+
+    Append this to every file under ARTIFACT_ROOT. Returns both a
+    machine-readable comment (parsed by `read_stamp`) and a human line.
+    """
+    sha = _git("rev-parse", "HEAD", default="unknown")
+    dirty = bool(_git("status", "--porcelain", "--", *_CODE_PATHS))
+    ext = _ext_digest()
+    note = ("**working tree DIRTY under "
+            f"{', '.join(_CODE_PATHS)} -- the commit does not describe what ran**"
+            if dirty else "working tree clean under " + ", ".join(_CODE_PATHS))
+    return (f"\n<!-- provenance: commit={sha} dirty={int(dirty)} ext={ext} -->\n"
+            f"\n---\n\n_produced by commit `{sha}`, Rust extension `{ext}`; "
+            f"{note}._\n")
+
+
+def read_stamp(text):
+    """(commit, dirty, ext) from a stamped artifact, or None if unstamped."""
+    m = _STAMP_RE.search(text)
+    if not m:
+        return None
+    return m.group(1), m.group(2) == "1", m.group(3)
