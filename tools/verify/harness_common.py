@@ -309,8 +309,12 @@ def write_csv(path, rows, fieldnames=None):
         path.write_text("")
         return
     fieldnames = fieldnames or list(rows[0].keys())
+    # lineterminator="\n": csv defaults to CRLF per RFC 4180, but these files are
+    # COMMITTED, and a CRLF artifact reads as modified on every regeneration for
+    # anyone whose core.autocrlf is not `input`. LF makes the bytes stable
+    # regardless of that setting.
     with open(path, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w = csv.DictWriter(f, fieldnames=fieldnames, lineterminator="\n")
         w.writeheader()
         for r in rows:
             w.writerow(r)
