@@ -32,6 +32,9 @@ figures/*.pkl
 
 # Experiment results (regenerable from scripts)
 results/
+# ...except the paper's generated tables, which must be committed: they carry the
+# producing commit SHA, and numbers a reader cannot trace to code are not evidence.
+!doc/results/
 
 # Specific excludes
 doc/20250902_*
