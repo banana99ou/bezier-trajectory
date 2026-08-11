@@ -21,8 +21,13 @@ Definitions used here, matching paper section 4.1:
               certificate exists to adjudicate.
   안전 여유   min_radius - R_KOZ (km)
   제어 비용   mean_control_accel_ms2 (m/s^2), per section 4.1's definition
-  계산 시간   median of REPEATS solves (s); a single solve is ~0.1 s and
-              noise-dominated, so one sample would not be reportable
+  계산 시간   MINIMUM of REPEATS solves (s). A single solve is ~0.1 s, so any
+              one sample is dominated by scheduler noise. The minimum is the
+              standard robust estimator for timings: noise only ever ADDS
+              time, so the floor is the reproducible quantity. The median was
+              tried first and was NOT stable -- consecutive generations
+              disagreed in the second decimal, which would churn the paper on
+              every rebuild.
 
 No Delta-v proxy appears anywhere: the solver no longer emits one.
 """
@@ -30,7 +35,6 @@ No Delta-v proxy appears anywhere: the solver no longer emits one.
 from __future__ import annotations
 
 import platform
-import statistics
 import subprocess
 import sys
 from pathlib import Path
@@ -41,7 +45,7 @@ from tools.verify import harness_common as H
 
 OUT_DIR = Path(__file__).resolve().parents[1] / "doc" / "results"
 SCENARIO = "phase120"
-REPEATS = 5
+REPEATS = 15
 
 T3_SEGS = (2, 4, 8, 16, 32, 64)     # section 4.2, first experiment (N = 7)
 T24_DEGREES = (6, 7, 8)             # section 4.2, second experiment (n_seg = 16)
@@ -82,7 +86,7 @@ def measure(degree, n_seg):
         margin_km=float(info["min_radius"]) - sc["r_e"],
         ctrl_cost_ms2=float(info["mean_control_accel_ms2"]),
         objective=float(info["cost"]),
-        runtime_s=statistics.median(times),
+        runtime_s=min(times),
         iters=int(info["iterations"]),
         stop=stop, stop_name=_STOP_NAME.get(stop, "?"),
         hull_violation_km=hull,
@@ -132,8 +136,13 @@ def main():
         f"$R_{{\\mathrm{{KOZ}}}}$ = {sc['r_e']:.0f} km · $T$ = {sc['T']:.0f} s",
         f"- 신뢰 구간 초기 크기 {sc['r0']:.0f} km · 허용오차 1e-8 · "
         f"$n_{{\\mathrm{{conv}}}}$ = 3 · $\\mu$ = 1e-2",
-        f"- 계산 시간: {REPEATS}회 실행의 중앙값 · {platform.machine()} / "
+        f"- 계산 시간: {REPEATS}회 실행의 최소값 · {platform.machine()} / "
         f"Python {platform.python_version()}",
+        "- solver는 결정적이다. 안전 여유·제어 비용·목적함수·반복 횟수·성공 여부는",
+        "  재실행해도 모든 자리가 동일하다. **계산 시간은 예외이며 재생성 시 달라진다.**",
+        "  잡음은 시간을 늘리기만 하므로 최소값을 쓰지만, 그래도 실행 묶음 사이에서",
+        "  약 ±5% 변동한다(측정값). 따라서 재현되는 것은 자릿수가 아니라 경향이며,",
+        "  본문이 근거로 삼는 것도 분할 수와 차수에 대한 단조 증가 경향이다.",
         f"- 성공 여부 = 명제 1 인증($h \\le$ {CERT_TOL:g} km) **그리고** "
         f"원칙적 종료(stop_reason ∈ {{1, 4}})", "",
         "## 표 2 [T2]. 대표 설정에서의 결과 요약", "",
