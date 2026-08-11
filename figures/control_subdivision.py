@@ -47,15 +47,19 @@ def bezier_eval(P, t_arr):
 
 
 # ---------------------------------------------------------------------------
-# Palette (matched to repo conventions: koz_linearization.py, visualization.py)
+# Palette -- Tableau Colorblind 10, the same set and the same roles as
+# koz_linearization.py, which illustrates the same objects two pages later.
+#   ink  = the curve and the construction marks
+#   grey = the whole control polygon and its loose hull, before subdivision
+#   blue/orange = the individual sub-arcs after subdivision
 # ---------------------------------------------------------------------------
-CURVE          = "#2c3e50"
-CP_LINE        = "#34495e"
-CP_MARK        = "#2980b9"
-GLOBAL_HULL_FC = "#d5dbdb"
-GLOBAL_HULL_EC = "#7f8c8d"
-SEG3           = ["#E74C3C", "#3498DB", "#F39C12"]   # repo per-segment palette
-CENTROID       = "#8e44ad"
+CURVE          = "#333333"
+CP_LINE        = "#595959"
+CP_MARK        = "#595959"
+GLOBAL_HULL_FC = "#CFCFCF"
+GLOBAL_HULL_EC = "#898989"
+SEG3           = ["#006BA4", "#C85200", "#898989"]
+CENTROID       = "#333333"   # same mark as c^(s) in koz_linearization.py
 
 # Degree-5 teaching curve (concept figure; hand-tuned so the hull-tightening
 # is visually obvious).
@@ -127,7 +131,8 @@ def build_figure(save=False):
     ax.plot(P_GLOBAL[:, 0], P_GLOBAL[:, 1], "--s", color=CP_LINE,
             mfc=CP_MARK, mec=CP_MARK, ms=7, lw=1.2, zorder=5)
     for i, p in enumerate(P_GLOBAL):
-        ax.annotate(rf"$P_{{{i}}}$", xy=p, xytext=(p[0] + 0.18, p[1] + 0.22),
+        ax.annotate(rf"$\mathbf{{p}}_{{{i}}}$", xy=p,
+                    xytext=(p[0] + 0.18, p[1] + 0.22),
                     fontsize=10, color=CP_MARK, zorder=10)
     ax.set_xlim(*xlim); ax.set_ylim(*ylim)
 
@@ -144,10 +149,16 @@ def build_figure(save=False):
         ax.plot(Q[:, 0], Q[:, 1], "--o", color=c, mfc=c, mec=c,
                 ms=4.5, lw=1.1, zorder=5)
         cen = Q.mean(axis=0)
-        ax.plot(*cen, "D", color=CENTROID, ms=7, zorder=6)
-        ax.annotate(rf"$c^{{({s+1})}}$", xy=cen,
-                    xytext=(cen[0] + 0.12, cen[1] + 0.28),
-                    fontsize=9.5, color=CENTROID, fontweight="bold", zorder=10)
+        ax.plot(*cen, "D", color=CENTROID, ms=7, mec="white", mew=1.0,
+                zorder=6)
+        # Offset the label along the curve->centroid direction so it never lands
+        # on the curve, whichever side of it this sub-arc's centroid falls.
+        away = cen - curve[np.argmin(np.linalg.norm(curve - cen, axis=1))]
+        away = away / (np.linalg.norm(away) + 1e-12)
+        ax.annotate(rf"$\mathbf{{c}}^{{({s+1})}}$", xy=cen,
+                    xytext=cen + away * 0.62,
+                    fontsize=9.5, color=CENTROID, fontweight="bold", zorder=10,
+                    ha="center", va="center")
     ax.plot(curve[:, 0], curve[:, 1], color=CURVE, lw=2.2, zorder=4)
     ax.set_xlim(*xlim); ax.set_ylim(*ylim)
 

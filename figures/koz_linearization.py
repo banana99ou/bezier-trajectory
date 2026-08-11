@@ -4,7 +4,7 @@ Supporting half-space construction on one sub-arc (concept figure for 3.1).
   (a) Whole curve, sub-arc junctions, and the sub-arc that violates the KOZ
   (b) Construction on that sub-arc: centroid c^(s) -> outward normal n^(s)
       -> supporting half-space H^(s), tangent to the sphere at distance r_e
-  (c) Result of imposing the constraint: every q_k^(s) inside H^(s), and the
+  (c) Result of imposing the constraint: every q_m^(s) inside H^(s), and the
       corrected curve clear of the KOZ
 
 The geometry is synthetic 2D, chosen so the sphere's curvature is visible at the
@@ -12,13 +12,14 @@ zoom level of a single sub-arc. It cannot come from the real solver: that code
 path requires dim == 3, and at the real scale (r_e = 6471 km, one sub-arc chord
 ~725 km at n_seg=16) the KOZ boundary departs from a straight line by 1.4% of
 the chord -- the half-space and the sphere would draw as the same line, which is
-exactly the distinction this figure exists to show. Real solver output is 4.
+exactly the distinction this figure exists to show. The results figures are
+where real solver output belongs.
 
 The *constraint* is the real one. The corrected control points are not pushed by
 hand; they solve
 
     min_{P'} ||P' - P||_F^2
-    s.t.     n^(s) . (S^(s) P')_k >= n^(s) . c_KOZ + r_e   for all s, k
+    s.t.     n^(s) . (S^(s) P')_m >= n^(s) . c_KOZ + r_e   for all s, m
 
 over the global control points, with S^(s) taken from the repo's own De
 Casteljau subdivision matrices and the normals frozen at the reference curve P.
@@ -39,7 +40,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch
 from scipy.optimize import minimize
-from scipy.spatial import ConvexHull
 
 # Real repo subdivision matrices: P^(s) = S^(s) P
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -127,7 +127,7 @@ def supporting_halfspaces(P, S_list, center, radius):
 def solve_halfspace_projection(P, S_list, half_spaces):
     """One SCvx iteration of the 3.1 constraint, as a projection.
 
-        min ||P' - P||_F^2   s.t.  n^(s) . (S^(s) P')_k >= n^(s) . c_KOZ + r_e
+        min ||P' - P||_F^2   s.t.  n^(s) . (S^(s) P')_m >= n^(s) . c_KOZ + r_e
 
     Linear in P', so the corrected curve stays a single Bezier curve and the
     endpoints are held at the boundary conditions.
@@ -142,7 +142,7 @@ def solve_halfspace_projection(P, S_list, half_spaces):
 
     cons = []
     for S, (n_hat, off) in zip(S_list, half_spaces):
-        # row k of A is d/dP' of  n . (S P')_k , flattened row-major
+        # row m of A is d/dP' of  n . (S P')_m , flattened row-major
         A = np.kron(S, n_hat.reshape(1, -1))
         cons.append(dict(type="ineq",
                          fun=lambda z, A=A, off=off: A @ z - off,
@@ -180,8 +180,8 @@ def build_geometry():
     segs_fix = [S @ P_fix for S in S_list]
 
     n_hat, off = half_spaces[viol]
-    for k, q in enumerate(segs_fix[viol]):
-        assert n_hat @ q - off > -1e-7, f"corrected q_{k} outside H^(s)"
+    for m, q in enumerate(segs_fix[viol]):
+        assert n_hat @ q - off > -1e-7, f"corrected q_{m} outside H^(s)"
 
     return dict(S_list=S_list, segs=segs, segs_fix=segs_fix, viol=viol,
                 P_fix=P_fix, n_hat=n_hat, offset=off, depth=depth,
@@ -230,10 +230,10 @@ def style_axes(ax, title, tag):
 
 
 def label_ctrl_polygon(ax, pts, anchor, offset, color):
-    """Name the control polygon once. Labelling every q_k adds no information
+    """Name the control polygon once. Labelling every q_m adds no information
     and crowds the region where the correction is largest."""
     p = pts[anchor]
-    ax.annotate(r"$\mathbf{q}^{(s)}_k$", xy=p,
+    ax.annotate(r"$\mathbf{q}^{(s)}_m$", xy=p,
                 xytext=(p[0] + offset[0], p[1] + offset[1]),
                 fontsize=FS_SYM_SM, color=color, ha="center", va="center",
                 zorder=10, arrowprops=dict(arrowstyle="-", color=color, lw=0.7))
@@ -370,10 +370,11 @@ def build_figure(save=False):
     ghost(ax, arc_ref, C_VIOL, lw=2.4, alpha=0.60, zorder=2.6)
     ghost(ax, curve_fix, C_FIX_GHOST, lw=2.6, zorder=2.8)   # after, full width
 
-    hull = ConvexHull(segs_fix[viol])
-    ax.add_patch(plt.Polygon(segs_fix[viol][hull.vertices], fc=C_FIX,
-                             ec=C_FIX, lw=1.0, ls=":", alpha=0.16, zorder=1.5))
-
+    # No convex hull is drawn here. Projecting onto a half-space straightens the
+    # arc, so the corrected control points are near-collinear: the hull comes out
+    # 0.39% of the chord thick, which is sub-pixel at 300 dpi. The convex-hull
+    # argument behind Proposition 1 is carried by control_subdivision.py, where
+    # the geometry is not degenerate.
     ghost(ax, arc_fix, C_FIX, lw=2.8, zorder=4)
     ax.plot(segs_fix[viol][:, 0], segs_fix[viol][:, 1], "--o", color=C_FIX,
             lw=1.3, ms=5, zorder=5)
