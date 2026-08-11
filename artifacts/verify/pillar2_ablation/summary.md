@@ -109,8 +109,8 @@ Isolation finding: Cell (a) alone conflates two changes -- setting `scp_trust_ra
 
 Isolation finding: Cell (a) alone conflates two changes -- setting `scp_trust_radius=0` both reverts to the legacy unconditional-accept loop AND re-enables the proximal. The added cell (a0) separates them: with the proximal removed the legacy loop still takes 2339 iters (it exits via the step-norm tolerance, not the SCvx criterion) -- >3x the trust path's 10. So the **trust region is the primary fix**; the mis-scaled proximal is a **secondary aggravator** that drives the already-slow legacy loop from 2339 iters to the cap. In the trust path the proximal is inert ((b)==(c)). The `scvx_freeze` cells were removed with the mechanism itself.
 
-<!-- provenance: commit=3e73f70f1f6fdfe50e7731a74919c39056677c2e dirty=0 ext=825716be634e -->
+<!-- provenance: commit=db97dcd1e4bca14279a909f9ea4da29fe3a8d583 dirty=0 ext=825716be634e -->
 
 ---
 
-_produced by commit `3e73f70f1f6fdfe50e7731a74919c39056677c2e`, Rust extension `825716be634e`; working tree clean under tools/verify, orbital_docking, rust_optimizer._
+_produced by commit `db97dcd1e4bca14279a909f9ea4da29fe3a8d583`, Rust extension `825716be634e`; working tree clean under tools/verify, orbital_docking, rust_optimizer._

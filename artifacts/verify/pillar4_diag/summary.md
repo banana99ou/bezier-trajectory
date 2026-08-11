@@ -86,8 +86,8 @@ See `iter_trace_phase170.png` (orange band = feasibility-restoration).
 
 See `iter_trace_planechange.png` (orange band = feasibility-restoration).
 
-<!-- provenance: commit=3e73f70f1f6fdfe50e7731a74919c39056677c2e dirty=0 ext=825716be634e -->
+<!-- provenance: commit=db97dcd1e4bca14279a909f9ea4da29fe3a8d583 dirty=0 ext=825716be634e -->
 
 ---
 
-_produced by commit `3e73f70f1f6fdfe50e7731a74919c39056677c2e`, Rust extension `825716be634e`; working tree clean under tools/verify, orbital_docking, rust_optimizer._
+_produced by commit `db97dcd1e4bca14279a909f9ea4da29fe3a8d583`, Rust extension `825716be634e`; working tree clean under tools/verify, orbital_docking, rust_optimizer._
