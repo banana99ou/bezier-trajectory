@@ -819,7 +819,10 @@ pub fn optimize_orbital_docking(
     // they are very different claims — the streak asserts merit stationarity, the
     // collapse only says the ratio test stopped accepting anything.
     //   0 = iteration cap, 1 = K-consecutive merit streak,
-    //   2 = trust-region collapse, 3 = QP failure
+    //   2 = trust-region collapse, 3 = QP failure,
+    //   4 = K-consecutive model stationarity (|pred| < tol_f*|phi| with the
+    //       certificate held) — the DOMINANT exit since 2026-08-11; 1 and 4 are
+    //       the principled ones, 0/2/3 all mean the loop gave up.
     let mut stop_reason = 0.0f64;
     // QP-health counters, surfaced in `info` so a reduced-accuracy or degenerate
     // solve cannot pass unnoticed into the merit/ratio test.

@@ -401,6 +401,95 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
     quadrature is node-count invariant (a Riemann sum cannot be). Proven able to
     fail by reverting the quadrature in place.
 
+10. **2026-08-11 — adversarial review of the |pred| fix.** An independent agent was
+    told to REFUTE seven claims about the change, with "nothing found" declared an
+    acceptable answer. Four core claims survived; two of the author's own
+    statements were refuted. **Read this before re-deriving any of it.**
+
+    **REFUTED — `test_uncertified_run_still_cannot_claim_stationarity` did not test
+    what its docstring claimed.** Rebuilding with `&& vlin_p <= 1e-6` DELETED from
+    `optimizer.rs` left all three tests in
+    `tests/regression/test_stationarity_exit.py` GREEN. Reproduce the proof without
+    rebuilding anything:
+
+    ```
+    SCVX_TRACE=1 .venv/bin/python -c "
+    import sys; sys.path.insert(0,'.')
+    import warnings; warnings.filterwarnings('ignore')
+    from tools.verify import harness_common as H
+    H.run_rust(H.make_scenario('phase120', N=7), n_seg=2)" 2>&1 | grep '^SCVXTRACE' \
+      | awk -F, '$2 ~ /^[0-9]+$/ {p=($5<0?-$5:$5); t=($9<0?-$9:$9); v=$15+0;
+          if(t>0){r=p/t; n++; if(n==1||r<m)m=r; if(r<1e-8)b++; if(v<=1e-6)c++;
+          if(r<1e-8&&v<=1e-6)both++}}
+        END{printf "iters=%d min|pred|/|phi|=%.3e band=%d cert=%d BOTH=%d\n",n,m,b+0,c+0,both+0}'
+    ```
+
+    Gives `iters=1000 min|pred|/|phi|=1.082e-05 band=0 cert=30 BOTH=0`. The pred
+    band never opens on n_seg=2 (three orders above tol_f = 1e-8), so the
+    certificate guard is never the binding condition there and a regression in it
+    passes unnoticed. **The certificate guard on the stationarity exit is UNTESTED.**
+    Closing that needs a configuration simultaneously model-stationary AND
+    uncertified; none is known. Test renamed and its docstring corrected to claim
+    only what it checks. Tests 1 and 2 ARE falsifiable — both go red on the pre-fix
+    binary, re-confirmed independently.
+
+    **REFUTED — "no objective moved by a single digit" was phase120-only.** See the
+    correction embedded in entry 9. Correct claim: identical to ~12 significant
+    digits, 0 runs worse, 0 costs moved >1e-9 relative across 5 scenarios × 8
+    configs.
+
+    **SURVIVED, with the evidence, so nobody re-runs these:**
+    - *pred >= 0 is exact, negatives are pure noise.* Verified structurally, not by
+      plausibility: `l_p`/`l_c` use the same `quad_form(&h_obj, &f_obj, ·)` and the
+      same `koz_row_violation` over the same rows, so the dropped constant cancels;
+      the proximal is gated `!trust_active` so `h_mat == h_obj`; `obj_scale` divides
+      H, f AND the elastic weight identically so `argmin` is unchanged; trust rows
+      are `[p−Δ, p+Δ]`, an ∞-norm box exactly centred at p, so `d = 0` is always
+      feasible. Max `hard_viol_p` among negative-pred iterations: **6.66e-15**.
+    - *The accepted band is wide enough but not too wide.* 571 non-bootstrap
+      iterations, 35 configs: max |negative pred| **5.1232e-14**, min band
+      `tol_f·|φ|` **2.2038e-13**, ratio **4.30×**, negatives falling outside the
+      band **0 of 110**. The author's worry that the band is "10–20× wider than the
+      noise" was misconceived: since the true pred is ≥ 0, an observed negative
+      inside the band implies the true value is inside it, provided noise < band.
+      Width is not the criterion; only noise < band is.
+    - *No premature stop.* Impossibility test — restart every run from its own final
+      point at a fresh FULL trust radius (more freedom cannot help a true optimum).
+      35 configs × 5 scenarios: **0 improved**, max relative gain 1.34e-10.
+
+    **NEW SOFT SPOTS, all pre-existing, none introduced by the fix:**
+    - **`pred_floor` is ~114× below the merit's noise floor** (median 4.50e-16 vs
+      measured 5.12e-14). Over 571 iterations, **56 had pred inside the noise and 27
+      of those were REJECTED**, halving the trust region on a ratio of one noise
+      number by another. The |pred| fix escapes the *symptom* by exiting before that
+      cascade collapses the radius; it does not remove the mechanism. Largest
+      remaining soft spot. Changing it would change ANSWERS (§4) — do not touch
+      without a measurement campaign.
+    - **`n_conv = 3` is weaker than §4 implies.** On the reject path the reference
+      does not move and the box only shrinks, so pred is monotonically
+      non-increasing — three consecutive qualifying iterations are NOT three
+      independent observations. Applies equally to the old `pred >= 0` form.
+    - **phase170/N=7/n_seg=4 fires stop 4 at trust = 0.0305 km** (16 halvings), the
+      near-collapsed-box hazard §4 warns about. Checked directly: re-evaluated at
+      the full 4000 km radius, pred = 1.59e-12 and 7.09e-13 against a band of
+      1.32e-11 — 8× inside, genuinely critical. Fires pre-fix too.
+    - **`SolverStatus::AlmostSolved` increments `qp_almost_solved` but returns the
+      solution as if exact**; nothing in the loop gates on it, so a degraded QP does
+      feed pred. Measured 0 occurrences across all 75 sweep runs. The protection the
+      old `pred >= 0` guard incidentally gave covered only QP errors smaller than
+      the convergence tolerance, which by definition cannot change the answer.
+
+    **Method notes worth keeping.** (a) The reviewer's wheel-swap protocol was
+    silently broken — `pip install /tmp/pre_fix.whl` fails on non-PEP-427 filenames
+    and the notice scrolls past in `tail`, so its first "pre-fix" measurement was
+    actually the post-fix binary. It recovered by asserting the installed `.so`
+    SHA-1 before every measurement. **Any A/B of two solver builds must verify the
+    installed binary's hash, not assume the install took.** (b) It declined to run
+    `tools/verify/*.py` because they overwrite `artifacts/verify/`, which is
+    gitignored and holds the only recorded 6/6 PASS evidence — an interrupted run
+    would destroy it unrecoverably. That is the provenance problem in §7's caveats,
+    biting in practice.
+
 ### Caveats on this evidence log (2026-08-08 adversarial review)
 
 Entries #2–#5 were measured in scratchpad scripts whose outputs were not

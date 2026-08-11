@@ -60,18 +60,35 @@ def test_critical_point_exits_principled(degree, n_seg, expected_cost):
     assert float(info["cost"]) == pytest.approx(expected_cost, rel=1e-6)
 
 
-def test_uncertified_run_still_cannot_claim_stationarity():
-    """The certificate guard must keep the exit from firing on an uncertified point.
+def test_coarse_mesh_does_not_reach_a_principled_stop():
+    """n_seg=2 must not reach a principled exit: it is nowhere near stationary.
 
-    n_seg=2 is too coarse for the Proposition 1 condition to be satisfiable here,
-    so it runs to the iteration cap. If this ever reports a principled stop, the
-    `vlin_p <= 1e-6` guard on the stationarity test has been lost and the exit
-    can no longer fail -- which would make the assertions above worthless.
+    WHAT THIS DOES *NOT* TEST -- read before relying on it. An earlier version of
+    this test claimed to probe the `vlin_p <= 1e-6` certificate guard on the
+    stationarity exit. It does not, and an adversarial review (2026-08-11) proved
+    it: rebuilding with `&& vlin_p <= 1e-6` DELETED from optimizer.rs leaves all
+    three tests in this file green.
+
+    The reason is measurable. Over n_seg=2's 1000 traced iterations on phase120,
+    min |pred|/|phi| = 1.082e-05 against tol_f = 1e-8 -- the pred band never opens
+    at all, on any iteration. The certificate is satisfied on 30 of those 1000
+    iterations, but the two conditions co-occur on ZERO. So this case is gated
+    entirely by the pred magnitude; the certificate guard is inert here and a
+    regression in it would pass unnoticed.
+
+    What this test DOES assert is still worth having: a mesh too coarse for the
+    problem stays three orders outside the stationarity band, so the exit added
+    above cannot fire on it. That is what keeps the two tests above from being
+    vacuously true for every configuration.
+
+    The certificate guard remains UNTESTED. Closing that gap needs a configuration
+    that is model-stationary AND uncertified simultaneously; none is currently
+    known.
     """
     sc = H.make_scenario("phase120", N=7)
     _, info = H.run_rust(sc, n_seg=2)
 
     assert float(info["final_hull_violation_km"]) > 1e-6, (
-        "n_seg=2 now satisfies the certificate; this test no longer probes the guard"
+        "n_seg=2 now satisfies the certificate; re-derive what this test covers"
     )
     assert int(info["scvx_stop_reason"]) not in PRINCIPLED_STOPS
