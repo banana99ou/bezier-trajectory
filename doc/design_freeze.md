@@ -488,7 +488,101 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
     `tools/verify/*.py` because they overwrite `artifacts/verify/`, which is
     gitignored and holds the only recorded 6/6 PASS evidence — an interrupted run
     would destroy it unrecoverably. That is the provenance problem in §7's caveats,
-    biting in practice.
+    biting in practice. **Resolved 2026-08-11 — see entry 11.**
+
+11. **2026-08-11 — the pillars only ever ran one geometry, and extending them
+    exposed five blind spots.** Four of six pillars ran phase120 alone, the case
+    they were debugged against. A check that runs only where it was calibrated
+    reports that that case still works, not that the solver does. All five
+    defects below are invisible on phase120 and were found by running the
+    existing `_SCENARIOS` set.
+
+    **(a) Artifacts were not evidence.** `artifacts/verify/` was gitignored and
+    carried no producing commit, so no pillar number was traceable from a clean
+    checkout, and the six summaries silently mixed 29 Jul with 9 Aug results into
+    one PASS. Now committed, and every file carries commit + dirty-flag + the
+    sha256 of the compiled Rust extension — the `.so` does not rebuild when
+    `rust_optimizer/` changes, so a clean source tree can still be running a
+    stale binary. `verdict.py` refuses an overall PASS across disagreeing stamps
+    (INCONCLUSIVE); run against the old unstamped artifacts it fires, exiting 1
+    where it previously exited 0 on the same inputs.
+
+    **(b) Pillar 2's ablation was CENSORED, not passing.** Its 2000-iteration cap
+    sat below what the legacy loop needs on the harder geometries, so cells (a)
+    and (a0) both read exactly 2000 and `a > a0` was false — recorded as "the
+    proximal does not aggravate". Lift the cap and (a0) terminates at 69 / 1197 /
+    2385 / 2339 iterations on phase70 / phase120 / phase135 / planechange while
+    (a) still runs past 12000: **the proximal aggravates by 11.5×–265×**. The
+    gate now requires (a0) to terminate; two cells pinned to one ceiling report
+    NOT MEASURED. phase170 remains NOT MEASURED at CAP=12000.
+
+    **(c) phase135 at N=6 could not take a single step** — first QP failed
+    (stop_reason 3, iterations 1), iterate still 3910 km inside the KOZ, at every
+    mesh. The iteration-1 BC-repair distance depends on the DEGREE as well as the
+    geometry: fewer control points means each must move further. r0=4000 fixes
+    it. Threshold, not tuning — the answer does not move above it: r0 ∈ {4000,
+    8000} × N ∈ {6,7,8} gives clearance 19.811 / 19.935 / 19.910 km and J
+    8.497359e-05 / 8.490308e-05 / 8.486337e-05, identical in every digit and
+    identical at N=7,8 to what r0=2000 already produced. Entry 8's "r0 is a
+    per-scenario field" is therefore incomplete: it is per (scenario, degree),
+    and 4000 covers the whole degree range for both phase135 and phase170.
+
+    **(d) Pillar 4b gated on `scvx_converged`**, which the trust-collapse exit
+    also sets whenever the iterate happens to be feasible. Recording
+    `scvx_stop_reason` beside it shows the two disagree on phase70/n_seg=2 at all
+    three degrees (stop=2, flag=1) — coarse cells that were never gated, but the
+    same disagreement on a fine-mesh cell would have passed silently. Fine-mesh
+    now gates on stop_reason, as Pillars 2 and 4a already did.
+
+    **(e) Pillar 1's ORACLE was the limiting factor, not the solver.** The first
+    five-geometry run reported FAIL on phase135, phase170 and planechange, and on
+    phase170 the gap read **−6.2%** — Rust apparently *below* the true optimum,
+    which would mean it violates the KOZ. It does not. All three failures share
+    one cause: the independent SciPy solve never reached a first-order point. The
+    straight-line start passes 3120–5890 km INSIDE the keep-out sphere, and
+    trust-constr spent its whole budget restoring feasibility.
+
+    Two fixes, both measured. First, `cold_start` pushes the interior control
+    points radially out to the KOZ surface — still Rust-blind, since it uses only
+    the KOZ radius and the initial guess. phase170 goes from optimality 1.5e-02
+    to **9.73e-09 in 597 iterations**, landing on J = 4.493266e-04, which is the
+    Rust-warm solve's value **to all seven digits**; two starts of opposite
+    provenance agreeing is what makes that the optimum rather than a basin.
+    Against it Rust at n_seg=64 is **+0.18%**, the expected sign. phase120 (310
+    iters) and planechange (459) likewise converge, phase120 to exactly the J the
+    old start reported. Second, convergence is now tested on the KKT residual and
+    constraint violation rather than on trust-constr's exit code: planechange had
+    returned `optimality=1.15e-07` with `status=0` and was recorded as a
+    non-reference for an exit code rather than for a number.
+
+    **phase135 has NO REFERENCE and this is not a budget problem.** Both starts,
+    given 6000 iterations, return exactly the J they already had at 800
+    (projected 8.319355e-05, straight-line 8.307425e-05) with optimality flat at
+    2.1e-03 and 9.5e-04. Stalled, not starved. `MAXITER=1500` therefore stands at
+    2.5× the worst converging case rather than chasing it. A geometry without a
+    converged reference now reports **NO REFERENCE**, not FAIL: an oracle that
+    cannot converge says nothing about the code under test, and scoring it as a
+    failure would attribute the oracle's limits to the solver. It is not a pass
+    either — the summary carries an explicit coverage line. There is deliberately
+    no fallback to the warm solve, which is seeded from the solver under test and
+    could never be independent. Pillar 2 uses the same three-state rule for the
+    same reason (b).
+
+    **Unchanged by all of this:** Pillars 3 and 4a pass on all five geometries —
+    15/15 cells primally feasible, all five traces stopping on model stationarity
+    with zero merit drift.
+
+    **phase70's KOZ never binds**, and that is worth stating because its numbers
+    otherwise look like a spectacular safety margin. Its minimum radius is at
+    τ = 0 exactly — the departure point — so its 145.00 km "clearance" is the
+    Progress orbit's altitude above the KOZ, not clearance the method produced.
+    Three independent confirmations: τ* = 0.0000 on a 20001-point grid; the
+    solution is bit-identical across n_seg ∈ {8,16,32}, which is impossible if a
+    KOZ constraint were active; and its equality-nullspace gradient ratio is
+    1.6e-07 against 0.24–0.42 on the other four, because the projection only
+    omits an active set when there is one. The same is true of phase120 at
+    n_seg ∈ {2,4}: both τ* = 0, both 145.00 km, which is why those two rows of
+    the paper's mesh table are not a conservatism measurement.
 
 ### Caveats on this evidence log (2026-08-08 adversarial review)
 
