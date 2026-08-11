@@ -46,8 +46,23 @@ from orbital_docking.de_casteljau import segment_matrices_equal_params
 
 OUT = H.ARTIFACT_ROOT / "pillar5_optimality"
 
-KKT_TOL = 5e-2      # relative stationarity residual accepted as "first-order optimal"
-ACTIVE_TOL = 1e-3   # km: a KOZ row within this of its bound counts as active
+# Relative stationarity residual accepted as "first-order optimal".
+#
+# 1e-3, tightened from 5e-2 on 2026-08-11. Measured residuals with the corrected
+# rows (see koz_rows) are 3.06e-06 .. 1.131e-05 across all five scenarios, so
+# this leaves 88x margin on the worst. The old 5e-2 left 4419x, which is not a
+# gate: it passed the pre-2026-08-11 rows, whose residual reached 1.42e-2 at
+# n_seg=16 and 3.72e-01 at n_seg=4. 1e-3 would have caught both.
+KKT_TOL = 1e-3
+
+# km: a KOZ row within this of its bound counts as active.
+#
+# Swept 2026-08-11 over 1e-5 .. 1e0 on all five scenarios: the residual is
+# IDENTICAL across 1e-5 .. 1e-1 and only softens at 1e0 (which admits inactive
+# rows and can only help the fit). So the verdict does not depend on where this
+# threshold is drawn -- the open question recorded in session_handoff is closed.
+ACTIVE_TOL = 1e-3
+
 N_DIRS = 400        # random feasible directions for the descent search
 
 
@@ -72,6 +87,40 @@ def koz_rows(P, A_list, r_e, c_koz=None):
 
     Returns (rows, slacks) with rows[i] the gradient of the i-th clearance wrt
     the flattened control net and slacks[i] its value (0 = active).
+
+    The clearance whose gradient this is:
+
+        gamma^(s)_m(x) = n^(s)(x) . (q^(s)_m(x) - c_KOZ) - r_e
+
+    The witness n^(s) is a FUNCTION OF x -- the centroid rule rebuilds it at
+    whatever point it is handed -- so the gradient carries two terms:
+
+        d gamma^(s)_m / d p_i
+            = S^(s)_mi n^(s)                                    <- base
+            + (w^(s)_i / ||c - c_KOZ||) (I - n n^T)(q_m - c_KOZ) <- witness rotation
+
+    with w^(s)_i = (1/(N+1)) sum_m S^(s)_mi the centroid weights. The projection
+    (I - n n^T) means the second term grows with how far the control point sits
+    from the tangent point ALONG the plane.
+
+    Until 2026-08-11 this function dropped the rotation term, on the stated
+    ground that it is "second order at an active point". That is false wherever
+    a sub-arc has appreciable lateral reach, i.e. at every mesh the paper
+    reports. Measured on phase120, the stationarity residual with the term
+    against without:
+
+        n_seg   with       without     inflation
+            4   2.835e-06  3.723e-01     131000x   (reported a FALSE failure)
+            8   1.044e-05  3.127e-02       2995x
+           16   1.131e-05  1.420e-02       1255x
+           32   1.166e-05  6.933e-03        595x
+           64   1.168e-05  3.442e-03        295x
+
+    With the term the residual is FLAT across the mesh -- the signature of a
+    genuine KKT point -- and the old numbers were dominated by the omission,
+    not by the solver. The same gradient is verified against central differences
+    to 1.1e-10 in the Rust row builder's test; dropping the rotation term makes
+    that check plateau at 4.3e-2 regardless of step size.
     """
     P = np.asarray(P, float)
     np1, dim = P.shape
@@ -85,14 +134,13 @@ def koz_rows(P, A_list, r_e, c_koz=None):
         if nv < 1e-12:
             continue
         n = v / nv
+        w_row = A.sum(axis=0) / np1          # centroid weights w^(s)_i
+        proj = np.eye(dim) - np.outer(n, n)  # tangential projector
         for k in range(np1):
-            # d/dP of n . (q_k - c_koz):  A[k,m] n  (normal held at its value;
-            # the rotation term is second order at an active point and is
-            # deliberately excluded -- the constraint being tested is the
-            # half-space itself, which is what certifies the curve).
+            tang = proj @ (Q[k] - c_koz)
             row = np.zeros((np1, dim))
             for m in range(np1):
-                row[m] += A[k, m] * n
+                row[m] += A[k, m] * n + (w_row[m] / nv) * tang
             rows.append(row.ravel())
             slacks.append(float(n @ (Q[k] - c_koz) - r_e))
     return np.array(rows), np.array(slacks)

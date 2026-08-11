@@ -78,12 +78,16 @@ def solve_nlp(scenario, x0):
     bcs = build_boundary_constraints(scenario["P_init"], v0=scenario["v0"],
                                      v1=scenario["v1"], dim=3, T=T)
 
+    # Defaults (Gauss-Legendre, 192 nodes) deliberately: this must be the SAME
+    # objective the gap is later scored with, or the NLP minimizes one function
+    # and gets graded on another. The former n_dense=600 uniform mean carried
+    # ~0.2% error -- larger than the n_seg=64 gap this pillar reports.
     def fun(x):
-        J, _ = H.J_true_and_grad(x.reshape(N + 1, 3), T, n_dense=600)
+        J, _ = H.J_true_and_grad(x.reshape(N + 1, 3), T)
         return OBJ_SCALE * J
 
     def jac(x):
-        _, g = H.J_true_and_grad(x.reshape(N + 1, 3), T, n_dense=600)
+        _, g = H.J_true_and_grad(x.reshape(N + 1, 3), T)
         return OBJ_SCALE * g
 
     res = minimize(

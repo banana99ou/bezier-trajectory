@@ -141,11 +141,14 @@ previously said "~1e-6, estimated" and nobody had ever measured it.
 - **The new scenarios only run in Pillar 5.** Pillars 1/2/3/4a use phase120 only;
   4b uses phase120+phase70. So "everything rests on one binding geometry" is only
   half fixed. Cheap to extend, and it strengthens every structural claim.
-- **Pillar 5 may be under-resolved — check before citing it.** KKT residual is
-  3.1e-6 on phase70 but **1.4e-2 on phase120**, four orders apart. Likely
-  `ACTIVE_TOL = 1e-3` km is missing nearly-active rows, which would make the test
-  **lenient**. Run a sensitivity sweep on that threshold before the paper leans on
-  Pillar 5.
+- ~~**Pillar 5 may be under-resolved**~~ **RESOLVED 2026-08-11, and the cause was
+  not the one suspected.** The four-orders spread (3.1e-6 phase70 vs 1.4e-2
+  phase120) was not `ACTIVE_TOL` — that threshold turns out to be irrelevant
+  (residual identical over 1e-5…1e-1 on all five scenarios). It was
+  `optimality.py:koz_rows` omitting the witness-rotation term, which inflated the
+  residual by 295×–131000× in proportion to mesh coarseness. Fixed; residuals are
+  now flat at 3.1e-6…1.1e-5, and `KKT_TOL` is tightened 5e-2 → 1e-3. See
+  design_freeze §7 entry 9.
 
 ### 3. Housekeeping
 
@@ -185,9 +188,14 @@ memory.**
 - **Objective comparisons: use the Rust exact-Gram internal merit**, or the
   post-`d8e9f2d` `J_true`. Never a pre-`d8e9f2d` `J_true` number.
 - Pillar 1 (independent scipy NLP, Rust-blind, cold start) gap versus n_seg,
-  **freeze-off, re-measured 2026-08-09**: 12.559% (n_seg=8), 2.871% (16), 0.706%
-  (32), 0.165% (64). The old "6.5% → 1.3%" was freeze-ON and is dead.
-- (A) iteration counts, phase120: 8 iters (n_seg=8), 20 (16), 21 (32).
+  **re-measured 2026-08-11 with the corrected oracle**: **12.570% (n_seg=8),
+  2.882% (16), 0.717% (32), 0.175% (64)**. The 2026-08-09 figures (12.559 /
+  2.871 / 0.706 / 0.165) are DEAD: that run optimized the stale uniform-mean
+  `J_true_and_grad`, whose own error (0.207%) exceeded the n_seg=64 gap it
+  reported (0.165%) — see design_freeze §7 entry 10. The older "6.5% → 1.3%" was
+  freeze-ON and is doubly dead.
+- (A) iteration counts, phase120, **post-|pred| fix**: 8 iters at n_seg=8, 16,
+  32 and 64 alike (was 8 / 20 / 21 before `0d130fc`).
 - The 1.8e-6 agreement between the Python Gauss-Legendre integral and the Rust
   Gram integral is the strongest validation claim available for the objective.
 

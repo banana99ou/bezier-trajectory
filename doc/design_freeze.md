@@ -183,7 +183,15 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
   −tol_f·|φ| < pred < 0 — only where the sign is below the merit's own
   resolution; a pred negative by more than tol_f·|φ| is a genuine model defect
   and still resets the streak. The certificate guard (`vlin_p <= 1e-6`) is
-  unchanged and still blocks uncertified points.
+  unchanged in the code — but note it is **UNTESTED**: an adversarial review
+  (2026-08-11) rebuilt with that clause deleted and every test in
+  `tests/regression/test_stationarity_exit.py` stayed green. The n_seg=2 case
+  that was believed to probe it is gated entirely by pred magnitude instead
+  (min |pred|/|φ| = 1.082e-05 over 1000 iterations, against tol_f = 1e-8; the
+  certificate holds on 30 of those iterations and the two conditions co-occur on
+  ZERO). Closing that gap needs a configuration that is model-stationary AND
+  uncertified at once; none is currently known. Do not cite the guard as
+  covered.
 
   `pred_floor = 1e-12·|φ|` was left alone deliberately. It also sits below the
   merit's resolution (~1e-14 absolute, 4e-10 relative), but it governs which
@@ -207,7 +215,7 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
 
 | parameter | value | principle |
 |---|---|---|
-| μ (`elastic_weight`) | 1e-2 | exact-penalty rule: above the KOZ dual scale, far below objective-swamping — μ=1e4 measurably degraded optima 4–5× via penalty noise in ρ (evidence #2). **‖λ_KOZ‖_∞ MEASURED 2026-08-09 (Pillar 5): max 1.5e-7 across five scenarios, so μ=1e-2 clears it by 5 orders.** Previously recorded as "estimated ~1e-6" and never measured. |
+| μ (`elastic_weight`) | 1e-2 | exact-penalty rule: above the KOZ dual scale, far below objective-swamping — μ=1e4 measurably degraded optima 4–5× via penalty noise in ρ (evidence #2). **‖λ_KOZ‖_∞ MEASURED: max 1.895e-7 across five scenarios (2026-08-11, with the corrected KOZ rows; the 2026-08-09 figure of 1.5e-7 came from the frozen-normal rows now known to be wrong), so μ=1e-2 clears it by 5 orders.** Previously recorded as "estimated ~1e-6" and never measured. |
 | r₀ (`scp_trust_radius`) | 2000 km | must exceed the iteration-1 BC-repair distance (~1650 km in the demo); r₀ ≤ 1000 fails at iteration 1 (known open item) |
 | η | 0.1 | textbook SCvx acceptance threshold [Mao et al.] |
 | grow / shrink | ×2 @ ρ>0.9 / ×0.5 | textbook trust-region schedule |
@@ -312,27 +320,86 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
    It does change the fix: the change is to the stationarity test and the noise
    floor, not to the trust-collapse branch.
 
-   **Pillar 5 blind spot, now suspected.** `tools/verify/optimality.py:koz_rows`
-   deliberately omits the witness-rotation term, on the stated ground that it is
-   second order at an active point. At n_seg=4 the over-clearance is 145 km, so
-   the segment's lateral reach — the very quantity that scales that term — is
-   large, and the omission is not second order. That is the likely source of the
-   3.723e-01 residual, meaning it measures Pillar 5's own approximation rather
-   than the solver. Verify before citing any coarse-mesh Pillar 5 number.
+   **Pillar 5 blind spot — CONFIRMED and FIXED 2026-08-11.**
+   `tools/verify/optimality.py:koz_rows` omitted the witness-rotation term, on
+   the stated ground that it is second order at an active point. That ground is
+   false wherever a sub-arc has appreciable lateral reach, which is every mesh
+   the paper reports. Measured on phase120, residual with the term vs without:
+
+   | n_seg | with | without (shipped) | inflation |
+   |---|---|---|---|
+   | 4 | 2.835e-06 | 3.723e-01 | 131000× |
+   | 8 | 1.044e-05 | 3.127e-02 | 2995× |
+   | 16 | 1.131e-05 | 1.420e-02 | 1255× |
+   | 32 | 1.166e-05 | 6.933e-03 | 595× |
+   | 64 | 1.168e-05 | 3.442e-03 | 295× |
+
+   With the term the residual is FLAT across the mesh — the signature of a
+   genuine KKT point. Without it the residual tracked mesh coarseness, i.e. the
+   test was measuring its own approximation. **The n_seg=4 "3.723e-01, NOT
+   OPTIMAL" verdict recorded above was therefore an artifact: corrected, that
+   point has the LOWEST residual of the five.** The rows that "passed" passed
+   for a reason unrelated to what the test claims to measure.
+
+   Two consequences, both adopted: `KKT_TOL` tightened 5e-2 → **1e-3** (88×
+   margin on the worst of 1.131e-05; the old gate could not have failed on the
+   broken rows, the new one does — verified by reverting the term and watching
+   phase120 go FAIL at 1.420e-02). And `ACTIVE_TOL` swept 1e-5…1e0 on all five
+   scenarios: the residual is IDENTICAL over 1e-5…1e-1, so the verdict does not
+   depend on that threshold — the open sensitivity question is closed.
+
    (Independently: n_seg=4's 0 descent hits rest on only 88 certified trials
    versus 604 and 644, because its feasible set is small enough that most random
    directions leave it.)
 
-   **Outcome after the |pred| fix (same day, phase120).** Every trust-collapse
-   row converted to model stationarity: N=8/n_seg=16 stop 2 @ 27 iters → stop 4
-   @ 8; N=7/n_seg=4 stop 2 @ 30 → stop 4 @ 12. **No objective moved by a single
-   digit** — 2.256657e-05 and 7.039215e-05 before and after, and likewise for
-   every other configuration — confirming this changes where the loop stops, not
-   what it converges to. Iteration counts fell across the board (n_seg=16:
-   20 → 8, n_seg=32: 21 → 8, n_seg=64: 13 → 8) because the loop no longer spends
-   its tail rejecting noise-level null steps. n_seg=2 still runs to the cap, as
-   it must: it fails the certificate, so the guard correctly refuses the exit.
-   All 6 pillars PASS, 24 Rust tests, 89 Python tests (86 + the 3 new guards).
+   **Outcome after the |pred| fix (same day).** Every trust-collapse row
+   converted to model stationarity: N=8/n_seg=16 stop 2 @ 27 iters → stop 4 @ 8;
+   N=7/n_seg=4 stop 2 @ 30 → stop 4 @ 12. Iteration counts fell across the board
+   (n_seg=16: 20 → 8, n_seg=32: 21 → 8, n_seg=64: 13 → 8) because the loop no
+   longer spends its tail rejecting noise-level null steps. n_seg=2 still runs to
+   the cap. All 6 pillars PASS, 24 Rust tests, Python suite green.
+
+   **Correction (adversarial review, same day).** The first write-up of this
+   entry said "no objective moved by a single digit". That was measured on
+   phase120 only and is FALSE as stated. A 5-scenario × 8-config pre/post sweep
+   found **0 runs worse and 0 costs moved by more than 1e-9 relative**, but seven
+   configurations DID move, by ~1e-12 relative — e.g. phase135/N=8/n_seg=16 at
+   1.02e-12, planechange/N=7/n_seg=64 at 5.70e-12. Mechanism: those configs
+   flipped stop 1 → stop 4 at the same iteration count, and the stop-4 `break`
+   fires BEFORE `p = x_new`, so it returns the REFERENCE where stop 1 returned
+   the accepted candidate. Correct claim: identical to ~12 significant digits,
+   four orders inside tol_f. The fix changes what is returned, negligibly; it
+   does not change what the loop converges to.
+
+10. **2026-08-11** — `harness_common.J_true_and_grad` was still the uniform-mean
+    Riemann sum that was removed from `J_true` on 2026-08-09. The fix never
+    reached the gradient twin, and nothing compared them, so it survived two days
+    behind a green suite. Measured relative error at the `n_dense=600` its caller
+    used: 0.196% (n_seg=8) … **0.207% (n_seg=64)**.
+
+    It feeds **Pillar 1** (`nlp_crosscheck.py`, the objective AND gradient of the
+    independent scipy NLP) and **Pillar 3** (`kkt_check.py`). Pillar 1 therefore
+    optimized one function and was scored with another (`J_true`, corrected), and
+    its `res_cold.optimality` certified a stationary point of the wrong function.
+    Worse, **the error EXCEEDED the gap being reported**: 0.207% against a
+    n_seg=64 gap of 0.165%. That is the identical defect shape as evidence #7(a)
+    — an oracle asked to resolve a difference finer than itself.
+
+    Fixed to Gauss-Legendre on the same nodes as `J_true`. The two now agree to
+    1.2e-15 relative, and the analytic gradient matches central differences at
+    **2.5e-09**, from 4.147e-03 before — a disagreement that was INDEPENDENT of
+    the finite-difference step, which is the signature of two different
+    integrands rather than differencing noise.
+
+    Corrected Pillar 1 gaps (phase120, cold start, Rust-blind): **12.570%
+    (n_seg=8), 2.882% (16), 0.717% (32), 0.175% (64)** — the values barely moved,
+    but they are now measurements rather than noise, and the NLP reaches
+    `optimality=9.37e-09` with cold and warm starts agreeing to 0.000%.
+
+    `tests/regression/test_harness_oracle.py` now asserts the two oracles agree,
+    the gradient matches finite differences, that check can itself fail, and the
+    quadrature is node-count invariant (a Riemann sum cannot be). Proven able to
+    fail by reverting the quadrature in place.
 
 ### Caveats on this evidence log (2026-08-08 adversarial review)
 

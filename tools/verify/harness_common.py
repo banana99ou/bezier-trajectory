@@ -192,14 +192,31 @@ def _grav_jacobians(rs, h=1e-3):
         lambda r: _accel_total(r, MU, R_E_EARTH, J2), rr, h) for rr in rs])
 
 
-def J_true_and_grad(P, T, n_dense=1200):
+def J_true_and_grad(P, T, n_nodes=192):
     """
     J_true and its analytic gradient wrt the flattened control points.
     Returns (J, grad_flat) with grad_flat shape ((N+1)*dim,).
+
+    Gauss-Legendre, on the SAME nodes as J_true, so this function's J agrees
+    with J_true(P, T) to floating-point round-off (~1e-15 relative; not
+    bit-identical, since the two differ in summation order).
+    `tests/regression/test_harness_oracle.py` asserts both that agreement and
+    the gradient against central differences.
+
+    History: until 2026-08-11 this was a uniform mean over `linspace` -- the
+    O(1/n) Riemann sum that was removed from J_true on 2026-08-09 but never from
+    its gradient twin. Measured on phase120, that form carried 0.196%-0.207%
+    relative error at the n_dense=600 its caller used. Pillar 1 optimizes with
+    this objective and gradient, then scores the result with the corrected
+    J_true, and reports a gap that at n_seg=64 was 0.165% -- SMALLER than the
+    oracle's own error. That is the same defect shape as the 2026-08-09 A/B bug:
+    an oracle asked to resolve a difference finer than itself.
     """
     P = np.asarray(P, float)
     N = P.shape[0] - 1
-    taus = np.linspace(0.0, 1.0, int(n_dense))
+    x, w_gl = np.polynomial.legendre.leggauss(int(n_nodes))
+    taus = 0.5 * (x + 1.0)                               # map [-1,1] -> [0,1]
+    wts = 0.5 * w_gl
     Bp = bernstein_matrix(N, taus)                       # (n, N+1)  -> r = Bp @ P
     EDED = get_E_matrix(N - 1) @ get_D_matrix(N) @ get_E_matrix(N - 1) @ get_D_matrix(N)
     Ca = Bp @ EDED                                       # (n, N+1)  -> a_tau = Ca @ P
@@ -208,10 +225,12 @@ def J_true_and_grad(P, T, n_dense=1200):
     g = grav_total(r)
     Jg = _grav_jacobians(r)                              # (n,3,3)
     u = a - g                                            # (n,3)
-    J = float(np.mean(np.sum(u * u, axis=1)))
+    J = float(np.sum(wts * np.sum(u * u, axis=1)))
     # w_k[d'] = sum_d u_k[d] * Jg_k[d,d']
     w = np.einsum("kd,kde->ke", u, Jg)                   # (n,3)
-    grad = (2.0 / n_dense) * ((Ca.T @ u) / (T * T) - Bp.T @ w)  # (N+1, 3)
+    uw = wts[:, None] * u
+    ww = wts[:, None] * w
+    grad = 2.0 * ((Ca.T @ uw) / (T * T) - Bp.T @ ww)     # (N+1, 3)
     return J, grad.reshape(-1)
 
 
