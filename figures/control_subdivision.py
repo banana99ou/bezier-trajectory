@@ -1,5 +1,5 @@
 """
-F7. De Casteljau subdivision of the control points.
+De Casteljau subdivision of the control points.
 
 Two-panel 2D concept figure illustrating how the De Casteljau subdivision
 matrix S^(s) splits the whole control polygon P into per-segment control
@@ -11,8 +11,8 @@ that the §3.1 supporting half-space relies on).
   (b) After subdivision:   per-segment control points P^(s)=S^(s)P, tight hulls
 
 Usage:
-    python figures/f7_control_subdivision.py          # show interactively
-    python figures/f7_control_subdivision.py --save    # save .pdf and .png
+    python figures/control_subdivision.py          # show interactively
+    python figures/control_subdivision.py --save    # save .pdf and .png
 """
 
 import sys
@@ -47,7 +47,7 @@ def bezier_eval(P, t_arr):
 
 
 # ---------------------------------------------------------------------------
-# Palette (matched to repo conventions: f1_koz_linearization.py, visualization.py)
+# Palette (matched to repo conventions: koz_linearization.py, visualization.py)
 # ---------------------------------------------------------------------------
 CURVE          = "#2c3e50"
 CP_LINE        = "#34495e"
@@ -106,7 +106,7 @@ def seg_control_points(P, n_seg):
 # Build the figure
 # ---------------------------------------------------------------------------
 
-def build_f7(save=False):
+def build_figure(save=False):
     Qs = seg_control_points(P_GLOBAL, N_SEG)
     t_dense = np.linspace(0, 1, 400)
     curve = bezier_eval(P_GLOBAL, t_dense)
@@ -155,7 +155,7 @@ def build_f7(save=False):
     if save:
         out_dir = Path(__file__).resolve().parent
         for ext in ("pdf", "png"):
-            out_path = out_dir / f"f7_control_subdivision.{ext}"
+            out_path = out_dir / f"control_subdivision.{ext}"
             fig.savefig(out_path, dpi=300, bbox_inches="tight", facecolor="white")
             print(f"Saved {out_path}")
     else:
@@ -164,4 +164,4 @@ def build_f7(save=False):
 
 
 if __name__ == "__main__":
-    build_f7(save="--save" in sys.argv)
+    build_figure(save="--save" in sys.argv)

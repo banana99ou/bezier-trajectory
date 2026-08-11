@@ -6,10 +6,10 @@ Two-panel figure showing:
   Left:  Control-effort energy vs subdivision count, stratified by degree
   Right: Runtime vs subdivision count, stratified by degree
 
-Uses the 120-deg phase-lag cache files (same as build_f3.py / build_csv.py).
+Uses the 120-deg phase-lag cache files (same as build_representative_trajectories.py / build_csv.py).
 
 Usage:
-    python tools/build_f5.py
+    python tools/build_multi_order_tradeoff.py
 """
 
 import sys
@@ -102,7 +102,7 @@ def main():
 
     fig.tight_layout()
 
-    out = ROOT / "figures" / "f5_multi_order_tradeoff_N678.png"
+    out = ROOT / "figures" / "multi_order_tradeoff_N678.png"
     fig.savefig(out, dpi=200, bbox_inches="tight", facecolor="white")
     print(f"\nSaved -> {out}  ({out.stat().st_size / 1024:.0f} KB)")
     plt.close(fig)

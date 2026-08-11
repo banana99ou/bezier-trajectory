@@ -6,10 +6,10 @@ Two-panel figure showing:
   Left:  Runtime vs subdivision count
   Right: Control-effort energy and safety margin vs subdivision count
 
-Uses the 120-deg phase-lag cache files (same as build_f3.py / build_csv.py).
+Uses the 120-deg phase-lag cache files (same as build_representative_trajectories.py / build_csv.py).
 
 Usage:
-    python tools/build_f4.py
+    python tools/build_subdivision_tradeoff.py
 """
 
 import sys
@@ -102,7 +102,7 @@ def main():
 
     fig.tight_layout()
 
-    out = ROOT / "figures" / "f4_subdivision_tradeoff_N7.png"
+    out = ROOT / "figures" / "subdivision_tradeoff_N7.png"
     fig.savefig(out, dpi=200, bbox_inches="tight", facecolor="white")
     print(f"\nSaved -> {out}  ({out.stat().st_size / 1024:.0f} KB)")
     plt.close(fig)

@@ -1,5 +1,5 @@
 """
-F2. SCvx iteration in control-point space.
+SCvx iteration in control-point space.
 
 Single-column vertical flowchart of the canonical SCvx loop of §3.3
 (Algorithm 1).  Operators that are assembled once are separated from the
@@ -19,8 +19,8 @@ Layout rules (keep these when editing):
     with the head outside the target, never underneath it.
 
 Usage:
-    python figures/f2_scp_pipeline.py          # show interactively
-    python figures/f2_scp_pipeline.py --save   # save to figures/f2_scp_pipeline.{pdf,png}
+    python figures/scp_pipeline.py          # show interactively
+    python figures/scp_pipeline.py --save   # save to figures/scp_pipeline.{pdf,png}
 """
 
 import sys
@@ -212,7 +212,7 @@ def right(key):
 # Main figure
 # ---------------------------------------------------------------------------
 
-def build_f2(save=False):
+def build_figure(save=False):
     # Match mathtext to the sans body text so one font reads throughout.
     plt.rcParams["mathtext.fontset"] = "dejavusans"
     plt.rcParams["mathtext.default"] = "regular"
@@ -365,7 +365,7 @@ def build_f2(save=False):
     if save:
         out = Path(__file__).resolve().parent
         for ext in ("pdf", "png"):
-            p = out / f"f2_scp_pipeline.{ext}"
+            p = out / f"scp_pipeline.{ext}"
             fig.savefig(p, dpi=300, bbox_inches="tight", facecolor="white")
             print(f"Saved {p}")
     else:
@@ -375,4 +375,4 @@ def build_f2(save=False):
 
 
 if __name__ == "__main__":
-    build_f2(save="--save" in sys.argv)
+    build_figure(save="--save" in sys.argv)

@@ -1,9 +1,9 @@
-"""Build T6 downstream-comparison CSV and F6 speedup figure.
+"""Build the downstream-comparison CSV and the speedup figure.
 
 Reads per-case JSONs under ``results/dcm_pass1_replace_full/`` and writes:
 
 - ``artifacts/paper_artifacts/t6_downstream_comparison.csv``
-- ``figures/f6_downstream_speedup.png``
+- ``figures/downstream_speedup.png``
 
 Also prints median/min/max speedup and cost-delta summary to stdout.
 """
@@ -23,7 +23,7 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_RESULTS = REPO / "results" / "dcm_pass1_replace_full"
 DEFAULT_CSV = REPO / "artifacts" / "paper_artifacts" / "t6_downstream_comparison.csv"
-DEFAULT_FIG = REPO / "figures" / "f6_downstream_speedup.png"
+DEFAULT_FIG = REPO / "figures" / "downstream_speedup.png"
 
 T6_COLUMNS = [
     "case_id",
@@ -115,7 +115,7 @@ def build_figure(rows: list[dict], out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     both_converged = [r for r in rows if r["baseline_pass2_converged"] and r["proposed_converged"]]
     if not both_converged:
-        raise RuntimeError("No cases with both pipelines converged; cannot build F6.")
+        raise RuntimeError("No cases with both pipelines converged; cannot build the figure.")
 
     sorted_rows = sorted(both_converged, key=lambda r: r["speedup"])
     labels = [f"{r['case_id']}" for r in sorted_rows]
@@ -147,7 +147,7 @@ def build_figure(rows: list[dict], out_path: Path) -> None:
     ax_right.legend(loc="upper left", fontsize=8)
     ax_right.grid(axis="y", linestyle=":", alpha=0.5)
 
-    fig.suptitle("F6. Bézier-Pass-1-replacement vs full two-pass DCM (matched Pass 2)")
+    fig.suptitle("Bézier-Pass-1-replacement vs full two-pass DCM (matched Pass 2)")
     fig.tight_layout()
     fig.savefig(out_path, dpi=200)
     plt.close(fig)

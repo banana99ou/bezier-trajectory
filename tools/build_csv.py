@@ -19,7 +19,7 @@ import numpy as np
 from orbital_docking import constants, generate_initial_control_points
 from orbital_docking.cache import get_cache_key, get_cache_path, load_from_cache
 
-# ── 120-deg scenario geometry (must match build_f3.py) ───────────────
+# ── 120-deg scenario geometry (must match build_representative_trajectories.py) ──
 INCLINATION_DEG = 51.64
 RAAN_DEG = 0.0
 ISS_U_DEG = 45.0

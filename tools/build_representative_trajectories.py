@@ -6,7 +6,7 @@ Loads cached optimization results for N=6,7,8 at n_seg=16 and composes
 a publication-ready 1×3 panel figure.
 
 Usage:
-    python tools/build_f3.py
+    python tools/build_representative_trajectories.py
 """
 
 import sys
@@ -176,7 +176,7 @@ def main():
     fig.subplots_adjust(left=0.02, right=0.98, bottom=0.02, top=0.90,
                         wspace=0.08)
 
-    out = ROOT / "figures" / "f3_representative_settings.png"
+    out = ROOT / "figures" / "representative_trajectories.png"
     fig.savefig(out, dpi=300, bbox_inches="tight", pad_inches=0.05,
                 facecolor="white")
     print(f"\nSaved → {out}  ({out.stat().st_size / 1024:.0f} KB)")

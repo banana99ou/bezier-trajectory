@@ -1,5 +1,5 @@
 """
-F1. Supporting half-space construction on one sub-arc (concept figure for 3.1).
+Supporting half-space construction on one sub-arc (concept figure for 3.1).
 
   (a) Whole curve, sub-arc junctions, and the sub-arc that violates the KOZ
   (b) Construction on that sub-arc: centroid c^(s) -> outward normal n^(s)
@@ -26,9 +26,9 @@ That is one SCvx iteration of the constraint in 3.1, so the corrected curve is
 continuous by construction and the endpoints stay put.
 
 Usage:
-    python figures/f1_koz_linearization.py           # show interactively
-    python figures/f1_koz_linearization.py --save    # write .pdf and .png
-    python figures/f1_koz_linearization.py --diag    # print geometry diagnostics
+    python figures/koz_linearization.py           # show interactively
+    python figures/koz_linearization.py --save    # write .pdf and .png
+    python figures/koz_linearization.py --diag    # print geometry diagnostics
 """
 
 import sys
@@ -47,7 +47,7 @@ from orbital_docking.de_casteljau import segment_matrices_equal_params
 
 
 # ---------------------------------------------------------------------------
-# Palette -- Tableau Colorblind 10, same set adopted for F2.
+# Palette -- Tableau Colorblind 10, same set adopted for scp_pipeline.py.
 #   orange  = the keep-out zone (hazard)
 #   grey    = the reference curve, i.e. "before"
 #   blue    = the corrected curve, i.e. "after"
@@ -243,7 +243,7 @@ def label_ctrl_polygon(ax, pts, anchor, offset, color):
 # Figure
 # ---------------------------------------------------------------------------
 
-def build_f1(save=False):
+def build_figure(save=False):
     g = build_geometry()
     segs, segs_fix, viol = g["segs"], g["segs_fix"], g["viol"]
     n_hat, centroid, support_pt = g["n_hat"], g["centroid"], g["support_pt"]
@@ -392,7 +392,7 @@ def build_f1(save=False):
     if save:
         out_dir = Path(__file__).resolve().parent
         for ext in ("pdf", "png"):
-            out_path = out_dir / f"f1_koz_linearization.{ext}"
+            out_path = out_dir / f"koz_linearization.{ext}"
             fig.savefig(out_path, dpi=300, bbox_inches="tight",
                         facecolor="white")
             print(f"Saved {out_path}")
@@ -428,4 +428,4 @@ if __name__ == "__main__":
     if "--diag" in sys.argv:
         diagnostics()
     else:
-        build_f1(save="--save" in sys.argv)
+        build_figure(save="--save" in sys.argv)
