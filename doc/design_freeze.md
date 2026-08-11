@@ -154,9 +154,50 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
   accepted steps AND the accepted iterate carries the certificate
   (h ≤ 1e-6 km aggregate). tol_f = max(tol, 1e-8); defaults tol = 1e-8
   (Python signature and verify harness).
-- Second criterion: trust radius < 1e-2 km at a reference satisfying the
-  certificate AND all hard rows ⇒ converged (standard trust-region collapse
-  stopping); otherwise converged stays false.
+- Second criterion — trust-radius collapse. **DECISION 2026-08-11 (author):
+  gate this on CRITICALITY, not feasibility.** Reference for the whole
+  trust-region stopping question, and the book this project defers to on it:
+
+  > Conn, A. R., Gould, N. I. M., and Toint, Ph. L., *Trust-Region Methods*,
+  > MOS-SIAM Series on Optimization, SIAM, Philadelphia, 2000.
+  > doi:10.1137/1.9780898719857 · ISBN 978-0-89871-460-9 · xix+942 pp.
+  > Ch. 6 (Global Convergence of the Basic Algorithm) covers collapse as a
+  > stopping rule; Ch. 12 (Projection Methods for Convex Constraints) is the
+  > relevant chapter for the criticality measure in our setting, since the
+  > subproblem's constraints — half-spaces, the ∞-norm box, the BC equalities —
+  > are all convex. Chapter titles verified against the SIAM listing 2026-08-11;
+  > SUBSECTION numbers have NOT been checked, so do not cite them.
+
+  Current code (`optimizer.rs:1468-1476`) sets
+  `converged_scvx = vlin_p <= 1e-6 && hard_viol_p <= 1e-9` — a FEASIBILITY
+  test. Feasible ≠ optimal, so it cannot separate a converged point from a
+  deadlocked one. That is why the pillars were moved off `scvx_converged` onto
+  `scvx_stop_reason`; the switch hid the symptom without fixing the test.
+
+  **IMPLEMENTED 2026-08-11**, and NOT in the trust-collapse branch — measurement
+  (§7 entry 9) showed every run reaching collapse on phase120 was already
+  critical (pred/|φ| ≤ 1.2e-9 against tol_f = 1e-8). One guard was blocking the
+  stationarity exit: it required `pred >= 0.0`, so a numerically-zero pred of
+  −9.1e-15 failed it and reset the streak permanently. The test now compares
+  **|pred| < tol_f·|φ|**. This widens the accepting set by exactly
+  −tol_f·|φ| < pred < 0 — only where the sign is below the merit's own
+  resolution; a pred negative by more than tol_f·|φ| is a genuine model defect
+  and still resets the streak. The certificate guard (`vlin_p <= 1e-6`) is
+  unchanged and still blocks uncertified points.
+
+  `pred_floor = 1e-12·|φ|` was left alone deliberately. It also sits below the
+  merit's resolution (~1e-14 absolute, 4e-10 relative), but it governs which
+  candidate becomes the next reference, so changing it would change ANSWERS. The
+  |pred| fix changes only where the loop stops. Revisit only with evidence.
+
+  Do NOT "fix" this by evaluating pred at the collapsed radius — a tiny box
+  always predicts tiny improvement, so that test cannot fail and would be
+  worthless evidence. The criticality comparison must be against |φ|.
+
+  Regression guard: `tests/regression/test_stationarity_exit.py`. No verification
+  pillar covers N=8/n_seg=16 or N=7/n_seg=4, so a revert would otherwise pass the
+  whole suite. Verified 2026-08-11 that reverting the comparison and rebuilding
+  turns both assertions red.
 - Why K-consecutive: a one-shot test fires during the slow crawl along
   re-aimed KOZ walls — measured stopping 33% above the optimum at tol 1e-6
   (evidence #3/#4). Step-norm tests are invalid here: the walls re-aim every
@@ -238,6 +279,60 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
    r0=4000 — r0 is now a per-scenario field, not a global constant) and
    `planechange` (23.9° orbit-plane difference, so the two velocity BCs differ in
    direction, not just phase). All five pass Pillars 1–5 with (A).
+
+9. **2026-08-11** — the trust-collapse test is wrong in BOTH directions, measured
+   on phase120 with Pillar 5's solver-blind KKT check. Two configurations stop on
+   collapse (stop_reason 2) at an identical final radius of 0.00763 km:
+   **N=8, n_seg=16** has KKT relative residual **1.229e-02** — *better* than the
+   clean-exit control (N=7, n_seg=16, stop 1) at 1.420e-02 — and 0/604 descent
+   hits. It is at an optimum and is labelled a failure. **N=7, n_seg=4** has KKT
+   residual **3.723e-01**, seven times the 5e-2 gate.
+
+   **The first reading of that pair — "n_seg=4 is genuinely stuck" — was WRONG,
+   and was refuted the same day.** Restarting each collapsed run from its own
+   final point with a fresh 2000 km radius moved neither: max control-point
+   motion 0.0000 km, objective unchanged to all digits, both collapsing again in
+   exactly 18 halvings (2000·2⁻¹⁸ = 0.0076 km, i.e. every step rejected). The
+   per-iteration trace then gave the criticality number directly: **pred/|φ| is
+   4.0e-10 … 1.2e-9 for BOTH collapsed runs**, against tol_f = 1e-8. Both are
+   critical. So is the clean-exit control (stop 1) at 4.3e-14 … 1.6e-9.
+
+   The real defect is numerical, and it is twofold (`optimizer.rs`):
+   (a) the stationarity test requires `pred >= 0.0`, so a pred of −9.1e-15 —
+   numerically zero — fails it and resets `stat_streak` forever; and
+   (b) `pred_floor = 1e-12·|φ| ≈ 2.3e-17` sits ~400× BELOW the merit's actual
+   resolution (~1e-14 absolute, 4e-10 relative), so a noise-level negative `act`
+   is read as genuine worsening, the null step is rejected instead of accepted,
+   and the radius halves to the floor. The clean run differs only in that its
+   null steps land on the accept side of that same threshold.
+
+   This does not overturn the §4 decision — gating on criticality is still the
+   right rule, and it is now better supported, since the criticality measure
+   separates cleanly (all three critical) where radius and feasibility do not.
+   It does change the fix: the change is to the stationarity test and the noise
+   floor, not to the trust-collapse branch.
+
+   **Pillar 5 blind spot, now suspected.** `tools/verify/optimality.py:koz_rows`
+   deliberately omits the witness-rotation term, on the stated ground that it is
+   second order at an active point. At n_seg=4 the over-clearance is 145 km, so
+   the segment's lateral reach — the very quantity that scales that term — is
+   large, and the omission is not second order. That is the likely source of the
+   3.723e-01 residual, meaning it measures Pillar 5's own approximation rather
+   than the solver. Verify before citing any coarse-mesh Pillar 5 number.
+   (Independently: n_seg=4's 0 descent hits rest on only 88 certified trials
+   versus 604 and 644, because its feasible set is small enough that most random
+   directions leave it.)
+
+   **Outcome after the |pred| fix (same day, phase120).** Every trust-collapse
+   row converted to model stationarity: N=8/n_seg=16 stop 2 @ 27 iters → stop 4
+   @ 8; N=7/n_seg=4 stop 2 @ 30 → stop 4 @ 12. **No objective moved by a single
+   digit** — 2.256657e-05 and 7.039215e-05 before and after, and likewise for
+   every other configuration — confirming this changes where the loop stops, not
+   what it converges to. Iteration counts fell across the board (n_seg=16:
+   20 → 8, n_seg=32: 21 → 8, n_seg=64: 13 → 8) because the loop no longer spends
+   its tail rejecting noise-level null steps. n_seg=2 still runs to the cap, as
+   it must: it fails the certificate, so the guard correctly refuses the exit.
+   All 6 pillars PASS, 24 Rust tests, 89 Python tests (86 + the 3 new guards).
 
 ### Caveats on this evidence log (2026-08-08 adversarial review)
 

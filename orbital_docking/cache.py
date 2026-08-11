@@ -10,7 +10,7 @@ from pathlib import Path
 
 # Increment to invalidate old caches when the optimization formulation changes.
 # NOTE: the cache key does NOT hash the Rust binary; bump this after any solver rebuild.
-CACHE_VERSION = "14.0-self-consistent-koz-rows"
+CACHE_VERSION = "15.0-abs-pred-stationarity"
 
 
 def get_cache_key(

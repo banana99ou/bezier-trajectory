@@ -1353,8 +1353,13 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
                 continue;
             }
 
-            // Stationarity test (standard trust-region "predicted reduction" criterion;
-            // Conn/Gould/Toint Ch. 8, Nocedal & Wright Ch. 4). `pred` is the model's own
+            // Stationarity test (standard trust-region "predicted reduction" criterion).
+            // Reference: Conn, Gould & Toint, *Trust-Region Methods*, MOS-SIAM Series on
+            // Optimization, SIAM 2000, doi:10.1137/1.9780898719857 — Ch. 6 for the basic
+            // convergence theory and Ch. 12 (Projection Methods for Convex Constraints)
+            // for the criticality measure in this setting, since the subproblem's
+            // constraints (half-spaces, the inf-norm box, the BC equalities) are convex.
+            // Also Nocedal & Wright 2e Ch. 4. `pred` is the model's own
             // estimate of the improvement available from this reference. Once that is
             // negligible relative to the merit, the model reports no achievable progress
             // and the iterate is stationary FOR THE MODEL — continuing only feeds the
@@ -1374,7 +1379,22 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
             // true problem only where the model is faithful, which is what rho certifies.
             //
             // K-consecutive, like the merit streak (see `stat_streak`).
-            if pred >= 0.0 && pred < tol_f * t_p.abs() && vlin_p <= 1e-6 {
+            //
+            // The comparison is on |pred|, not pred, and the reason is numerical. Near a
+            // stationary point pred is a difference of two merits that agree to ~1e-14
+            // absolute (~4e-10 relative), so its SIGN is noise: the phase120 preds at the
+            // stopping point measure -9.095e-15, -1.819e-14, -2.729e-14. The former
+            // `pred >= 0.0` guard therefore reset the streak on every such iteration and
+            // this exit could never fire. The loop instead rejected the null steps and
+            // halved the trust region 18 consecutive times to the floor, reporting
+            // stop_reason 2 (failure) at a point whose pred/|phi| was 1.2e-9 — three
+            // orders INSIDE tol_f. Measured 2026-08-11 on N=8/n_seg=16 and N=7/n_seg=4;
+            // both are critical, and both were mislabelled as failures.
+            //
+            // This widens the accepting set by exactly -tol_f*|T| < pred < 0, i.e. only
+            // where the sign sits below the merit's own resolution. A pred negative by
+            // MORE than tol_f*|T| is a genuine model defect and still resets the streak.
+            if pred.abs() < tol_f * t_p.abs() && vlin_p <= 1e-6 {
                 stat_streak += 1;
                 if stat_streak >= conv_streak_required {
                     converged_scvx = true;
