@@ -1,37 +1,39 @@
-# Rust Migration QA Strategy
+# Rust QA Strategy
 
-The core risk is: **does the Rust optimizer produce physically correct trajectories**, not just "feasible by its own metrics"? The Python and Rust solvers use different QP backends (trust-constr vs Clarabel), so we shouldn't expect identical outputs — but we need to verify the solutions are valid under the **same physics model**.
+> **Superseded.** This document described a Python/Rust two-backend comparison, with
+> Python (`trust-constr`) as the ground-truth oracle. **The Python optimizer has been
+> removed.** There is no second backend to cross-validate against, and
+> `spacetime_bezier/constraints.py` is not a reference implementation — see
+> [`CLAUDE.md`](../CLAUDE.md) §Architecture.
+>
+> Do not build a verification harness against a Python solver. It does not exist.
 
-## 1. Cross-validate Rust solutions through Python's physics
+## What verification means now
 
-Feed Rust's `P_opt` back into Python's evaluation/validation code — use Python as the ground truth checker:
+With one backend, correctness cannot come from agreement between two implementations.
+It has to come from checks that could actually fail:
 
-- Recompute `min_radius` from Rust's P_opt using Python's `BezierCurve.point()`
-- Recompute `cost_true_energy` from Rust's P_opt using Python's `_build_ctrl_accel_quadratic()`
-- Check KOZ constraint satisfaction using Python's `build_koz_constraints()`
-- Check boundary conditions (endpoint preservation, velocity/accel BCs if any)
+- **Geometry, against the true obstacle.** Sample the returned curve densely and measure
+  clearance against the analytic tube `‖p_xy − p₀ − v·p_t‖ ≥ r`, independent of whatever
+  half-spaces the QP was given. This is the only check that does not inherit the
+  constraint builder's own assumptions.
+- **Slack must gate.** A run that ends with `total_slack > 0` solved a relaxed problem.
+  It is not a feasible result and must not produce a figure. See workstream **B7**.
+- **Tests must be able to fail.** The current KOZ suite cannot: every case uses
+  `vel = [0, 0]`, where the defect it would catch has exactly zero error, and
+  `tests/unit/test_spacetime_constraints.py:65` asserts the buggy behavior outright.
+  Any new constraint test needs a **moving** obstacle.
+- **The Rust constraint builder has no tests at all.** `spacetime_constraints.rs` is the
+  code that runs in production; the Python tests exercise a builder nothing uses.
 
-## 2. Per-component unit parity tests
+## Still valid from the original document
 
-The building blocks should match exactly (same math, no solver involved):
+Per-component parity against closed-form values (not against another solver):
 
-- Gravity at ~20 random positions
 - D/E/G matrices for degrees 2–6
-- Segment matrices for various N/n_seg combos
-- Bernstein basis + derivative weights at several tau values
-- `_build_ctrl_accel_quadratic()` H/f/c output for same P_ref
+- Segment matrices across N / n_seg combinations
+- Bernstein basis and derivative weights at several tau values
+- Gravity at a spread of positions
 
-## 3. Solution quality sweep
-
-Run both solvers across a grid of (degree, n_seg, max_iter) and compare:
-
-- Does Rust always produce feasible solutions when Python does?
-- Is Rust's cost within a reasonable factor of Python's?
-- Does Rust maintain endpoint constraints?
-
-## 4. Edge cases
-
-- N=2 (minimal degree for acceleration)
-- n_seg=1 (no subdivision)
-- With velocity/acceleration BCs
-- With prograde enforcement
+Edge cases worth covering: `N=2` (minimal degree for acceleration), `n_seg=1` (no
+subdivision), velocity/acceleration boundary conditions.

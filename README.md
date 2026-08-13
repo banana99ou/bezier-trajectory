@@ -2,7 +2,9 @@
 
 A personal research / debug sandbox for **space-time Bezier trajectory optimization**. The premise being probed: lifting moving obstacles into space-time (adding time as an explicit Bezier coordinate) turns them into static tubes, so the existing convex-hull / supporting-half-space machinery should handle moving-obstacle avoidance directly. The sandbox exists to stress that premise — pose problems, find where the optimizer breaks, prototype fixes.
 
-Drag obstacles, tweak parameters, watch the optimizer re-solve. For north-star direction see [`VISION.md`](VISION.md). For current architecture and Claude-Code-facing notes see [`CLAUDE.md`](CLAUDE.md).
+Drag obstacles, tweak parameters, watch the optimizer re-solve.
+
+**Current focus (until 2026-08-19): a conference paper on the space-time formulation.** Sandbox feature work is paused. For the goal, workstreams, known solver defects, and architecture, see [`CLAUDE.md`](CLAUDE.md) — it is the single source of direction for this branch.
 
 ## Interacting with the sandbox
 
@@ -45,11 +47,13 @@ pytest
 
 Defined in `spacetime_bezier/scenarios.py`. Each is a 2D + time problem: moving obstacles, fixed endpoints, the optimizer plans both path *and* timing.
 
-| Scenario | What it shows |
-|----------|---------------|
-| `original` (3 moving obstacles) | Basic proof of concept — curve threads between constant-velocity tubes in (x, y, t). |
-| `disappearing_wall` | A wall that vanishes at a known time. The curve "waits" in space-time then passes through — demonstrates time as a real optimization dimension. |
-| `diverse` (varied sizes / speeds / directions) | Stress case. Currently infeasible across all configs — elastic relaxation keeps the solver running but no feasible path is found. |
+| Scenario | What it shows | Status |
+|----------|---------------|--------|
+| `original` (3 moving obstacles) | Basic proof of concept — curve threads between constant-velocity tubes in (x, y, t). | Feasible |
+| `wall` | A wall that vanishes at a known time. The curve *should* "wait" in space-time then pass through, demonstrating time as a real optimization dimension. | **Infeasible** — the returned curve penetrates the wall by 0.112. The behavior this scenario exists to show does not currently work. |
+| `diverse` (varied sizes / speeds / directions) | Stress case. | **Infeasible** — elastic relaxation keeps the solver running but no feasible path is found. |
+
+Both failures trace to the two KOZ constraint defects documented in [`CLAUDE.md`](CLAUDE.md) under Established facts.
 
 Scenarios are registered in `SCENARIO_MAP`; add your own by appending to `scenarios.py`.
 
@@ -64,7 +68,7 @@ Scenarios are registered in `SCENARIO_MAP`; add your own by appending to `scenar
 
 ## Architecture in one paragraph
 
-Rust is the sole optimizer backend. A single SCP `scp_step` function in the Rust core is both the batch iteration and the debug step — debugger sessions observe the real run via an emitted trace, they don't implement a second optimizer. Python handles request shaping, scenario definitions, JSON I/O, and the debug UI server. See `VISION.md` for the foundational rules (backend honesty, geometry authenticity, one execution model) that these choices enforce.
+Rust is the sole optimizer backend. A single SCP `scp_step` function in the Rust core is both the batch iteration and the debug step — debugger sessions observe the real run via an emitted trace, they don't implement a second optimizer. Python handles request shaping, scenario definitions, JSON I/O, and the debug UI server. See [`CLAUDE.md`](CLAUDE.md) §After the paper for the foundational rules (backend honesty, geometry authenticity, one execution model) that these choices enforce.
 
 ## Contributing / extending
 
