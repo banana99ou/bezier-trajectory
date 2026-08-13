@@ -6,13 +6,13 @@ For "what exists today / how to run it", see `README.md` and `CLAUDE.md`.
 
 ## North Star
 
-**A research sandbox for the space-time Bezier idea.** An interactive workbench where a professor (or anyone pitching the paper) can drag moving obstacles around, tweak parameters, and watch the optimizer re-solve in real time. The tool *is* the demo — not a separate thing you run to generate figures for a demo.
+**A personal research / debug sandbox for the space-time Bezier idea.** An interactive workbench the author uses to pose problems, surface weakpoints in the optimizer and the space-time formulation, and prototype new ideas against them. Not a tech demo, not a pitch artifact — the intended user is the person maintaining this branch.
 
-The core research claim being exhibited: lifting moving obstacles into space-time turns them into static tubes, so the existing Bezier convex-hull / supporting-half-space machinery applies directly in the higher-dimensional space. The sandbox should make that claim feel obvious by letting the user poke the problem and see the optimizer respond.
+The research claim under test: lifting moving obstacles into space-time turns them into static tubes, so the existing Bezier convex-hull / supporting-half-space machinery applies directly in the higher-dimensional space. The sandbox exists to *stress* that claim — find the cases where it bends or breaks, and iterate.
 
 ## Target user experience
 
-What a sandbox session should look like when fully built out:
+What a working sandbox session looks like for the author:
 
 - **Drag to pose the problem.** Grab an obstacle in 3D, drop it somewhere new, release — the optimizer re-solves and the trajectory updates. Same for endpoints.
 - **Slide parameters live.** `N` (curve order), `n_seg` (segments), proximal weight, trust-region radius, time scaling α — all exposed, all re-solve on change.
@@ -21,7 +21,7 @@ What a sandbox session should look like when fully built out:
 - **Side-by-side comparison.** Two solves, different scenarios or different parameters, rendered together so the difference is the point of the view.
 - **Scenario save/load.** A session can be serialized to JSON and reopened later — so an interesting failure case is reproducible, not lost.
 
-The debugger (the step-through-each-SCP-stage view) is one mode within this sandbox, not the product itself. It's where you go when "why did it fail?" isn't enough.
+The debugger (the step-through-each-SCP-stage view) is one mode within this sandbox — a drawer that slides in over the same scene, not a separate page. It's where you go when "why did it fail?" isn't enough.
 
 ## Foundations
 
@@ -38,6 +38,16 @@ same request + same backend + same configuration
 
 Batch solves and debugger sessions are two views of the same execution, not two different execution models. Concretely: `scp_step` in the Rust core is both the batch iteration and the debug step — a debug session never simulates an alternative stepper.
 
+### One frontend, two tempos
+
+Batch mode and diagnostic mode are views on the same page, not separate apps. They share scenario state, 3D scene, camera, and server. Diagnostic mode is a side drawer (stage list, row-level KOZ inspector, iteration scrubber) that slides in — never a separate URL, never a page reload, never a re-imported scenario.
+
+*Why it matters:* the core research loop (pose → observe → diagnose → iterate) breaks if "drop into debug" costs a reload or a scenario round-trip. Context loss — lost camera, lost drag history, lost "the thing I was just looking at" — kills the loop.
+
+*Why drawer and not inlined:* batch tempo (slider → fast resolve → look at curve) and debug tempo (step, inspect row 42 of obstacle 3's plane equation, diff iterate N vs N+1) have genuinely different chrome needs. One giant view serving both clutters the batch case (most sessions); a drawer keeps the batch view clean and reveals debug tools on demand.
+
+Today the repo has two HTML pages and two servers — this foundation is a target, not current state. Rotate toward it, not away from it.
+
 ### Rust is the sole engine
 
 Rust (Clarabel QP + elastic relaxation for infeasible KOZ subproblems) owns:
@@ -48,7 +58,7 @@ Rust (Clarabel QP + elastic relaxation for infeasible KOZ subproblems) owns:
 - final iterate selection
 - authoritative trace emission
 
-Python is no longer a backend. The Python SCP stepper (`spacetime_bezier/debug_stepper.py`) is retained only for the `clip_trust_region` utility; it is not a reference solver or an oracle. If the sandbox ever shows a result, that result came from Rust.
+Python is no longer a backend. The Python SCP stepper (`spacetime_bezier/debug_stepper.py`) is dead code pending cleanup — nothing outside the file imports it, and it is not a reference solver or an oracle. If the sandbox ever shows a result, that result came from Rust.
 
 ### Trace is observability over the real run
 
@@ -103,6 +113,7 @@ The schema must distinguish *current iterate / raw candidate / accepted iterate 
 ## Non-goals
 
 - A stage-by-stage formal debugger spec — the old `DEBUGGER_SPEC.md` 10-stage taxonomy now lives in code, not in prose.
+- A separate debugger app / page / URL. Diagnostic mode is a drawer inside the sandbox, not its own tool.
 - Polished production UI. This is a workbench; ugly-but-honest beats pretty-but-fake.
 - Shareable static reports / exported PDFs. The live tool is the artifact.
 - Python as a permanent reference backend. Already removed; should stay removed.
@@ -126,14 +137,14 @@ Other items (comparison mode, Rust-internal stage exposure beyond what the debug
 
 ## Acceptance for the north star
 
-The sandbox is working when a first-time user — say a professor — can:
+The sandbox is working when the author, mid-investigation, can:
 
-1. Open the tool in a browser, see a default scenario solving.
-2. Grab an obstacle, move it, watch the curve re-solve.
-3. Make the problem infeasible on purpose, read the one-line diagnosis, and step into the debug view to see which KOZ row blew up.
-4. Save the scenario, close the tab, reopen it, and land on the same state.
+1. Open the tool, land on a scenario that solves, and start poking immediately — no boilerplate between thought and experiment.
+2. Grab an obstacle, move it into a configuration suspected of breaking the solver, and watch the curve re-solve (or fail).
+3. When something breaks, read the one-line diagnosis, drop into the debug view, and trace the failure down to the specific KOZ row / iteration that blew up — without leaving the browser.
+4. Save the failing scenario, come back days later, and land on the exact same state to continue probing.
 
-Everything else is in service of that.
+Everything else is in service of that loop: pose → observe → diagnose → iterate.
 
 ## Practical direction for design decisions
 
@@ -146,6 +157,7 @@ When choosing between options, prefer the one that moves toward:
 - Debugger replay from authentic trace.
 - Row-level geometry inspectability for KOZ constraints.
 - Interactivity over batch re-runs.
+- One frontend with a diagnostic drawer over separate debug/batch pages.
 
 Reject changes that deepen:
 
@@ -153,3 +165,4 @@ Reject changes that deepen:
 - Debugger-only orchestration that diverges from the batch path.
 - Visualizations that can't be tied back to actual solver geometry.
 - UI features that require snapshotting state and rendering it offline rather than re-solving live.
+- Separate debugger frontends that lose scenario state, camera, or viewport when switching modes.

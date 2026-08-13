@@ -29,13 +29,17 @@ Landed as a 5-commit series on 2026-04-20 (`e9d3311` → `c5d4f8b`). Obstacles t
 - [x] Visual feedback during drag: the trajectory is dimmed while a drag or solve is in flight; the existing status pill doubles as the solving spinner.
 - [ ] Obstacle velocity handles — deferred. Velocity is now fully editable via the two control-point t-coordinates, so a separate velocity handle isn't load-bearing for the demo.
 
-## Phase 3 — Diagnostic bridge
+## Phase 3 — Diagnostic drawer (in-sandbox)
+
+Fold diagnostic mode into the sandbox per VISION §One frontend, two tempos: shared page, shared scene, shared camera, shared scenario. The existing standalone `spacetime_bezier_opt_debug.html` + `tools/spacetime_opt_debug.py` are the reference implementation — their views migrate into the sandbox drawer and the standalone pair is retired once parity is reached.
 
 - [ ] Define a one-line infeasibility summary format: obstacle id, segment index, iteration, dominant violated row.
 - [ ] Emit that summary from the Rust backend through the trace layer (extend `DebugFrame` if needed).
 - [ ] Render the summary in a diagnostic panel in `spacetime_bezier_interactive.html`.
-- [ ] Add an "Open in debug mode" button that deep-links to `figures/spacetime_bezier_opt_debug.html` with the failing run's trace preloaded.
-- [ ] Verify the debugger UI can consume a trace produced by the sandbox (forces trace schema to be the real shared contract).
+- [ ] Add a "Diagnose" toggle that slides in a diagnostic drawer over the current scene, preloaded with the latest run's trace — no reload, no scenario round-trip, camera preserved.
+- [ ] Migrate stage list, row-level KOZ inspector, and iteration scrubber from `spacetime_bezier_opt_debug.html` into the sandbox drawer.
+- [ ] Route trace collection through the sandbox server (`spacetime_bezier/sandbox.py`) so the drawer consumes the same execution path batch mode does — forces trace schema to be the real shared contract.
+- [ ] Retire `figures/spacetime_bezier_opt_debug.html` and `tools/spacetime_opt_debug.py` once drawer parity is confirmed; update README commands list.
 
 ## Phase 4 — Persistence & comparison
 
@@ -48,7 +52,7 @@ Landed as a 5-commit series on 2026-04-20 (`e9d3311` → `c5d4f8b`). Obstacles t
 ## Phase 5 — Streaming observer (deferred)
 
 - [ ] Define a streaming observer interface in Rust that emits trace frames live without buffering the full run.
-- [ ] Stream frames to the UI via WebSocket or SSE from `tools/spacetime_opt_debug.py` (or a successor).
+- [ ] Stream frames from the sandbox server (`spacetime_bezier/sandbox.py`) to the diagnostic drawer via WebSocket or SSE.
 - [ ] Enable live inspection during a long solve without altering solver control flow.
 
 ## Cross-cutting / housekeeping

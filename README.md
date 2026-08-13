@@ -1,8 +1,8 @@
 # Space-Time Bezier Trajectory Sandbox
 
-An interactive research workbench for **space-time Bezier trajectory optimization** — a paper-pitch demo exploring whether lifting moving obstacles into space-time (adding time as an explicit Bezier coordinate) lets the existing convex-hull / supporting-half-space machinery handle moving-obstacle avoidance directly.
+A personal research / debug sandbox for **space-time Bezier trajectory optimization**. The premise being probed: lifting moving obstacles into space-time (adding time as an explicit Bezier coordinate) turns them into static tubes, so the existing convex-hull / supporting-half-space machinery should handle moving-obstacle avoidance directly. The sandbox exists to stress that premise — pose problems, find where the optimizer breaks, prototype fixes.
 
-The sandbox is the demo: drag obstacles, tweak parameters, watch the optimizer re-solve. For north-star direction see [`VISION.md`](VISION.md). For current architecture and Claude-Code-facing notes see [`CLAUDE.md`](CLAUDE.md).
+Drag obstacles, tweak parameters, watch the optimizer re-solve. For north-star direction see [`VISION.md`](VISION.md). For current architecture and Claude-Code-facing notes see [`CLAUDE.md`](CLAUDE.md).
 
 ## Interacting with the sandbox
 
@@ -72,4 +72,4 @@ Rust is the sole optimizer backend. A single SCP `scp_step` function in the Rust
 - **Change the optimizer**: edit `rust_optimizer/core/src/spacetime_optimizer.rs` (outer loop) or `spacetime_constraints.rs` (KOZ geometry), then rebuild with `maturin develop --release`.
 - **Change the UI**: edit `figures/spacetime_bezier_interactive.html` or `figures/spacetime_bezier_opt_debug.html`.
 
-Before opening a PR, run `pytest` (two pre-existing failures in `orbital_docking/` tests are known — golden drift and a removed warning check).
+Before opening a PR, run `pytest`.
