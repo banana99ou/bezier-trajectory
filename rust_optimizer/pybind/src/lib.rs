@@ -116,6 +116,7 @@ fn optimize_orbital_docking<'py>(
     time_ub = 15.0,
     elastic_weight = 100.0,
     cap_bulge_ratio = 2.0,
+    use_scvx = false,
 ))]
 fn optimize_spacetime_bezier<'py>(
     py: Python<'py>,
@@ -137,6 +138,7 @@ fn optimize_spacetime_bezier<'py>(
     time_ub: f64,
     elastic_weight: f64,
     cap_bulge_ratio: f64,
+    use_scvx: bool,
 ) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyDict>)> {
     let p_arr = p_init.as_array();
     let np1 = p_arr.shape()[0];
@@ -236,6 +238,7 @@ fn optimize_spacetime_bezier<'py>(
         &obstacles,
         elastic_weight,
         cap_bulge_ratio,
+        use_scvx,
     );
 
     let p_opt = PyArray2::from_vec2(py, &{
@@ -360,12 +363,14 @@ impl SpacetimeScpContext {
 
     /// Run one SCP iteration from the given control points.
     /// Returns (p_new, info_dict, koz_segment_idx, koz_cp_idx, koz_obstacle_idx,
-    ///          koz_normals, koz_support_points, koz_closest_centers,
+    ///          koz_iteration, koz_normals, koz_support_points, koz_closest_centers,
     ///          koz_lower_bounds, koz_margins, koz_slack).
+    #[pyo3(signature = (p_current, iteration = 0))]
     fn step<'py>(
         &self,
         py: Python<'py>,
         p_current: PyReadonlyArray2<'py, f64>,
+        iteration: u32,
     ) -> PyResult<PyObject> {
         let p_arr = p_current.as_array();
         let p_flat: Vec<f64> = p_arr.iter().copied().collect();
@@ -389,6 +394,13 @@ impl SpacetimeScpContext {
             self.elastic_weight,
             self.tol,
             self.cap_bulge_ratio,
+            iteration,
+            // The step debugger stays on the legacy path. Driving it with SCvx would
+            // return a raw CANDIDATE that this stepper has no accept/reject stage to
+            // grade, and it would then be displayed as an accepted iterate — the exact
+            // conflation the trace is required not to make. Wiring the debugger to the
+            // ratio test is separate work.
+            false,
         );
 
         let np1 = self.precomputed.np1;
@@ -414,12 +426,15 @@ impl SpacetimeScpContext {
         info.set_item("converged", result.converged)?;
         info.set_item("cost", result.cost)?;
         info.set_item("koz_row_count", result.koz_rows.len())?;
+        // False on this path: `p_new` is an accepted iterate, not a raw candidate.
+        info.set_item("is_candidate", result.is_candidate)?;
 
         // Pack per-row KOZ data as parallel flat arrays
         let n_koz = result.koz_rows.len();
         let seg_idx: Vec<i32> = result.koz_rows.iter().map(|r| r.segment_idx as i32).collect();
         let cp_idx: Vec<i32> = result.koz_rows.iter().map(|r| r.cp_idx as i32).collect();
         let obs_idx: Vec<i32> = result.koz_rows.iter().map(|r| r.obstacle_idx as i32).collect();
+        let iter_idx: Vec<i32> = result.koz_rows.iter().map(|r| r.iteration as i32).collect();
 
         let mut normals_flat = Vec::with_capacity(n_koz * dim);
         let mut support_flat = Vec::with_capacity(n_koz * dim);
@@ -438,6 +453,7 @@ impl SpacetimeScpContext {
         let koz_seg = PyArray1::from_vec(py, seg_idx);
         let koz_cp = PyArray1::from_vec(py, cp_idx);
         let koz_obs = PyArray1::from_vec(py, obs_idx);
+        let koz_iter = PyArray1::from_vec(py, iter_idx);
         let koz_normals = PyArray2::from_vec2(py, &{
             result.koz_rows.iter().map(|r| r.normal.clone()).collect::<Vec<_>>()
         }).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
@@ -453,7 +469,7 @@ impl SpacetimeScpContext {
 
         Ok((
             p_new, info,
-            koz_seg, koz_cp, koz_obs,
+            koz_seg, koz_cp, koz_obs, koz_iter,
             koz_normals, koz_supports, koz_centers,
             koz_lbs, koz_margins, koz_slack,
         ).into_pyobject(py)?.into_any().unbind())

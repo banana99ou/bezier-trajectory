@@ -21,6 +21,20 @@ except ImportError:  # pragma: no cover - exercised when the native extension is
     _bezier_opt_rs = None
 
 
+# Mirrors `stop_reason` in rust_optimizer/core/src/spacetime_optimizer.rs.
+# Only `merit_streak` and `stationary` are success claims; the rest mean the loop
+# gave up, and the labels say so rather than leaving it to the reader.
+_STOP_REASONS = {
+    0: "iteration_cap (gave up)",
+    1: "merit_streak",
+    2: "trust_collapse (gave up unless certified)",
+    3: "qp_failure (gave up)",
+    4: "stationary",
+    5: "legacy_small_step (NOT an optimality claim)",
+    -1: "not_reported",
+}
+
+
 def _optimize_spacetime_rust(
     P_init: np.ndarray,
     obstacles: list[dict],
@@ -35,6 +49,7 @@ def _optimize_spacetime_rust(
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
     cap_bulge_ratio: float = 2.0,
+    use_scvx: bool = False,
     verbose: bool = True,
 ) -> tuple[np.ndarray, dict]:
     """Call the native Rust backend for the space-time optimizer."""
@@ -65,6 +80,7 @@ def _optimize_spacetime_rust(
         time_lb=time_lb,
         time_ub=time_upper,
         cap_bulge_ratio=cap_bulge_ratio,
+        use_scvx=use_scvx,
     )
     P_opt = np.asarray(P_opt, dtype=float)
     info = dict(info)
@@ -79,14 +95,37 @@ def _optimize_spacetime_rust(
         print(
             f"SCP: N={n_cp - 1}, dim={dim}, n_seg={n_seg}, n_cp={n_cp}, n_obs={len(obstacles)}, backend=rust"
         )
-        if delta < tol and total_slack < 1e-10:
-            reason = "converged"
-        elif iterations >= max_iter:
-            reason = "max_iter_reached"
-        else:
-            reason = "solver_failure"
+        # Termination label comes from the solver, which is the only thing that knows
+        # why it stopped. The previous version re-derived it here as
+        # "delta < tol -> converged", which reports a small step as an optimality
+        # claim -- and on the legacy path every step is accepted unconditionally, so a
+        # small step can mean the iterate stopped moving for any reason at all.
+        reason = _STOP_REASONS.get(int(info.get("stop_reason", -1)), "unknown")
+        converged = bool(info.get("converged", 0.0))
         print(f"  rust result: iterations={iterations}/{max_iter}, clearance={clearance:.4f}")
-        print(f"  termination: {reason}, feasible={feasible}, delta={delta:.2e}, koz_slack={total_slack:.2e}")
+        print(
+            f"  termination: {reason}, converged={converged}, feasible={feasible}, "
+            f"delta={delta:.2e}, koz_slack={total_slack:.2e}"
+        )
+        if info.get("returned_best_iterate", 0.0):
+            print(
+                "  NOTE: the final iterate penetrated an obstacle; returning the best "
+                "feasible iterate seen instead. It is NOT the point the loop stopped on."
+            )
+        if info.get("scvx", 0.0):
+            print(
+                f"  scvx: accept={int(info.get('scvx_accept_count', 0))} "
+                f"reject={int(info.get('scvx_reject_count', 0))} "
+                f"null={int(info.get('scvx_null_step_count', 0))} "
+                f"bootstrap={int(info.get('scvx_bootstrap_count', 0))}"
+            )
+            print(
+                f"  rho: mean={info.get('scvx_rho_mean', math.nan):.4f} "
+                f"min={info.get('scvx_rho_min', math.nan):.4f} "
+                f"max={info.get('scvx_rho_max', math.nan):.4f} "
+                f"n={int(info.get('scvx_rho_samples', 0))}, "
+                f"final_trust={info.get('scvx_final_trust', math.nan):.3e}"
+            )
 
     return P_opt, info
 
@@ -105,6 +144,7 @@ def optimize_spacetime_from_control_points(
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
     cap_bulge_ratio: float = 2.0,
+    use_scvx: bool = False,
     verbose: bool = True,
 ) -> tuple[np.ndarray, dict]:
     """Optimize a space-time Bezier curve from an initial control polygon.
@@ -125,6 +165,7 @@ def optimize_spacetime_from_control_points(
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
         cap_bulge_ratio=cap_bulge_ratio,
+        use_scvx=use_scvx,
         verbose=verbose,
     )
 
@@ -146,6 +187,7 @@ def optimize_spacetime(
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
     cap_bulge_ratio: float = 2.0,
+    use_scvx: bool = False,
     verbose: bool = True,
     init_curve: dict | None = None,
 ) -> tuple[np.ndarray, dict]:
@@ -171,6 +213,7 @@ def optimize_spacetime(
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
         cap_bulge_ratio=cap_bulge_ratio,
+        use_scvx=use_scvx,
         verbose=verbose,
     )
 
