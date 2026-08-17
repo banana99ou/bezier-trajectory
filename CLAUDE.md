@@ -49,8 +49,9 @@ Three separate agents have each spent ~50 tool calls rediscovering these.
 - `bezier.rs` and `de_casteljau.rs` are **byte-identical** between `main` and this branch.
 - **`0d130fc` (the `|pred|` stationarity fix) has no pre-image here.** `spacetime_optimizer.rs` has no merit function, no `pred`, and no ratio test; every step is accepted unconditionally (`spacetime_optimizer.rs:369-392`). "Converged" means `delta < tol && slack < 1e-10` — the step got small, which is not an optimality claim.
 - **G1 — the body-case KOZ normal has a zero time coefficient.** `spacetime_constraints.rs:82-104`. The tube is `‖p_xy − p₀ − v·p_t‖ ≤ r`, so its true normal is `(n̂, −n̂·v)`; the code drops the time term. This regressed in `29a43c6` (which fixed an unrelated slider artifact and never mentioned the normal); `c4ec13c` had it right. Because obstacle time windows default to `±inf` (`geometry.py:194-195`), the cap branch is unreachable — so on `original` and `diverse`, **every KOZ row in every iteration is a zero-time row**, and the QP is told that moving a control point in time cannot change clearance.
-- **G2 — one plane per (segment, control point, obstacle).** `spacetime_constraints.rs:191-193`. Each row is spread across *all* global control points by the dense subdivision matrix (`:206-211`), so two segments on opposite sides of a tube fight over shared variables. This forfeits the convex-hull certificate that both other constraint builders in this repo preserve.
-- `wall` and `diverse` are infeasible (min clearance −0.112 and −0.495, 200 iterations). **Parameter tuning was already tried and failed** — `489eb85` shortened the wall's `t_end` 8.0 → 5.0 and added low-segment configs.
+- **G2 — one plane per (segment, control point, obstacle).** `spacetime_constraints.rs:191-193`. The convex-hull certificate needs **one** plane satisfied by **all** of a segment's control points; per-point planes prove only that each point individually is outside its own plane, which is exactly as strong as sampling the curve at finitely many points. Worse, opposing normals let a segment's hull straddle the tube, and a straddling hull *contains* it. Confirmed against six papers in `doc/notes/_shared/c3_safe_corridor_refs.md`; the only per-control-point method in the literature (EGO-Planner) is an explicit soft penalty claiming no guarantee.
+  - **The dense subdivision matrix is NOT part of this defect.** An earlier version of this line implied it was. De Casteljau weights are non-negative and sum to one, so each sub-control-point is a convex combination of the parents and the certificate transfers intact. Sparsifying that matrix would *break* the guarantee.
+- `wall` and `diverse` are infeasible. **Parameter tuning was already tried and failed** — `489eb85` shortened the wall's `t_end` 8.0 → 5.0 and added low-segment configs. (Superseded numbers: this line previously recorded −0.112 and −0.495; see the scenario table for measured values.)
 - **The KOZ tests cannot fail on G1.** Every one uses `vel=[0,0]`, where a zero time coefficient is genuinely correct, and `tests/unit/test_spacetime_constraints.py:65` asserts `A[:, 2::3] == 0`, which enshrines the bug. Those tests exercise `spacetime_bezier/constraints.py` — the dead Python builder. The Rust builder has no tests at all.
 - **Note 001 contradicts itself, so A1 is real work.** `doc/notes/001_problem_formulation/main.tex` §"Body 경우" derives `n = (d_xy/‖d_xy‖, 0)` and states the time component is "정확히 0" — presenting it as the correct formulation. §"잘못된 패턴" then forbids exactly that: evaluate the obstacle at `p₀ + v·t`, build the normal from spatial coordinates only, emit a zero time component. The body derivation *is* those three steps. Separately, §"선형화 지점" presents per-control-point linearization as an improvement over per-centroid ("더 조밀한 표본") — that is G2. **The note enshrines both defects as design. Do not seed the paper from it until A1 revises it.**
 
@@ -143,9 +144,16 @@ Registry keys are in `spacetime_bezier/scenarios.py` (`SCENARIO_MAP`).
 
 | Key | Purpose | Status |
 |-----|---------|--------|
-| `original` | 3 moving obstacles; basic proof of concept | Feasible, ~39 iterations |
-| `diverse` | Varied sizes/speeds/directions; shows generality | **Infeasible** — min clearance −0.495, runs to max_iter |
-| `wall` | Curve should "wait" until the wall vanishes — time as a real optimization dimension | **Infeasible** — min clearance −0.112, runs to max_iter. The behavior this scenario exists to demonstrate does not currently work. |
+Measured 2026-08-17, degree 8, `max_iter=200`, trust radius 0.5, after the solver
+was reduced to a single graded path. `certificate` is the violation of the
+half-spaces the returned iterate's own control points generate — nonzero means the
+convex-hull guarantee does **not** hold for that curve, whatever its clearance.
+
+| Key | Purpose | Status |
+|-----|---------|--------|
+| `original` | 3 moving obstacles; basic proof of concept | Clearance **+0.317** at 8 segments, certificate clean, but **does not converge** (trust collapse). ⚠️ The previously recorded "Feasible, ~39 iterations / +0.8348" was **the straight-line initial guess handed back unchanged** — the best-iterate fallback was seeded with the input, so the solver's own output was discarded. Verified: initial-guess clearance is exactly +0.8348. |
+| `diverse` | Varied sizes/speeds/directions; shows generality | **Infeasible** — clearance −0.710, certificate violated by 3.52, trust collapse at 28 iterations. |
+| `wall` | Curve should "wait" until the wall vanishes — time as a real optimization dimension | **Works at 2 segments only**: clearance **+0.038**, converged on stationarity, certificate clean, zero rejected steps. Every higher segment count fails (−0.11 to −0.15) — one plane per *control point* fights itself as segments multiply. |
 
 ## Key Files
 

@@ -30,8 +30,7 @@ _STOP_REASONS = {
     2: "trust_collapse (gave up unless certified)",
     3: "qp_failure (gave up)",
     4: "stationary",
-    5: "legacy_small_step (NOT an optimality claim)",
-    -1: "not_reported",
+    -1: "still running / not reported",
 }
 
 
@@ -49,7 +48,6 @@ def _optimize_spacetime_rust(
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
     cap_bulge_ratio: float = 2.0,
-    use_scvx: bool = False,
     verbose: bool = True,
 ) -> tuple[np.ndarray, dict]:
     """Call the native Rust backend for the space-time optimizer."""
@@ -80,7 +78,6 @@ def _optimize_spacetime_rust(
         time_lb=time_lb,
         time_ub=time_upper,
         cap_bulge_ratio=cap_bulge_ratio,
-        use_scvx=use_scvx,
     )
     P_opt = np.asarray(P_opt, dtype=float)
     info = dict(info)
@@ -112,20 +109,23 @@ def _optimize_spacetime_rust(
                 "  NOTE: the final iterate penetrated an obstacle; returning the best "
                 "feasible iterate seen instead. It is NOT the point the loop stopped on."
             )
-        if info.get("scvx", 0.0):
-            print(
-                f"  scvx: accept={int(info.get('scvx_accept_count', 0))} "
-                f"reject={int(info.get('scvx_reject_count', 0))} "
-                f"null={int(info.get('scvx_null_step_count', 0))} "
-                f"bootstrap={int(info.get('scvx_bootstrap_count', 0))}"
-            )
-            print(
-                f"  rho: mean={info.get('scvx_rho_mean', math.nan):.4f} "
-                f"min={info.get('scvx_rho_min', math.nan):.4f} "
-                f"max={info.get('scvx_rho_max', math.nan):.4f} "
-                f"n={int(info.get('scvx_rho_samples', 0))}, "
-                f"final_trust={info.get('scvx_final_trust', math.nan):.3e}"
-            )
+        print(
+            f"  steps: accept={int(info.get('accept_count', 0))} "
+            f"reject={int(info.get('reject_count', 0))} "
+            f"null={int(info.get('null_step_count', 0))} "
+            f"bootstrap={int(info.get('bootstrap_count', 0))}"
+        )
+        print(
+            f"  rho: mean={info.get('rho_mean', math.nan):.4f} "
+            f"min={info.get('rho_min', math.nan):.4f} "
+            f"max={info.get('rho_max', math.nan):.4f} "
+            f"n={int(info.get('rho_samples', 0))}, "
+            f"final_trust={info.get('final_trust', math.nan):.3e}"
+        )
+        print(
+            f"  hull certificate violation at returned iterate: "
+            f"{info.get('koz_violation_reference', math.nan):.3e}"
+        )
 
     return P_opt, info
 
@@ -144,7 +144,6 @@ def optimize_spacetime_from_control_points(
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
     cap_bulge_ratio: float = 2.0,
-    use_scvx: bool = False,
     verbose: bool = True,
 ) -> tuple[np.ndarray, dict]:
     """Optimize a space-time Bezier curve from an initial control polygon.
@@ -165,7 +164,6 @@ def optimize_spacetime_from_control_points(
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
         cap_bulge_ratio=cap_bulge_ratio,
-        use_scvx=use_scvx,
         verbose=verbose,
     )
 
@@ -187,7 +185,6 @@ def optimize_spacetime(
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
     cap_bulge_ratio: float = 2.0,
-    use_scvx: bool = False,
     verbose: bool = True,
     init_curve: dict | None = None,
 ) -> tuple[np.ndarray, dict]:
@@ -213,7 +210,6 @@ def optimize_spacetime(
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
         cap_bulge_ratio=cap_bulge_ratio,
-        use_scvx=use_scvx,
         verbose=verbose,
     )
 

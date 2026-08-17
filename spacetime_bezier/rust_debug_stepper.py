@@ -12,7 +12,8 @@ import numpy as np
 from orbital_docking.de_casteljau import segment_matrices_equal_params
 
 from .debug_trace import DebugFrame
-from .geometry import bezier_curve, obstacle_array_bundle
+from .geometry import bezier_curve, compute_min_clearance, obstacle_array_bundle
+from .objective import build_initial_guess
 
 try:
     import bezier_opt as _bezier_opt_rs
@@ -49,7 +50,6 @@ class RustOptimizerStepper:
         p_init: np.ndarray,
         obstacles: list[dict],
         clearance_fn,
-        rust_solver=None,  # retained for API compatibility, unused
         n_seg: int = 8,
         max_iter: int = 30,
         tol: float = 1e-6,
@@ -60,6 +60,7 @@ class RustOptimizerStepper:
         coord_ub: float = 20.0,
         time_lb: float = 0.0,
         time_ub_scale: float = 1.5,
+        cap_bulge_ratio: float = 2.0,
     ) -> None:
         if _bezier_opt_rs is None or not hasattr(_bezier_opt_rs, "SpacetimeScpContext"):
             raise RuntimeError("Rust extension bezier_opt is not available or missing SpacetimeScpContext.")
@@ -79,6 +80,7 @@ class RustOptimizerStepper:
         self.coord_ub = float(coord_ub)
         self.time_lb = float(time_lb)
         self.time_ub_scale = float(time_ub_scale)
+        self.cap_bulge_ratio = float(cap_bulge_ratio)
 
         self.A_list = segment_matrices_equal_params(self.N, self.n_seg)
         self.initial_clearance = float(
@@ -135,6 +137,7 @@ class RustOptimizerStepper:
         seg_idx: np.ndarray,
         cp_idx: np.ndarray,
         obs_idx: np.ndarray,
+        iter_idx: np.ndarray,
         normals: np.ndarray,
         supports: np.ndarray,
         centers: np.ndarray,
@@ -144,19 +147,27 @@ class RustOptimizerStepper:
     ) -> dict:
         """Build a per-segment KOZ payload from Rust's per-row data.
 
-        Groups rows by segment and builds active_obstacles entries with
-        real normal/support/margin values for each obstacle-segment-CP triple.
+        Emits every row (not just the tightest per obstacle-segment pair).
+        Summary fields on each active_obstacle entry reflect the tightest row
+        so existing UI half-space rendering stays intact; full row list is
+        attached as ``rows``.
         """
         n_rows = len(seg_idx)
         segment_snapshots = _segment_snapshots(self.A_list, np.asarray(control_points, dtype=float))
+        n_cp_seg = int(self.A_list[0].shape[0]) if len(self.A_list) else 0
+
         # Index by segment
         by_segment: dict[int, list[int]] = {}
         for r in range(n_rows):
             by_segment.setdefault(int(seg_idx[r]), []).append(r)
 
+        def _slack_of(r: int) -> float:
+            return float(slack[r]) if r < len(slack) else 0.0
+
         segments_out = []
         worst_margin = float("inf")
         worst_segment_idx = None
+
         for snap in segment_snapshots:
             s_idx = int(snap["segment_index"])
             if s_idx not in by_segment:
@@ -165,43 +176,88 @@ class RustOptimizerStepper:
             seg = dict(snap)
             rows_here = by_segment[s_idx]
 
-            # Aggregate per-obstacle (one entry per obstacle that touches this segment)
+            # Group rows by obstacle within this segment
             obs_to_rows: dict[int, list[int]] = {}
             for r in rows_here:
                 obs_to_rows.setdefault(int(obs_idx[r]), []).append(r)
 
             active_obs = []
             for o_idx, r_list in obs_to_rows.items():
-                # Pick the tightest (lowest margin) row for this obstacle-segment pair
-                tightest = min(r_list, key=lambda r: float(margins[r]))
-                margin_val = float(margins[tightest])
-                if margin_val < worst_margin:
-                    worst_margin = margin_val
+                # Sort rows by cp_idx for deterministic UI ordering
+                r_list_sorted = sorted(r_list, key=lambda r: int(cp_idx[r]))
+
+                # Tightest row for summary/backward-compat display
+                tightest = min(r_list_sorted, key=lambda r: float(margins[r]))
+                tightest_margin = float(margins[tightest])
+                if tightest_margin < worst_margin:
+                    worst_margin = tightest_margin
                     worst_segment_idx = s_idx
 
-                normal = normals[tightest].tolist()
+                tight_normal = normals[tightest].tolist()
+
+                rows_detail = [
+                    {
+                        "row_index": int(r),
+                        "cp_idx": int(cp_idx[r]),
+                        "iteration": int(iter_idx[r]) if r < len(iter_idx) else 0,
+                        "normal": normals[r][:-1].tolist(),
+                        "time_coefficient": float(normals[r][-1]),
+                        "support_point": supports[r].tolist(),
+                        "center": centers[r].tolist(),
+                        "lower_bound": float(lbs[r]),
+                        "lhs_current": float(lbs[r] + margins[r]),
+                        "margin_current": float(margins[r]),
+                        "slack": _slack_of(r),
+                    }
+                    for r in r_list_sorted
+                ]
+
                 active_obs.append({
                     "obstacle_index": o_idx,
                     "obstacle_name": self.obstacles[o_idx].get("name", f"obs{o_idx}"),
                     "geometry_type": "capsule",
+                    # Summary (tightest row) — preserves existing UI rendering
                     "center": centers[tightest].tolist(),
                     "support_point": supports[tightest].tolist(),
-                    "normal": normal[:-1],
-                    "time_coefficient": float(normal[-1]),
+                    "normal": tight_normal[:-1],
+                    "time_coefficient": float(tight_normal[-1]),
                     "lower_bound": float(lbs[tightest]),
                     "lhs_current": float(lbs[tightest] + margins[tightest]),
-                    "margin_current": margin_val,
-                    "row_indices": r_list,
-                    "slack": float(slack[tightest]) if len(slack) > tightest else 0.0,
+                    "margin_current": tightest_margin,
+                    "row_indices": r_list_sorted,
+                    "slack": _slack_of(tightest),
+                    # Per-row detail
+                    "tightest_row_index": int(tightest),
+                    "tightest_cp_idx": int(cp_idx[tightest]),
+                    "row_count": len(r_list_sorted),
+                    "rows": rows_detail,
                 })
             seg["active_obstacles"] = active_obs
             segments_out.append(seg)
+
+        # Flat list of every row for the margin table in the UI
+        all_rows = [
+            {
+                "row_index": int(r),
+                "segment_index": int(seg_idx[r]),
+                "cp_idx": int(cp_idx[r]),
+                "obstacle_index": int(obs_idx[r]),
+                "obstacle_name": self.obstacles[int(obs_idx[r])].get("name", f"obs{int(obs_idx[r])}"),
+                "iteration": int(iter_idx[r]) if r < len(iter_idx) else 0,
+                "margin_current": float(margins[r]),
+                "lower_bound": float(lbs[r]),
+                "slack": _slack_of(r),
+            }
+            for r in range(n_rows)
+        ]
 
         return {
             "row_count": int(n_rows),
             "segments": segments_out,
             "worst_margin": worst_margin if worst_margin != float("inf") else None,
             "worst_segment": worst_segment_idx,
+            "all_rows": all_rows,
+            "n_cp_seg": n_cp_seg,
         }
 
     def _prepare_frames(self) -> None:
@@ -262,20 +318,37 @@ class RustOptimizerStepper:
             scp_trust_radius=self.scp_trust_radius,
             elastic_weight=100.0,
             tol=self.tol,
+            cap_bulge_ratio=self.cap_bulge_ratio,
         )
 
-        # Track best feasible iterate (match Rust optimize_spacetime semantics)
+        # The iterate, the best-feasible iterate and the stopping decision all live
+        # in the Rust state now. This loop reads them; it does not re-derive them.
+        # Re-deriving is what made this a second solver.
         current_cp = self.P_init.copy()
         best_cp = current_cp.copy()
-        best_clearance = self.initial_clearance
+        # Overwritten from the solver state each iteration; never seeded from the
+        # initial guess, which is not an iterate the solver produced.
+        best_clearance = float("-inf")
+        stop_reason = -1.0
+        state_converged = False
+        last_delta = float("nan")
+        last_total_slack = 0.0
+        last_max_slack = 0.0
+        last_cost = float("nan")
 
         for it in range(1, self.max_iter + 1):
-            result = ctx.step(current_cp)
-            p_new, info, seg_idx, cp_idx, obs_idx, normals, supports, centers, lbs, margins, slack = result
+            result = ctx.step()
+            (
+                p_new, info,
+                seg_idx, cp_idx, obs_idx, iter_idx,
+                normals, supports, centers,
+                lbs, margins, slack,
+            ) = result
             p_new = np.asarray(p_new, dtype=float)
             seg_idx = np.asarray(seg_idx)
             cp_idx = np.asarray(cp_idx)
             obs_idx = np.asarray(obs_idx)
+            iter_idx = np.asarray(iter_idx)
             normals = np.asarray(normals)
             supports = np.asarray(supports)
             centers = np.asarray(centers)
@@ -287,7 +360,8 @@ class RustOptimizerStepper:
             # supporting-surface-generation frame — real per-row data
             ss_payload = self._common_payload(current_cp)
             ss_payload["koz"] = self._build_koz_payload(
-                current_cp, seg_idx, cp_idx, obs_idx, normals, supports, centers, lbs, margins, slack
+                current_cp, seg_idx, cp_idx, obs_idx, iter_idx,
+                normals, supports, centers, lbs, margins, slack,
             )
             ss_payload["diagnostics"] = {
                 "summary": f"Iteration {it} KOZ supporting surfaces ({info['koz_row_count']} rows).",
@@ -375,13 +449,21 @@ class RustOptimizerStepper:
                             pe_payload, iteration=it - 1)
             )
 
-            # Advance state
+            # `p_new` is the ACCEPTED iterate: unchanged when the step was rejected.
+            # The raw candidate is info["p_candidate"], and the two are kept distinct
+            # because a rejected candidate must never be displayed as an iterate.
             current_cp = p_new
-            if float(info["clearance"]) > 0.0 and float(info["clearance"]) > best_clearance:
-                best_clearance = float(info["clearance"])
-                best_cp = current_cp.copy()
+            last_delta = float(info["delta"])
+            last_total_slack = float(info["total_slack"])
+            last_max_slack = float(info["max_slack"])
+            last_cost = float(info["cost"])
+            best_clearance = float(info["best_clearance"])
+            best_cp = np.asarray(ctx.best_control_points(), dtype=float)
+            state_converged = bool(info["state_converged"])
+            stop_reason = float(info["stop_reason"])
 
-            if bool(info["converged"]):
+            # The solver decides when it is done, not this loop.
+            if not bool(info["running"]):
                 break
 
         # Final iterate: use best feasible if current is infeasible
@@ -397,12 +479,25 @@ class RustOptimizerStepper:
             final_cp = current_cp
 
         self.final_control_points = np.asarray(final_cp, dtype=float)
+        feasible = final_clearance > 0.0 or len(self.obstacles) == 0
         self.result_info = {
             "backend": "rust",
             "iterations": int(it) if "it" in dir() else 0,
-            "min_clearance": final_clearance,
-            "best_clearance": best_clearance,
-            "used_best_feasible": used_best,
+            "feasible": bool(feasible),
+            "min_clearance": float(final_clearance),
+            "best_clearance": float(best_clearance),
+            "used_best_feasible": bool(used_best),
+            "cost": float(last_cost),
+            "cost_true_energy": float(last_cost),
+            "cost_no_const": float(last_cost),
+            "final_delta_norm": float(last_delta),
+            "total_koz_slack": float(last_total_slack),
+            "max_koz_slack": float(last_max_slack),
+            "max_control_accel_ms2": 0.0,
+            "mean_control_accel_ms2": 0.0,
+            "converged": bool(state_converged),
+            "stop_reason": float(stop_reason),
+            "returned_best_iterate": bool(used_best),
         }
 
         finalize_payload = self._common_payload(self.final_control_points)
@@ -432,3 +527,87 @@ class RustOptimizerStepper:
         while self.next_frame() is not None:
             pass
         return self.final_control_points.copy(), dict(self.result_info)
+
+    def frames_as_dicts(self) -> list[dict]:
+        """Return all collected frames as JSON-safe dicts. Requires run_to_completion first."""
+        if not self._prepared:
+            self._prepare_frames()
+        return [f.to_dict() for f in self._frames]
+
+
+def create_spacetime_debug_stepper_from_control_points(
+    p_init,
+    obstacles: list[dict],
+    clearance_fn=compute_min_clearance,
+    n_seg: int = 8,
+    max_iter: int = 30,
+    tol: float = 1e-6,
+    scp_prox_weight: float = 0.5,
+    scp_trust_radius: float = 0.0,
+    min_dt: float = 0.1,
+    coord_lb: float = -20.0,
+    coord_ub: float = 20.0,
+    time_lb: float = 0.0,
+    time_ub_scale: float = 1.5,
+    cap_bulge_ratio: float = 2.0,
+) -> RustOptimizerStepper:
+    """Create a Rust-backed debug stepper from an existing control polygon."""
+    return RustOptimizerStepper(
+        p_init=np.asarray(p_init, dtype=float),
+        obstacles=obstacles,
+        clearance_fn=clearance_fn,
+        n_seg=n_seg,
+        max_iter=max_iter,
+        tol=tol,
+        scp_prox_weight=scp_prox_weight,
+        scp_trust_radius=scp_trust_radius,
+        min_dt=min_dt,
+        coord_lb=coord_lb,
+        coord_ub=coord_ub,
+        time_lb=time_lb,
+        time_ub_scale=time_ub_scale,
+        cap_bulge_ratio=cap_bulge_ratio,
+    )
+
+
+def create_spacetime_debug_stepper(
+    N: int,
+    dim: int,
+    p_start,
+    p_end,
+    obstacles: list[dict],
+    clearance_fn=compute_min_clearance,
+    n_seg: int = 8,
+    max_iter: int = 30,
+    tol: float = 1e-6,
+    scp_prox_weight: float = 0.5,
+    scp_trust_radius: float = 0.0,
+    min_dt: float = 0.1,
+    coord_lb: float = -20.0,
+    coord_ub: float = 20.0,
+    time_lb: float = 0.0,
+    time_ub_scale: float = 1.5,
+    cap_bulge_ratio: float = 2.0,
+    init_curve: dict | None = None,
+) -> RustOptimizerStepper:
+    """Create a Rust-backed debug stepper, building the initial guess from endpoints."""
+    n_cp = int(N) + 1
+    p_init = build_initial_guess(p_start, p_end, n_cp, init_curve=init_curve)
+    if dim != p_init.shape[1]:
+        raise ValueError(f"Expected dim={dim}, got initial guess with dim={p_init.shape[1]}")
+    return create_spacetime_debug_stepper_from_control_points(
+        p_init,
+        obstacles,
+        clearance_fn=clearance_fn,
+        n_seg=n_seg,
+        max_iter=max_iter,
+        tol=tol,
+        scp_prox_weight=scp_prox_weight,
+        scp_trust_radius=scp_trust_radius,
+        min_dt=min_dt,
+        coord_lb=coord_lb,
+        coord_ub=coord_ub,
+        time_lb=time_lb,
+        time_ub_scale=time_ub_scale,
+        cap_bulge_ratio=cap_bulge_ratio,
+    )

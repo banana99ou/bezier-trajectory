@@ -116,7 +116,6 @@ fn optimize_orbital_docking<'py>(
     time_ub = 15.0,
     elastic_weight = 100.0,
     cap_bulge_ratio = 2.0,
-    use_scvx = false,
 ))]
 fn optimize_spacetime_bezier<'py>(
     py: Python<'py>,
@@ -138,7 +137,6 @@ fn optimize_spacetime_bezier<'py>(
     time_ub: f64,
     elastic_weight: f64,
     cap_bulge_ratio: f64,
-    use_scvx: bool,
 ) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyDict>)> {
     let p_arr = p_init.as_array();
     let np1 = p_arr.shape()[0];
@@ -238,7 +236,6 @@ fn optimize_spacetime_bezier<'py>(
         &obstacles,
         elastic_weight,
         cap_bulge_ratio,
-        use_scvx,
     );
 
     let p_opt = PyArray2::from_vec2(py, &{
@@ -272,11 +269,13 @@ struct SpacetimeScpContext {
     t_end: Vec<f64>,
     n_obs: usize,
     spatial_dim: usize,
-    scp_prox_weight: f64,
-    scp_trust_radius: f64,
     elastic_weight: f64,
     tol: f64,
     cap_bulge_ratio: f64,
+    /// Trust radius and streak counters live here, not in Python. A stepper that
+    /// re-derived them per call would be running a different algorithm from the
+    /// batch loop.
+    state: spacetime_optimizer::ScpState,
 }
 
 #[pymethods]
@@ -344,6 +343,9 @@ impl SpacetimeScpContext {
             &p_flat, np1, dim, n_seg, min_dt, coord_lb, coord_ub, time_lb, time_ub,
         );
 
+        let _ = scp_prox_weight; // the trust region does this job; see scp_step
+        let state = spacetime_optimizer::ScpState::new(&p_flat, scp_trust_radius);
+
         Ok(Self {
             precomputed: pre,
             pos0,
@@ -353,28 +355,35 @@ impl SpacetimeScpContext {
             t_end,
             n_obs,
             spatial_dim,
-            scp_prox_weight,
-            scp_trust_radius,
             elastic_weight,
             tol,
             cap_bulge_ratio,
+            state,
         })
     }
 
-    /// Run one SCP iteration from the given control points.
-    /// Returns (p_new, info_dict, koz_segment_idx, koz_cp_idx, koz_obstacle_idx,
-    ///          koz_iteration, koz_normals, koz_support_points, koz_closest_centers,
-    ///          koz_lower_bounds, koz_margins, koz_slack).
-    #[pyo3(signature = (p_current, iteration = 0))]
-    fn step<'py>(
-        &self,
-        py: Python<'py>,
-        p_current: PyReadonlyArray2<'py, f64>,
-        iteration: u32,
-    ) -> PyResult<PyObject> {
-        let p_arr = p_current.as_array();
-        let p_flat: Vec<f64> = p_arr.iter().copied().collect();
+    /// The best feasible iterate seen so far, as (np1, dim).
+    fn best_control_points<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        let np1 = self.precomputed.np1;
+        let dim = self.precomputed.dim;
+        let mut rows = Vec::with_capacity(np1);
+        for i in 0..np1 {
+            rows.push(self.state.best_p[i * dim..(i + 1) * dim].to_vec());
+        }
+        PyArray2::from_vec2(py, &rows)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))
+    }
 
+    /// Run one canonical SCP iteration and return what happened.
+    ///
+    /// Takes no control points: the iterate lives in the context, because the
+    /// accept/reject decision is what determines it. A caller that passed its own
+    /// point in would be able to advance along a path the solver never chose.
+    ///
+    /// Returns (p_iterate, info, koz_* arrays) where `p_iterate` is the ACCEPTED
+    /// iterate after the decision -- unchanged when the step was rejected. The raw
+    /// candidate is in `info["p_candidate"]`.
+    fn step<'py>(&mut self, py: Python<'py>) -> PyResult<PyObject> {
         let obstacles = SpacetimeObstacleData {
             pos0: &self.pos0,
             vel: &self.vel,
@@ -385,35 +394,40 @@ impl SpacetimeScpContext {
             spatial_dim: self.spatial_dim,
         };
 
-        let result = spacetime_optimizer::scp_step(
-            &p_flat,
+        let iter_out = spacetime_optimizer::scp_iterate(
+            &mut self.state,
             &self.precomputed,
             &obstacles,
-            self.scp_prox_weight,
-            self.scp_trust_radius,
             self.elastic_weight,
             self.tol,
             self.cap_bulge_ratio,
-            iteration,
-            // The step debugger stays on the legacy path. Driving it with SCvx would
-            // return a raw CANDIDATE that this stepper has no accept/reject stage to
-            // grade, and it would then be displayed as an accepted iterate — the exact
-            // conflation the trace is required not to make. Wiring the debugger to the
-            // ratio test is separate work.
-            false,
         );
+        let outcome = iter_out.outcome;
+        let accepted = iter_out.accepted;
+        let rho = iter_out.rho;
+        let pred = iter_out.pred;
+        let act = iter_out.act;
+        let vtrue_c = iter_out.vtrue_c;
+        let trust_before = iter_out.trust_before;
+        let trust_after = iter_out.trust_after;
+        let result = iter_out.step;
 
         let np1 = self.precomputed.np1;
         let dim = self.precomputed.dim;
 
-        // Pack p_new as (np1, dim)
-        let p_new = PyArray2::from_vec2(py, &{
+        let as_rows = |flat: &[f64]| {
             let mut rows = Vec::with_capacity(np1);
             for i in 0..np1 {
-                rows.push(result.p_new[i * dim..(i + 1) * dim].to_vec());
+                rows.push(flat[i * dim..(i + 1) * dim].to_vec());
             }
             rows
-        }).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
+        };
+        // The ACCEPTED iterate. On a rejected step this is the previous point --
+        // which is the whole reason the two are returned separately.
+        let p_new = PyArray2::from_vec2(py, &as_rows(&self.state.p))
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
+        let p_candidate = PyArray2::from_vec2(py, &as_rows(&result.p_new))
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
 
         // Pack info dict
         let info = PyDict::new(py);
@@ -426,8 +440,28 @@ impl SpacetimeScpContext {
         info.set_item("converged", result.converged)?;
         info.set_item("cost", result.cost)?;
         info.set_item("koz_row_count", result.koz_rows.len())?;
-        // False on this path: `p_new` is an accepted iterate, not a raw candidate.
-        info.set_item("is_candidate", result.is_candidate)?;
+        // The accept/reject decision. `converged` above is always false -- a single
+        // subproblem never decides that; the state does.
+        info.set_item("p_candidate", p_candidate)?;
+        info.set_item("outcome", outcome)?;
+        info.set_item("accepted", accepted)?;
+        info.set_item("rho", rho)?;
+        info.set_item("pred_reduction", pred)?;
+        info.set_item("actual_reduction", act)?;
+        info.set_item("koz_violation_candidate", vtrue_c)?;
+        info.set_item("koz_violation_reference", result.vlin_p)?;
+        info.set_item("trust_before", trust_before)?;
+        info.set_item("trust_after", trust_after)?;
+        info.set_item("iteration", self.state.iteration)?;
+        info.set_item("state_converged", self.state.converged)?;
+        info.set_item("stop_reason", self.state.stop)?;
+        info.set_item("running", self.state.running())?;
+        info.set_item("accept_count", self.state.accept_count)?;
+        info.set_item("reject_count", self.state.reject_count)?;
+        // Best FEASIBLE iterate seen, tracked by the solver. Exposed so a stepping
+        // caller does not have to re-derive it and risk tracking a different point
+        // from the batch loop.
+        info.set_item("best_clearance", self.state.best_clearance)?;
 
         // Pack per-row KOZ data as parallel flat arrays
         let n_koz = result.koz_rows.len();
