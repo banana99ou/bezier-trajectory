@@ -15,6 +15,9 @@ import numpy as np
 from .geometry import compute_min_clearance, obstacle_array_bundle
 from .objective import build_initial_guess
 
+# Mirrors DEFAULT_TRUST_RADIUS in rust_optimizer/core/src/spacetime_optimizer.rs.
+DEFAULT_TRUST_RADIUS = 0.5
+
 try:
     import bezier_opt as _bezier_opt_rs
 except ImportError:  # pragma: no cover - exercised when the native extension is unavailable.
@@ -41,7 +44,7 @@ def _optimize_spacetime_rust(
     max_iter: int = 30,
     tol: float = 1e-6,
     scp_prox_weight: float = 0.5,
-    scp_trust_radius: float = 0.0,
+    scp_trust_radius: float = DEFAULT_TRUST_RADIUS,
     min_dt: float = 0.1,
     coord_lb: float = -20.0,
     coord_ub: float = 20.0,
@@ -137,7 +140,7 @@ def optimize_spacetime_from_control_points(
     max_iter: int = 30,
     tol: float = 1e-6,
     scp_prox_weight: float = 0.5,
-    scp_trust_radius: float = 0.0,
+    scp_trust_radius: float = DEFAULT_TRUST_RADIUS,
     min_dt: float = 0.1,
     coord_lb: float = -20.0,
     coord_ub: float = 20.0,
@@ -178,7 +181,7 @@ def optimize_spacetime(
     max_iter: int = 30,
     tol: float = 1e-6,
     scp_prox_weight: float = 0.5,
-    scp_trust_radius: float = 0.0,
+    scp_trust_radius: float = DEFAULT_TRUST_RADIUS,
     min_dt: float = 0.1,
     coord_lb: float = -20.0,
     coord_ub: float = 20.0,
@@ -220,7 +223,7 @@ def optimize_scenario(
     max_iter: int = 200,
     tol: float = 1e-6,
     scp_prox_weight: float = 0.3,
-    scp_trust_radius: float = 0.0,
+    scp_trust_radius: float = DEFAULT_TRUST_RADIUS,
     min_dt: float = 0.1,
     verbose: bool = True,
 ) -> dict:
@@ -259,6 +262,12 @@ def optimize_scenario(
             print(f"  Final clearance: {clearance:.4f}")
 
         key = f"N{N}_seg{n_seg}"
+        # `feasible` says the sampled curve misses the obstacles. `certified`
+        # says the control-point hull satisfies the half-spaces it generates,
+        # which is the property the paper claims. They are different, and a run
+        # can pass the first while failing the second -- so both are recorded and
+        # neither is allowed to stand in for the other.
+        certificate = float(opt_info.get("koz_violation_reference", float("nan")))
         results[key] = {
             "N": int(N),
             "n_seg": int(n_seg),
@@ -266,13 +275,27 @@ def optimize_scenario(
             "min_clearance": float(clearance),
             "feasible": bool(clearance > 0.0),
             "backend": backend_used,
+            "converged": bool(opt_info.get("converged", 0.0)),
+            "stop_reason": int(opt_info.get("stop_reason", -1)),
+            "stop_label": _STOP_REASONS.get(int(opt_info.get("stop_reason", -1)), "unknown"),
+            "iterations": int(opt_info.get("iterations", -1)),
+            "certificate_violation": certificate,
+            "certified": bool(certificate <= 1e-6),
+            "accept_count": int(opt_info.get("accept_count", 0)),
+            "reject_count": int(opt_info.get("reject_count", 0)),
+            "returned_best_iterate": bool(opt_info.get("returned_best_iterate", 0.0)),
+            "trust_radius": float(scp_trust_radius),
         }
 
-    feasible = {key: value for key, value in results.items() if value["feasible"]}
-    if feasible:
-        best_key = max(feasible, key=lambda key: feasible[key]["min_clearance"])
-    else:
-        best_key = max(results, key=lambda key: results[key]["min_clearance"])
+    def _rank(item):
+        _, v = item
+        return (
+            bool(v["feasible"]) and bool(v.get("certified", False)),
+            bool(v["feasible"]),
+            float(v["min_clearance"]),
+        )
+
+    best_key = max(results.items(), key=_rank)[0]
 
     if verbose:
         print(
@@ -299,7 +322,7 @@ def optimize_scenarios(
     max_iter: int = 200,
     tol: float = 1e-6,
     scp_prox_weight: float = 0.3,
-    scp_trust_radius: float = 0.0,
+    scp_trust_radius: float = DEFAULT_TRUST_RADIUS,
     min_dt: float = 0.1,
     verbose: bool = True,
 ) -> dict:

@@ -81,6 +81,98 @@
   canvas { display: block; cursor: grab; }
   button { padding: 4px 14px; cursor: pointer; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px; }
   button:hover { background: #444; }
+
+  /* ═══ Diagnostic drawer ═══ */
+  #diagnoseToggle {
+    margin-left: 8px; padding: 2px 10px; font-size: 11px; vertical-align: middle;
+    background: #1b2134; color: #8cb4ff; border: 1px solid #3f5fa8;
+  }
+  #diagnoseToggle:hover { background: #253056; }
+  #diagnoseToggle[aria-pressed="true"] { background: #3f5fa8; color: #fff; }
+  #diagnosisPill {
+    display: block; margin-top: 4px; font-size: 11px;
+    color: #ffd37a; cursor: pointer; user-select: none;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #diagnosisPill:hover { text-decoration: underline; }
+  #diagnosisPill[hidden] { display: none; }
+
+  .diag-drawer {
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: 20;
+    width: 400px; background: rgba(17,21,34,0.97);
+    border-left: 1px solid #2f3957;
+    transform: translateX(100%); transition: transform 0.2s ease-out;
+    overflow-y: auto; padding: 12px 14px;
+    font-size: 12px; color: #eef2ff;
+  }
+  .diag-drawer.open { transform: translateX(0); }
+  .diag-drawer header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 8px;
+  }
+  .diag-drawer header h2 { font-size: 14px; color: #8cb4ff; margin: 0; }
+  .diag-drawer h3 { font-size: 12px; color: #8cb4ff; margin: 12px 0 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .diag-drawer label {
+    display: block; font-size: 11px; color: #bdc9ef; margin-top: 6px;
+  }
+  .diag-drawer select, .diag-drawer button {
+    width: 100%; background: #1b2134; color: #eef2ff;
+    border: 1px solid #40507d; border-radius: 5px;
+    padding: 4px 8px; font-size: 11px; margin-top: 3px;
+  }
+  .diag-drawer button { cursor: pointer; padding: 5px 8px; }
+  .diag-drawer button:hover:not(:disabled) { background: #253056; }
+  .diag-drawer button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .diag-drawer pre {
+    margin: 4px 0 0; padding: 8px; background: #0f1320;
+    border: 1px solid #27304a; border-radius: 6px;
+    white-space: pre-wrap; font-size: 11px; line-height: 1.4;
+    font-family: ui-monospace, monospace; color: #d9e2ff;
+  }
+  .diag-close {
+    width: auto !important; padding: 2px 8px !important; margin-top: 0 !important;
+    font-size: 14px !important; line-height: 1;
+  }
+  .diag-nav { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+  .diag-nav button { margin-top: 0; }
+  #diagFramePosition { float: right; color: #8cb4ff; font-family: ui-monospace, monospace; }
+  #diagFrameRail {
+    list-style: none; padding: 0; margin: 4px 0 0;
+    max-height: 220px; overflow-y: auto;
+    border: 1px solid #27304a; border-radius: 6px; background: #0f1320;
+  }
+  #diagFrameRail li {
+    padding: 3px 7px; cursor: pointer;
+    font-family: ui-monospace, monospace; font-size: 11px;
+    border-bottom: 1px solid #1a2037;
+  }
+  #diagFrameRail li:hover { background: #1a2240; }
+  #diagFrameRail li.active { background: #263566; color: #fff; }
+  #diagFrameRail li.failed-stage { color: #ffb3ad; }
+  #diagFrameRail li .stage-tag { color: #8cb4ff; }
+  #diagFrameRail li .iter-tag { color: #95a1c6; font-size: 10px; }
+  #diagMarginWrap {
+    max-height: 220px; overflow: auto;
+    border: 1px solid #27304a; border-radius: 6px;
+  }
+  #diagMarginTable { width: 100%; border-collapse: collapse; font-size: 11px; }
+  #diagMarginTable th, #diagMarginTable td {
+    padding: 3px 6px; text-align: right;
+    border-bottom: 1px solid #1f2740;
+    font-family: ui-monospace, monospace;
+  }
+  #diagMarginTable th {
+    position: sticky; top: 0; background: #1b2134;
+    color: #8cb4ff; text-align: center; font-weight: 600;
+  }
+  #diagMarginTable tbody tr { cursor: pointer; }
+  #diagMarginTable tbody tr:hover { background: #242d4a; }
+  #diagMarginTable tbody tr.selected { background: #32416e; }
+  #diagMarginTable tbody tr.violated td { color: #ff7b72; }
+  #diagMarginTable tbody tr.near-active td { color: #ffd166; }
+
+  body.drawer-open #info { display: none; }
+  body.drawer-open #legend { display: none; }
 </style>
 </head>
 <body>
@@ -138,8 +230,6 @@
     <label>Time scale &alpha; <span class="val" id="alphaVal">1.50</span></label>
     <input type="range" id="alphaSlider" min="1" max="3" step="0.05" value="1.5">
 
-    <label title="1 = isotropic spherical caps. >1 elongates caps in t, &lt;1 flattens them. Cylinder body is unaffected.">Cap roundness <span class="val" id="capRoundVal">2.00</span></label>
-    <input type="range" id="capRoundSlider" min="0.2" max="5" step="0.05" value="2">
 
     <div class="num-grid">
       <div class="num-cell">
@@ -164,6 +254,8 @@
 
 <div id="solverStatus" class="offline">
   <span id="solverStatusText">solver: offline (no server)</span>
+  <button id="diagnoseToggle" type="button" aria-pressed="false" title="Open diagnostic drawer (stage list, KOZ row inspector)">Diagnose</button>
+  <span id="diagnosisPill" hidden title="Click to open the diagnostic drawer on this failure"></span>
   <span class="progress"><span class="bar" id="solverProgressBar"></span></span>
 </div>
 
@@ -172,896 +264,66 @@
 
 <canvas id="c"></canvas>
 
+<aside id="diagDrawer" class="diag-drawer" aria-hidden="true">
+  <header>
+    <h2>Diagnostic drawer</h2>
+    <button id="diagCloseBtn" type="button" class="diag-close" aria-label="Close drawer">×</button>
+  </header>
+
+  <section>
+    <div class="diag-nav">
+      <button id="diagPrev" type="button" title="Previous frame">‹</button>
+      <button id="diagNext" type="button" title="Next frame">›</button>
+      <button id="diagPrevIter" type="button" title="Previous iteration">‹‹</button>
+      <button id="diagNextIter" type="button" title="Next iteration">››</button>
+      <button id="diagFinalize" type="button" title="Jump to final frame">end</button>
+    </div>
+    <label>Frames <span id="diagFramePosition">—</span></label>
+    <ol id="diagFrameRail"></ol>
+  </section>
+
+  <section>
+    <h3>Summary</h3>
+    <pre id="diagSummaryPre">Run a solve to populate the trace.</pre>
+  </section>
+
+  <section>
+    <h3>Inspect row</h3>
+    <label>Segment</label>
+    <select id="diagSegmentSelect"></select>
+    <label>Obstacle</label>
+    <select id="diagObstacleSelect"></select>
+    <label>Row (local cp)</label>
+    <select id="diagRowSelect"></select>
+    <pre id="diagDetailPre">No KOZ data at this frame.</pre>
+  </section>
+
+  <section>
+    <h3>KOZ margin table</h3>
+    <div id="diagMarginWrap">
+      <table id="diagMarginTable"></table>
+    </div>
+  </section>
+</aside>
+
 <script>
 // ══════════════════════════════════════════════════════════════
 // Embedded scenario data (from spacetime_scenarios.json)
 // ══════════════════════════════════════════════════════════════
 const SCENARIOS = {
   "original": {
-    "name": "original",
-    "title": "3 Moving Obstacles",
-    "best": "N6_seg8",
-    "obstacles": [
-      {
-        "pos0": [
-          2.0,
-          8.0
-        ],
-        "vel": [
-          0.5,
-          -0.7
-        ],
-        "r": 0.8,
-        "color": "#e74c3c",
-        "name": "A"
-      },
-      {
-        "pos0": [
-          6.0,
-          2.0
-        ],
-        "vel": [
-          -0.3,
-          0.5
-        ],
-        "r": 0.7,
-        "color": "#2980b9",
-        "name": "B"
-      },
-      {
-        "pos0": [
-          4.5,
-          5.5
-        ],
-        "vel": [
-          0.1,
-          -0.3
-        ],
-        "r": 0.6,
-        "color": "#27ae60",
-        "name": "C"
-      }
-    ],
-    "start": [
-      0.5,
-      1.0,
-      0.0
-    ],
-    "end": [
-      8.5,
-      8.5,
-      10.0
-    ],
-    "T": 10.0,
+    "title": "Original",
+    "best": "N6_seg2",
     "results": {
-      "N4_seg8": {
-        "N": 4,
-        "n_seg": 8,
+      "N6_seg2": {
+        "min_clearance": 1.0,
         "control_points": [
           [
-            0.49999999999999933,
-            0.9999999999999993,
-            4.3150317779079914e-17
-          ],
-          [
-            1.5280156957500342,
-            1.7966507690216955,
-            3.3250417679186994
-          ],
-          [
-            2.2580787275121135,
-            2.263305423027048,
-            5.613686198391184
-          ],
-          [
-            5.351826830870016,
-            5.351173827263954,
-            7.6663946741972975
-          ],
-          [
-            8.5,
-            8.5,
-            10.0
+            0.0,
+            0.0,
+            0.0
           ]
-        ],
-        "min_clearance": 0.3524260258084355,
-        "feasible": true
-      },
-      "N6_seg8": {
-        "N": 6,
-        "n_seg": 8,
-        "control_points": [
-          [
-            0.49999999999999845,
-            1.000000000000003,
-            -4.821604014022984e-16
-          ],
-          [
-            1.215281432329038,
-            1.5521872850132235,
-            2.6335124581188647
-          ],
-          [
-            1.980736744129102,
-            2.1610431188885952,
-            4.082414490317569
-          ],
-          [
-            2.705619552891151,
-            2.724005804955524,
-            5.556281623357154
-          ],
-          [
-            4.336299338594962,
-            4.309731497586562,
-            7.020170512530804
-          ],
-          [
-            6.4362512015429365,
-            6.425303256367894,
-            8.403187587168695
-          ],
-          [
-            8.500000000000002,
-            8.500000000000002,
-            10.000000000000002
-          ]
-        ],
-        "min_clearance": 0.36115954997229593,
-        "feasible": true
-      },
-      "N8_seg8": {
-        "N": 8,
-        "n_seg": 8,
-        "control_points": [
-          [
-            0.49999999999999833,
-            0.9999999999999997,
-            3.180423199787871e-16
-          ],
-          [
-            1.037188406999816,
-            1.415874021638922,
-            2.113632633363913
-          ],
-          [
-            1.563381259446728,
-            1.819298557641427,
-            3.375979685391576
-          ],
-          [
-            2.2354960166793676,
-            2.3874764935577266,
-            4.438321614586333
-          ],
-          [
-            2.902054969168029,
-            2.9487025580177963,
-            5.552852830591082
-          ],
-          [
-            3.905770674873322,
-            3.891246065989788,
-            6.600293308364279
-          ],
-          [
-            5.424366239952098,
-            5.412826504700001,
-            7.7362558945438735
-          ],
-          [
-            6.953003550341645,
-            6.946099602135449,
-            8.796243586222745
-          ],
-          [
-            8.499999999999996,
-            8.5,
-            10.000000000000002
-          ]
-        ],
-        "min_clearance": 0.35644213791871393,
-        "feasible": true
-      }
-    }
-  },
-  "diverse": {
-    "name": "diverse",
-    "title": "Diverse Moving Obstacles",
-    "best": "N8_seg16",
-    "obstacles": [
-      {
-        "pos0": [
-          1.0,
-          6.0
-        ],
-        "vel": [
-          0.8,
-          -0.1
-        ],
-        "r": 0.6,
-        "color": "#e74c3c",
-        "name": "A"
-      },
-      {
-        "pos0": [
-          5.0,
-          5.0
-        ],
-        "vel": [
-          0.05,
-          -0.15
-        ],
-        "r": 1.0,
-        "color": "#2980b9",
-        "name": "B"
-      },
-      {
-        "pos0": [
-          8.0,
-          1.0
-        ],
-        "vel": [
-          -0.6,
-          0.4
-        ],
-        "r": 0.5,
-        "color": "#27ae60",
-        "name": "C"
-      },
-      {
-        "pos0": [
-          3.0,
-          1.5
-        ],
-        "vel": [
-          0.3,
-          0.6
-        ],
-        "r": 0.4,
-        "color": "#9b59b6",
-        "name": "D"
-      },
-      {
-        "pos0": [
-          4.0,
-          8.0
-        ],
-        "vel": [
-          0.1,
-          -0.5
-        ],
-        "r": 0.9,
-        "color": "#e67e22",
-        "name": "E"
-      },
-      {
-        "pos0": [
-          7.0,
-          7.0
-        ],
-        "vel": [
-          -0.4,
-          -0.3
-        ],
-        "r": 0.35,
-        "color": "#1abc9c",
-        "name": "F"
-      },
-      {
-        "pos0": [
-          2.5,
-          4.0
-        ],
-        "vel": [
-          0.0,
-          0.0
-        ],
-        "r": 0.7,
-        "color": "#f39c12",
-        "name": "G"
-      }
-    ],
-    "start": [
-      0.5,
-      0.5,
-      0.0
-    ],
-    "end": [
-      9.0,
-      9.0,
-      10.0
-    ],
-    "T": 10.0,
-    "results": {
-      "N8_seg8": {
-        "N": 8,
-        "n_seg": 8,
-        "control_points": [
-          [
-            0.24097972468627088,
-            0.21475214091414252,
-            0.04808258452094152
-          ],
-          [
-            1.2539135404920423,
-            1.4224921679829787,
-            2.58334730993207
-          ],
-          [
-            2.2864120501465055,
-            2.6845750879964783,
-            3.7590736217087564
-          ],
-          [
-            3.1458774089466455,
-            3.624691796561865,
-            4.7579323039450685
-          ],
-          [
-            4.629669375486933,
-            5.418095650250043,
-            5.613915995491863
-          ],
-          [
-            6.1574757954001305,
-            6.8929544177780855,
-            6.494619273391883
-          ],
-          [
-            7.064068775405651,
-            7.591380595641348,
-            7.346190338712012
-          ],
-          [
-            8.165790314550263,
-            8.486670098270253,
-            8.421470268246104
-          ],
-          [
-            9.256406086133545,
-            9.308484738864326,
-            10.039740534849589
-          ]
-        ],
-        "min_clearance": -0.8472788218942112,
-        "feasible": false
-      },
-      "N8_seg16": {
-        "N": 8,
-        "n_seg": 16,
-        "control_points": [
-          [
-            0.1552850133954448,
-            0.14739104229869165,
-            0.04751789042692736
-          ],
-          [
-            0.6669813461777301,
-            0.9361497426022463,
-            2.704127422934828
-          ],
-          [
-            1.3206252701951287,
-            1.7410087446892257,
-            3.83713508134333
-          ],
-          [
-            1.8401304615372862,
-            2.7662458570077155,
-            4.792678085335728
-          ],
-          [
-            2.216941469767292,
-            3.156958070287954,
-            5.696183729357194
-          ],
-          [
-            8.636453926685578,
-            5.73177937363213,
-            6.609268856016319
-          ],
-          [
-            7.09748901041268,
-            6.909201855604498,
-            7.880579438500869
-          ],
-          [
-            8.466374349970682,
-            8.149708493010818,
-            8.996462471341783
-          ],
-          [
-            9.321530897162026,
-            9.398222800187918,
-            10.021346092000284
-          ]
-        ],
-        "min_clearance": -0.4342650426455644,
-        "feasible": false
-      },
-      "N10_seg16": {
-        "N": 10,
-        "n_seg": 16,
-        "control_points": [
-          [
-            0.08972117423234495,
-            0.052043660682324924,
-            0.04618897160905429
-          ],
-          [
-            0.9016337699012585,
-            0.6868469515166981,
-            2.1531029901206473
-          ],
-          [
-            1.694110843710825,
-            1.2816539297902962,
-            3.537941149200497
-          ],
-          [
-            2.552721247243997,
-            2.10783810645513,
-            4.601183322795209
-          ],
-          [
-            3.68128733392293,
-            2.916269317647315,
-            5.355367885050334
-          ],
-          [
-            4.2266606619086,
-            3.7112004618672967,
-            6.252617092564284
-          ],
-          [
-            5.617167450511175,
-            4.874486234927387,
-            6.968020863266004
-          ],
-          [
-            6.323922491670986,
-            5.9403278794944505,
-            7.753436121995608
-          ],
-          [
-            7.386354741121293,
-            7.238987064874236,
-            8.474511309211922
-          ],
-          [
-            8.382954656398947,
-            8.34378927499237,
-            9.35495882643254
-          ],
-          [
-            9.381334174472055,
-            9.488016499261459,
-            10.026110354954108
-          ]
-        ],
-        "min_clearance": -0.486479624139082,
-        "feasible": false
-      }
-    }
-  },
-  "wall": {
-    "name": "wall",
-    "title": "Disappearing Wall (t<5)",
-    "best": "N10_seg24",
-    "obstacles": [
-      {
-        "pos0": [
-          2.5,
-          0.0
-        ],
-        "vel": [
-          0.0,
-          0.0
-        ],
-        "r": 0.5,
-        "color": "#e67e22",
-        "name": "W0",
-        "t_start": 0.0,
-        "t_end": 5.0
-      },
-      {
-        "pos0": [
-          2.5,
-          0.8333333333333333
-        ],
-        "vel": [
-          0.0,
-          0.0
-        ],
-        "r": 0.5,
-        "color": "#e67e22",
-        "name": "W1",
-        "t_start": 0.0,
-        "t_end": 5.0
-      },
-      {
-        "pos0": [
-          2.5,
-          1.6666666666666665
-        ],
-        "vel": [
-          0.0,
-          0.0
-        ],
-        "r": 0.5,
-        "color": "#e67e22",
-        "name": "W2",
-        "t_start": 0.0,
-        "t_end": 5.0
-      },
-      {
-        "pos0": [
-          2.5,
-          2.5
-        ],
-        "vel": [
-          0.0,
-          0.0
-        ],
-        "r": 0.5,
-        "color": "#e67e22",
-        "name": "W3",
-        "t_start": 0.0,
-        "t_end": 5.0
-      },
-      {
-        "pos0": [
-          2.5,
-          3.333333333333333
-        ],
-        "vel": [
-          0.0,
-          0.0
-        ],
-        "r": 0.5,
-        "color": "#e67e22",
-        "name": "W4",
-        "t_start": 0.0,
-        "t_end": 5.0
-      },
-      {
-        "pos0": [
-          2.5,
-          4.166666666666667
-        ],
-        "vel": [
-          0.0,
-          0.0
-        ],
-        "r": 0.5,
-        "color": "#e67e22",
-        "name": "W5",
-        "t_start": 0.0,
-        "t_end": 5.0
-      },
-      {
-        "pos0": [
-          2.5,
-          5.0
-        ],
-        "vel": [
-          0.0,
-          0.0
-        ],
-        "r": 0.5,
-        "color": "#e67e22",
-        "name": "W6",
-        "t_start": 0.0,
-        "t_end": 5.0
-      },
-      {
-        "pos0": [
-          2.5,
-          5.833333333333334
-        ],
-        "vel": [
-          0.0,
-          0.0
-        ],
-        "r": 0.5,
-        "color": "#e67e22",
-        "name": "W7",
-        "t_start": 0.0,
-        "t_end": 5.0
-      },
-      {
-        "pos0": [
-          2.5,
-          6.666666666666666
-        ],
-        "vel": [
-          0.0,
-          0.0
-        ],
-        "r": 0.5,
-        "color": "#e67e22",
-        "name": "W8",
-        "t_start": 0.0,
-        "t_end": 5.0
-      },
-      {
-        "pos0": [
-          2.5,
-          7.5
-        ],
-        "vel": [
-          0.0,
-          0.0
-        ],
-        "r": 0.5,
-        "color": "#e67e22",
-        "name": "W9",
-        "t_start": 0.0,
-        "t_end": 5.0
-      },
-      {
-        "pos0": [
-          2.5,
-          8.333333333333334
-        ],
-        "vel": [
-          0.0,
-          0.0
-        ],
-        "r": 0.5,
-        "color": "#e67e22",
-        "name": "W10",
-        "t_start": 0.0,
-        "t_end": 5.0
-      },
-      {
-        "pos0": [
-          2.5,
-          9.166666666666666
-        ],
-        "vel": [
-          0.0,
-          0.0
-        ],
-        "r": 0.5,
-        "color": "#e67e22",
-        "name": "W11",
-        "t_start": 0.0,
-        "t_end": 5.0
-      },
-      {
-        "pos0": [
-          2.5,
-          10.0
-        ],
-        "vel": [
-          0.0,
-          0.0
-        ],
-        "r": 0.5,
-        "color": "#e67e22",
-        "name": "W12",
-        "t_start": 0.0,
-        "t_end": 5.0
-      },
-      {
-        "pos0": [
-          7.0,
-          3.0
-        ],
-        "vel": [
-          0.0,
-          0.3
-        ],
-        "r": 0.6,
-        "color": "#2980b9",
-        "name": "M1"
-      },
-      {
-        "pos0": [
-          6.5,
-          8.0
-        ],
-        "vel": [
-          0.2,
-          -0.2
-        ],
-        "r": 0.5,
-        "color": "#27ae60",
-        "name": "M2"
-      }
-    ],
-    "start": [
-      1.0,
-      5.0,
-      0.0
-    ],
-    "end": [
-      8.0,
-      5.0,
-      10.0
-    ],
-    "T": 10.0,
-    "results": {
-      "N8_seg16": {
-        "N": 8,
-        "n_seg": 16,
-        "control_points": [
-          [
-            0.9072937104387748,
-            4.997450808670901,
-            0.010158234186311222
-          ],
-          [
-            1.8438613151503425,
-            5.415646562092686,
-            2.274606304329012
-          ],
-          [
-            2.7513525836170096,
-            6.003576364250655,
-            3.6895688453670608
-          ],
-          [
-            3.8918741260199075,
-            4.687152766786511,
-            4.775992584092025
-          ],
-          [
-            4.2074793713459036,
-            5.8867207153171925,
-            6.08604163897048
-          ],
-          [
-            5.419006714787517,
-            4.850290986548381,
-            6.783047070210226
-          ],
-          [
-            6.085261230271163,
-            4.9962719349633975,
-            7.755528271006338
-          ],
-          [
-            7.080187865856327,
-            4.973473980797911,
-            9.166250787551464
-          ],
-          [
-            8.012738518833263,
-            4.961722880194587,
-            10.00321222211127
-          ]
-        ],
-        "min_clearance": -0.09803435225321544,
-        "feasible": false
-      },
-      "N10_seg16": {
-        "N": 10,
-        "n_seg": 16,
-        "control_points": [
-          [
-            0.9191086336876737,
-            5.000800510502475,
-            0.005952373402361605
-          ],
-          [
-            1.6592098545262348,
-            5.317981614106854,
-            2.199058852002319
-          ],
-          [
-            2.393784522462475,
-            5.674393187741439,
-            3.366866163248984
-          ],
-          [
-            3.1725355083437026,
-            5.76794898825653,
-            4.405131208993433
-          ],
-          [
-            3.9274597917908554,
-            4.401442564801288,
-            5.245477071942233
-          ],
-          [
-            4.350197365459597,
-            6.422543280306018,
-            6.039667971705682
-          ],
-          [
-            5.22362704104361,
-            4.4750423462493725,
-            6.83411191652662
-          ],
-          [
-            5.73651049929482,
-            5.247493876974523,
-            7.6178502703213935
-          ],
-          [
-            6.514099684436239,
-            4.93871901024459,
-            8.369361563410095
-          ],
-          [
-            7.2539529765154604,
-            4.966579100649207,
-            9.188925565007962
-          ],
-          [
-            8.010693393062693,
-            4.965009337990356,
-            9.99933484814978
-          ]
-        ],
-        "min_clearance": -0.09692190201345213,
-        "feasible": false
-      },
-      "N10_seg24": {
-        "N": 10,
-        "n_seg": 24,
-        "control_points": [
-          [
-            0.9999999999999979,
-            5.0,
-            1.188228564235894e-16
-          ],
-          [
-            0.3579838929544399,
-            5.176199523362354,
-            1.949056192846539
-          ],
-          [
-            -0.30292997992158754,
-            5.356223928054179,
-            3.379125059806862
-          ],
-          [
-            -0.5844247838301279,
-            5.455098615121639,
-            4.389224220679844
-          ],
-          [
-            -1.2669839680783526,
-            5.678369415135844,
-            5.247872518279458
-          ],
-          [
-            0.13892201781906194,
-            5.290177185518694,
-            6.083924738861445
-          ],
-          [
-            1.2990123644476728,
-            5.284655792987327,
-            6.719216670760737
-          ],
-          [
-            2.6745143648021603,
-            5.1449762924907825,
-            7.53374205962677
-          ],
-          [
-            4.51125866480587,
-            4.920220474446657,
-            8.324508936537331
-          ],
-          [
-            6.247272078522001,
-            4.966331614853343,
-            9.206908139995456
-          ],
-          [
-            8.0,
-            4.999999999999998,
-            10.000000000000002
-          ]
-        ],
-        "min_clearance": 0.26952014115337397,
-        "feasible": true
+        ]
       }
     }
   }
@@ -1642,11 +904,13 @@ function draw3DScene(tNow, curPt, fullCurve, dists) {
   }
 
   // Trajectory (past = bright, future = faint). When the user is dragging
-  // a handle or a solve is in flight, the curve on screen is stale — dim
-  // it to make that unambiguous.
+  // a handle, a solve is in flight, OR the diagnostic drawer is open, the
+  // main curve is context — dim it so the drawer's debug iterate (rendered
+  // later in this function) reads as foreground.
   const stale = cpDragState !== null || endpointDragState !== null || solveInFlight;
-  const alphaFuture = stale ? 0.07 : 0.15;
-  const alphaPast = stale ? 0.35 : 1.0;
+  const drawerDim = (typeof diagDrawerOpen !== 'undefined') && diagDrawerOpen;
+  const alphaFuture = drawerDim ? (stale ? 0.04 : 0.07) : (stale ? 0.07 : 0.15);
+  const alphaPast   = drawerDim ? (stale ? 0.20 : 0.35) : (stale ? 0.35 : 1.0);
   for(let i=0;i<fullCurve.length-1;i++) drawLine3D(fullCurve[i],fullCurve[i+1],'#ff0',2,alphaFuture);
   for(let i=0;i<fullCurve.length-1;i++){if(fullCurve[i][2]>tNow)break; drawLine3D(fullCurve[i],fullCurve[i+1],'#ff0',2.5,alphaPast);}
 
@@ -1692,6 +956,11 @@ function draw3DScene(tNow, curPt, fullCurve, dists) {
       ctx.fillText(d.dist.toFixed(2), mid.x + 5, mid.y - 5);
     }
   }
+
+  // Diagnostic drawer overlay (hybrid render): the current debug frame's
+  // control polygon + selected supporting half-space sit on top of the
+  // dimmed trajectory and obstacles.
+  if (typeof diagRenderOverlay3D === 'function') diagRenderOverlay3D();
 }
 
 // Full-canvas 2D (x, y) view at the current time t. The 3D scene is collapsed
@@ -1853,11 +1122,40 @@ function draw2DScene(tNow, curPt, fullCurve, dists) {
   }
 }
 
+
+// A run is only usable as a figure when all three hold: the sampled curve misses
+// every obstacle, the loop converged for a principled reason, and the
+// control-point hull satisfies the half-spaces it generates. `feasible` alone
+// answers none of the last two. Runs predating the verdict fields report
+// "unverified" rather than being silently treated as good.
+function describeRun(r) {
+  if (r.converged === undefined) return `(clr=${r.min_clearance.toFixed(3)}, unverified)`;
+  const bits = [`clr=${r.min_clearance.toFixed(3)}`];
+  bits.push(r.feasible ? 'clear' : 'PENETRATES');
+  bits.push(r.converged ? 'converged' : `no-conv:${r.stop_label || '?'}`);
+  if (!r.certified) bits.push(`CERT VIOLATED ${Number(r.certificate_violation).toExponential(2)}`);
+  return `(${bits.join(', ')})`;
+}
+
+function runIsFigureGrade(r) {
+  return Boolean(r && r.feasible && r.converged && r.certified);
+}
+
 function renderInfoPanel(tNow, curPt, dists, minClearances) {
   const cData = currentSolveInfo;
   let info = `Scenario: ${currentScenario.title}\n`;
   info += `Curve: N=${cData.N}, seg=${cData.n_seg}\n`;
-  info += `CPs: ${CTRL_PTS.length}, reported clr: ${cData.min_clearance.toFixed(4)}\n\n`;
+  info += `CPs: ${CTRL_PTS.length}, reported clr: ${cData.min_clearance.toFixed(4)}\n`;
+  const rec = currentScenario && currentScenario.results
+    ? currentScenario.results[document.getElementById('curveSelect').value]
+    : null;
+  if (rec && rec.converged !== undefined) {
+    info += runIsFigureGrade(rec)
+      ? `status: FIGURE-GRADE (converged, certified)\n\n`
+      : `status: NOT FIGURE-GRADE ${describeRun(rec)}\n\n`;
+  } else {
+    info += `status: unverified (data predates the verdict fields)\n\n`;
+  }
   info += `t = ${tNow.toFixed(2)} / ${T_TOTAL}\n`;
   info += `pos = (${curPt[0].toFixed(2)}, ${curPt[1].toFixed(2)})\n\n`;
   if (dists.length > 0) {
@@ -1898,7 +1196,7 @@ function loadScenario(name) {
     const r = currentScenario.results[key];
     const opt = document.createElement('option');
     opt.value = key;
-    opt.textContent = `${key} (clr=${r.min_clearance.toFixed(3)}, ${r.feasible?'ok':'INFEASIBLE'})`;
+    opt.textContent = `${key} ${describeRun(r)}`;
     if (key === currentScenario.best) opt.selected = true;
     cs.appendChild(opt);
   }
@@ -2027,18 +1325,11 @@ function stopSolveProgress() {
 function enableSandboxControls(enabled) {
   const section = document.getElementById('sandboxSection');
   section.dataset.disabled = enabled ? 'false' : 'true';
-  ['nSlider','nsegSlider','proxSlider','trustSlider','alphaSlider','capRoundSlider',
+  ['nSlider','nsegSlider','proxSlider','trustSlider','alphaSlider',
    'maxIterInput','tolInput','minDtInput'].forEach(id => {
-    document.getElementById(id).disabled = !enabled;
+    const el = document.getElementById(id);
+    if (el) el.disabled = !enabled;
   });
-}
-
-// "Cap roundness" is the cap bulge / cylinder radius ratio (=1 → isotropic
-// spherical caps, >1 → elongated along t, <1 → flattened). Passed directly
-// as `cap_bulge_ratio` to the Rust KOZ builder.
-function currentCapBulgeRatio() {
-  const v = parseFloat(document.getElementById('capRoundSlider').value);
-  return Number.isFinite(v) && v > 0 ? v : 2.0;
 }
 
 function currentSandboxParams() {
@@ -2051,7 +1342,6 @@ function currentSandboxParams() {
     scp_prox_weight: parseFloat(document.getElementById('proxSlider').value),
     scp_trust_radius: parseFloat(document.getElementById('trustSlider').value),
     time_ub_scale: parseFloat(document.getElementById('alphaSlider').value),
-    cap_bulge_ratio: currentCapBulgeRatio(),
     max_iter: Number.isFinite(maxIter) && maxIter > 0 ? maxIter : 30,
     tol: Number.isFinite(tol) && tol > 0 ? tol : 1e-6,
     min_dt: Number.isFinite(minDt) && minDt >= 0 ? minDt : 0.1,
@@ -2064,7 +1354,6 @@ function syncSandboxReadouts() {
   document.getElementById('proxVal').textContent = parseFloat(document.getElementById('proxSlider').value).toFixed(2);
   document.getElementById('trustVal').textContent = parseFloat(document.getElementById('trustSlider').value).toFixed(2);
   document.getElementById('alphaVal').textContent = parseFloat(document.getElementById('alphaSlider').value).toFixed(2);
-  document.getElementById('capRoundVal').textContent = parseFloat(document.getElementById('capRoundSlider').value).toFixed(2);
 }
 
 function scheduleSolve() {
@@ -2204,6 +1493,7 @@ function applySolveResponse(data, clientMs) {
       100,
     );
   }
+  if (typeof diagOnSolveResponse === 'function') diagOnSolveResponse(data);
   draw();
 }
 
@@ -2232,7 +1522,6 @@ function loadScenarioFromServer(name) {
   document.getElementById('proxSlider').value = 0.5;
   document.getElementById('trustSlider').value = 0.0;
   document.getElementById('alphaSlider').value = 1.5;
-  document.getElementById('capRoundSlider').value = 2.0;
   document.getElementById('maxIterInput').value = 30;
   document.getElementById('tolInput').value = '1e-6';
   document.getElementById('minDtInput').value = 0.1;
@@ -2275,10 +1564,10 @@ document.getElementById('btnView2D').addEventListener('click', () => setViewMode
 // Sandbox slider listeners: update readouts every frame, debounced re-solve.
 // Trust / α also redraw immediately so their overlay feedback tracks the
 // slider position even before the new solve arrives.
-['nSlider','nsegSlider','proxSlider','trustSlider','alphaSlider','capRoundSlider'].forEach(id => {
+['nSlider','nsegSlider','proxSlider','trustSlider','alphaSlider'].forEach(id => {
   document.getElementById(id).addEventListener('input', () => {
     syncSandboxReadouts();
-    if (id === 'trustSlider' || id === 'alphaSlider' || id === 'capRoundSlider') draw();
+    if (id === 'trustSlider' || id === 'alphaSlider') draw();
     scheduleSolve();
   });
 });
@@ -2591,6 +1880,391 @@ function animate() {
   document.getElementById('tSlider').value = tFrac; draw();
   requestAnimationFrame(animate);
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Diagnostic drawer — consumes /api/trace/<id> traces emitted by
+// every /api/solve response. Shares the main 3D canvas: when open,
+// the final trajectory is dimmed and the drawer's current-frame
+// control polygon + selected supporting half-space render on top.
+// ═══════════════════════════════════════════════════════════════
+let diagDrawerOpen = false;
+let diagFrames = [];
+let diagTraceId = null;
+let diagFrameIndex = 0;
+let diagSelected = { segment: null, obstacle: null, row: null };
+let diagLatestDiagnosis = null;
+
+const DIAG_MAX_TABLE_ROWS = 200;
+
+function diagCurrentFrame() {
+  if (!diagFrames.length) return null;
+  const i = Math.max(0, Math.min(diagFrames.length - 1, diagFrameIndex));
+  return diagFrames[i];
+}
+
+function diagKozSegments(frame) { return (frame && frame.payload && frame.payload.koz && frame.payload.koz.segments) || []; }
+function diagAllRows(frame) { return (frame && frame.payload && frame.payload.koz && frame.payload.koz.all_rows) || []; }
+
+function diagOpen() {
+  if (diagDrawerOpen) return;
+  diagDrawerOpen = true;
+  const drawer = document.getElementById('diagDrawer');
+  drawer.classList.add('open');
+  drawer.setAttribute('aria-hidden', 'false');
+  document.getElementById('diagnoseToggle').setAttribute('aria-pressed', 'true');
+  document.body.classList.add('drawer-open');
+  if (diagTraceId && !diagFrames.length) diagFetchTrace(diagTraceId);
+  else diagRenderAll();
+  draw();
+}
+
+function diagClose() {
+  if (!diagDrawerOpen) return;
+  diagDrawerOpen = false;
+  const drawer = document.getElementById('diagDrawer');
+  drawer.classList.remove('open');
+  drawer.setAttribute('aria-hidden', 'true');
+  document.getElementById('diagnoseToggle').setAttribute('aria-pressed', 'false');
+  document.body.classList.remove('drawer-open');
+  draw();
+}
+
+async function diagFetchTrace(traceId) {
+  if (!traceId) return;
+  try {
+    const resp = await fetch('/api/trace/' + encodeURIComponent(traceId));
+    if (!resp.ok) { diagFrames = []; diagRenderAll(); draw(); return; }
+    const data = await resp.json();
+    diagFrames = Array.isArray(data.frames) ? data.frames : [];
+    diagTraceId = data.trace_id || traceId;
+    diagFrameIndex = diagFrames.length ? diagFrames.length - 1 : 0;
+    diagSelected = { segment: null, obstacle: null, row: null };
+  } catch (_) {
+    diagFrames = [];
+  }
+  diagRenderAll();
+  draw();
+}
+
+function diagOnSolveResponse(resp) {
+  diagTraceId = resp.trace_id || null;
+  diagLatestDiagnosis = resp.diagnosis || null;
+  const pill = document.getElementById('diagnosisPill');
+  if (diagLatestDiagnosis) {
+    pill.textContent = diagLatestDiagnosis;
+    pill.hidden = false;
+  } else {
+    pill.hidden = true;
+    pill.textContent = '';
+  }
+  if (diagDrawerOpen && diagTraceId) {
+    diagFetchTrace(diagTraceId);
+  } else if (!diagTraceId) {
+    diagFrames = [];
+    if (diagDrawerOpen) diagRenderAll();
+  }
+}
+
+function diagSetFrameIndex(i) {
+  if (!diagFrames.length) return;
+  const clamped = Math.max(0, Math.min(diagFrames.length - 1, i));
+  if (clamped === diagFrameIndex) return;
+  diagFrameIndex = clamped;
+  diagSelected.segment = null;
+  diagSelected.obstacle = null;
+  diagSelected.row = null;
+  diagRenderAll();
+  draw();
+}
+
+function diagStepIter(dir) {
+  if (!diagFrames.length) return;
+  const cur = diagFrames[diagFrameIndex]?.iteration;
+  let idx = diagFrameIndex + dir;
+  while (idx >= 0 && idx < diagFrames.length) {
+    const it = diagFrames[idx]?.iteration;
+    if (it != null && it !== cur) { diagSetFrameIndex(idx); return; }
+    idx += dir;
+  }
+  diagSetFrameIndex(dir > 0 ? diagFrames.length - 1 : 0);
+}
+
+function diagRenderAll() {
+  diagRenderFrameRail();
+  diagUpdateSelectors();
+  diagRenderSummary();
+  diagRenderDetail();
+  diagRenderMarginTable();
+}
+
+function diagRenderFrameRail() {
+  const rail = document.getElementById('diagFrameRail');
+  const pos = document.getElementById('diagFramePosition');
+  if (!diagFrames.length) {
+    rail.innerHTML = '<li>(no trace)</li>';
+    pos.textContent = '—';
+    return;
+  }
+  pos.textContent = `${diagFrameIndex + 1} / ${diagFrames.length}`;
+  const html = diagFrames.map((f, i) => {
+    const it = f.iteration == null ? '–' : f.iteration;
+    const status = String((f.payload && f.payload.solver && f.payload.solver.status) || '').toLowerCase();
+    const cls = [];
+    if (i === diagFrameIndex) cls.push('active');
+    if (status === 'failed') cls.push('failed-stage');
+    return `<li data-idx="${i}" class="${cls.join(' ')}">`
+      + `<span class="iter-tag">it ${it}</span>`
+      + `<span class="stage-tag"> ${f.stage}</span>`
+      + `</li>`;
+  }).join('');
+  rail.innerHTML = html;
+  rail.querySelectorAll('li[data-idx]').forEach(li => {
+    li.addEventListener('click', () => diagSetFrameIndex(parseInt(li.dataset.idx, 10)));
+  });
+  const active = rail.querySelector('li.active');
+  if (active) active.scrollIntoView({ block: 'nearest' });
+}
+
+function diagUpdateSelectors() {
+  const frame = diagCurrentFrame();
+  const segSel = document.getElementById('diagSegmentSelect');
+  const obsSel = document.getElementById('diagObstacleSelect');
+  const rowSel = document.getElementById('diagRowSelect');
+
+  const kozSegs = diagKozSegments(frame);
+  segSel.innerHTML = '';
+  kozSegs.forEach(seg => {
+    const opt = document.createElement('option');
+    opt.value = String(seg.segment_index);
+    opt.textContent = `segment ${seg.segment_index}`;
+    segSel.appendChild(opt);
+  });
+  if (kozSegs.length) {
+    const chosen = kozSegs.some(s => String(s.segment_index) === diagSelected.segment)
+      ? diagSelected.segment : String(kozSegs[0].segment_index);
+    segSel.value = chosen; diagSelected.segment = chosen;
+  } else {
+    diagSelected.segment = null;
+  }
+
+  const segObj = kozSegs.find(s => String(s.segment_index) === diagSelected.segment);
+  const obstacles = (segObj && segObj.active_obstacles) || [];
+  obsSel.innerHTML = '';
+  obstacles.forEach(obs => {
+    const opt = document.createElement('option');
+    opt.value = String(obs.obstacle_index);
+    opt.textContent = obs.obstacle_name || `obs${obs.obstacle_index}`;
+    obsSel.appendChild(opt);
+  });
+  if (obstacles.length) {
+    const chosen = obstacles.some(o => String(o.obstacle_index) === diagSelected.obstacle)
+      ? diagSelected.obstacle : String(obstacles[0].obstacle_index);
+    obsSel.value = chosen; diagSelected.obstacle = chosen;
+  } else {
+    diagSelected.obstacle = null;
+  }
+
+  const obsObj = obstacles.find(o => String(o.obstacle_index) === diagSelected.obstacle);
+  const rows = (obsObj && obsObj.rows) || [];
+  rowSel.innerHTML = '';
+  rows.forEach(r => {
+    const opt = document.createElement('option');
+    opt.value = String(r.row_index);
+    opt.textContent = `cp ${r.cp_idx}  margin=${Number(r.margin_current).toFixed(3)}`;
+    rowSel.appendChild(opt);
+  });
+  if (rows.length) {
+    const chosen = rows.some(r => String(r.row_index) === diagSelected.row)
+      ? diagSelected.row : String(rows[0].row_index);
+    rowSel.value = chosen; diagSelected.row = chosen;
+  } else {
+    diagSelected.row = null;
+  }
+}
+
+function diagCurrentRow() {
+  const frame = diagCurrentFrame();
+  const seg = diagKozSegments(frame).find(s => String(s.segment_index) === diagSelected.segment);
+  const obs = seg && seg.active_obstacles && seg.active_obstacles.find(o => String(o.obstacle_index) === diagSelected.obstacle);
+  return (obs && obs.rows && obs.rows.find(r => String(r.row_index) === diagSelected.row)) || null;
+}
+
+function diagRenderSummary() {
+  const frame = diagCurrentFrame();
+  const pre = document.getElementById('diagSummaryPre');
+  if (!frame) {
+    pre.textContent = diagLatestDiagnosis
+      ? `No trace loaded.\ndiagnosis: ${diagLatestDiagnosis}`
+      : 'Run a solve to populate the trace.';
+    return;
+  }
+  const p = frame.payload || {};
+  const metrics = p.metrics || {};
+  const trust = p.trust_region || {};
+  const solver = p.solver || {};
+  const lines = [
+    `stage  : ${frame.stage}`,
+    `label  : ${frame.label}`,
+    `iter   : ${frame.iteration == null ? '–' : frame.iteration}`,
+    `frame  : ${diagFrameIndex + 1} / ${diagFrames.length}`,
+  ];
+  if (diagLatestDiagnosis) lines.push(`diag   : ${diagLatestDiagnosis}`);
+  if (metrics.delta != null)     lines.push(`delta       = ${Number(metrics.delta).toFixed(6)}`);
+  if (metrics.clearance != null) lines.push(`clearance   = ${Number(metrics.clearance).toFixed(6)}`);
+  if (metrics.cost != null)      lines.push(`cost        = ${Number(metrics.cost).toFixed(6)}`);
+  if (trust.raw_step_norm != null)  lines.push(`raw_step    = ${Number(trust.raw_step_norm).toFixed(6)}`);
+  if (trust.used_step_norm != null) lines.push(`used_step   = ${Number(trust.used_step_norm).toFixed(6)}`);
+  if (trust.clipped != null)        lines.push(`clipped     = ${trust.clipped}`);
+  if (solver.status != null)        lines.push(`status      = ${solver.status}`);
+  if (solver.elastic_used != null)  lines.push(`elastic     = ${solver.elastic_used}`);
+  if (solver.total_slack != null)   lines.push(`total_slack = ${Number(solver.total_slack).toFixed(6)}`);
+  if (p.final_clearance != null)    lines.push(`final_clear = ${Number(p.final_clearance).toFixed(6)}`);
+  pre.textContent = lines.join('\n');
+}
+
+function diagRenderDetail() {
+  const pre = document.getElementById('diagDetailPre');
+  const frame = diagCurrentFrame();
+  if (!frame) { pre.textContent = 'No trace.'; return; }
+  const kozSegs = diagKozSegments(frame);
+  if (!kozSegs.length) { pre.textContent = 'No KOZ data at this frame.'; return; }
+  const seg = kozSegs.find(s => String(s.segment_index) === diagSelected.segment);
+  const obs = seg && seg.active_obstacles && seg.active_obstacles.find(o => String(o.obstacle_index) === diagSelected.obstacle);
+  const row = diagCurrentRow();
+
+  const lines = [];
+  if (seg) {
+    lines.push(`segment ${seg.segment_index}`);
+    if (seg.centroid) lines.push(`  centroid   = (${seg.centroid.map(v => Number(v).toFixed(3)).join(', ')})`);
+    if (seg.centroid_time != null) lines.push(`  centroid_t = ${Number(seg.centroid_time).toFixed(3)}`);
+  }
+  if (obs) {
+    lines.push('');
+    lines.push(`obstacle ${obs.obstacle_name}  (idx ${obs.obstacle_index})`);
+    if (obs.center) lines.push(`  center     = (${obs.center.map(v => Number(v).toFixed(3)).join(', ')})`);
+    if (obs.row_count != null) lines.push(`  rows       = ${obs.row_count}  (tightest cp=${obs.tightest_cp_idx})`);
+  }
+  if (row) {
+    const tCoef = Number(row.time_coefficient || 0);
+    const planeType = Math.abs(tCoef) > 1e-6 ? 'lifted_3d' : 'time_sliced';
+    const fullNormal = [...(row.normal || []), tCoef];
+    const active = Math.abs(Number(row.margin_current)) < 1e-4;
+    lines.push('');
+    lines.push(`row ${row.row_index}  cp=${row.cp_idx}  it=${row.iteration == null ? '–' : row.iteration}`);
+    lines.push(`  plane      = ${planeType}  (time_coef=${tCoef.toFixed(4)})`);
+    lines.push(`  normal_3d  = (${fullNormal.map(v => Number(v).toFixed(3)).join(', ')})`);
+    if (row.support_point) lines.push(`  support    = (${row.support_point.map(v => Number(v).toFixed(3)).join(', ')})`);
+    if (row.center)        lines.push(`  closest    = (${row.center.map(v => Number(v).toFixed(3)).join(', ')})`);
+    lines.push(`  lb         = ${Number(row.lower_bound).toFixed(4)}`);
+    lines.push(`  lhs        = ${Number(row.lhs_current).toFixed(4)}`);
+    lines.push(`  margin     = ${Number(row.margin_current).toFixed(4)}${active ? '  (active)' : ''}`);
+    if (row.slack != null && Number(row.slack) > 1e-9) {
+      lines.push(`  slack      = ${Number(row.slack).toFixed(4)}`);
+    }
+  }
+  pre.textContent = lines.length ? lines.join('\n') : 'No selection.';
+}
+
+function diagRenderMarginTable() {
+  const frame = diagCurrentFrame();
+  const table = document.getElementById('diagMarginTable');
+  if (!frame) { table.innerHTML = ''; return; }
+  const rows = diagAllRows(frame);
+  if (!rows.length) {
+    table.innerHTML = '<thead><tr><th colspan="6">No KOZ rows in this frame.</th></tr></thead>';
+    return;
+  }
+  const sorted = rows.slice().sort((a, b) => Number(a.margin_current) - Number(b.margin_current));
+  const truncated = sorted.length > DIAG_MAX_TABLE_ROWS ? sorted.slice(0, DIAG_MAX_TABLE_ROWS) : sorted;
+  const selSeg = diagSelected.segment, selObs = diagSelected.obstacle, selRow = diagSelected.row;
+  const head = '<thead><tr><th>seg</th><th>cp</th><th>obstacle</th><th>margin</th><th>lb</th><th>slack</th></tr></thead>';
+  const body = '<tbody>' + truncated.map(r => {
+    const m = Number(r.margin_current), s = Number(r.slack || 0);
+    const cls = [];
+    if (m < 0) cls.push('violated');
+    else if (m < 1e-4) cls.push('near-active');
+    if (String(r.segment_index) === selSeg && String(r.obstacle_index) === selObs && String(r.row_index) === selRow) cls.push('selected');
+    return `<tr class="${cls.join(' ')}" data-seg="${r.segment_index}" data-obs="${r.obstacle_index}" data-row="${r.row_index}">`
+      + `<td>${r.segment_index}</td><td>${r.cp_idx}</td><td>${r.obstacle_name}</td>`
+      + `<td>${m.toFixed(4)}</td><td>${Number(r.lower_bound).toFixed(4)}</td>`
+      + `<td>${s > 0 ? s.toFixed(4) : '–'}</td></tr>`;
+  }).join('') + '</tbody>';
+  const suffix = sorted.length > DIAG_MAX_TABLE_ROWS
+    ? `<tfoot><tr><td colspan="6" style="text-align:center; color:#95a1c6;">showing first ${DIAG_MAX_TABLE_ROWS} of ${sorted.length}</td></tr></tfoot>`
+    : '';
+  table.innerHTML = head + body + suffix;
+  table.querySelectorAll('tbody tr').forEach(tr => {
+    tr.addEventListener('click', () => {
+      diagSelected.segment = tr.dataset.seg;
+      diagSelected.obstacle = tr.dataset.obs;
+      diagSelected.row = tr.dataset.row;
+      diagUpdateSelectors();
+      diagRenderDetail();
+      diagRenderMarginTable();
+      draw();
+    });
+  });
+}
+
+// Called from draw3DScene() when the drawer is open: hybrid render.
+function diagRenderOverlay3D() {
+  if (!diagDrawerOpen) return;
+  const frame = diagCurrentFrame();
+  if (!frame) return;
+  const cps = frame.payload && frame.payload.control_points;
+  if (Array.isArray(cps) && cps.length) {
+    for (let i = 0; i < cps.length - 1; i++) {
+      drawLine3D(cps[i], cps[i + 1], '#ffd37a', 2, 0.9);
+    }
+    cps.forEach(p => {
+      const sp = toScreen(...p);
+      ctx.beginPath(); ctx.arc(sp.x, sp.y, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffd37a'; ctx.globalAlpha = 0.95; ctx.fill();
+      ctx.globalAlpha = 1;
+    });
+  }
+  const row = diagCurrentRow();
+  if (row && row.support_point) {
+    const tCoef = Number(row.time_coefficient || 0);
+    const fullNormal = [...(row.normal || []), tCoef];
+    drawHalfspacePlane(row.support_point, fullNormal, '#ff7b72', 2.6, 0.9);
+  }
+}
+
+// Buttons
+document.getElementById('diagnoseToggle').addEventListener('click', () => {
+  if (diagDrawerOpen) diagClose(); else diagOpen();
+});
+document.getElementById('diagnosisPill').addEventListener('click', diagOpen);
+document.getElementById('diagCloseBtn').addEventListener('click', diagClose);
+document.getElementById('diagPrev').addEventListener('click', () => diagSetFrameIndex(diagFrameIndex - 1));
+document.getElementById('diagNext').addEventListener('click', () => diagSetFrameIndex(diagFrameIndex + 1));
+document.getElementById('diagPrevIter').addEventListener('click', () => diagStepIter(-1));
+document.getElementById('diagNextIter').addEventListener('click', () => diagStepIter(+1));
+document.getElementById('diagFinalize').addEventListener('click', () => diagSetFrameIndex(diagFrames.length - 1));
+document.getElementById('diagSegmentSelect').addEventListener('change', (e) => {
+  diagSelected.segment = e.target.value;
+  diagSelected.obstacle = null;
+  diagSelected.row = null;
+  diagUpdateSelectors();
+  diagRenderDetail();
+  diagRenderMarginTable();
+  draw();
+});
+document.getElementById('diagObstacleSelect').addEventListener('change', (e) => {
+  diagSelected.obstacle = e.target.value;
+  diagSelected.row = null;
+  diagUpdateSelectors();
+  diagRenderDetail();
+  diagRenderMarginTable();
+  draw();
+});
+document.getElementById('diagRowSelect').addEventListener('change', (e) => {
+  diagSelected.row = e.target.value;
+  diagRenderDetail();
+  diagRenderMarginTable();
+  draw();
+});
 
 // Init
 async function init() {

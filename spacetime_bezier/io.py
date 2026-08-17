@@ -60,6 +60,48 @@ def _normalize_degree_args(argv: list[str]) -> list[str]:
     return normalized
 
 
+
+DEFAULT_VIEWER_PATH = Path(__file__).resolve().parents[1] / "figures" / "spacetime_bezier_interactive.html"
+
+VIEWER_BLOB_PREFIX = "const SCENARIOS = "
+
+
+def sync_interactive_viewer(
+    outputs: dict,
+    viewer_path: str | Path = DEFAULT_VIEWER_PATH,
+) -> Path:
+    """Rewrite the viewer's inline scenario blob from `outputs`.
+
+    The interactive page carries its own baked copy of the scenario data so it
+    works over `file://` with no server. Nothing used to keep that copy in step
+    with `figures/spacetime_scenarios.json`, so the two silently diverged -- the
+    page shipped trajectories from a solver three months and two defect fixes out
+    of date. Regenerating one without the other is what made that possible, so
+    the pipeline now writes both or neither.
+    """
+    viewer_path = Path(viewer_path)
+    text = viewer_path.read_text()
+
+    start = text.index(VIEWER_BLOB_PREFIX)
+    brace = text.index("{", start)
+    depth = 0
+    end = None
+    for idx in range(brace, len(text)):
+        if text[idx] == "{":
+            depth += 1
+        elif text[idx] == "}":
+            depth -= 1
+            if depth == 0:
+                end = idx + 1
+                break
+    if end is None:
+        raise ValueError(f"Unbalanced SCENARIOS blob in {viewer_path}")
+
+    blob = json.dumps(outputs, indent=2)
+    viewer_path.write_text(text[:start] + VIEWER_BLOB_PREFIX + blob + text[end:])
+    return viewer_path
+
+
 def load_outputs(path: str | Path = DEFAULT_OUTPUT_PATH) -> dict:
     path = Path(path)
     if not path.exists():
@@ -202,11 +244,25 @@ def main(argv: list[str] | None = None) -> None:
     )
     saved_path = save_outputs(all_outputs, output_path)
     print(f"\nSaved: {saved_path}")
+    try:
+        viewer = sync_interactive_viewer(all_outputs)
+        print(f"Synced viewer: {viewer}")
+    except (OSError, ValueError) as exc:  # pragma: no cover - viewer is optional
+        print(f"WARNING: could not sync the interactive viewer: {exc}")
 
     for name in args.scenarios:
         data = all_outputs[name]
         best = data["results"][data["best"]]
-        print(f"\n{data['title']}: best={data['best']}, clearance={best['min_clearance']:.4f}")
+        verdict = "CONVERGED" if best.get("converged") else "did NOT converge"
+        cert = best.get("certificate_violation", float("nan"))
+        cert_txt = "certified" if best.get("certified") else f"certificate VIOLATED by {cert:.3e}"
+        print(
+            f"\n{data['title']}: best={data['best']}, "
+            f"clearance={best['min_clearance']:.4f}, {verdict} "
+            f"({best.get('stop_label', '?')}), {cert_txt}"
+        )
+        if not (best.get("converged") and best.get("certified") and best["feasible"]):
+            print("  NOT SUITABLE AS A FIGURE: this run does not support the hull claim.")
         for row in best["control_points"]:
             print(f"  [{row[0]:.4f}, {row[1]:.4f}, {row[2]:.4f}],")
 
@@ -217,3 +273,9 @@ def main(argv: list[str] | None = None) -> None:
             port=args.viewer_port,
         )
         print(f"\nOpened interactive viewer: {viewer_url}")
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entrypoint
+    # Without this, `python3 -m spacetime_bezier.io` exits 0 having done nothing,
+    # which is how the shipped scenario JSON stayed three months stale.
+    main()
