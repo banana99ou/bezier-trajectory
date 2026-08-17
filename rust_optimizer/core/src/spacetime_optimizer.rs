@@ -368,8 +368,17 @@ pub fn scp_step(
     };
 
     // Build KOZ constraints with per-row metadata
-    let mut koz_bundle = spacetime_constraints::build_spacetime_koz_constraints(
-        &pre.a_list, p_current, np1, dim, obstacles, cap_bulge_ratio,
+    // The QP gets the SELF-CONSISTENT rows: same half-spaces, plus the term that
+    // anticipates the plane rotating as the control points move. Without it the
+    // step lands flush on a plane that pivots out from under it and the next
+    // iteration rejects it — measured at 10-13 rejections per ~17 iterations.
+    //
+    // The certificate is never evaluated with these; `koz_violation_rebuilt_at`
+    // uses the exact rows. That separation is what keeps the reported guarantee
+    // sound while letting the subproblem model the pivot.
+    let _ = cap_bulge_ratio;
+    let mut koz_bundle = spacetime_constraints::build_spacetime_koz_constraints_linearized(
+        &pre.a_list, p_current, np1, dim, obstacles,
     );
     if let Some(ref mut bundle) = koz_bundle {
         for row in &mut bundle.rows {

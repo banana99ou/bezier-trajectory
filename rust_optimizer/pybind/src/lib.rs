@@ -257,6 +257,91 @@ fn optimize_spacetime_bezier<'py>(
     Ok((p_opt, info))
 }
 
+/// The EXACT obstacle half-spaces at a given control polygon.
+///
+/// These are the rows the certificate is evaluated with -- one plane per
+/// (segment, obstacle), normal frozen at the segment centroid, shared by every
+/// control point of that segment. Exposed so tests can assert the two properties
+/// that make the guarantee work, neither of which holds for the self-consistent
+/// rows the QP is given (those carry a rotation term and are explicitly not
+/// conservative).
+///
+/// Returns (normals, lower_bounds, segment_idx, cp_idx, obstacle_idx).
+#[pyfunction]
+#[pyo3(signature = (
+    p, obstacle_pos0, obstacle_vel, obstacle_r,
+    obstacle_t_start = None, obstacle_t_end = None, n_seg = 8,
+))]
+fn spacetime_koz_rows_exact<'py>(
+    py: Python<'py>,
+    p: PyReadonlyArray2<'py, f64>,
+    obstacle_pos0: PyReadonlyArray2<'py, f64>,
+    obstacle_vel: PyReadonlyArray2<'py, f64>,
+    obstacle_r: PyReadonlyArray1<'py, f64>,
+    obstacle_t_start: Option<PyReadonlyArray1<'py, f64>>,
+    obstacle_t_end: Option<PyReadonlyArray1<'py, f64>>,
+    n_seg: usize,
+) -> PyResult<PyObject> {
+    let p_arr = p.as_array();
+    let np1 = p_arr.shape()[0];
+    let dim = p_arr.shape()[1];
+    let spatial_dim = dim - 1;
+    let p_flat: Vec<f64> = p_arr.iter().copied().collect();
+
+    let n_obs = obstacle_pos0.as_array().shape()[0];
+    let pos0: Vec<f64> = obstacle_pos0.as_array().iter().copied().collect();
+    let vel: Vec<f64> = obstacle_vel.as_array().iter().copied().collect();
+    let radii: Vec<f64> = obstacle_r.as_array().iter().copied().collect();
+    let t_start: Vec<f64> = obstacle_t_start
+        .map(|a| a.as_array().iter().copied().collect())
+        .unwrap_or_else(|| vec![f64::NEG_INFINITY; n_obs]);
+    let t_end: Vec<f64> = obstacle_t_end
+        .map(|a| a.as_array().iter().copied().collect())
+        .unwrap_or_else(|| vec![f64::INFINITY; n_obs]);
+
+    let obstacles = SpacetimeObstacleData {
+        pos0: &pos0,
+        vel: &vel,
+        radii: &radii,
+        t_start: &t_start,
+        t_end: &t_end,
+        n_obs,
+        spatial_dim,
+    };
+    let a_list = bezier_opt_core::de_casteljau::segment_matrices_equal_params(np1 - 1, n_seg);
+
+    let bundle = bezier_opt_core::spacetime_constraints::build_spacetime_koz_constraints(
+        &a_list, &p_flat, np1, dim, &obstacles, 2.0,
+    );
+    let rows = match bundle {
+        Some(b) => b.rows,
+        None => Vec::new(),
+    };
+
+    let normals: Vec<Vec<f64>> = rows.iter().map(|r| r.normal.clone()).collect();
+    let lbs: Vec<f64> = rows.iter().map(|r| r.lower_bound).collect();
+    let seg: Vec<i32> = rows.iter().map(|r| r.segment_idx as i32).collect();
+    let cp: Vec<i32> = rows.iter().map(|r| r.cp_idx as i32).collect();
+    let obs: Vec<i32> = rows.iter().map(|r| r.obstacle_idx as i32).collect();
+
+    let normals_arr = if normals.is_empty() {
+        PyArray2::from_vec2(py, &vec![vec![0.0; dim]; 0])
+    } else {
+        PyArray2::from_vec2(py, &normals)
+    }
+    .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
+
+    Ok((
+        normals_arr,
+        PyArray1::from_vec(py, lbs),
+        PyArray1::from_vec(py, seg),
+        PyArray1::from_vec(py, cp),
+        PyArray1::from_vec(py, obs),
+    )
+        .into_pyobject(py)?
+        .into())
+}
+
 /// Opaque handle holding precomputed SCP data and obstacle arrays.
 /// Exposes a `step()` method that runs one SCP iteration.
 #[pyclass]
@@ -514,6 +599,7 @@ impl SpacetimeScpContext {
 fn bezier_opt(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(optimize_orbital_docking, m)?)?;
     m.add_function(wrap_pyfunction!(optimize_spacetime_bezier, m)?)?;
+    m.add_function(wrap_pyfunction!(spacetime_koz_rows_exact, m)?)?;
     m.add_class::<SpacetimeScpContext>()?;
     Ok(())
 }

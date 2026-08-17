@@ -26,12 +26,12 @@ A session can open with just an item id (`B1`, `A2`, `C1`).
 - A6 figure slots — what each figure must show, defined before any exist
 
 **B. Solver**
-- B0 repair the venv (nothing runs until this is done)
-- B1 fix G1 — `n[dim-1] = -dot(n_xy, vel)` before normalizing, recompute `lb`
-- B2 a KOZ test with a **moving** obstacle that fails before B1 and passes after
+- ~~B0 repair the venv~~ **DONE**
+- ~~B1 fix G1~~ **DONE** — tube is a capsule around the slanted centreline; the time component falls out of the slant
+- ~~B2 a KOZ test with a **moving** obstacle that fails before B1 and passes after~~ **DONE** — `tests/unit/test_spacetime_koz_geometry.py`; 4 of them failed on the old geometry, one breach measured at 8.51
 - B3 re-benchmark; sweep `cap_bulge_ratio` on `wall`
-- B4 fix G2 — one plane per (segment, obstacle), side committed per passing class
-- B5 port the SCvx machinery from `main` (only if B3 shows it is still needed)
+- ~~B4 fix G2~~ **DONE** — one plane per (segment, obstacle) aimed at the segment centroid. Side commitment per passing class is NOT done and is what `wall` still needs (see B6).
+- ~~B5 port the SCvx machinery from `main`~~ **DONE** — `848bf3b`, then reduced to one canonical iteration in `9b9c3d3`
 - B6 procedural seeds (left/right/wait/hurry) + multi-start
 - B7 feasibility gate: a run with `total_slack > 0` cannot produce a figure
 
@@ -48,8 +48,10 @@ Three separate agents have each spent ~50 tool calls rediscovering these.
 - **The merge-base `e849ff7` contains no Rust.** Both lineages wrote `rust_optimizer/` from scratch after 2026-04-03, so `git merge main` is an add/add conflict on every file. Bringing solver work over from `main` is a **file-level port**, never a merge or a rebase.
 - `bezier.rs` and `de_casteljau.rs` are **byte-identical** between `main` and this branch.
 - **`0d130fc` (the `|pred|` stationarity fix) has no pre-image here.** `spacetime_optimizer.rs` has no merit function, no `pred`, and no ratio test; every step is accepted unconditionally (`spacetime_optimizer.rs:369-392`). "Converged" means `delta < tol && slack < 1e-10` — the step got small, which is not an optimality claim.
-- **G1 — the body-case KOZ normal has a zero time coefficient.** `spacetime_constraints.rs:82-104`. The tube is `‖p_xy − p₀ − v·p_t‖ ≤ r`, so its true normal is `(n̂, −n̂·v)`; the code drops the time term. This regressed in `29a43c6` (which fixed an unrelated slider artifact and never mentioned the normal); `c4ec13c` had it right. Because obstacle time windows default to `±inf` (`geometry.py:194-195`), the cap branch is unreachable — so on `original` and `diverse`, **every KOZ row in every iteration is a zero-time row**, and the QP is told that moving a control point in time cannot change clearance.
-- **G2 — one plane per (segment, control point, obstacle).** `spacetime_constraints.rs:191-193`. The convex-hull certificate needs **one** plane satisfied by **all** of a segment's control points; per-point planes prove only that each point individually is outside its own plane, which is exactly as strong as sampling the curve at finitely many points. Worse, opposing normals let a segment's hull straddle the tube, and a straddling hull *contains* it. Confirmed against six papers in `doc/notes/_shared/c3_safe_corridor_refs.md`; the only per-control-point method in the literature (EGO-Planner) is an explicit soft penalty claiming no guarantee.
+- **G1 — FIXED 2026-08-17.** Was: the body-case KOZ normal had a zero time coefficient. The tube is now a capsule around the obstacle's *slanted* centreline, so the time component comes from the slant rather than being written in. Verified by `test_moving_obstacle_normal_has_nonzero_time_component` and `test_half_space_actually_supports_the_tube`, which measured the old planes cutting through the obstacle by 8.51. Original diagnosis, kept for context:
+  - **G1 — the body-case KOZ normal has a zero time coefficient.** `spacetime_constraints.rs:82-104`. The tube is `‖p_xy − p₀ − v·p_t‖ ≤ r`, so its true normal is `(n̂, −n̂·v)`; the code drops the time term. This regressed in `29a43c6` (which fixed an unrelated slider artifact and never mentioned the normal); `c4ec13c` had it right. Because obstacle time windows default to `±inf` (`geometry.py:194-195`), the cap branch is unreachable — so on `original` and `diverse`, **every KOZ row in every iteration is a zero-time row**, and the QP is told that moving a control point in time cannot change clearance.
+- **G2 — FIXED 2026-08-17.** One plane per (segment, obstacle) now, aimed at the segment centroid and shared by every control point of that segment. A third piece was needed to make it usable: the plane rotates as the control points move, so the subproblem gets a **rotation term** (`build_spacetime_koz_constraints_linearized`) while the certificate is still evaluated with the exact rows. Without it, 10-13 of every ~17 steps were rejected and nothing converged. Original diagnosis, kept for context:
+  - **G2 — one plane per (segment, control point, obstacle).** `spacetime_constraints.rs:191-193`. The convex-hull certificate needs **one** plane satisfied by **all** of a segment's control points; per-point planes prove only that each point individually is outside its own plane, which is exactly as strong as sampling the curve at finitely many points. Worse, opposing normals let a segment's hull straddle the tube, and a straddling hull *contains* it. Confirmed against six papers in `doc/notes/_shared/c3_safe_corridor_refs.md`; the only per-control-point method in the literature (EGO-Planner) is an explicit soft penalty claiming no guarantee.
   - **The dense subdivision matrix is NOT part of this defect.** An earlier version of this line implied it was. De Casteljau weights are non-negative and sum to one, so each sub-control-point is a convex combination of the parents and the certificate transfers intact. Sparsifying that matrix would *break* the guarantee.
 - `wall` and `diverse` are infeasible. **Parameter tuning was already tried and failed** — `489eb85` shortened the wall's `t_end` 8.0 → 5.0 and added low-segment configs. (Superseded numbers: this line previously recorded −0.112 and −0.495; see the scenario table for measured values.)
 - **The KOZ tests cannot fail on G1.** Every one uses `vel=[0,0]`, where a zero time coefficient is genuinely correct, and `tests/unit/test_spacetime_constraints.py:65` asserts `A[:, 2::3] == 0`, which enshrines the bug. Those tests exercise `spacetime_bezier/constraints.py` — the dead Python builder. The Rust builder has no tests at all.
@@ -111,7 +113,7 @@ Correct pattern:
 - Treat the obstacle as one object in `(x, y, t)` or `(x, y, z, t)`
 - Build supporting half-spaces in the full lifted space so the time coordinate can appear in the plane equation
 
-> **The shipped code currently does the bad pattern.** `spacetime_constraints.rs:96` — *"Normal's t-component is 0 for the cylinder body"* — and because obstacle time windows default to `±inf`, that branch handles every row on `original` and `diverse`. This section describes the target, not the current state. Fixing it is **B1**.
+> **Done as of 2026-08-17.** The shipped code implements the correct pattern: `tube_geometry` in `spacetime_constraints.rs` builds a capsule around the slanted centreline in the full lifted space, and the time coefficient is nonzero whenever the obstacle moves. `SPACETIME_AXIS_SCALE` is pinned at 1.0 as a declared modelling choice — the consequence is that the constant-time cross-section is an ellipse stretched by `sqrt(1 + speed^2)`, i.e. conservative, measured at 1.32x on `original`.
 
 ## Commands
 
@@ -144,16 +146,27 @@ Registry keys are in `spacetime_bezier/scenarios.py` (`SCENARIO_MAP`).
 
 | Key | Purpose | Status |
 |-----|---------|--------|
-Measured 2026-08-17, degree 8, `max_iter=200`, trust radius 0.5, after the solver
-was reduced to a single graded path. `certificate` is the violation of the
-half-spaces the returned iterate's own control points generate — nonzero means the
-convex-hull guarantee does **not** hold for that curve, whatever its clearance.
+Measured 2026-08-17 after G1/G2 were fixed. Degree 8, `max_iter=200`, trust
+radius 0.5. `certificate` is the violation of the half-spaces the returned
+iterate's own control points generate — nonzero means the convex-hull guarantee
+does **not** hold for that curve, whatever its clearance.
 
-| Key | Purpose | Status |
-|-----|---------|--------|
-| `original` | 3 moving obstacles; basic proof of concept | Clearance **+0.317** at 8 segments, certificate clean, but **does not converge** (trust collapse). ⚠️ The previously recorded "Feasible, ~39 iterations / +0.8348" was **the straight-line initial guess handed back unchanged** — the best-iterate fallback was seeded with the input, so the solver's own output was discarded. Verified: initial-guess clearance is exactly +0.8348. |
-| `diverse` | Varied sizes/speeds/directions; shows generality | **Infeasible** — clearance −0.710, certificate violated by 3.52, trust collapse at 28 iterations. |
-| `wall` | Curve should "wait" until the wall vanishes — time as a real optimization dimension | **Works at 2 segments only**: clearance **+0.038**, converged on stationarity, certificate clean, zero rejected steps. Every higher segment count fails (−0.11 to −0.15) — one plane per *control point* fights itself as segments multiply. |
+| Key | Best config | Clearance | Converged | Certificate | Notes |
+|-----|-------------|-----------|-----------|-------------|-------|
+| `original` | 4 seg | **+0.620** | **yes** (stationary, 9 iters) | **0.000** | **Zero rejected steps.** The working demo. Also converges at 8 and 16 segments. |
+| `diverse` | 4 seg | +0.005 | no (iteration cap) | 1.616 | Barely clears; hull not certified. Higher segment counts are worse. |
+| `wall` | 12 seg | −0.088 | no | 1.572 | **Unsolved.** Plateaus near −0.09 from 8 segments up. |
+
+⚠️ Earlier records for `original` (+0.8348, "~39 iterations") were the
+**straight-line initial guess handed back unchanged** — the best-iterate fallback
+was seeded with the solver's own input. Fixed in `9b9c3d3`.
+
+**Why `wall` is still unsolved.** One plane per segment cannot pass a segment's
+control points on *opposite* sides of the same obstacle. The literature's fix is
+more segments; here that plateaus. The remaining lever is side commitment per
+passing class — procedural seeds and multi-start, item **B6**. Recorded as a
+strict `xfail` in `tests/unit/test_spacetime_koz_geometry.py` so the suite
+announces it if a later change fixes it.
 
 ## Key Files
 
