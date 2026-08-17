@@ -110,8 +110,19 @@ def scenario_wall() -> dict:
     }
 
 
+# (degree, segment count) pairs tried per scenario.
+#
+# Low segment counts were added 2026-08-18. The pre-2026-08-17 geometry used one
+# half-space per control point, so more segments meant more planes and generally
+# better numbers, and these lists were built around that. With one plane per
+# segment the trade reverses: each plane now binds every control point of its
+# segment, so few segments is a genuinely different -- and here better -- regime.
+# `original` and `diverse` had no config below 8 segments at all, which is why
+# their best results were being missed. Measured at degree 8, 4 segments:
+# original +0.6204 (converged, certified) against +0.3231 at 8 segments;
+# diverse +0.0045 (feasible) against -0.40 at every count that was listed.
 SCENARIO_MAP = {
-    "original": (scenario_original, [(4, 8),  (6, 8),   (8, 8)]  ),
-    "diverse":  (scenario_diverse,  [(8, 8),  (8, 16),  (10, 16)]),
+    "original": (scenario_original, [(4, 4), (4, 8), (6, 8), (8, 4), (8, 8)]),
+    "diverse":  (scenario_diverse,  [(8, 4), (8, 8), (8, 16), (10, 4), (10, 16)]),
     "wall":     (scenario_wall,     [(8, 2), (8, 3), (8, 4), (8, 16), (10, 16), (10, 24)]),
 }

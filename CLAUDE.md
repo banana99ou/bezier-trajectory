@@ -146,16 +146,27 @@ Registry keys are in `spacetime_bezier/scenarios.py` (`SCENARIO_MAP`).
 
 | Key | Purpose | Status |
 |-----|---------|--------|
-Measured 2026-08-17 after G1/G2 were fixed. Degree 8, `max_iter=200`, trust
-radius 0.5. `certificate` is the violation of the half-spaces the returned
-iterate's own control points generate — nonzero means the convex-hull guarantee
-does **not** hold for that curve, whatever its clearance.
+Regenerated 2026-08-18 by `python3 -m spacetime_bezier.io`, `max_iter=200`,
+trust radius 0.5. **FIGURE-GRADE** means all three of: the sampled curve clears
+every obstacle, the loop converged for a principled reason, and the control-point
+hull satisfies the half-spaces it generates. Clearance alone means none of that.
 
-| Key | Best config | Clearance | Converged | Certificate | Notes |
-|-----|-------------|-----------|-----------|-------------|-------|
-| `original` | 4 seg | **+0.620** | **yes** (stationary, 9 iters) | **0.000** | **Zero rejected steps.** The working demo. Also converges at 8 and 16 segments. |
-| `diverse` | 4 seg | +0.005 | no (iteration cap) | 1.616 | Barely clears; hull not certified. Higher segment counts are worse. |
-| `wall` | 12 seg | −0.088 | no | 1.572 | **Unsolved.** Plateaus near −0.09 from 8 segments up. |
+| Key | Best config | Clearance | Converged | Certificate | Figure-grade |
+|-----|-------------|-----------|-----------|-------------|--------------|
+| `original` | N8_seg4 | **+0.620** (10 iters) | **yes**, stationary | **0.000** | **YES — all 5 configs** |
+| `diverse` | N10_seg4 | +0.007 | no, iteration cap | 1.350 | no |
+| `wall` | N8_seg2 | −0.051 | no, trust collapse | 2.281 | no |
+
+`original` is the working demo: every shipped config converges, clears, and
+carries the certificate. `diverse` at 4 segments barely clears but never
+converges and its hull is not certified. `wall` remains unsolved.
+
+**Segment counts changed 2026-08-18.** The old geometry used one half-space per
+control point, so more segments meant more planes and better numbers, and the
+config lists were built around that. With one plane per segment the trade
+reverses — few segments is a different and here better regime. `original` and
+`diverse` had no config below 8 segments, which is why their best results were
+being missed entirely (`original` +0.620 at 4 segments against +0.323 at 8).
 
 ⚠️ Earlier records for `original` (+0.8348, "~39 iterations") were the
 **straight-line initial guess handed back unchanged** — the best-iterate fallback
@@ -163,10 +174,10 @@ was seeded with the solver's own input. Fixed in `9b9c3d3`.
 
 **Why `wall` is still unsolved.** One plane per segment cannot pass a segment's
 control points on *opposite* sides of the same obstacle. The literature's fix is
-more segments; here that plateaus. The remaining lever is side commitment per
-passing class — procedural seeds and multi-start, item **B6**. Recorded as a
-strict `xfail` in `tests/unit/test_spacetime_koz_geometry.py` so the suite
-announces it if a later change fixes it.
+more segments; here that plateaus near −0.09. The remaining lever is side
+commitment per passing class — procedural seeds and multi-start, item **B6**.
+Recorded as a strict `xfail` in `tests/unit/test_spacetime_koz_geometry.py` so
+the suite announces it if a later change fixes it.
 
 ## Key Files
 
