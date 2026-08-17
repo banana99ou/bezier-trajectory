@@ -162,7 +162,24 @@ def open_interactive_viewer(
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Space-time Bezier optimizer")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Space-time Bezier viewer. By default this LAUNCHES THE SANDBOX and "
+            "solves nothing: the page opens immediately and solves only the "
+            "scenario / degree / segment count you select. Use --bake to "
+            "pre-solve every configuration and refresh the static data."
+        )
+    )
+    parser.add_argument(
+        "--bake",
+        action="store_true",
+        help=(
+            "Solve every scenario at every configuration and rewrite "
+            "figures/spacetime_scenarios.json and the viewer's inline copy. "
+            "Slow -- it is 16 configurations, several of which run to the "
+            "iteration cap. Only needed to refresh the file:// fallback data."
+        ),
+    )
     parser.add_argument(
         "scenarios",
         nargs="*",
@@ -224,6 +241,13 @@ def _resolve_scenario_map(base_map: dict, degree_overrides: list[int] | None) ->
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Launch the viewer, or with --bake re-solve everything first.
+
+    Solving all 16 configurations before showing anything was the default until
+    2026-08-18, which meant a ~15 minute wait to look at one curve. The sandbox
+    has always solved on demand; the batch is only needed to refresh the static
+    data the page falls back to over file://.
+    """
     parser = build_arg_parser()
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     try:
@@ -231,6 +255,21 @@ def main(argv: list[str] | None = None) -> None:
     except argparse.ArgumentTypeError as exc:
         parser.error(str(exc))
     args = parser.parse_args(normalized_argv)
+
+    if not args.bake:
+        # Open first, solve on demand. The sandbox serves the same page and
+        # re-solves only the current selection on every change.
+        from .sandbox import main as sandbox_main
+
+        sandbox_argv = ["--host", args.viewer_host, "--port", str(args.viewer_port)]
+        if args.no_open:
+            sandbox_argv.append("--no-open")
+        print(
+            "Launching the live sandbox (nothing is pre-solved; the page solves "
+            "only what you select). Use --bake to refresh the static data."
+        )
+        sandbox_main(sandbox_argv)
+        return
 
     output_path = Path(args.output)
     existing_outputs = load_outputs(output_path)

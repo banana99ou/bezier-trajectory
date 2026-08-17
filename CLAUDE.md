@@ -118,13 +118,16 @@ Correct pattern:
 ## Commands
 
 ```bash
-# Launch the interactive sandbox (live re-solve on every slider change) — main entrypoint
+# Main entrypoint. Opens the viewer immediately and solves NOTHING up front:
+# each scenario / degree / segment-count you select is solved on demand, ~0.5-0.7s.
 python3 -m spacetime_bezier
+python3 -m spacetime_bezier.io      # same thing; --bake is what runs the batch
 
-# Regenerate the pre-baked scenario JSON (only needed for file:// viewing)
-python3 -m spacetime_bezier.io
+# Refresh the static file:// fallback data. SLOW: 16 configurations, several of
+# which run to the iteration cap (~15 min). Only needed for offline viewing.
+python3 -m spacetime_bezier.io --bake
 
-# Open the static interactive demo (uses pre-baked JSON; no live re-solve)
+# Open the static demo (pre-baked data, no live re-solve)
 open figures/spacetime_bezier_interactive.html
 
 # Run live optimizer step debugger

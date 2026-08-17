@@ -12,13 +12,9 @@ import pytest
 import spacetime_bezier.io as spacetime_io
 from spacetime_bezier.debug_session import OptimizerDebugSession, SessionConfig
 from spacetime_bezier.io import load_outputs, save_outputs
-from spacetime_bezier.optimize import (
-    _clip_trust_region,
-    compute_min_clearance,
-    create_spacetime_debug_stepper,
-    optimize_scenario,
-    optimize_spacetime,
-)
+from spacetime_bezier.geometry import compute_min_clearance
+from spacetime_bezier.optimize import optimize_scenario, optimize_spacetime
+from spacetime_bezier.rust_debug_stepper import create_spacetime_debug_stepper
 
 
 def _toy_scenario() -> dict:
@@ -155,9 +151,13 @@ def test_main_with_degree_override_runs_fixed_segment_sweep(tmp_path: Path, monk
 
     monkeypatch.setattr(spacetime_io, "optimize_scenarios", fake_optimize_scenarios)
 
+    # `--bake` is now required to run the batch: since 2026-08-18 the default
+    # action launches the viewer and solves nothing, because pre-solving all 16
+    # configurations meant a ~15 minute wait before anything could be looked at.
     spacetime_io.main(
         [
             "original",
+            "--bake",
             "-N",
             "6",
             "8",
@@ -227,6 +227,41 @@ def test_rust_debug_stepper_reports_rust_backend_truthfully():
     assert any(frame["stage"] == "solver-call" for frame in frames)
     assert frames[-1]["stage"] == "finalize"
     assert "scipy" not in json.dumps(frames).lower()
+
+
+def test_batch_and_stepper_produce_identical_final_iterate():
+    """Sandbox (batch) and debugger (collecting observer) must share execution.
+
+    Both paths drive the same Rust ``scp_step`` kernel, so for identical
+    inputs they must converge to the same final control polygon. This
+    guards against accidental divergence in the trace-layer observer.
+    """
+    scenario = _toy_scenario()
+    kwargs = dict(
+        N=4,
+        dim=3,
+        p_start=scenario["start"],
+        p_end=scenario["end"],
+        obstacles=scenario["obstacles"],
+        n_seg=4,
+        max_iter=10,
+        tol=1e-6,
+        scp_prox_weight=0.3,
+        scp_trust_radius=0.0,
+        min_dt=0.1,
+        init_curve=scenario["init_curve"],
+    )
+
+    P_batch, _ = optimize_spacetime(verbose=False, **kwargs)
+
+    stepper = create_spacetime_debug_stepper(**kwargs)
+    P_stepper, _ = stepper.run_to_completion()
+
+    assert P_batch.shape == P_stepper.shape
+    # Both paths pipe through the same scp_step; final iterate must match
+    # to numerical noise. Any non-trivial drift means the observer has
+    # started to fork from the real execution.
+    np.testing.assert_allclose(P_batch, P_stepper, atol=1e-9, rtol=0.0)
 
 
 def test_debug_session_next_prev_reset_are_history_based():
