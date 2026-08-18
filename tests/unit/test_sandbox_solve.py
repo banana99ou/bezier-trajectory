@@ -69,9 +69,13 @@ def test_solve_from_payload_returns_jsonable_response(_require_rust):
     assert "min_clearance" in info
     assert "backend" in info and info["backend"] == "rust"
 
-    # Response must round-trip through json without custom encoders.
+    # Response must round-trip as *strict* JSON. Plain `json.dumps(response)`
+    # was the assertion here and it could not fail: allow_nan defaults to True,
+    # so it emits the bare tokens NaN/Infinity/-Infinity, which are not JSON and
+    # which every browser's JSON.parse rejects. It passed for months while the
+    # page died on them. allow_nan=False is what makes this check able to fail.
     import json
-    json.dumps(response)
+    json.dumps(response, allow_nan=False)
 
 
 def test_solve_uses_payload_obstacles_over_preset(_require_rust):
@@ -115,3 +119,52 @@ def test_solve_rejects_payload_with_no_problem_state():
             "N": 8,
             "n_seg": 8,
         })
+
+
+def _reject_non_json_constants(token):
+    raise ValueError(f"non-JSON token {token!r}")
+
+
+def test_json_safe_replaces_non_finite_floats():
+    """Non-finite floats become null, at every depth."""
+    import json
+    import math
+
+    payload = {
+        "inf": math.inf,
+        "neg_inf": -math.inf,
+        "nan": math.nan,
+        "ok": 1.5,
+        "nested": {"deep": [math.inf, 2.0]},
+    }
+    safe = spacetime_sandbox._json_safe(payload)
+    assert safe["inf"] is None and safe["neg_inf"] is None and safe["nan"] is None
+    assert safe["ok"] == 1.5
+    assert safe["nested"]["deep"] == [None, 2.0]
+
+    # The point of the exercise: strict serialization now succeeds.
+    json.dumps(safe, allow_nan=False)
+
+
+def test_infeasible_solve_response_is_strict_json(_require_rust):
+    """A scenario where no iterate is ever feasible must still emit valid JSON.
+
+    `wall` leaves ``best_clearance`` at its -inf sentinel. That reached the wire
+    as the literal ``-Infinity``, so the browser's JSON.parse rejected the whole
+    document and the scenario was unusable in the UI ("solve failed: bad JSON")
+    -- while every Python-side check passed, because json.loads accepts those
+    tokens by default. This test parses the way a browser does: parse_constant
+    fires on NaN/Infinity/-Infinity, so it fails if one is ever emitted again.
+    """
+    import json
+
+    response = spacetime_sandbox.solve_from_payload({
+        "scenario_name": "wall",
+        "N": 8,
+        "n_seg": 2,
+        "max_iter": 3,
+    })
+    assert response["info"]["feasible"] is False, "wall is expected to be infeasible"
+
+    encoded = json.dumps(spacetime_sandbox._json_safe(response), allow_nan=False)
+    json.loads(encoded, parse_constant=_reject_non_json_constants)

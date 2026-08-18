@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import socket
 import sys
@@ -357,8 +358,28 @@ def _read_json_body(handler: SimpleHTTPRequestHandler) -> dict:
     return json.loads(body.decode("utf-8"))
 
 
+def _json_safe(obj):
+    """Replace non-finite floats with null so the payload is valid JSON.
+
+    `json.dumps` emits the bare tokens NaN / Infinity / -Infinity, which are not
+    JSON; every browser's JSON.parse rejects the whole document. `wall` returns
+    ``best_clearance = -inf`` whenever no iterate was ever feasible, so the
+    entire scenario failed in the UI with "solve failed: bad JSON" -- while every
+    curl check passed, because Python's json.loads accepts those tokens by
+    default. Serializing through here and with allow_nan=False means a
+    non-finite value can no longer leave this process disguised as JSON.
+    """
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {key: _json_safe(value) for key, value in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(value) for value in obj]
+    return obj
+
+
 def _write_json(handler: SimpleHTTPRequestHandler, payload: dict, status: int = 200) -> None:
-    encoded = json.dumps(payload).encode("utf-8")
+    encoded = json.dumps(_json_safe(payload), allow_nan=False).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(encoded)))

@@ -10,7 +10,12 @@
     position: fixed; top: 10px; left: 10px; z-index: 10;
     background: rgba(20,20,40,0.92); padding: 14px 18px; border-radius: 10px;
     border: 1px solid #333; min-width: 270px;
+    /* Capped so a long <option> label cannot stretch the panel. The offline
+       config list ("N8_seg2 (clr=-0.051, PENETRATES, no-conv:trust_collapse
+       ...)") widened the whole sidebar to ~600px and shifted every control. */
+    max-width: 330px;
   }
+  #ui select { max-width: 100%; }
   #ui h2 { font-size: 14px; margin-bottom: 8px; color: #8af; }
   #ui label { font-size: 12px; display: block; margin-top: 6px; color: #aaa; }
   #ui select, #ui input[type=range] { width: 100%; }
@@ -21,14 +26,26 @@
   #info {
     position: fixed; bottom: 10px; right: 10px; z-index: 10;
     background: rgba(20,20,40,0.92); padding: 10px 14px; border-radius: 8px;
-    border: 1px solid #333; font-size: 11px; font-family: monospace; white-space: pre;
+    border: 1px solid #333; font-size: 11px; font-family: monospace;
+    /* `pre` clipped the verdict line mid-word ("NOT FIGURE-GRADE (clr=-0.051,
+       PENETRATES, no-co...") -- the one line that must stay readable. */
+    white-space: pre-wrap; overflow-wrap: anywhere;
     max-width: 380px; max-height: 300px; overflow-y: auto;
   }
   #solverStatus {
     position: fixed; bottom: 320px; right: 10px; z-index: 10;
     background: rgba(20,20,40,0.92); padding: 8px 12px; border-radius: 8px;
     border: 1px solid #333; font-size: 11px; font-family: monospace;
-    max-width: 520px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 520px;
+  }
+  /* Only the status sentence may ellipsize. It used to be the whole bar
+     (nowrap + overflow:hidden on the container), which painted the Diagnose
+     button 78px outside the clip and made the diagnostic drawer unreachable
+     by mouse -- elementFromPoint at the button's centre returned null. */
+  #solverStatusRow { display: flex; align-items: center; gap: 8px; }
+  #solverStatusText {
+    flex: 1 1 auto; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   #solverStatus.solved { border-color: #2ecc71; color: #9af2b6; }
   #solverStatus.infeasible { border-color: #f39c12; color: #ffd37a; }
@@ -67,6 +84,13 @@
   body[data-view-mode="2d"] .view-3d-only { display: none; }
   body[data-server-mode="true"] .fallback-only { display: none; }
   body[data-server-mode="false"] .server-only { display: none; }
+  /* Repeated with #ui so they out-specify `#ui label { display: block }`
+     (1,0,1). Without this the <label> elements survived while their controls
+     vanished: 2D mode showed "View rotation -55.0" with no slider under it, and
+     server mode showed "Curve config" over an empty hidden dropdown. */
+  body[data-view-mode="2d"] #ui .view-3d-only { display: none; }
+  body[data-server-mode="true"] #ui .fallback-only { display: none; }
+  body[data-server-mode="false"] #ui .server-only { display: none; }
   .t-row { display: flex; gap: 4px; align-items: center; margin: 2px 0 4px 0; }
   .t-row input[type=range] { flex: 1; }
   .t-row button {
@@ -84,7 +108,7 @@
 
   /* ═══ Diagnostic drawer ═══ */
   #diagnoseToggle {
-    margin-left: 8px; padding: 2px 10px; font-size: 11px; vertical-align: middle;
+    flex: 0 0 auto; padding: 2px 10px; font-size: 11px;
     background: #1b2134; color: #8cb4ff; border: 1px solid #3f5fa8;
   }
   #diagnoseToggle:hover { background: #253056; }
@@ -173,6 +197,10 @@
 
   body.drawer-open #info { display: none; }
   body.drawer-open #legend { display: none; }
+  /* The drawer is 400px wide and would sit on top of the status bar. Move the
+     bar clear rather than hiding it: it names the run the drawer is dissecting,
+     and the diagnosis pill lives in it. */
+  body.drawer-open #solverStatus { right: 420px; }
 </style>
 </head>
 <body>
@@ -253,8 +281,10 @@
 </div>
 
 <div id="solverStatus" class="offline">
-  <span id="solverStatusText">solver: offline (no server)</span>
-  <button id="diagnoseToggle" type="button" aria-pressed="false" title="Open diagnostic drawer (stage list, KOZ row inspector)">Diagnose</button>
+  <div id="solverStatusRow">
+    <span id="solverStatusText">solver: offline (no server)</span>
+    <button id="diagnoseToggle" type="button" aria-pressed="false" title="Open diagnostic drawer (stage list, KOZ row inspector)">Diagnose</button>
+  </div>
   <span id="diagnosisPill" hidden title="Click to open the diagnostic drawer on this failure"></span>
   <span class="progress"><span class="bar" id="solverProgressBar"></span></span>
 </div>
@@ -1796,6 +1826,13 @@ let solveRequestSeq = 0;
 let solveProgressHandle = null;
 let lastSolveMs = 200;  // rolling estimate of solve duration for progress bar
 const SOLVE_DEBOUNCE_MS = 150;
+// Cap bulge ratio the SERVER actually solved with — echoed in every /api/solve
+// response. The capsule mesh and the JS mirror of capsule_surface_support are
+// drawn with this, never with a client-side guess, or the picture stops being
+// the geometry that produced the curve. Default matches
+// rust_optimizer/core/src/spacetime_constraints.rs::DEFAULT_CAP_BULGE_RATIO.
+const DEFAULT_CAP_BULGE_RATIO = 2.0;
+let serverCapBulgeRatio = DEFAULT_CAP_BULGE_RATIO;
 
 // ══════════════════════════════════════════════════════════════
 // Math
@@ -2570,15 +2607,37 @@ function renderInfoPanel(tNow, curPt, dists, minClearances) {
   let info = `Scenario: ${currentScenario.title}\n`;
   info += `Curve: N=${cData.N}, seg=${cData.n_seg}\n`;
   info += `CPs: ${CTRL_PTS.length}, reported clr: ${cData.min_clearance.toFixed(4)}\n`;
-  const rec = currentScenario && currentScenario.results
-    ? currentScenario.results[document.getElementById('curveSelect').value]
-    : null;
-  if (rec && rec.converged !== undefined) {
-    info += runIsFigureGrade(rec)
-      ? `status: FIGURE-GRADE (converged, certified)\n\n`
-      : `status: NOT FIGURE-GRADE ${describeRun(rec)}\n\n`;
+  if (serverMode && cData.solve_failed) {
+    info += `status: LAST SOLVE FAILED — nothing below reflects a completed run\n\n`;
+  } else if (serverMode) {
+    // Live mode reports only what the live path actually computes. The sandbox
+    // runs through RustOptimizerStepper, whose result_info carries no
+    // certificate field, so claiming FIGURE-GRADE here would assert a property
+    // nothing measured. Slack IS available, and a run that leaned on elastic
+    // relaxation is exactly the case a figure must never come from (B7).
+    const bits = [cData.feasible ? 'clears' : 'PENETRATES'];
+    bits.push(cData.converged ? 'converged' : 'did NOT converge');
+    info += `status: ${bits.join(', ')}\n`;
+    if (Number.isFinite(cData.total_slack)) {
+      info += cData.total_slack > 1e-9
+        ? `  ELASTIC SLACK ${cData.total_slack.toExponential(2)} — not figure-grade\n`
+        : `  slack 0\n`;
+    }
+    if (cData.showing_last_feasible) {
+      info += `  (canvas shows the last feasible curve, not this run)\n`;
+    }
+    info += `  hull certificate is not evaluated live — use --bake\n\n`;
   } else {
-    info += `status: unverified (data predates the verdict fields)\n\n`;
+    const rec = currentScenario && currentScenario.results
+      ? currentScenario.results[document.getElementById('curveSelect').value]
+      : null;
+    if (rec && rec.converged !== undefined) {
+      info += runIsFigureGrade(rec)
+        ? `status: FIGURE-GRADE (converged, certified)\n\n`
+        : `status: NOT FIGURE-GRADE ${describeRun(rec)}\n\n`;
+    } else {
+      info += `status: unverified (data predates the verdict fields)\n\n`;
+    }
   }
   info += `t = ${tNow.toFixed(2)} / ${T_TOTAL}\n`;
   info += `pos = (${curPt[0].toFixed(2)}, ${curPt[1].toFixed(2)})\n\n`;
@@ -2660,9 +2719,11 @@ function updateLegend() {
     // the data, not a hardcoded value that goes stale when a scenario changes.
     const group = OBSTACLES.filter(o => o.name.replace(/\d+$/,'') === prefix);
     let label = group.length > 1 ? `${group[0].name}-${group[group.length-1].name}` : obs.name;
+    // Only annotate a window that actually restricts the horizon. Every
+    // obstacle spans [0, T] by construction, so printing that is pure noise.
     const windowBits = [];
-    if (obs.t_start != null && obs.t_start > 0) windowBits.push(`t>${obs.t_start}`);
-    if (obs.t_end != null) windowBits.push(`t<${obs.t_end}`);
+    if (obs.t_start != null && obs.t_start > 1e-9) windowBits.push(`t>${+obs.t_start.toFixed(2)}`);
+    if (obs.t_end != null && obs.t_end < T_TOTAL - 1e-9) windowBits.push(`t<${+obs.t_end.toFixed(2)}`);
     if (windowBits.length) label += ` (${windowBits.join(', ')})`;
     html += `<div><span style="color:${obs.color}">*</span> ${label}</div>`;
   }
@@ -2766,6 +2827,16 @@ function enableSandboxControls(enabled) {
     const el = document.getElementById(id);
     if (el) el.disabled = !enabled;
   });
+  // Traces come from /api/solve, so offline there is nothing to diagnose ever.
+  // Leaving the button live opened an empty drawer inviting you to "run a
+  // solve", which is the one thing offline mode cannot do.
+  const diag = document.getElementById('diagnoseToggle');
+  if (diag) {
+    diag.disabled = !enabled;
+    diag.title = enabled
+      ? 'Open diagnostic drawer (stage list, KOZ row inspector)'
+      : 'Needs the live sandbox: python3 -m spacetime_bezier';
+  }
 }
 
 function currentSandboxParams() {
@@ -2782,6 +2853,27 @@ function currentSandboxParams() {
     tol: Number.isFinite(tol) && tol > 0 ? tol : 1e-6,
     min_dt: Number.isFinite(minDt) && minDt >= 0 ? minDt : 0.1,
   };
+}
+
+// Called by the renderer. Was referenced but never defined until 2026-08-18,
+// which threw on every draw3DScene() call and left the canvas entirely blank
+// in server mode -- the page looked like it had no data at all.
+// A failed solve must not leave the previous run's verdict standing. Switching
+// to `wall` after a good `original` solve used to redraw wall's obstacles under
+// the sentence "clears, converged" while the clearance readout beside it said
+// -0.286 -- the panel contradicting itself on screen.
+function markSolveFailed() {
+  currentSolveInfo = Object.assign({}, currentSolveInfo, {
+    solve_failed: true,
+    converged: false,
+    total_slack: NaN,
+    showing_last_feasible: false,
+  });
+  draw();
+}
+
+function currentCapBulgeRatio() {
+  return Number.isFinite(serverCapBulgeRatio) ? serverCapBulgeRatio : DEFAULT_CAP_BULGE_RATIO;
 }
 
 function syncSandboxReadouts() {
@@ -2838,6 +2930,7 @@ async function doSolve() {
     if (seq !== solveRequestSeq) return;
     solveInFlight = false;
     stopSolveProgress();
+    markSolveFailed();
     setStatus('failed', `solve failed: network error (${err.message})`, 100);
     return;
   }
@@ -2851,6 +2944,7 @@ async function doSolve() {
   } catch (err) {
     solveInFlight = false;
     stopSolveProgress();
+    markSolveFailed();
     setStatus('failed', `solve failed: bad JSON (${err.message})`, 100);
     return;
   }
@@ -2858,6 +2952,7 @@ async function doSolve() {
   if (!response.ok || data.error) {
     solveInFlight = false;
     stopSolveProgress();
+    markSolveFailed();
     const msg = data.error || `HTTP ${response.status}`;
     setStatus('failed', `solve failed: ${msg}`, 100);
     return;
@@ -2883,6 +2978,7 @@ function applySolveResponse(data, clientMs) {
     currentScenario.bezier_obstacles = data.obstacles;
     OBSTACLES = data.obstacles.map(legacyFromBezier);
   }
+  if (Number.isFinite(data.cap_bulge_ratio)) serverCapBulgeRatio = data.cap_bulge_ratio;
   if (Array.isArray(data.start)) currentScenario.start = data.start.slice();
   if (Array.isArray(data.end)) currentScenario.end = data.end.slice();
   currentScenario.T = data.T;
@@ -2897,6 +2993,9 @@ function applySolveResponse(data, clientMs) {
       n_seg: data.n_seg,
       min_clearance: clr,
       feasible: true,
+      converged: !!info.converged,
+      total_slack: Number(info.total_koz_slack),
+      showing_last_feasible: false,
     };
     setStatus(
       'solved',
@@ -2913,6 +3012,11 @@ function applySolveResponse(data, clientMs) {
         n_seg: lastFeasibleResponse.n_seg,
         min_clearance: lastFeasibleResponse.info.min_clearance,
         feasible: true,
+        converged: !!lastFeasibleResponse.info.converged,
+        total_slack: Number(lastFeasibleResponse.info.total_koz_slack),
+        // The canvas and the status bar describe different runs here. Say so,
+        // rather than letting the picture pass for the run that just failed.
+        showing_last_feasible: true,
       };
     } else {
       CTRL_PTS = data.control_points;
@@ -2921,6 +3025,9 @@ function applySolveResponse(data, clientMs) {
         n_seg: data.n_seg,
         min_clearance: isFinite(clr) ? clr : 0,
         feasible: false,
+        converged: !!info.converged,
+        total_slack: Number(info.total_koz_slack),
+        showing_last_feasible: false,
       };
     }
     setStatus(
@@ -3373,7 +3480,14 @@ async function diagFetchTrace(traceId) {
     const data = await resp.json();
     diagFrames = Array.isArray(data.frames) ? data.frames : [];
     diagTraceId = data.trace_id || traceId;
-    diagFrameIndex = diagFrames.length ? diagFrames.length - 1 : 0;
+    // Land on the last frame that actually carries KOZ rows. The true last
+    // frame is `finalize`, which has none, so opening the drawer used to show
+    // an empty margin table -- the feature's headline view, blank on arrival.
+    diagFrameIndex = 0;
+    for (let i = diagFrames.length - 1; i >= 0; i--) {
+      if (diagAllRows(diagFrames[i]).length) { diagFrameIndex = i; break; }
+      if (i === 0) diagFrameIndex = diagFrames.length ? diagFrames.length - 1 : 0;
+    }
     diagSelected = { segment: null, obstacle: null, row: null };
   } catch (_) {
     diagFrames = [];
