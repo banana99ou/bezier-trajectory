@@ -23,11 +23,9 @@ import numpy as np
 # ensure project root is importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from spacetime_bezier.optimize import (
-    compute_min_clearance,
-    create_spacetime_debug_stepper,
-    optimize_spacetime,
-)
+from spacetime_bezier.geometry import compute_min_clearance
+from spacetime_bezier.optimize import optimize_spacetime
+from spacetime_bezier.rust_debug_stepper import create_spacetime_debug_stepper
 from spacetime_bezier.scenarios import SCENARIO_MAP
 
 

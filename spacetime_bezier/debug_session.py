@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 import json
 import time
 
-from .optimize import create_spacetime_debug_stepper
+from .rust_debug_stepper import create_spacetime_debug_stepper
 from .scenarios import SCENARIO_MAP
 
 

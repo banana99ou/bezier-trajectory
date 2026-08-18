@@ -78,6 +78,25 @@
     opacity: 0.6;
     cursor: not-allowed;
   }
+  #marginTable th, #marginTable td {
+    padding: 3px 6px;
+    text-align: right;
+    border-bottom: 1px solid #1f2740;
+    font-family: ui-monospace, monospace;
+  }
+  #marginTable th {
+    position: sticky; top: 0;
+    background: #1b2134;
+    color: #8cb4ff;
+    text-align: center;
+    font-weight: 600;
+    cursor: default;
+  }
+  #marginTable tbody tr { cursor: pointer; }
+  #marginTable tbody tr:hover { background: #242d4a; }
+  #marginTable tbody tr.selected { background: #32416e; }
+  #marginTable tbody tr.violated td { color: #ff7b72; }
+  #marginTable tbody tr.near-active td { color: #ffd166; }
 </style>
 </head>
 <body>
@@ -125,6 +144,10 @@
   <select id="segmentSelect"></select>
   <label>Obstacle</label>
   <select id="obstacleSelect"></select>
+  <label>Row (local CP)</label>
+  <select id="rowSelect"></select>
+  <label class="toggle"><input id="chkAllRows" type="checkbox">Show all rows in 3D</label>
+  <label class="toggle"><input id="chkMarginTable" type="checkbox" checked>Margin table</label>
 </div>
 
 <div id="details">
@@ -132,6 +155,10 @@
   <pre id="summaryPre">Loading...</pre>
   <h3>Selection</h3>
   <pre id="detailPre">No data.</pre>
+  <h3>KOZ Row Margins</h3>
+  <div id="marginTableWrap" style="max-height:260px; overflow:auto; font-size:11px; border:1px solid #27304a; border-radius:6px;">
+    <table id="marginTable" style="width:100%; border-collapse:collapse;"></table>
+  </div>
 </div>
 
 <canvas id="canvas"></canvas>
@@ -147,6 +174,11 @@ const scenarioSelect = document.getElementById('scenarioSelect');
 const configSelect = document.getElementById('configSelect');
 const segmentSelect = document.getElementById('segmentSelect');
 const obstacleSelect = document.getElementById('obstacleSelect');
+const rowSelect = document.getElementById('rowSelect');
+const chkAllRowsEl = document.getElementById('chkAllRows');
+const chkMarginTableEl = document.getElementById('chkMarginTable');
+const marginTableWrap = document.getElementById('marginTableWrap');
+const marginTable = document.getElementById('marginTable');
 const startBtn = document.getElementById('startBtn');
 const resetBtn = document.getElementById('resetBtn');
 const prevBtn = document.getElementById('prevBtn');
@@ -227,6 +259,7 @@ function setControlsDisabled(disabled) {
     configSelect,
     segmentSelect,
     obstacleSelect,
+    rowSelect,
     document.getElementById('maxIterInput'),
     document.getElementById('tolInput'),
     document.getElementById('proxInput'),
@@ -321,6 +354,34 @@ function halfspaceSegments(frame) {
   return frame?.payload?.koz?.segments || [];
 }
 
+function allRowsForFrame(frame) {
+  return frame?.payload?.koz?.all_rows || [];
+}
+
+function nCpSegForFrame(frame) {
+  return frame?.payload?.koz?.n_cp_seg || null;
+}
+
+function rowsForSelectedObs(frame) {
+  const hsSegment = halfspaceSegments(frame).find(seg => String(seg.segment_index) === segmentSelect.value);
+  if (!hsSegment) return [];
+  const obs = hsSegment.active_obstacles?.find(o => String(o.obstacle_index) === obstacleSelect.value);
+  return obs?.rows || [];
+}
+
+function selectedRow(frame) {
+  const rows = rowsForSelectedObs(frame);
+  if (!rows.length) return null;
+  const want = rowSelect.value;
+  return rows.find(r => String(r.row_index) === want) || rows[0];
+}
+
+function selectedObstacleObj(frame) {
+  const hsSegment = halfspaceSegments(frame).find(seg => String(seg.segment_index) === segmentSelect.value);
+  if (!hsSegment) return null;
+  return hsSegment.active_obstacles?.find(o => String(o.obstacle_index) === obstacleSelect.value) || null;
+}
+
 function populateScenarioControls() {
   const catalog = scenarioCatalog();
   scenarioSelect.innerHTML = '';
@@ -371,6 +432,7 @@ function updateInspectSelectors() {
   const segments = segmentsForFrame(frame);
   const previousSegment = segmentSelect.value;
   const previousObstacle = obstacleSelect.value;
+  const previousRow = rowSelect.value;
 
   segmentSelect.innerHTML = '';
   segments.forEach(segment => {
@@ -398,6 +460,21 @@ function updateInspectSelectors() {
     obstacleSelect.value = active.some(obs => String(obs.obstacle_index) === previousObstacle)
       ? previousObstacle
       : String(active[0].obstacle_index);
+  }
+
+  // Populate row selector from the selected obstacle's rows
+  rowSelect.innerHTML = '';
+  const rows = rowsForSelectedObs(frame);
+  rows.forEach(r => {
+    const option = document.createElement('option');
+    option.value = String(r.row_index);
+    option.textContent = `cp ${r.cp_idx}  margin=${Number(r.margin_current).toFixed(3)}`;
+    rowSelect.appendChild(option);
+  });
+  if (rows.length) {
+    rowSelect.value = rows.some(r => String(r.row_index) === previousRow)
+      ? previousRow
+      : String(rows[0].row_index);
   }
 }
 
@@ -497,7 +574,29 @@ function selectionTextForState() {
     if (selectedObstacle.lower_bound != null) lines.push(`lb = ${Number(selectedObstacle.lower_bound).toFixed(3)}`);
     if (selectedObstacle.lhs_current != null) lines.push(`lhs_current = ${Number(selectedObstacle.lhs_current).toFixed(3)}`);
     if (selectedObstacle.margin_current != null) lines.push(`margin_current = ${Number(selectedObstacle.margin_current).toFixed(3)}`);
+    if (selectedObstacle.row_count != null) lines.push(`row_count = ${selectedObstacle.row_count} (tightest cp_idx=${selectedObstacle.tightest_cp_idx})`);
     lines.push(`rows = ${(selectedObstacle.row_indices || []).join(', ')}`);
+  }
+
+  // Row-level detail for the selected row
+  const row = selectedRow(frame);
+  if (row) {
+    const nCpSeg = nCpSegForFrame(frame);
+    const cpLabel = nCpSeg ? `${row.cp_idx} / ${nCpSeg - 1}` : String(row.cp_idx);
+    const tCoef = Number(row.time_coefficient);
+    const planeType = Math.abs(tCoef) > 1e-6 ? 'lifted_3d' : 'time_sliced';
+    const fullNormal = [...(row.normal || []), tCoef];
+    const active = Math.abs(Number(row.margin_current)) < 1e-4;
+    lines.push('');
+    lines.push(`row ${row.row_index}  cp=${cpLabel}`);
+    lines.push(`  plane_type = ${planeType}  (time_coef=${tCoef.toFixed(4)})`);
+    lines.push(`  normal_3d = (${fullNormal.map(v => Number(v).toFixed(3)).join(', ')})`);
+    if (row.support_point) lines.push(`  support = (${row.support_point.map(v => Number(v).toFixed(3)).join(', ')})`);
+    if (row.center) lines.push(`  center = (${row.center.map(v => Number(v).toFixed(3)).join(', ')})`);
+    lines.push(`  lb = ${Number(row.lower_bound).toFixed(4)}`);
+    lines.push(`  lhs_current = ${Number(row.lhs_current).toFixed(4)}`);
+    lines.push(`  margin_current = ${Number(row.margin_current).toFixed(4)}${active ? '  (active)' : ''}`);
+    if (row.slack != null && Number(row.slack) > 0) lines.push(`  slack = ${Number(row.slack).toFixed(4)}`);
   }
   lines.push('');
   if (document.getElementById('chkRawPayload').checked) {
@@ -516,11 +615,81 @@ function selectionTextForState() {
 function updatePanels() {
   summaryPre.textContent = summaryTextForState();
   detailPre.textContent = selectionTextForState();
+  renderMarginTable();
   const scenario = currentScenario();
   const session = appState?.session || {};
   statusEl.textContent = scenario
     ? `${scenario.title} | N=${session.config?.N ?? '-'} seg=${session.config?.n_seg ?? '-'} | frame ${session.frame_index + 1}/${session.frame_count}`
     : 'No session loaded';
+}
+
+function renderMarginTable() {
+  const frame = currentFrame();
+  const rows = allRowsForFrame(frame);
+  const MAX_ROWS = 200;
+
+  marginTableWrap.style.display = chkMarginTableEl.checked ? '' : 'none';
+
+  if (!rows.length) {
+    marginTable.innerHTML = '<thead><tr><th colspan="6">No KOZ rows in this frame.</th></tr></thead>';
+    return;
+  }
+  const sorted = rows.slice().sort((a, b) => {
+    const d = Number(a.margin_current) - Number(b.margin_current);
+    return d !== 0 ? d : Number(a.row_index) - Number(b.row_index);
+  });
+  const truncated = sorted.length > MAX_ROWS ? sorted.slice(0, MAX_ROWS) : sorted;
+
+  const selSeg = segmentSelect.value;
+  const selObs = obstacleSelect.value;
+  const selRow = rowSelect.value;
+
+  const head = '<thead><tr>'
+    + '<th>seg</th><th>cp</th><th>obstacle</th>'
+    + '<th>margin</th><th>lb</th><th>slack</th>'
+    + '</tr></thead>';
+
+  const body = '<tbody>' + truncated.map(r => {
+    const margin = Number(r.margin_current);
+    const slack = Number(r.slack || 0);
+    const cls = [];
+    if (margin < 0) cls.push('violated');
+    else if (margin < 1e-4) cls.push('near-active');
+    if (
+      String(r.segment_index) === selSeg
+      && String(r.obstacle_index) === selObs
+      && String(r.row_index) === selRow
+    ) cls.push('selected');
+    return `<tr class="${cls.join(' ')}"
+      data-seg="${r.segment_index}"
+      data-obs="${r.obstacle_index}"
+      data-row="${r.row_index}">
+      <td>${r.segment_index}</td>
+      <td>${r.cp_idx}</td>
+      <td>${r.obstacle_name}</td>
+      <td>${margin.toFixed(4)}</td>
+      <td>${Number(r.lower_bound).toFixed(4)}</td>
+      <td>${slack > 0 ? slack.toFixed(4) : '-'}</td>
+    </tr>`;
+  }).join('') + '</tbody>';
+
+  const suffix = sorted.length > MAX_ROWS
+    ? `<tfoot><tr><td colspan="6" style="text-align:center; color:#95a1c6;">showing first ${MAX_ROWS} of ${sorted.length}</td></tr></tfoot>`
+    : '';
+
+  marginTable.innerHTML = head + body + suffix;
+
+  marginTable.querySelectorAll('tbody tr').forEach(tr => {
+    tr.addEventListener('click', () => {
+      segmentSelect.value = tr.dataset.seg;
+      // repopulate obstacle + row selects now that segment changed
+      updateInspectSelectors();
+      obstacleSelect.value = tr.dataset.obs;
+      updateInspectSelectors();
+      rowSelect.value = tr.dataset.row;
+      draw();
+    });
+  });
 }
 
 function comb(n, k) {
@@ -717,25 +886,55 @@ function drawScene() {
   if (document.getElementById('chkHalfspaces').checked) {
     const selectedSegment = segmentSelect.value;
     const selectedObstacle = obstacleSelect.value;
+    const selectedRowIdx = rowSelect.value;
+    const showAllRows = chkAllRowsEl.checked;
     const scenario = currentScenario();
     const fallbackT0 = scenario?.start?.[2] ?? 0;
     const fallbackT1 = scenario?.end?.[2] ?? scenario?.T ?? 10;
+
     halfspaceSegments(frame).forEach(segment => {
       segment.active_obstacles.forEach(active => {
-        const highlight =
+        const obsSelected =
           (!selectedSegment || String(segment.segment_index) === selectedSegment) &&
           (!selectedObstacle || String(active.obstacle_index) === selectedObstacle);
-        const color = highlight ? '#ffe66d' : '#b8c1ec';
-        const halfLen = highlight ? 2.2 : 1.3;
-        const patch = halfspacePatch(active, fallbackT0, fallbackT1, halfLen);
-        if (patch) {
-          drawLine3D(patch.p0, patch.p1, color, highlight ? 2 : 1, 0.45);
-          drawLine3D(patch.p1, patch.p2, color, 1, 0.35);
-          drawLine3D(patch.p2, patch.p3, color, highlight ? 2 : 1, 0.45);
-          drawLine3D(patch.p3, patch.p0, color, 1, 0.35);
+
+        if (showAllRows && Array.isArray(active.rows) && active.rows.length > 0) {
+          // Draw one thin patch per row
+          active.rows.forEach(row => {
+            const isSelectedRow = obsSelected && String(row.row_index) === selectedRowIdx;
+            const color = isSelectedRow ? '#ffe66d' : (obsSelected ? '#a3d9c8' : '#8a94b8');
+            const halfLen = isSelectedRow ? 2.2 : 0.9;
+            const patch = halfspacePatch(
+              { support_point: row.support_point, normal: [...(row.normal || []), row.time_coefficient] },
+              fallbackT0, fallbackT1, halfLen
+            );
+            if (patch) {
+              drawLine3D(patch.p0, patch.p1, color, isSelectedRow ? 2 : 1, isSelectedRow ? 0.55 : 0.3);
+              drawLine3D(patch.p1, patch.p2, color, 1, isSelectedRow ? 0.45 : 0.22);
+              drawLine3D(patch.p2, patch.p3, color, isSelectedRow ? 2 : 1, isSelectedRow ? 0.55 : 0.3);
+              drawLine3D(patch.p3, patch.p0, color, 1, isSelectedRow ? 0.45 : 0.22);
+            }
+            if (isSelectedRow) {
+              drawLine3D(row.center, row.support_point, color, 1.5, 0.9);
+              drawPoint3D(row.support_point, 4, color);
+            } else if (obsSelected) {
+              drawPoint3D(row.support_point, 2, color);
+            }
+          });
+        } else {
+          // Default: one patch per obstacle (tightest row summary)
+          const color = obsSelected ? '#ffe66d' : '#b8c1ec';
+          const halfLen = obsSelected ? 2.2 : 1.3;
+          const patch = halfspacePatch(active, fallbackT0, fallbackT1, halfLen);
+          if (patch) {
+            drawLine3D(patch.p0, patch.p1, color, obsSelected ? 2 : 1, 0.45);
+            drawLine3D(patch.p1, patch.p2, color, 1, 0.35);
+            drawLine3D(patch.p2, patch.p3, color, obsSelected ? 2 : 1, 0.45);
+            drawLine3D(patch.p3, patch.p0, color, 1, 0.35);
+          }
+          drawLine3D(active.center, active.support_point, color, 1.5, 0.9);
+          drawPoint3D(active.support_point, 4, color);
         }
-        drawLine3D(active.center, active.support_point, color, 1.5, 0.9);
-        drawPoint3D(active.support_point, 4, color);
       });
     });
   }
@@ -790,8 +989,9 @@ async function sessionAction(action) {
 
 scenarioSelect.addEventListener('change', populateConfigControls);
 segmentSelect.addEventListener('change', () => { updateInspectSelectors(); draw(); });
-obstacleSelect.addEventListener('change', draw);
-['chkTubes', 'chkSegments', 'chkHalfspaces', 'chkCompare', 'chkCentroids', 'chkRawPayload'].forEach(id => {
+obstacleSelect.addEventListener('change', () => { updateInspectSelectors(); draw(); });
+rowSelect.addEventListener('change', draw);
+['chkTubes', 'chkSegments', 'chkHalfspaces', 'chkCompare', 'chkCentroids', 'chkRawPayload', 'chkAllRows', 'chkMarginTable'].forEach(id => {
   document.getElementById(id).addEventListener('change', draw);
 });
 document.getElementById('startBtn').addEventListener('click', startSession);

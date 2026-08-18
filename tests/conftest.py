@@ -6,10 +6,40 @@ Fixtures provide a fixed-seed RNG, default scenario parameters (N, n_seg, T, r_e
 and P_init from generate_initial_control_points.
 """
 
+import socketserver
+
 import numpy as np
 import pytest
 
 from orbital_docking import constants, generate_initial_control_points
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_blocking_servers():
+    """Make `serve_forever()` raise instead of blocking, for every test.
+
+    On 2026-08-18 a test called `spacetime_bezier.io.main()` without `--bake`,
+    which had just become "launch the sandbox". The suite blocked in
+    `serve_forever()` and was still holding port 8765 ten hours later; the next
+    launch died with Errno 48. Nothing announced the hang -- pytest simply never
+    finished.
+
+    This cannot pass vacuously: if any test reaches a server loop it raises
+    RuntimeError and that test fails by name, rather than the run stalling.
+    """
+    original = socketserver.BaseServer.serve_forever
+
+    def refuse(self, *args, **kwargs):
+        raise RuntimeError(
+            "A test called serve_forever(). Tests must never start a blocking "
+            "server -- call the handler or solve_from_payload directly."
+        )
+
+    socketserver.BaseServer.serve_forever = refuse
+    try:
+        yield
+    finally:
+        socketserver.BaseServer.serve_forever = original
 
 
 @pytest.fixture

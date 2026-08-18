@@ -1,26 +1,29 @@
 """
-CLI and JSON I/O helpers for the space-time Bezier package.
+Command line surface and JSON I/O for the space-time Bezier package.
+
+There is exactly one entrypoint, ``python3 -m spacetime_bezier``. It launches
+the sandbox; ``--bake`` re-solves everything instead. Nothing here is runnable
+as ``__main__``: this module is imported by ``__init__``, so running it that way
+would execute the file twice under two names, and a test monkeypatching one copy
+would leave the shipped command running the other.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import socket
-import subprocess
 import sys
-import time
-import webbrowser
 from pathlib import Path
 
 from .optimize import optimize_scenarios
+from .sandbox import DEFAULT_HOST, DEFAULT_PORT, SANDBOX_HTML
+from .sandbox import main as sandbox_main
 from .scenarios import SCENARIO_MAP
 
 DEFAULT_OUTPUT_PATH = Path("figures/spacetime_scenarios.json")
-DEFAULT_VIEWER_HOST = "127.0.0.1"
-DEFAULT_VIEWER_PORT = 8765
-VIEWER_HTML = "spacetime_bezier_interactive.html"
 DEFAULT_N_SEG_SWEEP = (2, 8, 32, 64)
+DEFAULT_MAX_ITER = 10000
+DEFAULT_TOL = 1e-12
 
 
 def _positive_int(value: str) -> int:
@@ -61,9 +64,22 @@ def _normalize_degree_args(argv: list[str]) -> list[str]:
 
 
 
-DEFAULT_VIEWER_PATH = Path(__file__).resolve().parents[1] / "figures" / "spacetime_bezier_interactive.html"
+DEFAULT_VIEWER_PATH = Path(__file__).resolve().parents[1] / "figures" / SANDBOX_HTML
 
 VIEWER_BLOB_PREFIX = "const SCENARIOS = "
+
+
+def viewer_path_for(output_path: str | Path) -> Path:
+    """The viewer that belongs to a given scenario JSON: its sibling.
+
+    Deriving this rather than hardcoding the repo's copy is a safety property,
+    not tidiness. `sync_interactive_viewer` used to write the tracked
+    `figures/` page no matter where the JSON went, so the integration test --
+    which redirects output to a tmp directory and feeds in one fake control
+    point at the origin -- overwrote the real page's offline data anyway, and
+    that mock was committed. A test must not be able to reach a tracked file.
+    """
+    return Path(output_path).parent / SANDBOX_HTML
 
 
 def sync_interactive_viewer(
@@ -118,47 +134,16 @@ def save_outputs(outputs: dict, path: str | Path = DEFAULT_OUTPUT_PATH) -> Path:
     return path
 
 
-def _port_is_listening(host: str, port: int) -> bool:
-    try:
-        with socket.create_connection((host, port), timeout=0.2):
-            return True
-    except OSError:
-        return False
-
-
-def open_interactive_viewer(
-    output_path: str | Path = DEFAULT_OUTPUT_PATH,
-    host: str = DEFAULT_VIEWER_HOST,
-    port: int = DEFAULT_VIEWER_PORT,
-) -> str:
-    """
-    Serve the figures directory and open the interactive viewer in a browser.
-
-    Using a local HTTP server is required because the viewer fetches
-    `spacetime_scenarios.json`, which is unreliable from a `file://` URL.
-    """
-    output_path = Path(output_path)
-    viewer_dir = output_path.parent.resolve()
-    html_path = viewer_dir / VIEWER_HTML
-    if not html_path.exists():
-        raise FileNotFoundError(f"Missing interactive viewer HTML: {html_path}")
-
-    if not _port_is_listening(host, port):
-        subprocess.Popen(
-            [sys.executable, "-m", "http.server", str(port), "--bind", host],
-            cwd=str(viewer_dir),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        for _ in range(20):
-            if _port_is_listening(host, port):
-                break
-            time.sleep(0.1)
-
-    url = f"http://{host}:{port}/{VIEWER_HTML}"
-    webbrowser.open(url)
-    return url
+# `open_interactive_viewer` lived here until 2026-08-18. It spawned a detached
+# `python -m http.server` with start_new_session=True: no terminate, no atexit,
+# no recorded pid, so Ctrl-C never reached it and it outlived every parent. It
+# used port 8765, which was also this module's sandbox default, so one --bake
+# run permanently squatted the port the plain command needed -- the Errno 48
+# that started this rewrite. It also served the page WITHOUT /api/solve, so the
+# browser it opened answered every slider move with 501. Its stated reason (the
+# viewer "needs" a server because file:// cannot fetch the JSON) was obsolete:
+# the page falls back to the inline SCENARIOS blob, which --bake rewrites in the
+# same run.
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -180,52 +165,55 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "iteration cap. Only needed to refresh the file:// fallback data."
         ),
     )
+    # `default` is deliberately not set alongside `choices` here. argparse before
+    # 3.13 validates the default list against `choices` as a single value, so a
+    # bare `python3 -m spacetime_bezier` died on 3.11 and 3.12 with
+    # "invalid choice: ['original', 'diverse', 'wall']". Resolved in `main`.
     parser.add_argument(
         "scenarios",
         nargs="*",
-        default=list(SCENARIO_MAP.keys()),
         choices=list(SCENARIO_MAP.keys()),
-        help="Which scenarios to run (default: all)",
+        help="[--bake only] Which scenarios to re-solve (default: all).",
     )
     parser.add_argument(
         "-N",
         action="append",
         type=_positive_int,
         default=None,
-        help="Override with one or more positive Bezier degrees and run n_seg in {2, 8, 32, 64}.",
+        help="[--bake only] One or more Bezier degrees; runs n_seg in {2, 8, 32, 64}.",
     )
     parser.add_argument(
         "--tol",
         type=float,
-        default=1e-12,
-        help="Tolerance for optimization.",
+        default=None,
+        help=f"[--bake only] Optimizer tolerance (default: {DEFAULT_TOL:g}).",
     )
     parser.add_argument(
         "--max-iter",
         type=int,
-        default=10000,
-        help="Maximum number of iterations for optimization.",
+        default=None,
+        help=f"[--bake only] Iteration cap (default: {DEFAULT_MAX_ITER}).",
     )
     parser.add_argument(
         "--output",
-        default=str(DEFAULT_OUTPUT_PATH),
-        help="Path to the scenario JSON consumed by the interactive demo.",
+        default=None,
+        help=f"[--bake only] Scenario JSON path (default: {DEFAULT_OUTPUT_PATH}).",
     )
     parser.add_argument(
         "--no-open",
         action="store_true",
-        help="Do not automatically open the interactive HTML viewer.",
+        help="Do not open a browser.",
     )
     parser.add_argument(
-        "--viewer-host",
-        default=DEFAULT_VIEWER_HOST,
-        help="Host for the local viewer HTTP server.",
+        "--host",
+        default=DEFAULT_HOST,
+        help=f"Host for the sandbox server (default: {DEFAULT_HOST}).",
     )
     parser.add_argument(
-        "--viewer-port",
+        "--port",
         type=int,
-        default=DEFAULT_VIEWER_PORT,
-        help="Port for the local viewer HTTP server.",
+        default=DEFAULT_PORT,
+        help=f"Port for the sandbox server (default: {DEFAULT_PORT}).",
     )
     return parser
 
@@ -240,13 +228,26 @@ def _resolve_scenario_map(base_map: dict, degree_overrides: list[int] | None) ->
     }
 
 
-def main(argv: list[str] | None = None) -> None:
-    """Launch the viewer, or with --bake re-solve everything first.
+#: Flags that only mean something under --bake. Passing one without it used to
+#: be silently ignored: `python3 -m spacetime_bezier wall -N 12 --max-iter 50`
+#: launched an unrelated sandbox and dropped every one of those words.
+_BAKE_ONLY = {
+    "scenarios": "scenario names",
+    "N": "-N",
+    "tol": "--tol",
+    "max_iter": "--max-iter",
+    "output": "--output",
+}
 
-    Solving all 16 configurations before showing anything was the default until
-    2026-08-18, which meant a ~15 minute wait to look at one curve. The sandbox
-    has always solved on demand; the batch is only needed to refresh the static
-    data the page falls back to over file://.
+
+def main(argv: list[str] | None = None) -> int:
+    """Launch the sandbox, or with --bake re-solve everything instead.
+
+    Returns a process exit code. The default path serves until interrupted, so
+    this function blocks -- which is why nothing imports it as a helper and why
+    `tests/conftest.py` makes `serve_forever` raise under pytest. A test that
+    called this without --bake once left a listening socket behind for ten
+    hours and broke the next launch with Errno 48.
     """
     parser = build_arg_parser()
     raw_argv = list(sys.argv[1:] if argv is None else argv)
@@ -257,39 +258,44 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(normalized_argv)
 
     if not args.bake:
-        # Open first, solve on demand. The sandbox serves the same page and
-        # re-solves only the current selection on every change.
-        from .sandbox import main as sandbox_main
-
-        sandbox_argv = ["--host", args.viewer_host, "--port", str(args.viewer_port)]
+        ignored = [label for attr, label in _BAKE_ONLY.items() if getattr(args, attr)]
+        if ignored:
+            parser.error(
+                f"{', '.join(ignored)}: only meaningful with --bake. "
+                "Without --bake this launches the sandbox and solves nothing up front."
+            )
+        # Open first, solve on demand: one selection is one POST /api/solve.
+        sandbox_argv = ["--host", args.host, "--port", str(args.port)]
         if args.no_open:
             sandbox_argv.append("--no-open")
-        print(
-            "Launching the live sandbox (nothing is pre-solved; the page solves "
-            "only what you select). Use --bake to refresh the static data."
-        )
-        sandbox_main(sandbox_argv)
-        return
+        return sandbox_main(sandbox_argv)
 
-    output_path = Path(args.output)
+    scenarios = args.scenarios or list(SCENARIO_MAP.keys())
+    output_path = Path(args.output or DEFAULT_OUTPUT_PATH)
+    max_iter = DEFAULT_MAX_ITER if args.max_iter is None else args.max_iter
+    tol = DEFAULT_TOL if args.tol is None else args.tol
     existing_outputs = load_outputs(output_path)
     scenario_map = _resolve_scenario_map(SCENARIO_MAP, args.N)
     all_outputs = optimize_scenarios(
-        scenario_names=args.scenarios,
+        scenario_names=scenarios,
         scenario_map=scenario_map,
         existing_outputs=existing_outputs,
-        max_iter=args.max_iter,
-        tol=args.tol,
+        max_iter=max_iter,
+        tol=tol,
     )
     saved_path = save_outputs(all_outputs, output_path)
     print(f"\nSaved: {saved_path}")
-    try:
-        viewer = sync_interactive_viewer(all_outputs)
-        print(f"Synced viewer: {viewer}")
-    except (OSError, ValueError) as exc:  # pragma: no cover - viewer is optional
-        print(f"WARNING: could not sync the interactive viewer: {exc}")
+    viewer_target = viewer_path_for(saved_path)
+    if viewer_target.exists():
+        try:
+            viewer = sync_interactive_viewer(all_outputs, viewer_target)
+            print(f"Synced viewer: {viewer}")
+        except (OSError, ValueError) as exc:  # pragma: no cover - viewer is optional
+            print(f"WARNING: could not sync the interactive viewer: {exc}")
+    else:
+        print(f"No viewer beside {saved_path}; left the page's inline data alone.")
 
-    for name in args.scenarios:
+    for name in scenarios:
         data = all_outputs[name]
         best = data["results"][data["best"]]
         verdict = "CONVERGED" if best.get("converged") else "did NOT converge"
@@ -300,21 +306,12 @@ def main(argv: list[str] | None = None) -> None:
             f"clearance={best['min_clearance']:.4f}, {verdict} "
             f"({best.get('stop_label', '?')}), {cert_txt}"
         )
-        if not (best.get("converged") and best.get("certified") and best["feasible"]):
+        if not (best.get("converged") and best.get("certified") and best.get("feasible")):
             print("  NOT SUITABLE AS A FIGURE: this run does not support the hull claim.")
         for row in best["control_points"]:
             print(f"  [{row[0]:.4f}, {row[1]:.4f}, {row[2]:.4f}],")
 
-    if not args.no_open:
-        viewer_url = open_interactive_viewer(
-            output_path=saved_path,
-            host=args.viewer_host,
-            port=args.viewer_port,
-        )
-        print(f"\nOpened interactive viewer: {viewer_url}")
-
-
-if __name__ == "__main__":  # pragma: no cover - CLI entrypoint
-    # Without this, `python3 -m spacetime_bezier.io` exits 0 having done nothing,
-    # which is how the shipped scenario JSON stayed three months stale.
-    main()
+    if not args.no_open and viewer_target.exists():
+        print(f"\nOpen it with:  open {viewer_target}")
+        print(f"Or live-solve:  python3 -m spacetime_bezier")
+    return 0
