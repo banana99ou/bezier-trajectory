@@ -2,9 +2,25 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-This is the only file loaded into every session automatically. Everything an agent needs in order to work on this branch is here, not in a file this one points at.
+This file is **direction and guardrails**: what we are doing, what is already settled, and what not
+to re-propose. It is the only file loaded into every session automatically, so it is kept short
+enough to actually read. Anything carrying a derivation, a measurement, or an evidence trail lives
+in a note under `doc/notes/`, and **every such block leaves a one-line pointer here**. If you are
+about to add more than five lines of reasoning to this file, it belongs in a note.
 
-## Goal (until 2026-08-19)
+Where the reasoning went:
+- [`doc/notes/005_formulation_freeze.md`](doc/notes/005_formulation_freeze.md) — the frozen formulation, the velocity/acceleration derivation, occluder geometry
+- [`doc/notes/006_solver_record.md`](doc/notes/006_solver_record.md) — evidence behind every established fact, and the scenario measurement history
+- [`doc/notes/007_sandbox_direction.md`](doc/notes/007_sandbox_direction.md) — where the sandbox goes after the paper
+- [`doc/notes/008_schedule.md`](doc/notes/008_schedule.md) — 제출 마감일과 9월 4일 역산 마일스톤
+- [`PAPER_1.md`](PAPER_1.md) / [`PAPER_2.md`](PAPER_2.md) — paper claims and scope boundary
+- [`doc/refs/c1_novelty.md`](doc/refs/c1_novelty.md) — prior-art verification; **it outranks any agent's assertion about novelty**
+
+## Goal (until 2026-09-04)
+
+**한국항공우주학회 2026년도 추계학술대회 발표논문. 온라인 제출 마감 2026년 9월 4일(금).** 학회
+템플릿이 2페이지 고정이므로, 이 파일이 줄곧 가정해 온 "2-page conference paper"가 곧 이
+제출물이다. 역산 마일스톤은 [`doc/notes/008_schedule.md`](doc/notes/008_schedule.md).
 
 **A 2-page conference paper, first draft due Wednesday 2026-08-19.** The central claim is the space-time lift. Performance is housekeeping — the numbers need to be reasonable, not impressive.
 
@@ -13,27 +29,47 @@ The goal is not "make the solver good." It is: **make the paper's claims true of
 1. The paper claims a convex-hull guarantee the code does not implement. (True today — see G1/G2 below.)
 2. A figure comes from a run where elastic slack hid a constraint violation. (Possible today — `wall` renders a trajectory that is 0.112 inside an obstacle.)
 
+## Formulation decisions — frozen 2026-08-19 (item A1)
+
+Decisions, not findings: they define the problem the solver must answer. An agent that finds one
+inconvenient must raise it, not work around it. **Full text, rationale and derivation:
+[`doc/notes/005_formulation_freeze.md`](doc/notes/005_formulation_freeze.md).**
+
+1. The curve parameter is not time — **do not write "minimizes spatial acceleration"** until item B8 lands.
+2. Velocity and acceleration are rational in the control points, so **no quadratic acceleration-energy matrix exists.** Do not try to derive one.
+3. **Rename the objective, do not re-derive it**: it is a parameter-domain smoothness regularizer. Physics goes into constraints.
+4. The speed cap is a **constraint, not a cost** — a slant limit per control-polygon leg, proven sufficient in note 005. The acceleration cap is bilinear, so linearize it per iteration.
+5. Arrival time is freed with a **linear** time penalty; the subproblem stays a QP. Speed cap and time penalty must land **together**, or arrival collapses to an artifact.
+6. The energy-versus-time weight is a **preference, not a threshold** — report it as a scenario parameter.
+7. **Every number here is stale by construction** until B8–B10 land. Measurement is one pass at the end; the PI's draft carries none.
+8. Linearization handles a non-convex **free side**, never a non-convex **forbidden set** — the latter has no supporting half-space, so the certificate has nothing to stand on.
+
 ## Workstreams
 
 A session can open with just an item id (`B1`, `A2`, `C1`).
 
 **A. Paper** — no dependency on solver correctness except A1.
-- A1 freeze the constraint formulation on paper (blocks B4)
+- A1 freeze the constraint formulation. **Done 2026-08-19**, note 005 — what remains is revising note 001, which still enshrines both fixed defects as design
 - A2 §formulation — lifting, tube geometry, half-space in (x,y,t), monotonicity, finite-height tubes, why this is not time-slicing
 - A3 related work, incl. how this differs from TEB
 - A4 limitations — passing class comes from initialization; multi-start is not exhaustive
-- A5 demo scenario definitions (pendulum, sliding door) as parameters
+- A5 demo scenario definitions as parameters. **Decided 2026-08-19:** the line-of-sight demo is a *moving, non-straight* occluder — see [`PAPER_1.md`](PAPER_1.md) §"which line-of-sight demo" and note 005 Part 3
 - A6 figure slots — what each figure must show, defined before any exist
 
 **B. Solver**
 - ~~B0 repair the venv~~ **DONE**
 - ~~B1 fix G1~~ **DONE** — tube is a capsule around the slanted centreline; the time component falls out of the slant
-- ~~B2 a KOZ test with a **moving** obstacle that fails before B1 and passes after~~ **DONE** — `tests/unit/test_spacetime_koz_geometry.py`; 4 of them failed on the old geometry, one breach measured at 8.51
-- B3 re-benchmark; sweep `cap_bulge_ratio` on `wall`
-- ~~B4 fix G2~~ **DONE** — one plane per (segment, obstacle) aimed at the segment centroid. Side commitment per passing class is NOT done and is what `wall` still needs (see B6).
+- ~~B2 a KOZ test with a **moving** obstacle that fails before B1 and passes after~~ **DONE** — `tests/unit/test_spacetime_koz_geometry.py`
+- B3 re-benchmark, after the B8–B10 freeze. **Do not sweep `cap_bulge_ratio`** — it is dead code and the sweep can only produce a flat line (measured; note 006). Sweep `elastic_weight` instead.
+- ~~B4 fix G2~~ **DONE** — one plane per (segment, obstacle) aimed at the segment centroid
 - ~~B5 port the SCvx machinery from `main`~~ **DONE** — `848bf3b`, then reduced to one canonical iteration in `9b9c3d3`
-- B6 procedural seeds (left/right/wait/hurry) + multi-start
+- B6 procedural seeds (left/right/wait/hurry) + multi-start. **Demoted 2026-08-19** — it was justified by `wall` being infeasible, which was false. May still buy better local optima; blocks nothing.
 - B7 feasibility gate: a run with `total_slack > 0` cannot produce a figure
+- B8 rename the objective to what it measures, and add the velocity/acceleration rows as control-point operators (formulation decisions 1–3; the derivation is done, in note 005)
+- B9 slant-limit speed cap as a hard constraint, not a cost (formulation decision 4). Needs the second-order cone plumbed into `solve_qp`, or the linear per-axis fallback
+- B10 linear time penalty + freed arrival time. **Lands together with B9** (formulation decision 5)
+- B11 one run at three spatial dimensions plus time. **Cheap** — the solver is already dimension-generic, see Established facts; this is a scenario definition and a run, not a solver change. Retires the paper's largest weakness
+- B12 occlusion constraint builder, moving non-straight occluder as a chain of straight tubes. **Gated** on the per-piece space-time convexity check — do not write it before that check runs (note 005 Part 3)
 
 **C. References** — external ground truth for solver logic and math. When C and an agent's assertion disagree, C wins, and the disagreement is recorded.
 - C1 novelty positioning (**blocks A2**) — time-as-a-coordinate is old (Erdmann & Lozano-Pérez configuration-time space, space-time A*/SIPP, velocity obstacles). The contribution has to be narrower and true.
@@ -43,19 +79,21 @@ A session can open with just an item id (`B1`, `A2`, `C1`).
 
 ## Established facts — do not re-derive
 
-Three separate agents have each spent ~50 tool calls rediscovering these.
+Three separate agents have each spent ~50 tool calls rediscovering these. **Evidence, measurements
+and the original diagnoses: [`doc/notes/006_solver_record.md`](doc/notes/006_solver_record.md).**
 
-- **The merge-base `e849ff7` contains no Rust.** Both lineages wrote `rust_optimizer/` from scratch after 2026-04-03, so `git merge main` is an add/add conflict on every file. Bringing solver work over from `main` is a **file-level port**, never a merge or a rebase.
+- **The merge-base `e849ff7` contains no Rust.** Both lineages wrote `rust_optimizer/` from scratch, so `git merge main` is an add/add conflict on every file. Bringing solver work over from `main` is a **file-level port**, never a merge or a rebase.
 - `bezier.rs` and `de_casteljau.rs` are **byte-identical** between `main` and this branch.
-- **`0d130fc` (the `|pred|` stationarity fix) has no pre-image here.** `spacetime_optimizer.rs` has no merit function, no `pred`, and no ratio test; every step is accepted unconditionally (`spacetime_optimizer.rs:369-392`). "Converged" means `delta < tol && slack < 1e-10` — the step got small, which is not an optimality claim.
-- **G1 — FIXED 2026-08-17.** Was: the body-case KOZ normal had a zero time coefficient. The tube is now a capsule around the obstacle's *slanted* centreline, so the time component comes from the slant rather than being written in. Verified by `test_moving_obstacle_normal_has_nonzero_time_component` and `test_half_space_actually_supports_the_tube`, which measured the old planes cutting through the obstacle by 8.51. Original diagnosis, kept for context:
-  - **G1 — the body-case KOZ normal has a zero time coefficient.** `spacetime_constraints.rs:82-104`. The tube is `‖p_xy − p₀ − v·p_t‖ ≤ r`, so its true normal is `(n̂, −n̂·v)`; the code drops the time term. This regressed in `29a43c6` (which fixed an unrelated slider artifact and never mentioned the normal); `c4ec13c` had it right. Because obstacle time windows default to `±inf` (`geometry.py:194-195`), the cap branch is unreachable — so on `original` and `diverse`, **every KOZ row in every iteration is a zero-time row**, and the QP is told that moving a control point in time cannot change clearance.
-- **G2 — FIXED 2026-08-17.** One plane per (segment, obstacle) now, aimed at the segment centroid and shared by every control point of that segment. A third piece was needed to make it usable: the plane rotates as the control points move, so the subproblem gets a **rotation term** (`build_spacetime_koz_constraints_linearized`) while the certificate is still evaluated with the exact rows. Without it, 10-13 of every ~17 steps were rejected and nothing converged. Original diagnosis, kept for context:
-  - **G2 — one plane per (segment, control point, obstacle).** `spacetime_constraints.rs:191-193`. The convex-hull certificate needs **one** plane satisfied by **all** of a segment's control points; per-point planes prove only that each point individually is outside its own plane, which is exactly as strong as sampling the curve at finitely many points. Worse, opposing normals let a segment's hull straddle the tube, and a straddling hull *contains* it. Confirmed against six papers in `doc/notes/_shared/c3_safe_corridor_refs.md`; the only per-control-point method in the literature (EGO-Planner) is an explicit soft penalty claiming no guarantee.
-  - **The dense subdivision matrix is NOT part of this defect.** An earlier version of this line implied it was. De Casteljau weights are non-negative and sum to one, so each sub-control-point is a convex combination of the parents and the certificate transfers intact. Sparsifying that matrix would *break* the guarantee.
-- `wall` and `diverse` are infeasible. **Parameter tuning was already tried and failed** — `489eb85` shortened the wall's `t_end` 8.0 → 5.0 and added low-segment configs. (Superseded numbers: this line previously recorded −0.112 and −0.495; see the scenario table for measured values.)
-- **The KOZ tests cannot fail on G1.** Every one uses `vel=[0,0]`, where a zero time coefficient is genuinely correct, and `tests/unit/test_spacetime_constraints.py:65` asserts `A[:, 2::3] == 0`, which enshrines the bug. Those tests exercise `spacetime_bezier/constraints.py` — the dead Python builder. The Rust builder has no tests at all.
-- **Note 001 contradicts itself, so A1 is real work.** `doc/notes/001_problem_formulation/main.tex` §"Body 경우" derives `n = (d_xy/‖d_xy‖, 0)` and states the time component is "정확히 0" — presenting it as the correct formulation. §"잘못된 패턴" then forbids exactly that: evaluate the obstacle at `p₀ + v·t`, build the normal from spatial coordinates only, emit a zero time component. The body derivation *is* those three steps. Separately, §"선형화 지점" presents per-control-point linearization as an improvement over per-centroid ("더 조밀한 표본") — that is G2. **The note enshrines both defects as design. Do not seed the paper from it until A1 revises it.**
+- **The SCP loop has a real ratio test.** Since `9b9c3d3` there is a merit function, a predicted reduction, and a rho governing accept/reject and the trust update. What is still missing is any **dual or KKT residual**, so `converged` asserts feasibility plus no-further-progress — *not* stationarity of the original problem.
+- **G1 — FIXED 2026-08-17.** The keep-out normal's time component now falls out of the tube's slanted centreline instead of being written as zero.
+- **G2 — FIXED 2026-08-17.** One plane per (segment, obstacle), aimed at the segment centroid, plus a rotation term in the subproblem. The dense subdivision matrix was never part of this defect — sparsifying it would *break* the guarantee.
+- **`wall` and `diverse` are FEASIBLE.** Corrected 2026-08-19. Both clear and certify once the elastic penalty weight exceeds the scenario's exact-penalty threshold; the weight was pinned at 100 inside the Rust binding and unreachable from Python. Below threshold, a penetrating curve is genuinely the cheaper answer — the solver was right about the wrong problem.
+- **The certificate is evaluated at the RETURNED iterate.** Fixed 2026-08-19; it used to report the loop's final *reference* point, which is a different trajectory whenever the best-iterate fallback fires.
+- **The KOZ tests in `test_spacetime_constraints.py` cannot fail on G1** — every one uses zero velocity, and line 65 asserts the time column is zero, which enshrines the old bug. They exercise `spacetime_bezier/constraints.py`, the dead Python builder. The Rust builder *is* covered, by `tests/unit/test_spacetime_koz_geometry.py`.
+- **The solver is already dimension-generic.** `dim` comes from the array shape; the only guard is `dim >= 2` (`rust_optimizer/pybind/src/lib.rs:144`). **A run at three spatial dimensions plus time costs one scenario definition and one run, not a solver change** — item B11, and the cheapest way to retire the paper's largest weakness.
+- **The core lift is NOT novel.** Osburn, Peterson & Salmon (arXiv:2508.10203, Aug 2025) published the lift, time as a Bezier coordinate, hull half-spaces in the lifted space, finite-height prisms and time monotonicity — on Clarabel. **What survives is decomposition-free.** Never phrase the hook as "time as a coordinate". See [`doc/refs/c1_novelty.md`](doc/refs/c1_novelty.md).
+- **The paper documents did not drift; the containers moved.** Part A of `PAPER_1.md` is byte-identical to the committed `PAPER_CLAIM.md`; Part B is the former `PAPER_OUTLINE.md`. **Risk: `PAPER_OUTLINE.md`, `PAPER_2.md` and `doc/notes/004_probabilistic_koz/` were never committed** and exist only in the working tree.
+- **Note 001 contradicts itself, so A1 is real work.** `doc/notes/001_problem_formulation/main.tex` derives the zero-time normal in one section and forbids it in another, and presents per-control-point linearization as an improvement. **The note enshrines both fixed defects as design. Do not seed the paper from it until A1 revises it.**
 
 ## Decided against — do not re-propose
 
@@ -85,6 +123,10 @@ Lift 2D (or 3D) moving-obstacle avoidance into space-time by adding time as an e
 - The optimizer minimizes spatial acceleration energy while threading the curve between obstacle tubes
 - Time-limited obstacles (e.g. a wall that disappears) become **finite-height tubes** -- the curve can "wait" then pass through
 
+> ⚠️ **The list above is not a novelty claim.** Four of its five items were published by Osburn et
+> al. in August 2025 — see [`doc/refs/c1_novelty.md`](doc/refs/c1_novelty.md). It describes what the
+> code does, not what is new about it. What is new is *decomposition-free*.
+
 ## What Must Be Reused
 
 The baseline `orbital_docking/` package has dimension-agnostic building blocks. **Import them, don't rewrite them:**
@@ -102,30 +144,32 @@ What is genuinely **new** in the spacetime extension:
 
 ## Important Implementation Warning
 
-The intended model is a static obstacle in space-time, not a 2D obstacle re-evaluated on each time slice.
+The intended model is a static obstacle **in space-time**, not a 2D obstacle re-evaluated on each
+time slice. The bad pattern — evaluate the obstacle at `pos0 + vel*t`, build the normal from spatial
+coordinates only, emit a zero coefficient on the time coordinate — was defect G1 and is fixed.
+`tube_geometry` now builds a capsule around the slanted centreline in the full lifted space.
 
-Bad pattern to avoid:
-- Compute `pos0 + vel * t_seg`
-- Build a normal using only spatial coordinates
-- Emit a half-space with zero coefficient on the time coordinate
-
-Correct pattern:
-- Treat the obstacle as one object in `(x, y, t)` or `(x, y, z, t)`
-- Build supporting half-spaces in the full lifted space so the time coordinate can appear in the plane equation
-
-> **Done as of 2026-08-17.** The shipped code implements the correct pattern: `tube_geometry` in `spacetime_constraints.rs` builds a capsule around the slanted centreline in the full lifted space, and the time coefficient is nonzero whenever the obstacle moves. `SPACETIME_AXIS_SCALE` is pinned at 1.0 as a declared modelling choice — the consequence is that the constant-time cross-section is an ellipse stretched by `sqrt(1 + speed^2)`, i.e. conservative, measured at 1.32x on `original`.
+`SPACETIME_AXIS_SCALE` is pinned at 1.0 as a declared modelling choice; the consequence is a
+constant-time cross-section stretched by the obstacle speed, i.e. conservative — measured at 1.32x
+on `original`. History and evidence: [`doc/notes/006_solver_record.md`](doc/notes/006_solver_record.md).
 
 ## Commands
 
 ```bash
-# Main entrypoint. Opens the viewer immediately and solves NOTHING up front:
-# each scenario / degree / segment-count you select is solved on demand, ~0.5-0.7s.
+# THE entrypoint. There is exactly one. Opens the viewer immediately and solves
+# NOTHING up front: each scenario / degree / segment-count is solved on demand,
+# ~0.5-0.7s. Exits 1 if the port is busy, naming the pid that holds it and
+# warning when that process loaded the Rust extension before your last build.
 python3 -m spacetime_bezier
-python3 -m spacetime_bezier.io      # same thing; --bake is what runs the batch
 
 # Refresh the static file:// fallback data. SLOW: 16 configurations, several of
 # which run to the iteration cap (~15 min). Only needed for offline viewing.
-python3 -m spacetime_bezier.io --bake
+python3 -m spacetime_bezier --bake
+
+# `python3 -m spacetime_bezier.io` and `.sandbox` are NOT entrypoints as of
+# 2026-08-18. They bound a second default port (8765 vs 8767), which is how two
+# sandboxes ended up live at once -- the older four days stale on a different
+# interpreter, answering with pre-G1/G2 geometry and no signal in the UI.
 
 # Open the static demo (pre-baked data, no live re-solve)
 open figures/spacetime_bezier_interactive.html
@@ -147,93 +191,63 @@ cd rust_optimizer/pybind && PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 maturin develo
 
 Registry keys are in `spacetime_bezier/scenarios.py` (`SCENARIO_MAP`).
 
-| Key | Purpose | Status |
-|-----|---------|--------|
-Regenerated 2026-08-18 by `python3 -m spacetime_bezier.io`, `max_iter=200`,
-trust radius 0.5. **FIGURE-GRADE** means all three of: the sampled curve clears
-every obstacle, the loop converged for a principled reason, and the control-point
-hull satisfies the half-spaces it generates. Clearance alone means none of that.
+**FIGURE-GRADE** means all three of: the sampled curve clears every obstacle, the loop converged for
+a principled reason, and the control-point hull satisfies the half-spaces it generates. Clearance
+alone means none of that.
 
-| Key | Best config | Clearance | Converged | Certificate | Figure-grade |
-|-----|-------------|-----------|-----------|-------------|--------------|
-| `original` | N8_seg4 | **+0.620** (10 iters) | **yes**, stationary | **0.000** | **YES — all 5 configs** |
-| `diverse` | N10_seg4 | +0.007 | no, iteration cap | 1.350 | no |
-| `wall` | N8_seg2 | −0.051 | no, trust collapse | 2.281 | no |
+> ⚠️ **Every number below is stale by construction** — formulation decision 7. The objective is
+> about to change (B8–B10), so nothing measured before that freeze survives it. None of these may
+> reach the paper. Re-measure in one pass after the freeze.
 
-`original` is the working demo: every shipped config converges, clears, and
-carries the certificate. `diverse` at 4 segments barely clears but never
-converges and its hull is not certified. `wall` remains unsolved.
+| Key | Best config | Clearance | Converged | Certificate | Elastic weight | Figure-grade |
+|-----|-------------|-----------|-----------|-------------|----------------|--------------|
+| `original` | N8_seg4 | **+0.620** (10 iters) | **yes**, stationary | **0.000** | 100 | **yes — all 5 configs** |
+| `diverse` | N8_seg4 | **+0.1136** (9 iters) | **yes** | **0.000** | 800 | **yes** |
+| `wall` | N10_seg16 | **+0.0751** (19 iters) | **yes** | **0.000** | 100000 | **yes** |
 
-**Segment counts changed 2026-08-18.** The old geometry used one half-space per
-control point, so more segments meant more planes and better numbers, and the
-config lists were built around that. With one plane per segment the trade
-reverses — few segments is a different and here better regime. `original` and
-`diverse` had no config below 8 segments, which is why their best results were
-being missed entirely (`original` +0.620 at 4 segments against +0.323 at 8).
-
-⚠️ Earlier records for `original` (+0.8348, "~39 iterations") were the
-**straight-line initial guess handed back unchanged** — the best-iterate fallback
-was seeded with the solver's own input. Fixed in `9b9c3d3`.
-
-**Why `wall` is still unsolved.** One plane per segment cannot pass a segment's
-control points on *opposite* sides of the same obstacle. The literature's fix is
-more segments; here that plateaus near −0.09. The remaining lever is side
-commitment per passing class — procedural seeds and multi-start, item **B6**.
-Recorded as a strict `xfail` in `tests/unit/test_spacetime_koz_geometry.py` so
-the suite announces it if a later change fixes it.
+The elastic weight is part of the result and part of reproducing it: it is a **modelling decision,
+not a tuning knob**, because above the exact-penalty threshold the penalized and constrained
+problems share a solution and below it they do not. Measured thresholds and the full history — the
+segment-count reversal, the `+0.8348` straight-line artifact, why `wall` looked unsolved for months
+— are in [`doc/notes/006_solver_record.md`](doc/notes/006_solver_record.md).
 
 ## Key Files
 
-### Python package (`spacetime_bezier/`)
-- `__main__.py` -- Entrypoint: `python3 -m spacetime_bezier` → launches the sandbox
-- `sandbox.py` -- Interactive sandbox HTTP server (live re-solve on slider change)
-- `optimize.py` -- Public API: `optimize_spacetime()`, `optimize_scenario()`, debug stepper factories
-- `constraints.py` -- Python KOZ constraint builder (used by Python debug stepper only)
-- `rust_debug_stepper.py` -- Steps through actual Rust optimizer execution via debug log
-- `debug_stepper.py` -- Dead Python SCP stepper; no external imports. Kept pending cleanup, do not treat as a reference implementation.
-- `debug_session.py` -- Stateful session for the step debugger UI
-- `debug_trace.py` -- `DebugFrame` schema shared by both steppers
-- `geometry.py` -- `MovingObstacle`, `bezier_curve()`, `obstacle_array_bundle()`
-- `objective.py` -- Energy matrix and initial guess construction
-- `scenarios.py` -- Scenario definitions and `SCENARIO_MAP` registry
-- `io.py` -- CLI entrypoint, JSON I/O, interactive viewer launcher
+The full tree is [`README.md`](README.md) § Repo map — not repeated here. Only the entries that
+carry a warning or are easy to mistake:
 
-### Rust optimizer (`rust_optimizer/`)
-- `core/src/spacetime_optimizer.rs` -- SCP outer loop with elastic relaxation
-- `core/src/spacetime_constraints.rs` -- KOZ capsule geometry, boundary, monotonicity, box constraints
-- `core/src/optimizer.rs` -- Shared `solve_qp()` (Clarabel wrapper) and orbital docking optimizer
-- `pybind/src/lib.rs` -- PyO3 bindings exposing `optimize_spacetime_bezier()`
-
-### Tools
-- `tools/spacetime_opt_debug.py` -- HTTP server for the live step debugger UI
-- `tools/compare_backends.py` -- Runs scenarios and diffs results
-
-### Figures
-- `figures/spacetime_bezier_interactive.html` -- Interactive HTML demo with debug overlays
-- `figures/spacetime_bezier_opt_debug.html` -- Live optimizer step debugger UI
-- `figures/spacetime_scenarios.json` -- Optimized control points for all scenarios (generated)
+- `spacetime_bezier/__main__.py` -- **the** entrypoint. `io.py` and `sandbox.py` are not, as of 2026-08-18
+- `spacetime_bezier/optimize.py` -- public API, the elastic-weight ladder, `optimize_scenario`
+- `rust_optimizer/core/src/spacetime_constraints.rs` -- KOZ capsule geometry; both fixed defects lived here
+- `rust_optimizer/core/src/spacetime_optimizer.rs` -- SCP loop, ratio test, certificate at the returned iterate
+- `rust_optimizer/core/src/optimizer.rs` -- `solve_qp`; **emits linear cones only**, see note 005 on the speed cap
+- `spacetime_bezier/constraints.py`, `debug_stepper.py` -- **dead**, see Known Issues
+- `doc/notes/001_problem_formulation/` -- **contradicts itself**; do not seed the paper from it
+- `doc/notes/005_formulation_freeze.md`, `006_solver_record.md`, `007_sandbox_direction.md`, `doc/refs/c1_novelty.md` -- the reasoning moved out of this file
 
 ## After the paper
 
-The branch's longer-term direction, paused until 2026-08-19. It still holds.
-
-A **personal research / debug sandbox** for the space-time Bezier idea: an interactive workbench for posing problems, surfacing weakpoints in the optimizer and the formulation, and prototyping against them. Drag obstacles in 3D, slide parameters live, get "why did it fail?" in one line, scrub the SCP iteration history, save and reload scenarios.
-
-Rules that keep it honest:
-
-- **One canonical execution model.** Same request + same configuration = same execution = same result = same traceable explanation. `scp_step` in the Rust core is both the batch iteration and the debug step; a debug session never simulates an alternative stepper.
-- **One frontend, two tempos.** Diagnostic mode is a drawer over the same scene, sharing scenario state, camera, and server — never a separate page or a reload.
-- **Rust is the sole engine.** It owns the SCP loop, production KOZ half-space generation, candidate acceptance, final iterate selection, and trace emission. Python is not a reference solver or an oracle.
-- **Trace is observability over the real run,** not a parallel optimizer. Reconstruction from partial logs is an acceptable bridge; fake stage synthesis is not.
-- **Geometry authenticity.** Anything drawn either came from the backend that ran, or is explicitly marked derived. No time-sliced 2D plane labeled as a 3D supporting surface.
-- Trace frames must distinguish *current iterate / raw candidate / accepted iterate / best feasible iterate / final returned iterate*. These are different concepts; never conflate them.
-
-Full history of this direction is in git — `VISION.md` and `ToDo.md` were removed in the docs consolidation and can be restored with `git checkout <commit> -- VISION.md ToDo.md`.
+The branch's longer-term direction — a personal research and debug sandbox for the space-time Bezier
+idea — is paused until the paper ships and still holds. Its five honesty rules (one canonical
+execution model, one frontend, Rust as sole engine, trace as observability, geometry authenticity)
+govern how code is written here even now:
+[`doc/notes/007_sandbox_direction.md`](doc/notes/007_sandbox_direction.md).
 
 ## Known Issues
 
-- **G1** and **G2** above — the two KOZ constraint defects. These are the branch's most consequential open problems and are the reason `wall` and `diverse` fail.
-- `wall` and `diverse` are infeasible; elastic relaxation keeps the solver running but the returned curve penetrates the obstacle.
-- The Rust KOZ builder (`spacetime_constraints.rs`) has no tests. The Python tests cover a builder that production does not use.
-- `debug_stepper.py` is dead code — nothing outside the file imports it. Safe to delete after 2026-08-19.
-- The venv may be broken (built against a Homebrew Python that has since been upgraded). If `python3 -m spacetime_bezier` fails with a dyld error, rebuild it and re-run `maturin develop --release`. This is **B0**.
+- **The viewer's inline `const SCENARIOS` blob is test mock data, and it is committed.** An
+  integration test writing to a tmp dir used to overwrite the tracked `figures/` page; it now reads
+  one control point at the origin and no `diverse` or `wall`. Fixed at the source 2026-08-18, but
+  **the committed data is still wrong and only `--bake` regenerates it.** Serving over HTTP is
+  unaffected — only `file://` shows the mock.
+- **Baked and live runs use different solver parameters.** `--bake` defaults to `tol=1e-12,
+  max_iter=10000`; the sandbox posts `tol=1e-6, max_iter=30`; the scenario table was made with
+  neither, and there is no CLI flag for trust radius at all. A live violation of "one canonical
+  execution model", left alone deliberately — changing a default silently changes every number.
+- **`BENCHMARKS.md` is untracked and four months stale.** It cites the deleted `ToDo.md` and
+  describes a solver that predates the SCvx port. **Its numbers must never be quoted.**
+- `spacetime_bezier/constraints.py`, `debug_stepper.py` and `tests/unit/test_spacetime_constraints.py`
+  are a dead triple — production uses none of them, and they pin a time scale (0.5) that disagrees
+  with the Rust (1.0). Delete all three together.
+- The venv may be broken (built against a Homebrew Python since upgraded). If `python3 -m
+  spacetime_bezier` fails with a dyld error, rebuild it and re-run `maturin develop --release`.
