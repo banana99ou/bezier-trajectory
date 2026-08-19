@@ -14,7 +14,7 @@ Where the reasoning went:
 - [`doc/notes/007_sandbox_direction.md`](doc/notes/007_sandbox_direction.md) — where the sandbox goes after the paper
 - [`doc/notes/008_schedule.md`](doc/notes/008_schedule.md) — 제출 마감일과 9월 4일 역산 마일스톤
 - [`PAPER_1.md`](PAPER_1.md) / [`PAPER_2.md`](PAPER_2.md) — paper claims and scope boundary
-- [`doc/refs/c1_novelty.md`](doc/refs/c1_novelty.md) — prior-art verification; **it outranks any agent's assertion about novelty**
+- [`doc/refs/novelty_positioning.md`](doc/refs/novelty_positioning.md) — prior-art verification; **it outranks any agent's assertion about novelty**
 
 ## Goal (until 2026-09-04)
 
@@ -53,8 +53,8 @@ A session can open with just an item id (`B1`, `A2`, `C1`).
 - A2 §formulation — lifting, tube geometry, half-space in (x,y,t), monotonicity, finite-height tubes, why this is not time-slicing
 - A3 related work, incl. how this differs from TEB
 - A4 limitations — passing class comes from initialization; multi-start is not exhaustive
-- A5 demo scenario definitions as parameters. **Decided 2026-08-19:** the line-of-sight demo is a *moving, non-straight* occluder — see [`PAPER_1.md`](PAPER_1.md) §"which line-of-sight demo" and note 005 Part 3
-- A6 figure slots — what each figure must show, defined before any exist
+- A5 demo scenario definitions as parameters. **Decided 2026-08-19** — see [`PAPER_1.md`](PAPER_1.md) §"The demo scenario and its figure"
+- A6 figure slots — what each figure must show, defined before any exist. The occlusion figure's slot is defined in [`PAPER_1.md`](PAPER_1.md) §"The demo scenario and its figure"
 
 **B. Solver**
 - ~~B0 repair the venv~~ **DONE**
@@ -91,7 +91,7 @@ and the original diagnoses: [`doc/notes/006_solver_record.md`](doc/notes/006_sol
 - **The certificate is evaluated at the RETURNED iterate.** Fixed 2026-08-19; it used to report the loop's final *reference* point, which is a different trajectory whenever the best-iterate fallback fires.
 - **The KOZ tests in `test_spacetime_constraints.py` cannot fail on G1** — every one uses zero velocity, and line 65 asserts the time column is zero, which enshrines the old bug. They exercise `spacetime_bezier/constraints.py`, the dead Python builder. The Rust builder *is* covered, by `tests/unit/test_spacetime_koz_geometry.py`.
 - **The solver is already dimension-generic.** `dim` comes from the array shape; the only guard is `dim >= 2` (`rust_optimizer/pybind/src/lib.rs:144`). **A run at three spatial dimensions plus time costs one scenario definition and one run, not a solver change** — item B11, and the cheapest way to retire the paper's largest weakness.
-- **The core lift is NOT novel.** Osburn, Peterson & Salmon (arXiv:2508.10203, Aug 2025) published the lift, time as a Bezier coordinate, hull half-spaces in the lifted space, finite-height prisms and time monotonicity — on Clarabel. **What survives is decomposition-free.** Never phrase the hook as "time as a coordinate". See [`doc/refs/c1_novelty.md`](doc/refs/c1_novelty.md).
+- **The core lift is NOT novel.** Osburn, Peterson & Salmon (arXiv:2508.10203, Aug 2025) published the lift, time as a Bezier coordinate, hull half-spaces in the lifted space, finite-height prisms and time monotonicity — on Clarabel. **What survives is decomposition-free.** Never phrase the hook as "time as a coordinate". See [`doc/refs/novelty_positioning.md`](doc/refs/novelty_positioning.md).
 - **The paper documents did not drift; the containers moved.** Part A of `PAPER_1.md` is byte-identical to the committed `PAPER_CLAIM.md`; Part B is the former `PAPER_OUTLINE.md`. **Risk: `PAPER_OUTLINE.md`, `PAPER_2.md` and `doc/notes/004_probabilistic_koz/` were never committed** and exist only in the working tree.
 - **Note 001 contradicts itself, so A1 is real work.** `doc/notes/001_problem_formulation/main.tex` derives the zero-time normal in one section and forbids it in another, and presents per-control-point linearization as an improvement. **The note enshrines both fixed defects as design. Do not seed the paper from it until A1 revises it.**
 
@@ -124,7 +124,7 @@ Lift 2D (or 3D) moving-obstacle avoidance into space-time by adding time as an e
 - Time-limited obstacles (e.g. a wall that disappears) become **finite-height tubes** -- the curve can "wait" then pass through
 
 > ⚠️ **The list above is not a novelty claim.** Four of its five items were published by Osburn et
-> al. in August 2025 — see [`doc/refs/c1_novelty.md`](doc/refs/c1_novelty.md). It describes what the
+> al. in August 2025 — see [`doc/refs/novelty_positioning.md`](doc/refs/novelty_positioning.md). It describes what the
 > code does, not what is new about it. What is new is *decomposition-free*.
 
 ## What Must Be Reused
@@ -223,7 +223,7 @@ carry a warning or are easy to mistake:
 - `rust_optimizer/core/src/optimizer.rs` -- `solve_qp`; **emits linear cones only**, see note 005 on the speed cap
 - `spacetime_bezier/constraints.py`, `debug_stepper.py` -- **dead**, see Known Issues
 - `doc/notes/001_problem_formulation/` -- **contradicts itself**; do not seed the paper from it
-- `doc/notes/005_formulation_freeze.md`, `006_solver_record.md`, `007_sandbox_direction.md`, `doc/refs/c1_novelty.md` -- the reasoning moved out of this file
+- `doc/notes/005_formulation_freeze.md`, `006_solver_record.md`, `007_sandbox_direction.md`, `doc/refs/novelty_positioning.md` -- the reasoning moved out of this file
 
 ## After the paper
 

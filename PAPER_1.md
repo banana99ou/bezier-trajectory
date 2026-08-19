@@ -1,13 +1,158 @@
-# Paper claim, method, and demo scenarios
+# Paper 1 — offline space-time trajectory optimization, known obstacle motion
 
-Workstream C output. Rename freely — the name is not load-bearing.
+**Central doc for paper 1.** Everything about this paper lives here or is linked from here.
 
-Supporting evidence lives in `doc/refs/c1_novelty.md` (prior-art map, comparison against Osburn,
-source verification status) and `doc/notes/_shared/c3_safe_corridor_refs.md` (ground truth on
-using one plane per segment and obstacle). This file is the short version: what we claim, why it
-is different, how it works, and what could make it false.
+**Scope boundary.** Obstacle motion is known and deterministic. The solve is offline. There is no
+sensing model and nothing to re-estimate, which is why receding-horizon replanning is explicitly
+declined in Part A §7. The online / uncertain-hazard regime is a *separate* paper:
+[`PAPER_2.md`](PAPER_2.md). Stating this assumption plainly is what makes paper 2's contribution
+legible as a contribution rather than a correction.
+
+**Supporting evidence, kept separate on purpose** (it is a verification record, not paper content):
+- [`doc/refs/novelty_positioning.md`](doc/refs/novelty_positioning.md) — prior-art map, comparison against Osburn, per-source verification status
+- [`doc/notes/_shared/safe_corridor_references.md`](doc/notes/_shared/safe_corridor_references.md) — external ground truth for one plane per (segment, obstacle)
+
+**Structure of this file**
+- **Part A** — claim, what is different, method, demo scenarios, the shadow lemma, the risk the contribution creates, decided-against, what must be measured, weakest links. *(English; was `PAPER_CLAIM.md`.)*
+- **Part B** — 논문 뼈대: section-by-section skeleton for the 2-page paper. *(Korean; was `PAPER_OUTLINE.md`.)*
+
+Where Part A and Part B disagree, Part B §핵심 기여 is the authority — it is the section that was
+fixed first, and the rest is aligned to it.
 
 ---
+
+# Decisions — 2026-08-19
+
+Taken in conversation. Recorded here because they change what Part A and Part B are
+allowed to claim. **Part A below is unmodified** — it is byte-identical to the
+committed `PAPER_CLAIM.md` — so where this section and Part A disagree, this section
+is newer. The full formulation reasoning lives in `CLAUDE.md` §"Formulation
+decisions"; this is the paper-facing half.
+
+## The one-liner
+
+Causal, not a list. The mechanism is decomposition-free; three spatial dimensions
+plus time and the occlusion constraint are its consequences; freeing the arrival
+time removes a weakness and is not a claim.
+
+> Because moving obstacles enter as linearized supporting half-spaces on a lifted
+> space-time tube rather than a precomputed convex cell complex, the formulation
+> runs at three spatial dimensions plus time, and absorbs constraints — such as
+> line-of-sight occlusion by a moving obstacle — that a convex-decomposition
+> framework structurally cannot express.
+
+Never write "novel combination" and never claim the lift itself: Osburn et al.
+published it in August 2025. Never open with "time as a coordinate."
+
+## What the formulation change means for the paper
+
+1. **"Minimizes spatial acceleration" is currently false of the code.** The
+   objective measures bending against the curve *parameter*, not against real time,
+   and those coincide only when timing is uniform — the case this method exists to
+   escape. A plan that waits then dashes can score smooth while being physically
+   violent. Do not write the sentence until the re-derivation lands.
+2. **The speed cap enters as a constraint** — a slant limit in space-time — not as
+   a cost term.
+3. **Arrival time is freed**, and the objective becomes energy plus a weighted time
+   penalty. Until then, §formulation must state plainly that both endpoints pin
+   time, because the nearest prior work has arrival time free and a reviewer reads
+   that column first.
+4. **The energy-versus-time weight is a reported parameter**, not a tuned constant.
+   Its sweep is a legitimate figure: arrival time against energy.
+5. **No numbers until the freeze.** Every measurement in the repository predates the
+   objective change. The draft the PI reads carries none — as the abstract slot in
+   Part B already assumes.
+
+## Waiting: shown, but not the differentiator
+
+Decided 2026-08-19. The paper **does** state that the method produces waiting — it is true of the
+code and it is the visible consequence of per-segment time extents being decision variables, so
+Part B §핵심 기여's first contribution stands and the behaviour goes in the text.
+
+What it must not do is carry the differentiation. Osburn et al. have finite-height prisms *and* a
+free arrival time, so a wait-for-the-door trajectory comes out of their method too. Waiting
+demonstrates that time allocation is being optimized; it does not demonstrate that anything new is
+being done to obtain it. The differentiator is the mechanism: the obstacle's convex outer
+approximation is rebuilt from the current iterate every SCP iteration rather than fixed before the
+solve, and the segment time extents that approximation is built against are themselves decision
+variables. Convex-set-graph methods fix their regions before solving; MADER fixes its intervals in
+the knot vector.
+
+So: claim waiting as a capability, claim decomposition-free as the contribution.
+
+## The demo scenario and its figure
+
+Decided 2026-08-19, in stages. The tube-chain geometry behind it is derived in
+[`doc/notes/005_formulation_freeze.md`](doc/notes/005_formulation_freeze.md) Part 3 — that note
+carries the math; this section carries every paper-facing choice.
+
+**Occlusion goes into paper 1, with a moving occluder on a non-straight path.** The
+static-occluder alternative was considered and rejected: a static shadow extruded along time is a
+convex prism, which is exactly what a graphs-of-convex-sets method handles natively — cheap for
+us *and* for the nearest prior work, so it demonstrates nothing. The twisting shadow of a moving
+occluder is the case that shows the seam: one linearized row per segment-obstacle-station triple
+for us, against a shadow that a convex decomposition must carve out of free space with a set
+count that explodes. Only the moving case earns the second clause of the one-liner.
+
+**The middle path: one figure carries both consequences.** Two pages hold one demonstrated
+consequence, not two. So there is no separate dimensional-scaling figure: the occlusion demo
+itself runs at three spatial dimensions plus time, and the one figure does double duty.
+
+**The third dimension must be load-bearing, not decorative.** If the vehicle merely happens to be
+in three dimensions, a reviewer reads it as a rendering choice. The scenario is built so that
+going around loses contact and going over keeps it: the climb exists only because there is a
+third spatial dimension, and the reason the climb happens is the occlusion constraint. The two
+consequences are causally linked in one maneuver, not co-located in one plot.
+
+**The occlusion constraint picks the passing side.** The station is placed so the natural
+avoidance direction is the one that breaks the line of sight. The occlusion rows then select the
+passing class rather than decorate a trajectory that would have looked the same anyway — a much
+stronger claim than "the constraint was satisfied."
+
+**The occluder and the keep-out obstacle are the same body.** Staying visible to the station
+implies not being inside the occluder — a sight line that starts inside the body is blocked by
+definition — so the occlusion constraint subsumes collision avoidance for that body, and the
+keep-out rows are present but never binding in this scenario. State that in one honest sentence;
+it is a small true observation, and the keep-out machinery is already demonstrated by the
+existing scenarios.
+
+**Concrete geometry.** A wide, low moving fence — the `wall` scenario lifted to three spatial
+dimensions — with the station beyond it at low altitude. Going around laterally is long, or runs
+into the workspace bound; going over is short, and exits the shadow because the fence is low.
+
+**The baseline that must be able to fail.** Run the same scenario with the occlusion rows
+removed: it must lose contact for a measurable interval. If the baseline also keeps line of
+sight, the constraint was slack and the figure proves nothing — move the station and re-run. Two
+runs, identical in everything but one constraint block. This is the difference between evidence
+and decoration.
+
+**Figure plan: one figure, two panels** (this fills the figure-slot definition, item A6, for the
+occlusion figure). Three spatial dimensions plus time has no natural projection, so the picture
+and the proof are different panels:
+
+- a 3D spatial view, which only has to establish the dimensionality and sell the climb;
+- a line-of-sight-margin-versus-time panel, which proves the claim: the baseline dips below
+  zero, the constrained run stays above it. This panel is dimension-free and is the part a
+  reviewer actually checks.
+
+**Gate before any code** (solver item B12, the occlusion constraint builder): run the numerical
+convexity check on the space-time shadow set, per tube piece. The shadow of a convex body from a
+point observer is convex at a single instant, but the observer-to-occluder distance changes with
+time, so the cone's half-angle varies nonlinearly along the time axis. If the per-piece shadow is
+not convex, §3.2's outer approximation becomes mandatory rather than optional.
+
+## The question for the PI
+
+Not "does the skeleton look good." The one thing only they can answer:
+
+> Osburn et al. published the space-time Bezier lift in August 2025. Our delta is
+> that supporting half-spaces are generated directly against the obstacle tube
+> instead of precomputing a convex cell decomposition. **Is that delta enough for
+> this venue?**
+
+---
+
+# Part A — claim, evidence, and risks
 
 ## 1. The claim
 
@@ -241,3 +386,154 @@ Ranked by how much damage each would do if it turned out to be wrong.
    found, but absence of evidence is not proof of absence.
 4. Erdmann and Lozano-Perez, 1987, is unverified — the archived copy is a scan with no text
    layer. It is a lineage citation only, and nothing load-bearing rests on it.
+
+---
+
+# Part B — 논문 뼈대 (2페이지 학회 논문)
+
+뼈대만 정리한 절이다. 각 절에 무엇을 담고 무엇을 담지 않을지를 적었으며, 본문 문장은 아직 쓰지
+않았다. 주장의 근거와 검증 상태는 위 Part A에 있다.
+
+## 핵심 기여
+
+이 절은 본 문서에서 가장 먼저 확정된 부분이며, 다른 절의 서술이 이 절과 어긋나면 이 절을 기준으로
+맞춘다. 논문 본문에 옮길 때에도 표현만 다듬고 내용은 그대로 쓴다.
+
+한 문장으로 정리하면 다음과 같다. 본 논문은 각 분할구간의 시간 구간을 결정 변수로 두어, 이동
+장애물의 볼록 외부 근사를 순차 볼록 최적화(sequential convex programming, SCP) 반복마다 현재
+반복점으로부터 다시 구성하는 궤적 최적화 정식화를 제안한다. 자유 공간을 볼록 영역으로 미리
+분할하지 않으며, 어느 영역을 지날지 고르는 조합적 계층도 두지 않는다.
+
+기여는 다음 세 가지이다. 첫째, 분할구간의 시간 구간이 최적화의 입력이 아니라 결정 변수가 되므로
+시간 배분 자체가 최적화 대상이 된다. 통과 시점을 기다리는 동작이 이를 드러내는 사례이며, 이
+동작은 시간 구간이 자유로울 때에만 나타난다. 둘째, 리프팅된 공간에서 지지 반공간은 시간 성분을
+가져야 하며, 그 값은 공간 법선과 장애물 속도의 내적에 음의 부호를 붙인 것이다. 이 반공간을
+분할구간과 장애물 쌍마다 하나씩 두고 해당 분할구간의 모든 제어점에 부과하면 연속 시간에 대한
+볼록 껍질 보장이 유지된다. 제어점마다 다른 평면을 부과하면 이 보장은 유한 개의 점 조건으로
+약해진다. 셋째, 동일한 구성이 직선 형태의 구형 Keep-Out Zone(KOZ), 등속이 아닌 운동에서 생기는
+휘어진 관, 그리고 관측자에 대한 차폐 영역을 모두 처리한다. 비볼록이고 시간에 따라 변하는 임무
+제약을 추가하는 비용은 분할구간과 장애물과 관측자 조합마다 선형화된 제약 한 줄이다.
+
+주장하지 않는 것을 함께 적어 둔다. 시간을 곡선의 좌표로 두는 것 자체는 2025년 8월에 이미
+발표되었다. 등속 장애물이 정적인 관이 된다는 관찰은 1987년으로 거슬러 올라간다. 분할구간마다
+하나의 평면을 두면 볼록 껍질 보장이 유지된다는 사실은 안전 통로 문헌의 표준이다. 계산 속도도
+주장하지 않는다. 작은 문제에서는 동일한 solver 위에서 선행 연구와 큰 차이가 없다. 전역 최적성과
+초기값 없이 푸는 성질은 오히려 선행 연구 쪽이 낫고, 이는 한계 절에 명시한다.
+
+각 기여가 틀렸음을 보이는 조건도 미리 적어 둔다. 첫째 기여는 분할구간의 시간 구간을 자유롭게
+두면서 장애물 근사를 반복마다 다시 구성하는 선행 연구가 있으면 무너진다. 확인한 범위에서 볼록
+집합 그래프 계열은 영역을 풀기 전에 고정하고, MADER는 구간을 매듭으로 고정한다. 둘째 기여는
+모든 지지 반공간을 여유 없이 만족한 해가 장애물의 실제 궤적에 대해 재검증했을 때 침범으로
+판정되면 무너진다. 셋째 기여는 시간 배분이 미리 고정된 기법에서 대기 동작이 시연되면 무너진다.
+
+## 제목 후보
+
+1. 시간을 좌표로 갖는 Bézier 곡선을 이용한 이동 장애물 회피 궤적 최적화
+2. 공간 분할 없는 공간-시간 지지 반공간 기반 궤적 최적화
+
+## 초록 (5–6문장, 구체 수치 없이)
+
+이동 장애물 환경에서 경로와 통과 시점을 함께 결정해야 한다는 문제 제시로 시작한다. 기존
+볼록 최적화 계열이 자유 공간을 미리 볼록 영역으로 분할하고 그 위에서 조합적 탐색을 수행한다는
+구조적 특징을 한 문장으로 정리한다. 본 논문은 시간을 Bézier 곡선의 좌표로 포함하고 각
+분할구간의 시간 구간 자체를 결정 변수로 두는 정식화를 제안한다는 점을 밝힌다. 그 결과 통과
+시점을 기다리는 동작과 관측자에 대한 차폐를 유지하는 동작을 하나의 연속 최적화로 얻는다는
+정성적 결과로 마무리한다.
+
+## 1. 서론
+
+1문단은 이동 장애물 회피에서 경로 결정과 시점 결정이 분리되지 않는다는 점을 든다.
+
+2문단은 기존 접근의 구조적 제약을 정리한다. 볼록 영역 분할을 사전에 계산하는 계열과, 시간을
+곡선의 매개변수로 두어 시간 배분이 매듭에 의해 고정되는 계열로 나누어 각각 한 문장씩 적는다.
+
+3문단은 기여를 줄글로 열거한다. 첫째, 각 분할구간의 시간 구간을 결정 변수로 두어 SCP 반복마다 장애물의 볼록 외부 근사를 다시 구성하는
+정식화를 제안한다. 둘째, 리프팅된 공간에서 지지 반공간의 시간 성분이 생략될 수 없음을 보이고,
+분할구간과 장애물 쌍마다 하나의 지지 반공간을 모든 제어점에 부과하여 볼록 껍질 성질을 유지한다.
+셋째, 통과 시점 대기와 관측자 차폐 유지를 동일한 제약 구성으로 처리할 수 있음을 보인다.
+
+기여 서술에서 시간을 좌표로 두는 것 자체를 새로움으로 주장하지 않는다. 선행 연구가 이미
+제시한 부분이므로 관련 연구 절에서 명시적으로 인정한다.
+
+## 2. 문제 정식화
+
+### 2.1 공간-시간 리프팅
+
+등속으로 움직이는 장애물이 리프팅된 공간에서 기울어진 정적 관이 된다는 점을 서술한다. 시간이
+곡선의 매개변수가 아니라 좌표이므로 볼록 껍질 성질이 추가 조건 없이 그대로 성립한다는 점을
+덧붙인다. 시간을 매개변수로 두는 통로 기반 기법이 별도의 충분조건을 필요로 한다는 사실을 인용
+한 문장으로 대비시킨다.
+
+### 2.2 Bézier 표현과 결정 변수
+
+제어점을 결정 변수로 정의하고, De Casteljau 분할로 얻은 분할구간을 도입한다. 시간 좌표에 대한
+단조성 제약과 최소 시간 간격을 여기서 정의한다.
+
+## 3. 제안 기법
+
+### 3.1 분할구간과 장애물 쌍에 대한 지지 반공간
+
+supporting half-space(지지 반공간)를 첫 등장에서 병기하고 이후 한글 표기로 통일한다. 외향
+법선의 공간 성분과 시간 성분을 말로 서술한다. 시간 성분은 공간 법선과 장애물 속도의 내적에
+음의 부호를 붙인 값이며, 이 항이 없으면 해당 평면은 관을 지지하지 못한다는 점을 분명히 한다.
+
+하나의 분할구간에 속한 모든 제어점에 동일한 반공간을 부과한다는 점을 강조한다. 제어점마다
+다른 평면을 부과하면 볼록 껍질 성질을 사용할 수 없고 유한 개의 점 조건으로 약화된다는 점을
+한 문장으로 정리한다.
+
+### 3.2 시간 구간이 결정 변수인 경우의 외부 근사
+
+장애물 운동이 등속이 아닐 때 관이 휘어 비볼록이 되므로, 분할구간의 시간 구간에 겹치는 부분만
+볼록 외부 근사로 덮는다는 구성을 제시한다. 시간 구간이 결정 변수이므로 이 근사는 SCP 반복마다
+다시 구성된다는 점이 본 논문의 핵심이다.
+
+외부 근사가 자신이 덮는 시간 구간 밖에서는 아무것도 보장하지 않으므로, 신뢰 구간의 크기가
+반복점을 그 구간 안에 묶어 두어야 한다는 점을 명시한다. 이는 수렴을 돕는 장치가 아니라
+정당성을 위한 조건이다.
+
+### 3.3 관측자 차폐 제약
+
+관측자를 하나의 점으로 두고, 시선이 장애물에 가려지는 위치들의 집합을 차폐 영역으로 정의한다.
+장애물이 볼록이면 차폐 영역도 볼록이라는 명제를 제시하고 증명은 두세 문장으로 줄인다. 차폐를
+유지하는 제약은 볼록이므로 통과 방향을 미리 정할 필요가 없고, 차폐를 피하는 제약은 비볼록이어서
+장애물 회피와 같은 구성을 그대로 쓴다는 대비를 적는다.
+
+시간에 따라 차폐 영역이 회전하므로 리프팅된 공간에서는 볼록이 아니라는 점, 분할구간의 시간
+구간에 걸친 교집합을 사용하면 볼록이면서 보수적인 내부 근사가 된다는 점을 잇는다.
+
+## 4. 실험
+
+### 4.1 시나리오 1 — 통과 시점 대기
+
+시간 제한이 있는 장애물이 사라질 때까지 기다렸다가 통과하는 사례를 제시한다. 대기 동작이
+연속 최적화 하나로 얻어진다는 점이 이 시나리오의 목적이다.
+
+### 4.2 시나리오 2 — 관측자 차폐 유지
+
+여러 개의 지그재그로 움직이는 장애물 뒤에 머무르며 관측자의 시선을 피하는 사례를 제시한다.
+관측자 모형은 점 광원에 대한 이진 시선 차폐로 한정하고, 탐지 확률 모형은 사용하지 않는다는
+점을 실험 설정에서 밝힌다.
+
+### 4.3 비교
+
+계산 시간과 최소 여유 거리를 표로 제시한다. 구체 수치는 이 절에만 둔다. 최소 여유 거리는
+최적화가 사용한 외부 근사가 아니라 장애물의 실제 궤적에 대해 재검증한 값이어야 한다.
+
+## 5. 한계 및 결론
+
+국소해만 얻으며 초기값에 의존한다는 점을 먼저 적는다. 장애물 운동이 결정적이고 알려져 있다는
+가정을 명시한다. 볼록 외부 근사의 보수성은 분할구간 수로 조절되며, 분할구간 수를 늘리면
+실현 가능 영역이 넓어진다는 점을 덧붙인다.
+
+## 그림 슬롯
+
+1. 리프팅 개념도. 움직이는 장애물이 기울어진 관이 되는 그림.
+2. 지지 반공간 그림. 시간 성분이 없는 평면이 관을 지지하지 못함을 보이는 대비 그림.
+3. 시나리오 1 결과. 위에서 본 경로와 시간 축을 포함한 등각 투상 두 장.
+4. 시나리오 2 결과. 차폐 영역과 궤적을 함께 표시.
+
+## 관련 연구에서 반드시 인용할 것
+
+Erdmann과 Lozano-Perez의 구성 공간-시간, Safe Interval Path Planning, 공간-시간
+Rapidly-exploring Random Tree, 볼록 집합 그래프 계열과 그 공간-시간 확장, MADER,
+시간 의존 통로에서 볼록 껍질 성질이 성립하기 위한 충분조건을 다룬 연구.

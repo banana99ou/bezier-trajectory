@@ -15,11 +15,11 @@ Drag obstacles, tweak parameters, watch the optimizer re-solve.
 | direction, workstreams, architecture rules | [`CLAUDE.md`](CLAUDE.md) — single source of direction for this branch |
 | **paper 1** — offline, known obstacle motion | [`PAPER_1.md`](PAPER_1.md) — claim, method, scenarios, risks, 논문 뼈대 |
 | **paper 2** — online, uncertain hazards (future) | [`PAPER_2.md`](PAPER_2.md) — risk field, prior art, open question |
-| prior-art verification record | [`doc/refs/c1_novelty.md`](doc/refs/c1_novelty.md) |
+| prior-art verification record | [`doc/refs/novelty_positioning.md`](doc/refs/novelty_positioning.md) |
 | frozen formulation, derivations, occluder geometry | [`doc/notes/005_formulation_freeze.md`](doc/notes/005_formulation_freeze.md) |
 | evidence behind every established fact; measurement history | [`doc/notes/006_solver_record.md`](doc/notes/006_solver_record.md) |
 | where the sandbox goes after the paper | [`doc/notes/007_sandbox_direction.md`](doc/notes/007_sandbox_direction.md) |
-| safe-corridor ground truth | [`doc/notes/_shared/c3_safe_corridor_refs.md`](doc/notes/_shared/c3_safe_corridor_refs.md) |
+| safe-corridor ground truth | [`doc/notes/_shared/safe_corridor_references.md`](doc/notes/_shared/safe_corridor_references.md) |
 
 The two papers have a hard scope boundary. Paper 1 assumes obstacle motion is known and
 deterministic and solves offline. Paper 2 relaxes exactly that assumption — limited sensing,
@@ -75,7 +75,7 @@ uncertain hazards, receding horizon. Do not mix their claims.
 │   └── risk_field/                         paper 2 figures + the scripts that make them
 │
 └── doc/
-    ├── refs/c1_novelty.md     prior-art map, per-source verification status
+    ├── refs/novelty_positioning.md     prior-art map, per-source verification status
     ├── refs/papers/           archived source PDFs (not committed)
     ├── notes/_shared/         cross-workstream reference notes
     ├── notes/001_.../         LaTeX formulation note — contradicts itself, see CLAUDE.md
