@@ -38,7 +38,7 @@ import numpy as np
 from .geometry import bezier_obstacle_from_moving, moving_obstacle_from_bezier
 from .objective import build_initial_guess
 from .rust_debug_stepper import create_spacetime_debug_stepper_from_control_points
-from .scenarios import SCENARIO_MAP
+from .scenarios import SCENARIO_MAP, scenario_elastic_weight
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -289,6 +289,10 @@ def solve_from_payload(payload: dict) -> dict:
     tol = float(payload.get("tol", 1e-6))
     min_dt = float(payload.get("min_dt", 0.1))
     cap_bulge_ratio = float(payload.get("cap_bulge_ratio", 2.0))
+    # Exact-penalty weight on the KOZ slack. Below the problem's threshold a
+    # penetrating curve is genuinely cheaper than a clear one, so this decides
+    # feasibility, not just conditioning. Defaults per scenario.
+    elastic_weight = float(payload.get("elastic_weight", scenario_elastic_weight(scenario_name)))
 
     legacy_obstacles = [moving_obstacle_from_bezier(bo) for bo in bezier_obstacles]
 
@@ -306,6 +310,7 @@ def solve_from_payload(payload: dict) -> dict:
         min_dt=min_dt,
         time_ub_scale=time_ub_scale,
         cap_bulge_ratio=cap_bulge_ratio,
+        elastic_weight=elastic_weight,
     )
     P_opt, info = stepper.run_to_completion()
     frames = stepper.frames_as_dicts()
@@ -336,6 +341,7 @@ def solve_from_payload(payload: dict) -> dict:
         "tol": tol,
         "min_dt": min_dt,
         "cap_bulge_ratio": cap_bulge_ratio,
+        "elastic_weight": elastic_weight,
         "control_points": np.asarray(P_opt, dtype=float).tolist(),
         "init_control_points": np.asarray(P_init, dtype=float).tolist(),
         "obstacles": bezier_obstacles,

@@ -1047,8 +1047,26 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     );
     // The hull certificate: > 0 means the curve does not satisfy the half-spaces
     // its own control points generate.
-    info.insert("koz_violation_reference".to_string(), state.last_vtrue_p);
+    //
+    // Rebuilt at `p` -- the point this call actually RETURNS. It used to export
+    // `state.last_vtrue_p`, the violation of the loop's final reference iterate.
+    // Those are the same point only when the loop ended on a stationary or
+    // rejected step; when the best-feasible fallback fires (`returned_best`),
+    // `p` is `state.best_p` and the exported number described a trajectory
+    // nobody received. Measured on `diverse` N8_seg4: reported 1.616 against a
+    // true 2.264 at the returned control points. `certified` in optimize.py is
+    // derived from this key, so the guarantee has to be evaluated where the
+    // curve is.
+    info.insert(
+        "koz_violation_reference".to_string(),
+        koz_violation_rebuilt_at(&p, &pre, obstacles, cap_bulge_ratio),
+    );
     info.insert("koz_violation_candidate".to_string(), state.last_vtrue_c);
+    // Kept for provenance: what the old key would have said.
+    info.insert(
+        "koz_violation_last_reference".to_string(),
+        state.last_vtrue_p,
+    );
 
     OptResult {
         p_opt: p,

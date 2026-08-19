@@ -10,7 +10,6 @@ def get_D_matrix(N):
     """
     Compute derivative matrix D for Bézier curve of degree N.
 
-    From Project_Spec.md:
     [D]_i,j = N × { -1 if j=i, 1 if j=i+1, 0 otherwise }
 
     Args:
@@ -30,9 +29,6 @@ def get_E_matrix(N):
     """
     Compute elevation matrix E for Bézier curve of degree N.
     Elevates degree from N to N+1.
-
-    From Project_Spec.md equation:
-    E_{N→N+1} with specific structure
 
     Args:
         N: Original degree

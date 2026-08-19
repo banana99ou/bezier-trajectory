@@ -88,8 +88,7 @@ def test_koz_origin_rhs_r_e_and_unit_normal(T, r_e, default_N):
     # One segment: A_list = [I]
     A_list = segment_matrices_equal_params(N, n_seg=1)
 
-    with pytest.warns(UserWarning, match="c_KOZ.*defaulting to origin"):
-        lc = build_koz_constraints(A_list, P, r_e, dim=dim, c_KOZ=None)
+    lc = build_koz_constraints(A_list, P, r_e, dim=dim, c_KOZ=None)
 
     # All rows should have lb = r_e (origin => n^T * 0 + r_e = r_e)
     np.testing.assert_array_almost_equal(

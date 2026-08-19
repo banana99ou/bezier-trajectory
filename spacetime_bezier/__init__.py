@@ -18,7 +18,13 @@ from .rust_debug_stepper import (
     create_spacetime_debug_stepper_from_control_points,
 )
 from .debug_session import OptimizerDebugSession, SessionConfig
-from .scenarios import SCENARIO_MAP, scenario_diverse, scenario_original, scenario_wall
+from .scenarios import (
+    SCENARIO_MAP,
+    scenario_diverse,
+    scenario_original,
+    scenario_wall,
+    scenario_wall3d,
+)
 
 __all__ = [
     "MovingObstacle",
@@ -39,4 +45,5 @@ __all__ = [
     "scenario_diverse",
     "scenario_original",
     "scenario_wall",
+    "scenario_wall3d",
 ]

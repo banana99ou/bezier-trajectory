@@ -18,6 +18,35 @@ from .objective import build_initial_guess
 # Mirrors DEFAULT_TRUST_RADIUS in rust_optimizer/core/src/spacetime_optimizer.rs.
 DEFAULT_TRUST_RADIUS = 0.5
 
+# Weight on the elastic (virtual-control) slack in the QP subproblem. Mirrors the
+# pybind default in rust_optimizer/pybind/src/lib.rs.
+#
+# This is an EXACT-PENALTY weight: above a problem-dependent threshold the
+# penalized solution solves the original constrained problem, below it violating
+# a KOZ is simply cheaper than obeying it, and the solver returns a penetrating
+# curve that looks converged. It was hard-wired at 100.0 and reachable only by
+# calling the Rust binding directly, so no scenario could be tuned through this
+# module -- which is how `wall` and `diverse` came to be recorded as infeasible.
+# They are not: both clear and certify at a higher weight. Per-scenario values
+# live in scenarios.py; see SCENARIO_MAP.
+DEFAULT_ELASTIC_WEIGHT = 100.0
+
+# Penalty continuation ladder. `optimize_scenario` walks this in order and stops
+# at the first weight whose run is converged AND certified AND clearing.
+#
+# Escalating an exact penalty until the constraint violation vanishes is the
+# standard remedy when the threshold is unknown, and the threshold here IS
+# unknown -- it depends on the optimal multipliers, which differ per scenario and
+# per segment count. Fixing one weight instead is what made `wall` and `diverse`
+# look infeasible: at 100 a penetrating curve is simply cheaper than a clear one,
+# so the solver correctly returned a penetrating curve for the problem it was
+# actually given. Measured thresholds: `diverse` certifies from 800 (N8_seg4,
+# 4 segments) to 10000 (8 and 16 segments); `original` certifies at 100.
+#
+# The weight that succeeded is recorded per config as `elastic_weight`, so a
+# number in the table can always be traced to the penalty that produced it.
+ELASTIC_WEIGHT_LADDER = (100.0, 300.0, 800.0, 3000.0, 1e4, 1e5)
+
 try:
     import bezier_opt as _bezier_opt_rs
 except ImportError:  # pragma: no cover - exercised when the native extension is unavailable.
@@ -45,6 +74,7 @@ def _optimize_spacetime_rust(
     tol: float = 1e-6,
     scp_prox_weight: float = 0.5,
     scp_trust_radius: float = DEFAULT_TRUST_RADIUS,
+    elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,
     min_dt: float = 0.1,
     coord_lb: float = -20.0,
     coord_ub: float = 20.0,
@@ -75,6 +105,7 @@ def _optimize_spacetime_rust(
         tol=tol,
         scp_prox_weight=scp_prox_weight,
         scp_trust_radius=scp_trust_radius,
+        elastic_weight=elastic_weight,
         min_dt=min_dt,
         coord_lb=coord_lb,
         coord_ub=coord_ub,
@@ -141,6 +172,7 @@ def optimize_spacetime_from_control_points(
     tol: float = 1e-6,
     scp_prox_weight: float = 0.5,
     scp_trust_radius: float = DEFAULT_TRUST_RADIUS,
+    elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,
     min_dt: float = 0.1,
     coord_lb: float = -20.0,
     coord_ub: float = 20.0,
@@ -161,6 +193,7 @@ def optimize_spacetime_from_control_points(
         tol=tol,
         scp_prox_weight=scp_prox_weight,
         scp_trust_radius=scp_trust_radius,
+        elastic_weight=elastic_weight,
         min_dt=min_dt,
         coord_lb=coord_lb,
         coord_ub=coord_ub,
@@ -182,6 +215,7 @@ def optimize_spacetime(
     tol: float = 1e-6,
     scp_prox_weight: float = 0.5,
     scp_trust_radius: float = DEFAULT_TRUST_RADIUS,
+    elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,
     min_dt: float = 0.1,
     coord_lb: float = -20.0,
     coord_ub: float = 20.0,
@@ -207,6 +241,7 @@ def optimize_spacetime(
         tol=tol,
         scp_prox_weight=scp_prox_weight,
         scp_trust_radius=scp_trust_radius,
+        elastic_weight=elastic_weight,
         min_dt=min_dt,
         coord_lb=coord_lb,
         coord_ub=coord_ub,
@@ -224,10 +259,20 @@ def optimize_scenario(
     tol: float = 1e-6,
     scp_prox_weight: float = 0.3,
     scp_trust_radius: float = DEFAULT_TRUST_RADIUS,
+    elastic_weight: float | None = None,
     min_dt: float = 0.1,
     verbose: bool = True,
 ) -> dict:
-    """Run optimization for all requested degree/segment-count pairs."""
+    """Run optimization for all requested degree/segment-count pairs.
+
+    ``elastic_weight=None`` (the default) walks ``ELASTIC_WEIGHT_LADDER`` and
+    keeps the first run that is converged, certified and clearing. Passing a
+    float pins the weight and disables continuation, which is what the
+    reproducibility tests want.
+    """
+    ladder = (
+        tuple(ELASTIC_WEIGHT_LADDER) if elastic_weight is None else (float(elastic_weight),)
+    )
     obstacles = scenario["obstacles"]
     p_start = scenario["start"]
     p_end = scenario["end"]
@@ -240,26 +285,58 @@ def optimize_scenario(
             print(f"[{scenario['name']}] degree={N}, segments={n_seg}")
             print(f"{'=' * 60}")
 
-        P_opt, opt_info = optimize_spacetime(
-            N=N,
-            dim=len(p_start),
-            p_start=p_start,
-            p_end=p_end,
-            obstacles=obstacles,
-            n_seg=n_seg,
-            max_iter=max_iter,
-            tol=tol,
-            scp_prox_weight=scp_prox_weight,
-            scp_trust_radius=scp_trust_radius,
-            min_dt=min_dt,
-            verbose=verbose,
-            init_curve=init_curve,
-        )
-        backend_used = opt_info["backend"]
+        # Keep the best run seen, not merely the last one tried. Escalating past
+        # a weight that already cleared can make things worse -- `wall` N8_seg2
+        # clears at +0.1035 with w=800 and penetrates at -0.1474 with w=1e5 --
+        # so a ladder that returned its final rung would report the worse answer
+        # for every config that never certifies.
+        best_rank = None
+        P_opt = opt_info = clearance = None
+        used_weight = ladder[0]
+        for candidate_weight in ladder:
+            P_try, info_try = optimize_spacetime(
+                N=N,
+                dim=len(p_start),
+                p_start=p_start,
+                p_end=p_end,
+                obstacles=obstacles,
+                n_seg=n_seg,
+                max_iter=max_iter,
+                tol=tol,
+                scp_prox_weight=scp_prox_weight,
+                scp_trust_radius=scp_trust_radius,
+                elastic_weight=candidate_weight,
+                min_dt=min_dt,
+                verbose=verbose,
+                init_curve=init_curve,
+            )
+            clearance_try = compute_min_clearance(
+                P_try, obstacles, dim=len(p_start), n_eval=3000
+            )
+            cert_try = float(info_try.get("koz_violation_reference", float("nan")))
+            # Same ordering the scenario-level `_rank` uses to pick `best`.
+            rank_try = (
+                bool(info_try.get("converged", 0.0)) and cert_try <= 1e-6 and clearance_try > 0.0,
+                clearance_try > 0.0,
+                clearance_try,
+            )
+            if best_rank is None or rank_try > best_rank:
+                best_rank = rank_try
+                P_opt, opt_info, clearance, used_weight = (
+                    P_try,
+                    info_try,
+                    clearance_try,
+                    candidate_weight,
+                )
+            if verbose:
+                print(f"  w={candidate_weight:g}: clearance={clearance_try:.4f}, "
+                      f"certificate={cert_try:.4g}")
+            if bool(info_try.get("converged", 0.0)) and cert_try <= 1e-6 and clearance_try > 0.0:
+                break
 
-        clearance = compute_min_clearance(P_opt, obstacles, dim=len(p_start), n_eval=3000)
+        backend_used = opt_info["backend"]
         if verbose:
-            print(f"  Final clearance: {clearance:.4f}")
+            print(f"  Final clearance: {clearance:.4f} (elastic_weight={used_weight:g})")
 
         key = f"N{N}_seg{n_seg}"
         # `feasible` says the sampled curve misses the obstacles. `certified`
@@ -285,6 +362,7 @@ def optimize_scenario(
             "reject_count": int(opt_info.get("reject_count", 0)),
             "returned_best_iterate": bool(opt_info.get("returned_best_iterate", 0.0)),
             "trust_radius": float(scp_trust_radius),
+            "elastic_weight": float(used_weight),
         }
 
     def _rank(item):
@@ -323,6 +401,7 @@ def optimize_scenarios(
     tol: float = 1e-6,
     scp_prox_weight: float = 0.3,
     scp_trust_radius: float = DEFAULT_TRUST_RADIUS,
+    elastic_weight: float | None = None,
     min_dt: float = 0.1,
     verbose: bool = True,
 ) -> dict:
@@ -337,6 +416,7 @@ def optimize_scenarios(
             tol=tol,
             scp_prox_weight=scp_prox_weight,
             scp_trust_radius=scp_trust_radius,
+            elastic_weight=elastic_weight,
             min_dt=min_dt,
             verbose=verbose,
         )

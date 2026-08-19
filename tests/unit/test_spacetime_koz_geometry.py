@@ -23,6 +23,7 @@ import pytest
 
 import bezier_opt
 
+from spacetime_bezier.geometry import compute_min_clearance
 from spacetime_bezier.optimize import optimize_spacetime
 
 DIM = 3  # x, y, t
@@ -34,8 +35,13 @@ def _exact_rows(P, obstacles, n_seg):
     Not the rows handed to the solver. Those carry a rotation term that makes
     them self-consistent under the step, and they are documented as NOT
     conservative; the two properties below hold only for the exact rows.
+
+    The row width is read off `P`, not off the module-level `DIM`: item B11 runs
+    the same builder at four coordinates, and a helper that hardcodes three would
+    reshape those rows into nonsense instead of failing.
     """
     P = np.asarray(P, dtype=float)
+    dim = P.shape[1]
     pos0 = np.array([o["pos0"] for o in obstacles], dtype=float)
     vel = np.array([o["vel"] for o in obstacles], dtype=float)
     r = np.array([o["r"] for o in obstacles], dtype=float)
@@ -46,12 +52,35 @@ def _exact_rows(P, obstacles, n_seg):
         obstacle_t_start=t0, obstacle_t_end=t1, n_seg=n_seg,
     )
     return {
-        "normals": np.asarray(normals, dtype=float).reshape(-1, DIM),
+        "normals": np.asarray(normals, dtype=float).reshape(-1, dim),
         "lbs": np.asarray(lbs, dtype=float),
         "seg": np.asarray(seg),
         "cp": np.asarray(cp),
         "obs": np.asarray(obs),
     }
+
+
+def _exact_certificate(P, obstacles, n_seg):
+    """Hull-certificate violation recomputed from control points alone.
+
+    Sum of positive violations of the EXACT half-spaces over every subdivided
+    control point: `max(0, lb - n.q)` where `q = (A_seg @ P)[cp]`. This is the
+    same quantity the Rust layer reports as `koz_violation_reference`, derived
+    here independently so a test can contradict the solver instead of echoing it.
+    """
+    from orbital_docking.de_casteljau import segment_matrices_equal_params
+
+    P = np.asarray(P, dtype=float)
+    rows = _exact_rows(P, obstacles, n_seg)
+    a_list = segment_matrices_equal_params(P.shape[0] - 1, n_seg)
+
+    violation = 0.0
+    for normal, lb, seg_idx, cp_idx in zip(
+        rows["normals"], rows["lbs"], rows["seg"], rows["cp"]
+    ):
+        q = (np.asarray(a_list[int(seg_idx)], dtype=float) @ P)[int(cp_idx)]
+        violation += max(0.0, float(lb) - float(normal @ q))
+    return violation
 
 
 def _koz_rows(P, obstacles, n_seg):
@@ -188,7 +217,15 @@ def test_one_half_space_per_segment_and_obstacle():
         )
 
 
-def test_half_space_actually_supports_the_tube():
+# `MOVING` starts ON the trajectory line and recedes from it, so every row's
+# spatial normal has a NEGATIVE dot product with the obstacle velocity.
+# `APPROACHING` starts to one side and closes in, which puts that dot product
+# positive on some rows. The distinction is load-bearing -- see the test below.
+APPROACHING = [{"pos0": [5.0, -5.0], "vel": [0.0, 1.2], "r": 1.0}]
+
+
+@pytest.mark.parametrize("obstacles", [MOVING, APPROACHING], ids=["receding", "approaching"])
+def test_half_space_actually_supports_the_tube(obstacles):
     """The plane must have the WHOLE tube on the far side, not just touch it.
 
     Samples the true obstacle surface densely in time and checks every sample is
@@ -197,10 +234,21 @@ def test_half_space_actually_supports_the_tube():
     FAILS IF: the plane cuts through the obstacle, which is what a normal with a
     dropped time component does once the obstacle moves -- it would permit
     trajectories that pass straight through.
+
+    The `approaching` case exists because the `receding` one CANNOT fail for that
+    reason, which was measured on 2026-08-19 rather than assumed. Along the
+    centreline the emitted normal satisfies n_t = -n_s.vel exactly, so the plane's
+    value on the tube is constant in time; zeroing n_t makes it vary as
+    (n_s.vel) t instead. When n_s.vel is negative on every row -- which is what a
+    receding obstacle gives -- that variation only ever lowers the value, the
+    maximum stays at t=0, and the worst surface excess is unchanged: -0.020345
+    both as built and with the time column zeroed. On the approaching obstacle
+    the same mutation gives -0.0647 as built against +3.471 zeroed. Only the
+    second version is evidence about the time coefficient.
     """
     P = _straight_guess([0.0, 0.0, 0.0], [10.0, 0.0, 8.0], 9)
-    obs = MOVING[0]
-    rows = _exact_rows(P, MOVING, n_seg=4)
+    obs = obstacles[0]
+    rows = _exact_rows(P, obstacles, n_seg=4)
 
     worst = -np.inf
     for i in range(len(rows["lbs"])):
@@ -257,7 +305,7 @@ def test_moving_obstacle_scenario_converges_certified():
 
     fn, _ = SCENARIO_MAP["original"]
     sc = fn()
-    _, info = optimize_spacetime(
+    P_opt, info = optimize_spacetime(
         N=8, dim=3, p_start=sc["start"], p_end=sc["end"],
         obstacles=sc["obstacles"], n_seg=4, max_iter=200, tol=1e-6,
         scp_trust_radius=0.5, min_dt=0.1, verbose=False,
@@ -269,32 +317,243 @@ def test_moving_obstacle_scenario_converges_certified():
         f"converged with certificate violation {info['koz_violation_reference']:.3e}"
     )
 
+    # Recompute both verdicts from the RETURNED control points instead of
+    # trusting `info`. Asserting only on reported fields is a check that cannot
+    # fail: a solver handing its input straight back, with converged=1 and a
+    # certificate of 0, passed the three assertions above -- and reported the
+    # +0.8348 of the initial guess, the exact signature of the `9b9c3d3`
+    # best-iterate defect.
+    independent_clearance = compute_min_clearance(
+        P_opt, sc["obstacles"], dim=3, n_eval=20_001
+    )
+    assert independent_clearance > 0.0, (
+        f"reported clearance {info['min_clearance']:.4f} but the returned curve "
+        f"penetrates by {-independent_clearance:.4f}"
+    )
+    assert independent_clearance == pytest.approx(info["min_clearance"], abs=5e-3), (
+        f"reported clearance {info['min_clearance']:.4f} disagrees with the "
+        f"returned curve's {independent_clearance:.4f}"
+    )
+    assert _exact_certificate(P_opt, sc["obstacles"], n_seg=4) <= 1e-6, (
+        "the returned control points violate the half-spaces they generate"
+    )
 
-@pytest.mark.xfail(
-    reason="`wall` is unsolved: one plane per segment cannot pass a segment's "
-           "control points on opposite sides of the same obstacle, and the "
-           "literature's fix is more segments, which plateaus here at -0.09. "
-           "This records the gap rather than hiding it -- item B6 (procedural "
-           "seeds / multi-start) is the next lever.",
-    strict=True,
-)
+
 def test_wall_scenario_waits_for_the_wall():
-    """The wall vanishes at t = 5 and the curve should wait for it.
+    """The wall vanishes at t = 5, and the curve waits for it.
 
-    Kept as a strict expected-failure so that if a later change makes it pass,
-    the suite says so instead of staying silent.
+    This was a strict xfail until 2026-08-19, recording `wall` as unsolved and
+    naming multi-start (B6) as the next lever. That was wrong. `wall` is
+    solvable; what blocked it was the elastic penalty weight, which was pinned
+    at 100 inside the Rust binding and unreachable from Python. Below this
+    scenario's exact-penalty threshold a penetrating curve is genuinely the
+    cheaper answer, so the solver returned one and every sweep over degree and
+    segment count plateaued near -0.09.
+
+    The old xfail swept n_seg but could not vary the weight, so it could never
+    have discovered this -- it asserted the very limitation it was caused by.
+
+    FAILS IF: the run does not converge, the returned curve penetrates, or its
+    control points violate the half-spaces they generate.
+    """
+    from spacetime_bezier.scenarios import SCENARIO_MAP, scenario_elastic_weight
+
+    fn, _ = SCENARIO_MAP["wall"]
+    sc = fn()
+    n_seg = 16
+    P_opt, info = optimize_spacetime(
+        N=10, dim=3, p_start=sc["start"], p_end=sc["end"],
+        obstacles=sc["obstacles"], n_seg=n_seg, max_iter=200, tol=1e-6,
+        scp_trust_radius=0.5, min_dt=0.1, verbose=False,
+        elastic_weight=scenario_elastic_weight("wall"),
+        init_curve=sc.get("init_curve"),
+    )
+    assert info["converged"] == 1.0, f"did not converge (stop={info['stop_reason']})"
+    assert info["min_clearance"] > 0.0, f"penetrates by {-info['min_clearance']:.4f}"
+
+    independent_clearance = compute_min_clearance(
+        P_opt, sc["obstacles"], dim=3, n_eval=20_001
+    )
+    assert independent_clearance > 0.0, (
+        f"reported {info['min_clearance']:.4f} but the returned curve penetrates "
+        f"by {-independent_clearance:.4f}"
+    )
+    assert _exact_certificate(P_opt, sc["obstacles"], n_seg=n_seg) <= 1e-6, (
+        "the returned control points violate the half-spaces they generate"
+    )
+
+
+def test_wall_penetrates_below_its_penalty_threshold():
+    """The companion fact: at the old fixed weight of 100, `wall` really does
+    penetrate.
+
+    This is why the scenario was misread as infeasible for months, and it is
+    what makes the weight a modelling decision rather than a tuning knob.
+
+    FAILS IF: weight 100 already solves `wall`, which would mean the threshold
+    story above is wrong and the fix is something else.
     """
     from spacetime_bezier.scenarios import SCENARIO_MAP
 
     fn, _ = SCENARIO_MAP["wall"]
     sc = fn()
-    best = max(
-        optimize_spacetime(
-            N=8, dim=3, p_start=sc["start"], p_end=sc["end"],
-            obstacles=sc["obstacles"], n_seg=ns, max_iter=200, tol=1e-6,
-            scp_trust_radius=0.5, min_dt=0.1, verbose=False,
-            init_curve=sc.get("init_curve"),
-        )[1]["min_clearance"]
-        for ns in (2, 8, 12, 24)
+    _, info = optimize_spacetime(
+        N=10, dim=3, p_start=sc["start"], p_end=sc["end"],
+        obstacles=sc["obstacles"], n_seg=16, max_iter=200, tol=1e-6,
+        scp_trust_radius=0.5, min_dt=0.1, verbose=False,
+        elastic_weight=100.0,
+        init_curve=sc.get("init_curve"),
     )
-    assert best > 0.0, f"best configuration still penetrates by {-best:.4f}"
+    assert info["min_clearance"] < 0.0, (
+        "weight 100 now clears `wall`; the penalty-threshold explanation for the "
+        "old infeasibility record needs revisiting"
+    )
+
+
+# --- Item B11: three spatial coordinates plus time -------------------------
+#
+# Same builder, same solver, one more column. Nothing in Rust changed to make
+# these pass; `dim` has always come from the array shape. What these tests
+# exclude is the opposite claim -- that the code only *looks* dimension-generic
+# and quietly drops the third spatial coordinate or the time component once the
+# row width grows.
+
+# The obstacle APPROACHES the trajectory line. That is not cosmetic: the
+# support check below is only sensitive to a dropped time coefficient when some
+# row's spatial normal has a positive dot product with the obstacle velocity.
+# Measured on this geometry -- worst surface excess as built -0.081, with the
+# time column zeroed +3.599, with the z column zeroed +0.219. Measured on a
+# RECEDING obstacle (pos0 [5,0,0], vel [0,0.8,0.3]) -- as built -0.018, time
+# column zeroed -0.018, i.e. no signal at all. See the note on
+# `test_half_space_actually_supports_the_tube`.
+MOVING_3D = [{"pos0": [5.0, -5.0, -2.0], "vel": [0.0, 1.2, 0.5], "r": 1.0}]
+
+
+def test_half_space_supports_the_tube_in_three_spatial_dimensions():
+    """The four-coordinate rows must still support the true obstacle tube.
+
+    Samples the moving sphere's surface densely in time and in both angles, and
+    checks every sample is on the forbidden side of every emitted plane. This is
+    the three-dimensional twin of
+    `test_half_space_actually_supports_the_tube`, and it is the check that a
+    dropped coordinate cannot survive: if the builder ignored z, or emitted a
+    three-wide normal that the caller reshaped, the plane would slice the sphere.
+
+    FAILS IF: any surface sample lands on the free side of a plane by more than
+    solver noise, or the rows come back with a width other than four.
+    """
+    P = _straight_guess([0.0, 0.0, 0.0, 0.0], [10.0, 0.0, 0.0, 8.0], 9)
+    rows = _exact_rows(P, MOVING_3D, n_seg=4)
+    obs = MOVING_3D[0]
+
+    assert rows["normals"].shape[1] == 4, (
+        f"rows are {rows['normals'].shape[1]} wide at four coordinates"
+    )
+    assert len(rows["lbs"]) > 0, "no obstacle rows were generated at all"
+    assert np.abs(rows["normals"][:, -1]).max() > 1e-6, (
+        "every four-coordinate half-space has a zero time coefficient"
+    )
+
+    worst = -np.inf
+    thetas = np.linspace(0.0, np.pi, 12)
+    phis = np.linspace(0.0, 2.0 * np.pi, 16, endpoint=False)
+    for normal, lb in zip(rows["normals"], rows["lbs"]):
+        for t in np.linspace(0.0, 8.0, 40):
+            centre = np.asarray(obs["pos0"], float) + np.asarray(obs["vel"], float) * t
+            for th in thetas:
+                for ph in phis:
+                    offset = obs["r"] * np.array([
+                        np.sin(th) * np.cos(ph),
+                        np.sin(th) * np.sin(ph),
+                        np.cos(th),
+                    ])
+                    pt = np.append(centre + offset, t)
+                    # Forbidden side means n.pt <= lb; positive excess is a breach.
+                    worst = max(worst, float(normal @ pt - float(lb)))
+
+    assert worst <= 1e-9, (
+        f"a half-space cuts through the sphere by {worst:.4e} at four "
+        "coordinates; satisfying it does not imply avoiding the obstacle"
+    )
+
+
+def test_wall3d_climbs_and_is_certified():
+    """Item B11 end to end: three spatial coordinates plus time, converged,
+    clearing, certified, and cross-checked against the true obstacle motion.
+
+    The second half is the part that makes the extra dimension evidence rather
+    than decoration. The fence spans the full y extent of the corridor, so the
+    curve can only get past it by leaving that span sideways or by leaving the
+    fence's z extent. This asserts it does the latter *while still inside the y
+    span* -- the avoidance happens in the third spatial coordinate, and a
+    two-coordinate run of the same geometry could not reproduce it. (Measured:
+    the identical scenario without z penetrates by 0.47 to 0.78 and converges at
+    no config.)
+
+    FAILS IF: the run does not converge; the returned curve penetrates; its
+    control points violate the half-spaces they generate; `compute_min_clearance`
+    -- computed here from the returned control points and the obstacles' true
+    motion, not from anything the solver reported -- disagrees with the reported
+    clearance; or the curve crosses the fence by going around it in y, which
+    would mean the third coordinate carried nothing.
+    """
+    from spacetime_bezier.scenarios import SCENARIO_MAP
+    from spacetime_bezier.geometry import bezier_curve
+
+    fn, _ = SCENARIO_MAP["wall3d"]
+    sc = fn()
+    assert len(sc["start"]) == 4, "wall3d must have three spatial coordinates plus time"
+    n_seg = 2
+
+    P_opt, info = optimize_spacetime(
+        N=8, dim=4, p_start=sc["start"], p_end=sc["end"],
+        obstacles=sc["obstacles"], n_seg=n_seg, max_iter=200, tol=1e-6,
+        scp_prox_weight=0.3, scp_trust_radius=0.5, min_dt=0.1, verbose=False,
+        init_curve=sc.get("init_curve"),
+    )
+
+    assert P_opt.shape[1] == 4, f"solver returned {P_opt.shape[1]} coordinates"
+    assert info["converged"] == 1.0, f"did not converge (stop={info['stop_reason']})"
+    assert info["min_clearance"] > 0.0, f"penetrates by {-info['min_clearance']:.4f}"
+
+    independent_clearance = compute_min_clearance(
+        P_opt, sc["obstacles"], dim=4, n_eval=20_001
+    )
+    assert independent_clearance > 0.0, (
+        f"reported {info['min_clearance']:.4f} but the returned curve penetrates "
+        f"by {-independent_clearance:.4f}"
+    )
+    assert independent_clearance == pytest.approx(info["min_clearance"], abs=5e-3), (
+        f"reported clearance {info['min_clearance']:.4f} disagrees with the "
+        f"returned curve's {independent_clearance:.4f}"
+    )
+    assert _exact_certificate(P_opt, sc["obstacles"], n_seg=n_seg) <= 1e-6, (
+        "the returned control points violate the half-spaces they generate"
+    )
+
+    # Where the curve crosses the advancing fence plane, and how it got past.
+    fence = [o for o in sc["obstacles"] if o["name"].startswith("F")]
+    y_lo = min(o["pos0"][1] for o in fence)
+    y_hi = max(o["pos0"][1] for o in fence)
+    fence_r = max(o["r"] for o in fence)
+    fence_z = fence[0]["pos0"][2]
+    fence_x0 = fence[0]["pos0"][0]
+    fence_vx = fence[0]["vel"][0]
+
+    pts = bezier_curve(P_opt, 20_001)
+    gap = pts[:, 0] - (fence_x0 + fence_vx * pts[:, 3])
+    assert gap[0] < 0.0 < gap[-1], (
+        "the curve does not start behind the fence and end ahead of it, so "
+        "there is no crossing to inspect"
+    )
+    crossing = pts[int(np.argmin(np.abs(gap)))]
+
+    assert y_lo <= crossing[1] <= y_hi, (
+        f"the curve crossed at y={crossing[1]:.3f}, outside the fence's span "
+        f"[{y_lo}, {y_hi}] -- it went around, so the third spatial coordinate "
+        "is not what got it past"
+    )
+    assert abs(crossing[2] - fence_z) > fence_r, (
+        f"the curve crossed at z={crossing[2]:.3f}, inside the fence's z extent "
+        f"{fence_z} +/- {fence_r}"
+    )

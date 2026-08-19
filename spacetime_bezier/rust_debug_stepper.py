@@ -13,6 +13,7 @@ from orbital_docking.de_casteljau import segment_matrices_equal_params
 
 from .debug_trace import DebugFrame
 from .geometry import bezier_curve, compute_min_clearance, obstacle_array_bundle
+from .optimize import DEFAULT_ELASTIC_WEIGHT
 from .objective import build_initial_guess
 
 try:
@@ -61,6 +62,7 @@ class RustOptimizerStepper:
         time_lb: float = 0.0,
         time_ub_scale: float = 1.5,
         cap_bulge_ratio: float = 2.0,
+        elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,
     ) -> None:
         if _bezier_opt_rs is None or not hasattr(_bezier_opt_rs, "SpacetimeScpContext"):
             raise RuntimeError("Rust extension bezier_opt is not available or missing SpacetimeScpContext.")
@@ -81,6 +83,7 @@ class RustOptimizerStepper:
         self.time_lb = float(time_lb)
         self.time_ub_scale = float(time_ub_scale)
         self.cap_bulge_ratio = float(cap_bulge_ratio)
+        self.elastic_weight = float(elastic_weight)
 
         self.A_list = segment_matrices_equal_params(self.N, self.n_seg)
         self.initial_clearance = float(
@@ -316,7 +319,7 @@ class RustOptimizerStepper:
             time_ub=time_upper,
             scp_prox_weight=self.scp_prox_weight,
             scp_trust_radius=self.scp_trust_radius,
-            elastic_weight=100.0,
+            elastic_weight=self.elastic_weight,
             tol=self.tol,
             cap_bulge_ratio=self.cap_bulge_ratio,
         )
@@ -550,6 +553,7 @@ def create_spacetime_debug_stepper_from_control_points(
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
     cap_bulge_ratio: float = 2.0,
+    elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,
 ) -> RustOptimizerStepper:
     """Create a Rust-backed debug stepper from an existing control polygon."""
     return RustOptimizerStepper(
@@ -567,6 +571,7 @@ def create_spacetime_debug_stepper_from_control_points(
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
         cap_bulge_ratio=cap_bulge_ratio,
+        elastic_weight=elastic_weight,
     )
 
 
@@ -588,6 +593,7 @@ def create_spacetime_debug_stepper(
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
     cap_bulge_ratio: float = 2.0,
+    elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,
     init_curve: dict | None = None,
 ) -> RustOptimizerStepper:
     """Create a Rust-backed debug stepper, building the initial guess from endpoints."""
@@ -610,4 +616,5 @@ def create_spacetime_debug_stepper(
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
         cap_bulge_ratio=cap_bulge_ratio,
+        elastic_weight=elastic_weight,
     )

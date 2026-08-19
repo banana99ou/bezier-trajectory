@@ -2,10 +2,9 @@
 Orbital parameters and constants for the rendezvous optimizer.
 
 Scenario: Progress-to-ISS fast-rendezvous inspired (simplified single-arc).
-See Project_Spec.md for sourced mission values and modeling choices.
 """
 
-# Orbital parameters (Progress-to-ISS inspired, see Project_Spec.md)
+# Orbital parameters (Progress-to-ISS inspired)
 PROGRESS_START_ALTITUDE_KM = 245.0   # Circularized Progress-like parking orbit [km AMSL]
 ISS_TARGET_ALTITUDE_KM = 400.0       # ISS-like target orbit [km AMSL]
 KOZ_ALTITUDE_KM = 100.0              # Keep Out Zone altitude [km AMSL]

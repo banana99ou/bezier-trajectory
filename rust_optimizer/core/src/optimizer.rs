@@ -8,13 +8,17 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Append a JSON line to the file named by the `BEZIER_DEBUG_LOG` env var.
+/// No-op if the env var is unset.
 fn debug_log_solver(run_id: &str, hypothesis_id: &str, location: &str, message: &str, data: serde_json::Value) {
+    let Ok(path) = std::env::var("BEZIER_DEBUG_LOG") else {
+        return;
+    };
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0);
     let payload = serde_json::json!({
-        "sessionId": "9abff6",
         "runId": run_id,
         "hypothesisId": hypothesis_id,
         "location": location,
@@ -25,7 +29,7 @@ fn debug_log_solver(run_id: &str, hypothesis_id: &str, location: &str, message: 
     if let Ok(mut file) = OpenOptions::new()
         .create(true)
         .append(true)
-        .open("/Volumes/Sandisk/code/bezier-trajectory-merge/.cursor/debug-9abff6.log")
+        .open(&path)
     {
         let _ = writeln!(file, "{payload}");
     }
