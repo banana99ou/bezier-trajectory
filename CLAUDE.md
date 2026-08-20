@@ -59,7 +59,7 @@ A session can open with just an item id (`B1`, `A2`, `C1`).
 - ~~B0 repair the venv~~ **DONE**
 - ~~B1 fix G1~~ **DONE** — tube is a capsule around the slanted centreline; the time component falls out of the slant
 - ~~B2 a KOZ test with a **moving** obstacle that fails before B1 and passes after~~ **DONE** — `tests/unit/test_spacetime_koz_geometry.py`
-- B3 re-benchmark, after the B8–B10 freeze. **Do not sweep `cap_bulge_ratio`** — it is dead code and the sweep can only produce a flat line (measured). Sweep `elastic_weight` instead.
+- ~~B3 re-benchmark after the freeze~~ **DONE 2026-08-20** — one pass, 22 configurations, table in README §Measurements. Swept `elastic_weight` via the ladder; `cap_bulge_ratio` untouched (dead code, measured flat)
 - ~~B4 fix G2~~ **DONE** — one plane per (segment, obstacle) aimed at the segment centroid
 - ~~B5 port the SCvx machinery from `main`~~ **DONE** — `848bf3b`, then reduced to one canonical iteration in `9b9c3d3`
 - B6 procedural seeds (left/right/wait/hurry) + multi-start. **Demoted 2026-08-19** — it was justified by `wall` being infeasible, which was false. May still buy better local optima; blocks nothing.
@@ -177,8 +177,7 @@ Registry keys are in `spacetime_bezier/scenarios.py` (`SCENARIO_MAP`). What each
 last measured pass, and the elastic weight each result needs: [`README.md`](README.md)
 §Measurements.
 
-**Every number there is stale by construction** — formulation decision 7. The objective changes
-with B8–B10, so nothing measured before that freeze survives it and none of it may reach the paper.
+The B8–B10 freeze landed and the one-pass re-measurement ran **2026-08-20** (item B3); README §Measurements is current at defaults. Runs enabling `v_max` / `time_weight` / `free_arrival_time` are different problems — re-measure per scenario.
 
 ## Key Files
 
@@ -189,7 +188,7 @@ carry a warning or are easy to mistake:
 - `spacetime_bezier/optimize.py` -- public API, the elastic-weight ladder, `optimize_scenario`
 - `rust_optimizer/core/src/spacetime_constraints.rs` -- KOZ capsule geometry; both fixed defects lived here
 - `rust_optimizer/core/src/spacetime_optimizer.rs` -- SCP loop, ratio test, certificate at the returned iterate
-- `rust_optimizer/core/src/optimizer.rs` -- `solve_qp`; **emits linear cones only**, which is what blocks the speed cap (item B9)
+- `rust_optimizer/core/src/optimizer.rs` -- `solve_qp` + `solve_qp_with_socs`; second-order cones landed with B9 (the speed-cap cone carries no elastic slack, by design)
 - `spacetime_bezier/constraints.py`, `debug_stepper.py` -- **dead**, see Known Issues
 - `doc/notes/001_problem_formulation/` -- **contradicts itself**; do not seed the paper from it
 
