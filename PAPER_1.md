@@ -10,7 +10,7 @@ legible as a contribution rather than a correction.
 
 **Supporting evidence, kept separate on purpose** (it is a verification record, not paper content):
 - [`doc/refs/novelty_positioning.md`](doc/refs/novelty_positioning.md) — prior-art map, comparison against Osburn, per-source verification status
-- [`doc/notes/_shared/safe_corridor_references.md`](doc/notes/_shared/safe_corridor_references.md) — external ground truth for one plane per (segment, obstacle)
+- [`doc/refs/safe_corridor_references.md`](doc/refs/safe_corridor_references.md) — external ground truth for one plane per (segment, obstacle)
 
 **Structure of this file**
 - **Part A** — claim, what is different, method, demo scenarios, the shadow lemma, the risk the contribution creates, decided-against, what must be measured, weakest links. *(English; was `PAPER_CLAIM.md`.)*

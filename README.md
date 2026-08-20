@@ -16,7 +16,7 @@ Drag obstacles, tweak parameters, watch the optimizer re-solve.
 | **paper 1** — offline, known obstacle motion | [`PAPER_1.md`](PAPER_1.md) — claim, method, scenarios, risks, 논문 뼈대 |
 | **paper 2** — online, uncertain hazards (future) | [`PAPER_2.md`](PAPER_2.md) — risk field, prior art, open question |
 | prior-art verification record | [`doc/refs/novelty_positioning.md`](doc/refs/novelty_positioning.md) |
-| safe-corridor ground truth | [`doc/notes/_shared/safe_corridor_references.md`](doc/notes/_shared/safe_corridor_references.md) |
+| safe-corridor ground truth | [`doc/refs/safe_corridor_references.md`](doc/refs/safe_corridor_references.md) |
 | 연구노트 — what belongs there and what does not | [`doc/notes/README.md`](doc/notes/README.md) |
 
 The two papers have a hard scope boundary. Paper 1 assumes obstacle motion is known and
