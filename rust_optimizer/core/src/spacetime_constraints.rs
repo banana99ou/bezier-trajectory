@@ -404,6 +404,25 @@ pub struct OcclusionConstraintBundle {
     pub rows: Vec<OcclusionRowData>,
 }
 
+/// What one occlusion build produced, INCLUDING what it could not produce.
+///
+/// The second field is the whole point. `shadow_plane` returns `None` when the
+/// station sits inside the piece's inflated body: no half-space separates
+/// anything then, so no row can be emitted. Emitting nothing is correct for the
+/// QP — there is no valid convex constraint to hand it — but silently emitting
+/// nothing to the CERTIFICATE turns "cannot be certified" into "certified 0.0",
+/// which is a check that cannot fail. The count travels with the bundle so the
+/// certificate can refuse rather than pass.
+pub struct OcclusionBuildResult {
+    /// `None` when no row at all was emitted — either nothing was in range, or
+    /// every plane in range was dropped. `dropped_planes` distinguishes them.
+    pub bundle: Option<OcclusionConstraintBundle>,
+    /// (segment, station, obstacle) windows that were in range and whose
+    /// supporting plane could NOT be built. Each one is a piece of the
+    /// guarantee that is missing, not a piece that is satisfied.
+    pub dropped_planes: usize,
+}
+
 /// Some unit vector orthogonal to `e`, chosen by killing the axis `e` leans on
 /// least so the subtraction never cancels.
 fn any_orthogonal(e: &[f64]) -> Vec<f64> {
@@ -508,6 +527,13 @@ fn occluder_piece_body(
 /// Returns `None` when the station lies inside the inflated body. No plane
 /// separates anything then — the sight line starts blocked — and emitting one
 /// would be emitting a row that asserts nothing.
+///
+/// **`None` is not "satisfied".** It is "no certificate exists for this window".
+/// The caller counts these as `OcclusionBuildResult::dropped_planes`, and the
+/// exported certificate is INFINITE whenever the count is nonzero. Treating a
+/// drop as a zero violation is what let a straight flight whose true
+/// line-of-sight margin was −0.3999 come back converged, certified 0.0 and
+/// figure-grade.
 struct ShadowPlane {
     /// Unit outward normal; the free side is `n · x >= offset`.
     normal: Vec<f64>,
@@ -730,7 +756,7 @@ pub fn build_spacetime_occlusion_constraints(
     dim: usize,
     obstacles: &SpacetimeObstacleData<'_>,
     stations: &StationData<'_>,
-) -> Option<OcclusionConstraintBundle> {
+) -> OcclusionBuildResult {
     build_occlusion_rows(a_list, p, np1, dim, obstacles, stations, false)
 }
 
@@ -744,8 +770,16 @@ pub fn build_spacetime_occlusion_constraints_linearized(
     dim: usize,
     obstacles: &SpacetimeObstacleData<'_>,
     stations: &StationData<'_>,
-) -> Option<OcclusionConstraintBundle> {
+) -> OcclusionBuildResult {
     build_occlusion_rows(a_list, p, np1, dim, obstacles, stations, true)
+}
+
+/// No rows and nothing dropped — the honest description of "occlusion is off".
+fn no_occlusion_rows() -> OcclusionBuildResult {
+    OcclusionBuildResult {
+        bundle: None,
+        dropped_planes: 0,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -757,13 +791,13 @@ fn build_occlusion_rows(
     obstacles: &SpacetimeObstacleData<'_>,
     stations: &StationData<'_>,
     with_rotation: bool,
-) -> Option<OcclusionConstraintBundle> {
+) -> OcclusionBuildResult {
     if stations.n_stations == 0 || obstacles.n_obs == 0 {
-        return None;
+        return no_occlusion_rows();
     }
     let spatial_dim = obstacles.spatial_dim;
     if dim != spatial_dim + 1 {
-        return None;
+        return no_occlusion_rows();
     }
     let n_vars = np1 * dim;
     let t_idx = dim - 1;
@@ -771,6 +805,7 @@ fn build_occlusion_rows(
     let mut constraint_rows: Vec<Vec<f64>> = Vec::new();
     let mut lbs: Vec<f64> = Vec::new();
     let mut row_meta: Vec<OcclusionRowData> = Vec::new();
+    let mut dropped_planes = 0usize;
 
     for (seg_idx, a_seg) in a_list.iter().enumerate() {
         let (q, w, centroid) = segment_points_and_weights(a_seg, p, np1, dim);
@@ -799,9 +834,14 @@ fn build_occlusion_rows(
                 }
 
                 let (center, body_radius) = occluder_piece_body(obstacles, obs_idx, t_lo, t_hi);
+                // A window that IS in range but whose plane cannot be built is
+                // counted, not skipped quietly. The QP still gets nothing —
+                // there is no valid convex constraint to give it — but the
+                // caller now knows the guarantee has a hole in it.
                 let Some(plane) =
                     shadow_plane(station, &centroid[..spatial_dim], &center, body_radius)
                 else {
+                    dropped_planes += 1;
                     continue;
                 };
                 let n = &plane.normal;
@@ -859,7 +899,10 @@ fn build_occlusion_rows(
     }
 
     if constraint_rows.is_empty() {
-        return None;
+        return OcclusionBuildResult {
+            bundle: None,
+            dropped_planes,
+        };
     }
 
     let n_rows = constraint_rows.len();
@@ -868,16 +911,19 @@ fn build_occlusion_rows(
         a[i * n_vars..(i + 1) * n_vars].copy_from_slice(row);
     }
 
-    Some(OcclusionConstraintBundle {
-        constraint: LinearConstraint {
-            a,
-            lb: lbs,
-            ub: vec![f64::INFINITY; n_rows],
-            n_rows,
-            n_vars,
-        },
-        rows: row_meta,
-    })
+    OcclusionBuildResult {
+        bundle: Some(OcclusionConstraintBundle {
+            constraint: LinearConstraint {
+                a,
+                lb: lbs,
+                ub: vec![f64::INFINITY; n_rows],
+                n_rows,
+                n_vars,
+            },
+            rows: row_meta,
+        }),
+        dropped_planes,
+    }
 }
 
 /// Endpoint constraints.

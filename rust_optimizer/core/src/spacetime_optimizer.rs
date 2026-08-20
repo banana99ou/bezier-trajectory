@@ -238,7 +238,8 @@ fn koz_violation_rebuilt_at(
     }
 }
 
-/// Violation of the OCCLUSION half-spaces rebuilt AT `x` (item B12).
+/// Violation of the OCCLUSION half-spaces rebuilt AT `x` (item B12), together
+/// with the number of planes that could not be built there.
 ///
 /// The occlusion rows are physics-adjacent mission constraints and they carry the
 /// paper's guarantee, so they are certified exactly as the KOZ rows are: rebuilt
@@ -246,21 +247,29 @@ fn koz_violation_rebuilt_at(
 /// approximation each row stands on is built from `x`'s own segment time extents,
 /// so evaluating here is self-consistent — the certificate cannot be reporting a
 /// window the trajectory does not occupy.
+///
+/// The second return value is what makes this checkable. A window whose station
+/// sits inside the inflated occluder body yields no supporting half-space at all
+/// (`shadow_plane` returns `None`), so the row set is SILENT about it. Summing
+/// the rows that do exist then reports 0.0 — a certificate that cannot fail on
+/// exactly the configurations where line of sight is most likely already lost.
+/// The count is returned so callers can turn "no plane" into "no certificate".
 fn occlusion_violation_rebuilt_at(
     x: &[f64],
     pre: &ScpPrecomputed,
     obstacles: &SpacetimeObstacleData<'_>,
     stations: &StationData<'_>,
-) -> f64 {
+) -> (f64, usize) {
     let nvars = pre.np1 * pre.dim;
-    match spacetime_constraints::build_spacetime_occlusion_constraints(
+    let built = spacetime_constraints::build_spacetime_occlusion_constraints(
         &pre.a_list,
         x,
         pre.np1,
         pre.dim,
         obstacles,
         stations,
-    ) {
+    );
+    let viol = match built.bundle {
         Some(bundle) => row_violation(
             x,
             &bundle.constraint.a,
@@ -270,12 +279,42 @@ fn occlusion_violation_rebuilt_at(
             nvars,
         ),
         None => 0.0,
+    };
+    (viol, built.dropped_planes)
+}
+
+/// The occlusion CERTIFICATE at `x`: the violation, or infinity when any plane
+/// was dropped.
+///
+/// Infinity, not a large number: the quantity being reported is "how far the
+/// hull is from satisfying the half-spaces it generates", and for a dropped
+/// window there are no half-spaces, so the honest value is unbounded. The
+/// feasibility gate compares with `not (x <= tol)`, which infinity fails.
+fn occlusion_certificate_at(
+    x: &[f64],
+    pre: &ScpPrecomputed,
+    obstacles: &SpacetimeObstacleData<'_>,
+    stations: &StationData<'_>,
+) -> (f64, usize) {
+    let (viol, dropped) = occlusion_violation_rebuilt_at(x, pre, obstacles, stations);
+    if dropped > 0 {
+        (f64::INFINITY, dropped)
+    } else {
+        (viol, dropped)
     }
 }
 
 /// Both relaxable blocks, rebuilt at `x`. This is the quantity the SCvx ratio
 /// test and every convergence guard must use: a loop that graded only the KOZ
 /// block could declare success on a trajectory that has lost line of sight.
+///
+/// This uses the FINITE occlusion violation, not `occlusion_certificate_at`,
+/// and the difference is deliberate. The merit is a local model the ratio test
+/// divides by; an infinite merit makes every ratio NaN and collapses the trust
+/// region, so a dropped plane would stop the solver rather than be reported by
+/// it. The refusal belongs to the certificate, which is what the feasibility
+/// gate reads — see `occlusion_certificate_at`. A run with dropped planes can
+/// therefore still converge; it just cannot be figure-grade.
 fn relaxable_violation_rebuilt_at(
     x: &[f64],
     pre: &ScpPrecomputed,
@@ -284,7 +323,7 @@ fn relaxable_violation_rebuilt_at(
     cap_bulge_ratio: f64,
 ) -> f64 {
     koz_violation_rebuilt_at(x, pre, obstacles, cap_bulge_ratio)
-        + occlusion_violation_rebuilt_at(x, pre, obstacles, stations)
+        + occlusion_violation_rebuilt_at(x, pre, obstacles, stations).0
 }
 
 fn append_constraint(
@@ -343,6 +382,10 @@ pub struct ScpStepResult {
     /// from the KOZ slack because they are different constraints and a run that
     /// stands on one is not standing on the other.
     pub occlusion_slack_per_row: Vec<f64>,
+    /// Occlusion planes that were in range at the reference and could not be
+    /// built. Nonzero means this subproblem was handed an incomplete constraint
+    /// set, which the row count alone does not reveal.
+    pub occlusion_planes_dropped: usize,
 
     // ---- SCvx quantities. Populated only when `use_scvx` is true. ----
     //
@@ -437,6 +480,7 @@ fn failed_step(
         koz_slack_per_row: Vec::new(),
         occlusion_rows: Vec::new(),
         occlusion_slack_per_row: Vec::new(),
+        occlusion_planes_dropped: 0,
         is_candidate: false,
         l_p: f64::NAN,
         l_c: f64::NAN,
@@ -502,9 +546,14 @@ pub fn scp_step(
     // gets the SELF-CONSISTENT rows carrying the rotation term, the certificate
     // is always rebuilt from the exact ones. Both reproduce the true margin at
     // the reference, so `vlin_p` stays equal to the true violation there.
-    let occlusion_bundle = spacetime_constraints::build_spacetime_occlusion_constraints_linearized(
+    // A window whose plane cannot be built contributes NOTHING to the QP — there
+    // is no valid convex constraint to hand it — but the drop is carried out on
+    // the step so it cannot vanish. See `occlusion_certificate_at`.
+    let occlusion_built = spacetime_constraints::build_spacetime_occlusion_constraints_linearized(
         &pre.a_list, p_current, np1, dim, obstacles, stations,
     );
+    let occlusion_bundle = occlusion_built.bundle;
+    let occlusion_planes_dropped = occlusion_built.dropped_planes;
 
     // Objective: the parameter-domain smoothness regularizer on the spatial
     // control points, and nothing else. NOT acceleration energy -- see
@@ -765,6 +814,7 @@ pub fn scp_step(
         koz_slack_per_row,
         occlusion_rows: occlusion_rows_out,
         occlusion_slack_per_row,
+        occlusion_planes_dropped,
         is_candidate: true,
         l_p,
         l_c,
@@ -1290,9 +1340,16 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     // keep-out one: they are different guarantees and a run that fails one has
     // not failed the other. Zero by construction when no station was supplied.
     // The feasibility gate in optimize.py reads this key.
+    //
+    // INFINITE when any supporting plane could not be built at the returned
+    // iterate. `occlusion_planes_dropped` carries the count so the reason is
+    // visible and not merely the verdict. Both are evaluated at `p`, the point
+    // that is actually returned.
+    let (occ_cert, occ_dropped) = occlusion_certificate_at(&p, &pre, obstacles, stations);
+    info.insert("occlusion_violation_reference".to_string(), occ_cert);
     info.insert(
-        "occlusion_violation_reference".to_string(),
-        occlusion_violation_rebuilt_at(&p, &pre, obstacles, stations),
+        "occlusion_planes_dropped".to_string(),
+        occ_dropped as f64,
     );
     info.insert("koz_violation_candidate".to_string(), state.last_vtrue_c);
     // Kept for provenance: what the old key would have said.

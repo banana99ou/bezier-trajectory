@@ -116,6 +116,20 @@ def figure_grade_failures(row: dict) -> list[str]:
     occlusion = float(row.get("occlusion_violation", 0.0))
     if not occlusion <= FIGURE_GRADE_CERTIFICATE_TOL:
         reasons.append(f"line of sight lost, occlusion certificate {occlusion:.3e}")
+    # A dropped occlusion plane is NOT a satisfied one. When the station sits
+    # inside a piece's inflated body no supporting half-space exists, so the
+    # builder emits no row -- and a certificate summed over the rows that do
+    # exist then reads 0.0 for a trajectory whose true line of sight is gone.
+    # Measured: a straight flight past a fast occluder came back converged,
+    # certified 0.0 and figure-grade with a true sight margin of -0.3999.
+    # Defaults to 0.0 for the same reason `occlusion_violation` does: a pre-B12
+    # row has no stations, so it has nothing to drop.
+    dropped = float(row.get("occlusion_planes_dropped", 0.0))
+    if not dropped <= 0.0:
+        reasons.append(
+            f"{dropped:.0f} occlusion plane(s) could not be built; line of sight "
+            "is uncertifiable here, not certified"
+        )
     clearance = float(row.get("min_clearance", float("nan")))
     if not clearance > 0.0:
         reasons.append(f"penetrates by {-clearance:.3e}")
@@ -523,6 +537,9 @@ def optimize_scenario(
             "certified": bool(certificate <= 1e-6),
             "occlusion_violation": occlusion,
             "occlusion_certified": bool(occlusion <= 1e-6),
+            "occlusion_planes_dropped": float(
+                opt_info.get("occlusion_planes_dropped", 0.0)
+            ),
             "total_slack": total_slack,
             "accept_count": int(opt_info.get("accept_count", 0)),
             "reject_count": int(opt_info.get("reject_count", 0)),

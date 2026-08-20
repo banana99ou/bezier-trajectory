@@ -462,7 +462,9 @@ fn spacetime_occlusion_rows_exact<'py>(
         dim,
         &obstacles,
         &station_data,
-    ) {
+    )
+    .bundle
+    {
         Some(b) => b.rows,
         None => Vec::new(),
     };
@@ -705,6 +707,10 @@ impl SpacetimeScpContext {
         info.set_item("cost", result.cost)?;
         info.set_item("koz_row_count", result.koz_rows.len())?;
         info.set_item("occlusion_row_count", result.occlusion_rows.len())?;
+        // Windows in range whose supporting plane could not be built at this
+        // reference. The QP got nothing for them, so the row count above does
+        // not distinguish "nothing to constrain" from "could not constrain it".
+        info.set_item("occlusion_planes_dropped", result.occlusion_planes_dropped)?;
         info.set_item(
             "occlusion_total_slack",
             result.occlusion_slack_per_row.iter().sum::<f64>(),
