@@ -288,12 +288,14 @@ class RustOptimizerStepper:
 
         objective_payload = self._common_payload(self.P_init)
         objective_payload["objective"] = {
-            "type": "spatial_acceleration_energy",
+            # NOT acceleration energy: the curve parameter is not time, so this
+            # term is blind to timing (item B8, formulation decisions 1-3).
+            "type": "parameter_domain_smoothness_regularizer",
             "scp_prox_weight": self.scp_prox_weight,
             "trust_region_policy": "post_solve_clip",
             "scp_trust_radius": self.scp_trust_radius,
             "penalized_coordinates": list(range(self.dim - 1)),
-            "penalizes_time_acceleration": False,
+            "penalizes_time_coordinate": False,
         }
         self._frames.append(
             self._frame("objective-assembly", "Objective assembly", objective_payload, iteration=0)

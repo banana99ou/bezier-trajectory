@@ -20,7 +20,20 @@ const ETA_ACCEPT: f64 = 0.1;
 /// iterations.
 const CONV_STREAK_REQUIRED: usize = 3;
 
-fn build_spatial_energy_h(np1: usize, dim: usize) -> Vec<f64> {
+/// Quadratic form of the PARAMETER-DOMAIN smoothness regularizer on the spatial
+/// control points.
+///
+/// It is not spatial acceleration energy, and calling it that was defect-grade
+/// wrong (formulation decisions 1-3, item B8). The curve parameter is not time:
+/// physical velocity is the spatial parameter-derivative over the time
+/// parameter-derivative, a ratio of Beziers, so it is not polynomial in the
+/// control points and no quadratic form can equal its energy.
+///
+/// The term is blind to timing, and provably so: it never writes into the time
+/// column, so two polygons with identical spatial control points and any time
+/// coordinates whatsoever score the same. Physics is bounded by constraints --
+/// the slant-limit speed cap (item B9) -- never by this cost.
+fn build_smoothness_regularizer_h(np1: usize, dim: usize) -> Vec<f64> {
     let n = np1 - 1;
     let nvars = np1 * dim;
     let spatial_dim = dim - 1;
@@ -86,7 +99,7 @@ fn compute_min_clearance(
 /// Quadratic cost together with the magnitude of the arithmetic that produced it.
 ///
 /// The value is a signed sum whose terms can cancel almost completely: a straight
-/// line has exactly zero bending energy, so `0.5 xᵀHx` evaluates to ~1e-12 of
+/// line has exactly zero smoothness cost, so `0.5 xᵀHx` evaluates to ~1e-12 of
 /// cancellation residue rather than to zero. A tolerance stated relative to the
 /// VALUE then has nothing to be relative to, and every comparison against it is a
 /// comparison against noise.
@@ -181,8 +194,8 @@ fn hard_row_violation(
 ///
 /// This is the whole point of the ratio test here. The QP optimizes against
 /// half-spaces built at the reference; this rebuilds them at the candidate and
-/// asks whether the improvement survived the walls moving. Because the spatial
-/// energy objective is EXACTLY quadratic (no linearization anywhere), the gap
+/// asks whether the improvement survived the walls moving. Because the
+/// smoothness regularizer is EXACTLY quadratic (no linearization anywhere), the gap
 /// between predicted and actual reduction is attributable to this term and
 /// nothing else.
 fn koz_violation_rebuilt_at(
@@ -292,7 +305,7 @@ pub fn precompute_scp(
     let n = np1 - 1;
     ScpPrecomputed {
         a_list: de_casteljau::segment_matrices_equal_params(n, n_seg),
-        h_energy: build_spatial_energy_h(np1, dim),
+        h_energy: build_smoothness_regularizer_h(np1, dim),
         boundary: spacetime_constraints::build_boundary_constraints(
             np1, dim, &p_init[0..dim], &p_init[(np1 - 1) * dim..np1 * dim],
         ),
@@ -386,7 +399,9 @@ pub fn scp_step(
         }
     }
 
-    // Objective: spatial bending energy, and nothing else.
+    // Objective: the parameter-domain smoothness regularizer on the spatial
+    // control points, and nothing else. NOT acceleration energy -- see
+    // `build_smoothness_regularizer_h`.
     //
     // There is deliberately no proximal term. The trust region already bounds the
     // step, and a proximal weight present in the QP but absent from the merit
@@ -781,7 +796,7 @@ pub fn scp_iterate(
 
     // The magnitude every tolerance below is stated against. `|t_p|` alone is not
     // usable: the quadratic form is a signed sum whose terms cancel, and where the
-    // optimum has near-zero bending energy the merit is cancellation residue rather
+    // optimum has near-zero smoothness cost the merit is cancellation residue rather
     // than a value.
     let cancel_floor = f64::EPSILON * scale_p.max(scale_c);
     let merit_scale = t_p.abs().max(cancel_floor / 1e-9);
