@@ -45,6 +45,18 @@ def build_smoothness_regularizer(N: int, dim: int) -> np.ndarray:
     The time coordinate is left unpenalized, deliberately: penalizing it would
     bias the arrival time through the smoothness term rather than through the
     declared time penalty (item B10).
+
+    **This is the TESTED MIRROR of the derivation, not the matrix production
+    uses.** Rust is the sole optimizer backend and builds its own H in
+    ``build_smoothness_regularizer_h`` (``spacetime_optimizer.rs``); nothing in
+    the solve path calls this function. It exists so the derivation can be
+    written out in a readable form and checked -- which is only worth anything if
+    the two are pinned to each other, so they are:
+    ``tests/unit/test_objective_matches_rust.py`` asserts
+    ``0.5 * p^T H_python p`` against the Rust cost oracle over degrees 2 to 12 in
+    three and four dimensions. They agree to 4.9e-16 relative. If the two ever
+    diverge, that test is what says so; without it this file could drift into
+    documenting a matrix the solver does not use.
     """
     bc = BezierCurve(np.zeros((N + 1, dim), dtype=float))
     if bc.G_tilde is None:

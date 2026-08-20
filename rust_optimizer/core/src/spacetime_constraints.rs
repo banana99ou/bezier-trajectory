@@ -937,10 +937,13 @@ fn build_occlusion_rows(
 /// time for free and the linear time penalty would then measure duration only by
 /// accident.
 ///
-/// The freed row is written as `t_last >= t_start_point + (np1-1)*min_dt`,
-/// which is implied by monotonicity anyway; the real bound comes from the box
-/// constraint's `time_ub`. Keeping a row here rather than deleting one keeps the
-/// row count fixed, so nothing downstream has to branch on the flag.
+/// The freed row is written as `t_last >= p_start[t]` — the START time, with no
+/// `min_dt` term in it. (A previous version of this comment described a
+/// `t_start + (np1-1)*min_dt` row; no such row is emitted here, and that bound
+/// arises from the monotonicity block instead.) It is implied by monotonicity
+/// anyway; the real upper bound comes from the box constraint's `time_ub`.
+/// Keeping a row here rather than deleting one keeps the row count fixed, so
+/// nothing downstream has to branch on the flag.
 pub fn build_boundary_constraints(
     np1: usize,
     dim: usize,

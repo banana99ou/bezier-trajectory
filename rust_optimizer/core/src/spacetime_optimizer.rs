@@ -740,9 +740,17 @@ pub fn scp_step(
         .sum::<f64>()
         .sqrt();
 
-    // SCvx merit pieces. Both merits use the UNREGULARIZED objective (`pre.h_energy`,
-    // which carries no linear term) so the ratio measures model error and not the
-    // solver's own regularization. `vlin_p == vtrue_p` for this builder: each row's
+    // SCvx merit pieces. Both merits use the SUBPROBLEM'S OWN objective --
+    // `pre.h_energy` together with `pre.f_linear`, the linear time penalty -- so
+    // the ratio measures model error and nothing else. (This comment used to say
+    // the merits carry no linear term. They did not, before item B10; they do
+    // now, and they must: a cost term in the QP but not in the merit would make
+    // the solver minimize a different function from the one being graded, and
+    // the resulting rho would read as model error when it is bookkeeping error.)
+    // There is still no proximal term in either, which is the separate property
+    // that keeps the predicted reduction nonnegative.
+    //
+    // `vlin_p == vtrue_p` for this builder: each row's
     // support point is the exact closest point on the tube surface to its query
     // point and the normal is the unit vector along that offset, so `a·q - lb`
     // reproduces the exact clearance at the reference. Only the candidate needs
@@ -1066,7 +1074,7 @@ pub fn scp_iterate(
         state.p = cand;
         state.conv_streak = 0;
         state.stat_streak = 0;
-        update_best(state, &step);
+        update_best(state, &step, vtrue_c, stations.n_stations > 0);
         return ScpIteration {
             step,
             outcome: "bootstrap",
@@ -1126,7 +1134,7 @@ pub fn scp_iterate(
         if rho > 0.9 && rho.is_finite() {
             state.trust = (state.trust * 2.0).min(state.trust_max);
         }
-        update_best(state, &step);
+        update_best(state, &step, vtrue_c, stations.n_stations > 0);
         // Converged = merit stationary for K consecutive accepted steps AND the
         // accepted iterate carries the hull certificate against its OWN rebuilt
         // half-spaces. The second half is what stops a penetrating iterate being
@@ -1171,11 +1179,25 @@ pub fn scp_iterate(
 /// Track the best FEASIBLE iterate seen. Kept separate from the current iterate:
 /// they are different points, and reporting one alongside the other's convergence
 /// claim would be quoting two different trajectories.
-fn update_best(state: &mut ScpState, step: &ScpStepResult) {
+///
+/// "Best" used to mean keep-out clearance alone. With a station present that is
+/// the wrong ordering: a candidate can have the largest clearance of the run and
+/// still have lost line of sight, and the fallback would then return exactly the
+/// trajectory the occlusion constraint exists to exclude. When stations are
+/// present a candidate must additionally carry the relaxable certificate --
+/// `vtrue_c`, which the caller has already computed for the ratio test, and
+/// which covers both blocks.
+fn update_best(
+    state: &mut ScpState,
+    step: &ScpStepResult,
+    vtrue_c: f64,
+    stations_present: bool,
+) {
     // `state.p` is the just-accepted candidate, so the slack that produced it is
     // this step's slack. Recorded together with the point, never separately.
     state.accepted_total_slack = step.total_slack;
-    if step.clearance > 0.0 && step.clearance > state.best_clearance {
+    let admissible = !stations_present || vtrue_c <= 1e-6;
+    if admissible && step.clearance > 0.0 && step.clearance > state.best_clearance {
         state.best_clearance = step.clearance;
         state.best_p = state.p.clone();
         state.best_total_slack = step.total_slack;
@@ -1278,6 +1300,14 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     // gate must grade (item B7). NaN only if no step was ever accepted, i.e. the
     // returned point is the initial guess -- and NaN fails every comparison,
     // which is the correct outcome for "no evidence".
+    //
+    // THE NAME IS NARROWER THAN THE QUANTITY. This total covers the whole
+    // relaxable block, which is the keep-out rows AND the occlusion rows: they
+    // are appended contiguously and share one slack range. Measured on
+    // `station_fence` at w=100, where the keep-out certificate is exactly 0 and
+    // `total_koz_slack_returned` is 0.6132 -- all of it occlusion slack. The key
+    // is not renamed because it is read by the viewer, the debugger and the
+    // feasibility gate; the comment is the fix.
     let returned_total_slack = if returned_best {
         state.best_total_slack
     } else {
@@ -1361,9 +1391,18 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     );
     info.insert("speed_cap_violation".to_string(), speed_cap_viol);
     info.insert("stop_reason".to_string(), state.stop);
+    // `converged` must describe the point being RETURNED.
+    //
+    // `state.converged` is a statement about the reference the loop stopped on.
+    // When the best-feasible fallback fires, `p` is `state.best_p` -- a
+    // different trajectory, from an earlier iteration, that the convergence test
+    // was never applied to. Reporting the loop's verdict next to that point
+    // attributes one trajectory's evidence to another. `stop_reason` still
+    // carries why the loop ended, and `returned_best_iterate` still says the
+    // swap happened, so nothing is lost.
     info.insert(
         "converged".to_string(),
-        if state.converged { 1.0 } else { 0.0 },
+        if state.converged && !returned_best { 1.0 } else { 0.0 },
     );
     info.insert(
         "returned_best_iterate".to_string(),
