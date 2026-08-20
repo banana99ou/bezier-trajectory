@@ -12,3 +12,6 @@ target/
 .specstory
 .vscode/settings.json
 figures/debug/
+
+# 연구노트 are a standalone project — each note directory is its own git repo.
+doc/notes/

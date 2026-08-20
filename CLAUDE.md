@@ -12,7 +12,7 @@ Where the reasoning went:
 - [`PAPER_1.md`](PAPER_1.md) — paper 1: claim, the formulation derivation, occluder geometry, demo scenario, 제출 일정
 - [`PAPER_2.md`](PAPER_2.md) — paper 2: risk field, prior art, scope boundary against paper 1
 - [`doc/refs/novelty_positioning.md`](doc/refs/novelty_positioning.md) — prior-art verification; **it outranks any agent's assertion about novelty**
-- [`doc/notes/`](doc/notes/README.md) — 연구노트, bound for the lab's shared repository. Read `doc/notes/README.md` before putting anything there
+- `doc/notes/` — 연구노트, bound for the lab's shared repository. **Not part of this repository.** Each note is its own git repo on disk and this repo ignores the whole folder; read `doc/notes/README.md` before putting anything there
 - **`tests/`** — every measured number lives beside the assertion that re-measures it. A number in a markdown file cannot fail, so it is not evidence
 
 ## Goal (until 2026-09-04)
@@ -92,7 +92,7 @@ and `tests/integration/test_scvx_invariants.py` are where the evidence lives.
 - **The KOZ tests in `test_spacetime_constraints.py` cannot fail on G1** — every one uses zero velocity, and line 65 asserts the time column is zero, which enshrines the old bug. They exercise `spacetime_bezier/constraints.py`, the dead Python builder. The Rust builder *is* covered, by `tests/unit/test_spacetime_koz_geometry.py`.
 - **The solver is already dimension-generic.** `dim` comes from the array shape; the only guard is `dim >= 2` (`rust_optimizer/pybind/src/lib.rs:144`). **A run at three spatial dimensions plus time costs one scenario definition and one run, not a solver change** — item B11, and the cheapest way to retire the paper's largest weakness.
 - **The core lift is NOT novel.** Osburn, Peterson & Salmon (arXiv:2508.10203, Aug 2025) published the lift, time as a Bezier coordinate, hull half-spaces in the lifted space, finite-height prisms and time monotonicity — on Clarabel. **What survives is decomposition-free.** Never phrase the hook as "time as a coordinate". See [`doc/refs/novelty_positioning.md`](doc/refs/novelty_positioning.md).
-- **Note 001 contradicts itself, so A1 is real work.** In `doc/notes/001_problem_formulation/main.tex`: §"Body 경우" derives the zero-time normal and calls it "정확히 0"; §"잘못된 패턴" then forbids exactly those three steps; §"선형화 지점" presents per-control-point linearization as an improvement ("더 조밀한 표본"), which is G2. **The note enshrines both fixed defects as design. Do not seed the paper from it until A1 revises it.**
+- **Note 001 contradicts itself, so A1 is real work.** In `doc/notes/001_problem_formulation/main.tex` (a separate repo on disk, not tracked here): §"Body 경우" derives the zero-time normal and calls it "정확히 0"; §"잘못된 패턴" then forbids exactly those three steps; §"선형화 지점" presents per-control-point linearization as an improvement ("더 조밀한 표본"), which is G2. **The note enshrines both fixed defects as design. Do not seed the paper from it until A1 revises it.**
 
 ## Decided against — do not re-propose
 
@@ -195,7 +195,7 @@ carry a warning or are easy to mistake:
 - `rust_optimizer/core/src/spacetime_optimizer.rs` -- SCP loop, ratio test, certificate at the returned iterate
 - `rust_optimizer/core/src/optimizer.rs` -- `solve_qp` + `solve_qp_with_socs`; second-order cones landed with B9 (the speed-cap cone carries no elastic slack, by design)
 - `spacetime_bezier/constraints.py`, `debug_stepper.py` -- **dead**, see Known Issues
-- `doc/notes/001_problem_formulation/` -- **contradicts itself**; do not seed the paper from it
+- `doc/notes/001_problem_formulation/` -- a separate repo, ignored by this one. **Contradicts itself**; do not seed the paper from it
 
 ## Known Issues
 

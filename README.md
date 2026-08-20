@@ -17,7 +17,7 @@ Drag obstacles, tweak parameters, watch the optimizer re-solve.
 | **paper 2** — online, uncertain hazards (future) | [`PAPER_2.md`](PAPER_2.md) — risk field, prior art, open question |
 | prior-art verification record | [`doc/refs/novelty_positioning.md`](doc/refs/novelty_positioning.md) |
 | safe-corridor ground truth | [`doc/refs/safe_corridor_references.md`](doc/refs/safe_corridor_references.md) |
-| 연구노트 — what belongs there and what does not | [`doc/notes/README.md`](doc/notes/README.md) |
+| 연구노트 — separate repos, ignored here | `doc/notes/README.md` (on disk, not tracked by this repo) |
 
 The two papers have a hard scope boundary. Paper 1 assumes obstacle motion is known and
 deterministic and solves offline. Paper 2 relaxes exactly that assumption — limited sensing,
@@ -26,7 +26,7 @@ uncertain hazards, receding horizon. Do not mix their claims.
 ## Repo map
 
 ```
-├── CLAUDE.md                  direction and guardrails — read first; reasoning lives in doc/notes/
+├── CLAUDE.md                  direction and guardrails — read first; reasoning lives in PAPER_1.md / PAPER_2.md
 ├── PAPER_1.md                 paper 1 central doc (offline, known motion)
 ├── PAPER_2.md                 paper 2 central doc (online, uncertain hazards)
 ├── BENCHMARKS.md              STALE — predates commit 848bf3b; see "Measurements" below
@@ -73,17 +73,17 @@ uncertain hazards, receding horizon. Do not mix their claims.
 │   ├── spacetime_bezier_interactive.html   3D demo with debug overlays
 │   ├── spacetime_bezier_opt_debug.html     live SCP step debugger UI
 │   ├── spacetime_scenarios.json            baked control points (generated)
-│   └── risk_field/                         paper 2 figures + the scripts that make them
+│   ├── paper1/                             the paper's figures + their sidecars
+│   └── legacy/                             older renderings, kept for provenance
 │
 └── doc/
     ├── refs/novelty_positioning.md     prior-art map, per-source verification status
     ├── refs/papers/           archived source PDFs (not committed)
-    ├── notes/                 연구노트 ONLY — LaTeX, lab-repo bound. Rules: notes/README.md
-    │   ├── README.md          what qualifies as a note; where everything else goes
-    │   ├── _shared/           styles, logos, cross-note reference material
-    │   ├── 001_problem_formulation/  SCP-QP formulation — contradicts itself, see CLAUDE.md
-    │   ├── 002_probabilistic_koz/    paper 2: lobe geometry, convexity, saddle merging
-    │   └── 003_paper1_report_to_advisor/
+    ├── refs/safe_corridor_references.md  C3 ground truth for one plane per (segment, obstacle)
+    ├── notes/                 NOT PART OF THIS REPO — gitignored. 연구노트 are a standalone
+    │                          project; each note directory is its own git repository on disk,
+    │                          with its own history, bound for the lab's shared note repo.
+    │                          Rules for what qualifies: doc/notes/README.md
     └── archive/               old chat-derived notes
 ```
 
