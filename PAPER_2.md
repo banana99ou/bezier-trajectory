@@ -9,14 +9,14 @@ replanning for that reason. Paper 2 relaxes exactly that assumption — it is th
 correction.
 
 **Formal write-up.** The mathematics of §5 is written up properly, in Korean, with its own
-figures, in [`doc/notes/004_probabilistic_koz/main.tex`](doc/notes/004_probabilistic_koz/) —
+figures, in [`doc/notes/002_probabilistic_koz/main.tex`](doc/notes/002_probabilistic_koz/) —
 density vs confidence, lobe radius and expiry, convexity by covariance growth model,
 correlation-determined shape, merging at the saddle, convex hull of the merged cluster, and the
 link to the existing SCP-QP formulation. **That note is the paper draft; this file is the
 positioning and prior-art record it does not contain** (its `references.bib` currently holds two
 entries, so §3 and §4 here are not yet reflected in it).
 
-**Figure duplication to resolve.** `doc/notes/004_probabilistic_koz/` (fig1–fig3 +
+**Figure duplication to resolve.** `doc/notes/002_probabilistic_koz/` (fig1–fig3 +
 `make_figures.py`) and [`figures/risk_field/`](figures/risk_field/) are two independent renderings
 of the same three figures. Keep the note's copies; `figures/risk_field/` is the throwaway.
 

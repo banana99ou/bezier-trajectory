@@ -146,6 +146,11 @@ def test_ratio_approaches_one_as_trust_shrinks():
 
     assert abs(means[-1] - 1.0) < abs(means[0] - 1.0)
     # At the smallest radius the model should be exact to solver precision.
+    # The tolerance is deliberately looser than what this actually measures: on
+    # the no-obstacle problem the model is exact, so rho must be 1, and the
+    # measured band is [0.9999999999999, 1.0000000000030]. Both sides of rho use
+    # the same objective and the same penalty -- that is the invariant, and 1e-6
+    # is the margin allowed before it counts as broken.
     assert means[-1] == pytest.approx(1.0, abs=1e-6)
 
 

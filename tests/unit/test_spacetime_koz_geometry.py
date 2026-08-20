@@ -67,6 +67,16 @@ def _exact_certificate(P, obstacles, n_seg):
     control point: `max(0, lb - n.q)` where `q = (A_seg @ P)[cp]`. This is the
     same quantity the Rust layer reports as `koz_violation_reference`, derived
     here independently so a test can contradict the solver instead of echoing it.
+
+    Two independent computations must agree, and that is what caught the defect
+    this function was written for. Until 2026-08-19 the Rust layer exported the
+    violation of the loop's final *reference* point, not of the control points it
+    actually returned -- a different trajectory whenever the best-feasible
+    fallback fires. Measured on `diverse` N8_seg4: reported 1.61634 against a true
+    2.26425 at the returned points, a 40% understatement of the quantity backing
+    the paper's guarantee. This recomputation agrees with the fixed export to six
+    digits on both a certified run (0.000) and an uncertified one (2.264249); the
+    pre-fix value survives as `koz_violation_last_reference` for provenance.
     """
     from orbital_docking.de_casteljau import segment_matrices_equal_params
 

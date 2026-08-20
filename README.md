@@ -16,10 +16,8 @@ Drag obstacles, tweak parameters, watch the optimizer re-solve.
 | **paper 1** — offline, known obstacle motion | [`PAPER_1.md`](PAPER_1.md) — claim, method, scenarios, risks, 논문 뼈대 |
 | **paper 2** — online, uncertain hazards (future) | [`PAPER_2.md`](PAPER_2.md) — risk field, prior art, open question |
 | prior-art verification record | [`doc/refs/novelty_positioning.md`](doc/refs/novelty_positioning.md) |
-| frozen formulation, derivations, occluder geometry | [`doc/notes/005_formulation_freeze.md`](doc/notes/005_formulation_freeze.md) |
-| evidence behind every established fact; measurement history | [`doc/notes/006_solver_record.md`](doc/notes/006_solver_record.md) |
-| where the sandbox goes after the paper | [`doc/notes/007_sandbox_direction.md`](doc/notes/007_sandbox_direction.md) |
 | safe-corridor ground truth | [`doc/notes/_shared/safe_corridor_references.md`](doc/notes/_shared/safe_corridor_references.md) |
+| 연구노트 — what belongs there and what does not | [`doc/notes/README.md`](doc/notes/README.md) |
 
 The two papers have a hard scope boundary. Paper 1 assumes obstacle motion is known and
 deterministic and solves offline. Paper 2 relaxes exactly that assumption — limited sensing,
@@ -77,15 +75,12 @@ uncertain hazards, receding horizon. Do not mix their claims.
 └── doc/
     ├── refs/novelty_positioning.md     prior-art map, per-source verification status
     ├── refs/papers/           archived source PDFs (not committed)
-    ├── notes/_shared/         cross-workstream reference notes
-    ├── notes/001_.../         LaTeX formulation note — contradicts itself, see CLAUDE.md
-    ├── notes/005_formulation_freeze.md  frozen formulation, velocity/acceleration
-    │                                    derivation, occluder geometry (item A1)
-    ├── notes/006_solver_record.md       evidence for every established fact;
-    │                                    scenario measurement history
-    ├── notes/007_sandbox_direction.md   post-paper direction + honesty rules
-    ├── notes/004_probabilistic_koz/  paper 2 draft (Korean LaTeX): lobe geometry, convexity,
-    │                                 saddle merging. See PAPER_2.md for positioning.
+    ├── notes/                 연구노트 ONLY — LaTeX, lab-repo bound. Rules: notes/README.md
+    │   ├── README.md          what qualifies as a note; where everything else goes
+    │   ├── _shared/           styles, logos, cross-note reference material
+    │   ├── 001_problem_formulation/  SCP-QP formulation — contradicts itself, see CLAUDE.md
+    │   ├── 002_probabilistic_koz/    paper 2: lobe geometry, convexity, saddle merging
+    │   └── 003_paper1_report_to_advisor/
     └── archive/               old chat-derived notes
 ```
 
@@ -141,30 +136,47 @@ obstacles, fixed endpoints, and the optimizer plans path *and* timing.
 | `original` | 3 moving obstacles — curve threads between constant-velocity tubes in (x, y, t) |
 | `wall` | a wall that vanishes at a known time; the curve should wait, then pass — time as a real optimization dimension |
 | `diverse` | varied sizes / speeds / directions; stress case |
+| `wall3d` | three spatial dimensions + time; the curve climbs a wide low fence instead of going around — the dimension is load-bearing |
+| `station_fence` | **the paper's demo** — keep line of sight to a fixed station past a moving, non-straight fence (chain of time-windowed pieces). Occlusion rows on: climbs and holds the link; off: loses it for 7.8 s of 10. The fence is both occluder and keep-out body, so the occlusion constraint subsumes collision |
 
-Paper 1 replaces these with a **door** scenario (the `wall` behaviour, cleaned up) and a **stealth**
-scenario (hide in a moving occluder's shadow). See `PAPER_1.md` §4. The stealth scenario has no
-constraint builder in the Rust core yet.
+The paper's figure comes from `station_fence` via `tools/make_paper_figure.py`, which refuses to
+draw unless the constrained run is figure-grade AND the baseline measurably fails.
 
 ## Measurements
 
-**There is currently no citable performance number.** `BENCHMARKS.md` predates commit `848bf3b`
-(SCvx ratio test) and the constraint-geometry rewrite in `0f37794` (B1/B2/B4 — correct tube
-geometry, one plane per segment). Its numbers describe a solver that no longer exists.
+Last full pass **2026-08-20, after the B8–B10 formulation freeze** — one run of every registered
+configuration (22 total) at defaults: speed cap off, arrival time pinned, elastic-weight ladder on.
+A run that enables `v_max` / `time_weight` / `free_arrival_time` is a different problem and must be
+re-measured. **FIGURE-GRADE** is the B7 gate, checked per run: converged AND certificate ≤ 1e-6 at
+the returned iterate AND clearance > 0 against the true obstacle trajectories AND total slack
+≤ 1e-8 — plus the occlusion certificate where a station exists.
 
-Before quoting any number, read `PAPER_1.md` §6: the obstacle hull is rebuilt per iteration from
-the current iterate and is only valid inside the time span it was built for. If a step slides a
-segment outside that span, the constraint asserts nothing, reported slack is zero, and a
-feasibility gate will pass a penetrating trajectory. Clearance must be re-verified against the
-true obstacle trajectory, not against the hulls the solver used.
+| Key | Best config | Clearance | Iters | Elastic weight | Figure-grade |
+|-----|-------------|-----------|-------|----------------|--------------|
+| `original` | N8_seg4 | **+0.620** | 9 | 100 | **yes — all 5 configs** |
+| `diverse` | N8_seg4 | **+0.1136** | 9 | 800 (10000 at 8–16 seg) | **yes — all 5 configs** |
+| `wall` | N10_seg16 | **+0.0751** | 19 | 100000 | **only this config** — five others fail, incl. N8_seg2 which *clears* (+0.102) but is uncertified: the exact case the gate exists to catch |
+| `wall3d` | N8_seg2 | **+0.1623** | 9 | 100 | **yes — all 4 configs**, first ladder rung |
+| `station_fence` | N8_seg8 | +1.163 | 124 | 100000 | **yes — both configs.** Clearance is slack by construction (occlusion subsumes keep-out); the binding numbers are the independent min line-of-sight margin **+0.338** and the occlusion certificate **0.000** |
+
+The elastic weight is part of the result, not a tuning knob: above the exact-penalty threshold the
+penalized and constrained problems share a solution, below it they do not, and the threshold
+depends on the optimal multipliers so it differs per scenario and per segment count.
+`optimize_scenario` escalates through `ELASTIC_WEIGHT_LADDER` and records the weight that
+certified. Segment count reversed direction when one-plane-per-segment landed — `original` reaches
++0.620 at 4 segments against +0.323 at 8 — so old config lists that start at 8 segments miss the
+best result entirely.
+
+Timing profiles at these defaults are objective artifacts (the smoothness term is blind to the
+time coordinate; control-point times can sit on the `min_dt` floor). Geometry is evidence; timing
+is not, until a run sets the speed cap and time penalty.
 
 ## Architecture in one paragraph
 
 Rust is the sole optimizer backend. One `scp_step` in the Rust core is both the batch iteration and
 the debug step — debugger sessions observe the real run through an emitted trace, they do not
 implement a second optimizer. Python handles request shaping, scenario definitions, JSON I/O, and
-the debug UI server. See `CLAUDE.md` §After the paper for the rules this enforces (backend honesty,
-geometry authenticity, one execution model).
+the debug UI server. See `CLAUDE.md` §Architecture for the five rules this enforces.
 
 ## Extending
 
@@ -175,3 +187,11 @@ geometry authenticity, one execution model).
   `figures/spacetime_bezier_opt_debug.html`.
 
 Run `pytest` before opening a PR.
+
+## Where this goes, after the paper
+
+Paused until the paper ships; the direction still holds and the rules in `CLAUDE.md` §Architecture
+already govern how the code is written. The target is a personal research and debug workbench for
+the space-time Bezier idea — pose a problem, find where the optimizer breaks, prototype against it.
+Drag obstacles in 3D, slide parameters live, get "why did it fail?" in one line, scrub the SCP
+iteration history, save and reload scenarios.
