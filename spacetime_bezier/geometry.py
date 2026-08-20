@@ -83,12 +83,169 @@ def bezier_curve(control_points: np.ndarray, num_pts: int = 200) -> np.ndarray:
     return np.array([curve.point(tau) for tau in taus], dtype=float)
 
 
+# ---------------------------------------------------------------------------
+# Adaptive sampling for the two cross-checks
+#
+# Both `compute_min_clearance` and `compute_los_margin` sample the curve and
+# report a minimum over the samples. That makes them SUFFICIENT-condition
+# detectors: a sample that lands inside an obstacle proves penetration, but no
+# sample landing inside proves nothing about the samples that were not taken.
+# Two measured ways the uniform grid missed a real violation:
+#
+#   1. An obstacle whose active window is shorter than the time between
+#      consecutive samples can fall entirely BETWEEN them and be skipped. At 3000
+#      samples over a 10 s plan a window of +-0.001 s around t=5, with a
+#      full-size r=1.0 body sitting exactly on the curve, reported +0.5 -- while
+#      an 8-million-sample reference reported -1.0.
+#
+#   2. Uniform in the curve PARAMETER is not uniform in TIME. On a clustered
+#      curve the time spacing between neighbouring samples varied by 72.7x, so
+#      the effective resolution where the curve waits is far worse than the
+#      nominal one. A small fast obstacle (r=0.05, |v|=50) crossing the path
+#      reported +0.035 against a true -0.05.
+#
+# The repair is to inject extra samples. Time is monotone along the curve -- the
+# monotonicity constraint guarantees it -- so a target TIME can be inverted to a
+# curve parameter by bisection, and the injected samples can be placed to cover
+# every obstacle's active window at a spacing fine enough that the obstacle
+# cannot pass through unseen.
+#
+# THE RESIDUAL LIMITATION IS NOT REMOVED. This is still sampling, and the
+# spacing rule below is a heuristic bound on the closing rate, not a proof. What
+# carries the guarantee is the hull certificate, which is evaluated against the
+# exact half-spaces rebuilt at the returned control points and does not share
+# this weakness at all. These two functions are the INDEPENDENT cross-check on
+# that certificate, which is the only reason they exist.
+# ---------------------------------------------------------------------------
+
+# Ceiling on injected samples per obstacle. Reached only by geometry an order of
+# magnitude more extreme than any registered scenario (the r=0.05 / |v|=50 case
+# above needs about 2e4). A run that hits it is under-sampled and the docstrings
+# say so.
+_MAX_INJECTED_PER_OBSTACLE = 50_000
+
+
+def _bernstein(n: int, taus: np.ndarray) -> np.ndarray:
+    """Bernstein basis of degree ``n``, shaped ``(len(taus), n+1)``."""
+    from math import comb
+
+    taus = np.asarray(taus, dtype=float)[:, None]
+    k = np.arange(n + 1)[None, :]
+    coef = np.array([comb(n, int(i)) for i in range(n + 1)], dtype=float)[None, :]
+    return coef * (taus**k) * ((1.0 - taus) ** (n - k))
+
+
+def _eval_at(P: np.ndarray, taus: np.ndarray) -> np.ndarray:
+    """Curve points at arbitrary parameters, shaped ``(len(taus), dim)``."""
+    P = np.asarray(P, dtype=float)
+    return _bernstein(P.shape[0] - 1, taus) @ P
+
+
+def _tau_at_time(P: np.ndarray, targets: np.ndarray, n_bisect: int = 60) -> np.ndarray:
+    """Invert the (monotone) time coordinate: parameters where ``t(tau) == target``.
+
+    Bisection rather than a root solve because monotonicity is all that is
+    assumed, and 60 halvings of [0, 1] is machine precision.
+    """
+    P = np.asarray(P, dtype=float)
+    n = P.shape[0] - 1
+    t_cp = P[:, -1]
+    targets = np.asarray(targets, dtype=float)
+    lo = np.zeros_like(targets)
+    hi = np.ones_like(targets)
+    for _ in range(n_bisect):
+        mid = 0.5 * (lo + hi)
+        t_mid = _bernstein(n, mid) @ t_cp
+        below = t_mid < targets
+        lo = np.where(below, mid, lo)
+        hi = np.where(below, hi, mid)
+    return 0.5 * (lo + hi)
+
+
+def _max_leg_speed(P: np.ndarray) -> float:
+    """Upper bound on the curve's physical speed, from the control polygon.
+
+    ``d(spatial)/d(time)`` is a ratio of two Beziers of equal degree, and a
+    Bezier is a convex combination of its own control points, so the largest leg
+    slant of the control polygon bounds the speed of the whole curve -- the same
+    argument the speed cap stands on. Returns 0.0 if any time gap is
+    non-positive, i.e. if time is not monotone and the argument does not apply.
+    """
+    P = np.asarray(P, dtype=float)
+    gaps = np.diff(P, axis=0)
+    dt = gaps[:, -1]
+    if gaps.shape[0] == 0 or not np.all(dt > 0.0):
+        return 0.0
+    return float(np.max(np.linalg.norm(gaps[:, :-1], axis=1) / dt))
+
+
+def _sample_taus(P: np.ndarray, obstacles: list[dict], n_eval: int) -> np.ndarray:
+    """Uniform parameters, plus samples covering every obstacle's active window.
+
+    Falls back to the uniform grid alone when time is not monotone along the
+    curve, because the inversion has no unique answer then. That case cannot
+    arise from the solver -- the monotonicity rows forbid it -- but this function
+    is also called on hand-built polygons.
+    """
+    base = np.linspace(0.0, 1.0, int(n_eval))
+    P = np.asarray(P, dtype=float)
+    if not obstacles or P.shape[0] < 2:
+        return base
+
+    t_cp = P[:, -1]
+    if not np.all(np.diff(t_cp) > 0.0):
+        return base
+    t_lo, t_hi = float(t_cp[0]), float(t_cp[-1])
+    vehicle_speed = _max_leg_speed(P)
+
+    extra = [base]
+    for obs in obstacles:
+        a = max(float(obs.get("t_start", -np.inf)), t_lo)
+        b = min(float(obs.get("t_end", np.inf)), t_hi)
+        if not (b >= a):
+            continue
+        radius = float(obs["r"])
+        # Bound on how fast the gap between vehicle and obstacle can close.
+        closing = float(np.linalg.norm(np.asarray(obs["vel"], dtype=float))) + vehicle_speed
+        step = radius / (2.0 * max(closing, 1e-12))
+        if step <= 0.0:
+            continue
+        count = int(min(np.ceil((b - a) / step) + 1, _MAX_INJECTED_PER_OBSTACLE))
+        # At least three: both window endpoints and the midpoint. Bisection can
+        # land an endpoint a few ulps outside its own window, where the active
+        # mask drops it; the midpoint never is.
+        count = max(count, 3)
+        extra.append(_tau_at_time(P, np.linspace(a, b, count)))
+
+    taus = np.unique(np.concatenate(extra))
+    # Drop injected parameters that land on top of a uniform one. They cost a
+    # sample each and, being separated by a few ulps, can order by tau in the
+    # opposite sense to their times -- which makes the returned time axis
+    # non-monotone at the 1e-16 level for no benefit.
+    if taus.size > 1:
+        taus = taus[np.concatenate(([True], np.diff(taus) > 1e-15))]
+    return taus
+
+
 def compute_min_clearance(P, obstacles: list[dict], dim: int, n_eval: int = 1500) -> float:
-    """Evaluate the minimum clearance of a Bezier curve to all obstacles."""
+    """Minimum clearance of a Bezier curve to all obstacles, by sampling.
+
+    ``n_eval`` sets the uniform sample count; additional samples are injected to
+    cover each obstacle's active window at a spacing fine enough that a body of
+    its radius cannot cross the curve between two of them. See the module
+    comment above ``_MAX_INJECTED_PER_OBSTACLE``.
+
+    **This is the cross-check, not the guarantee.** It is a sufficient condition
+    for penetration and never a proof of clearance: a negative answer proves the
+    curve enters an obstacle, a positive answer says only that no sample did. The
+    guarantee is the control-point hull certificate, which is evaluated against
+    the exact half-spaces and has no sampling weakness.
+    """
     if not obstacles:
         return float("inf")
 
-    pts = bezier_curve(np.asarray(P, dtype=float), num_pts=n_eval)
+    P = np.asarray(P, dtype=float)
+    pts = _eval_at(P, _sample_taus(P, obstacles, n_eval))
     spatial_dim = dim - 1
     worst = np.inf
 
@@ -132,11 +289,22 @@ def compute_los_margin(P, station, obstacles: list[dict], dim: int, n_eval: int 
     time; an inactive obstacle blocks nothing, and a sample where nothing is
     active reports ``+inf``.
 
-    Returns ``(t_values, margins)``, both shaped ``(n_eval,)``. Times come back
-    alongside because the margin-versus-time panel is the figure that proves the
-    claim, and a margin array with no time axis cannot be plotted against one.
+    Returns ``(t_values, margins)``, both shaped ``(n_samples,)`` and ordered by
+    increasing curve parameter -- so the time axis is non-decreasing too, up to
+    floating-point noise of order 1e-16. Times come back alongside because the
+    margin-versus-time panel is the figure that proves the claim, and a margin
+    array with no time axis cannot be plotted against one.
+
+    ``n_samples >= n_eval``: the uniform grid is augmented with samples covering
+    each obstacle's active window, for the two reasons in the module comment
+    above ``_MAX_INJECTED_PER_OBSTACLE`` -- a short window can fall entirely
+    between two uniform samples, and uniform in the curve parameter is not
+    uniform in time. **The residual limitation stands**: this is sampling, so a
+    negative margin proves the sight line was lost and a positive one does not
+    prove it was kept. The occlusion certificate is the guarantee.
     """
-    pts = bezier_curve(np.asarray(P, dtype=float), num_pts=int(n_eval))
+    P = np.asarray(P, dtype=float)
+    pts = _eval_at(P, _sample_taus(P, obstacles, int(n_eval)))
     spatial_dim = dim - 1
     t_values = pts[:, -1]
     positions = pts[:, :spatial_dim]
