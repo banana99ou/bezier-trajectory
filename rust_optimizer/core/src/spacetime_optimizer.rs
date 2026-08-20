@@ -1261,8 +1261,12 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     } else {
         state.accepted_total_slack
     };
+    // `+ 0.0` is not a no-op here. Rust's `Sum for f64` folds from -0.0, so an
+    // EMPTY cone list -- the no-cap default -- comes back as -0.0 and every
+    // table and log line carries a minus sign in front of "no violation".
+    // Adding +0.0 maps -0.0 to +0.0 and leaves every other value alone.
     let speed_cap_viol =
-        spacetime_constraints::speed_cap_violation(&pre.speed_cap, &p, nvars);
+        spacetime_constraints::speed_cap_violation(&pre.speed_cap, &p, nvars) + 0.0;
 
     let feasible = final_clearance > 0.0 || obstacles.n_obs == 0;
     let cost = quadratic_cost(&pre.h_energy, &pre.f_linear, &p, nvars);

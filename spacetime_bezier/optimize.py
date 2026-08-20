@@ -56,25 +56,43 @@ except ImportError:  # pragma: no cover - exercised when the native extension is
 # ---------------------------------------------------------------------------
 # Feasibility gate (item B7)
 #
-# "A run with total_slack > 0 cannot produce a figure." The four conditions are
-# independent and none may stand in for another:
+# "A run with total_slack > 0 cannot produce a figure." The conditions are
+# independent and none may stand in for another. There are SIX, and the count is
+# written out here because the previous version said "four" while the predicate
+# checked five:
 #
-#   converged     -- the loop stopped for a principled reason, not the cap.
-#   certificate   -- the control-point hull satisfies the half-spaces it
-#                    generates, rebuilt at the RETURNED iterate. This is the
-#                    property the paper claims; clearance is not.
-#   clearance     -- the sampled curve misses the TRUE obstacle trajectories.
-#                    Re-verified in Python against the obstacles themselves, not
-#                    against the hulls the solver used, which is the condition
-#                    PAPER_1 sec. 6 requires because an adaptively-built hull is
-#                    valid only inside the time span it was built for.
-#   total_slack   -- the elastic relaxation bought nothing. Every subproblem is
-#                    solved elastically, so a converged, certified, clearing run
-#                    can still have been standing on slack; this is the condition
-#                    that catches it.
+#   converged        -- the loop stopped for a principled reason, not the cap.
+#   certificate      -- the control-point hull satisfies the keep-out half-spaces
+#                       it generates, rebuilt at the RETURNED iterate. This is
+#                       the property the paper claims; clearance is not.
+#   occlusion        -- the same statement for the line-of-sight half-spaces
+#                       (item B12). A separate guarantee: the keep-out
+#                       certificate says nothing about whether the station is
+#                       still visible.
+#   occlusion drops  -- every line-of-sight plane that was in range could
+#                       actually be built. A window whose station lies inside the
+#                       inflated occluder has no supporting half-space at all, so
+#                       it is UNCERTIFIABLE, not certified.
+#   clearance        -- the sampled curve misses the TRUE obstacle trajectories.
+#                       Re-verified in Python against the obstacles themselves,
+#                       not against the hulls the solver used, which is the
+#                       condition PAPER_1 sec. 6 requires because an
+#                       adaptively-built hull is valid only inside the time span
+#                       it was built for.
+#   total_slack      -- the elastic relaxation bought nothing. Every subproblem
+#                       is solved elastically, so a converged, certified,
+#                       clearing run can still have been standing on slack; this
+#                       is the condition that catches it.
+#   speed cap        -- the returned curve satisfies the slant-limit cones. The
+#                       cap is hard (formulation decision 4), so a violation is a
+#                       broken constraint, not a priced relaxation.
 #
 # NaN fails every comparison, so a run that never accepted a step (slack unknown)
-# is not figure-grade. That is the intended answer for "no evidence".
+# is not figure-grade. That is the intended answer for "no evidence". The three
+# conditions that are OPTIONAL features -- occlusion, occlusion drops, speed cap
+# -- default to 0.0 instead, because a run without stations or without a cap
+# genuinely has nothing to violate, and defaulting them to NaN would sink every
+# scenario in the table.
 # ---------------------------------------------------------------------------
 
 FIGURE_GRADE_CERTIFICATE_TOL = 1e-6
@@ -136,6 +154,14 @@ def figure_grade_failures(row: dict) -> list[str]:
     slack = float(row.get("total_slack", float("nan")))
     if not slack <= FIGURE_GRADE_SLACK_TOL:
         reasons.append(f"elastic slack {slack:.3e} > {FIGURE_GRADE_SLACK_TOL:g}")
+    # The speed cap is a HARD constraint (formulation decision 4), so a nonzero
+    # violation is not slack the run paid for -- it is a constraint the returned
+    # curve does not satisfy. It was recorded in every row and read by nothing,
+    # which made it decorative. Defaults to 0.0, which is the true value for a
+    # capless run: there are no cones, so there is nothing to violate.
+    speed_cap = float(row.get("speed_cap_violation", 0.0))
+    if not speed_cap <= FIGURE_GRADE_CERTIFICATE_TOL:
+        reasons.append(f"speed cap violated by {speed_cap:.3e}")
     return reasons
 
 
