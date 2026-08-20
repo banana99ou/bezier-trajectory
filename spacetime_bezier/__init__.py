@@ -2,7 +2,13 @@
 Space-time Bezier optimization package.
 """
 
-from .geometry import MovingObstacle, bezier_curve, compute_min_clearance, obstacle_array_bundle
+from .geometry import (
+    MovingObstacle,
+    bezier_curve,
+    compute_los_margin,
+    compute_min_clearance,
+    obstacle_array_bundle,
+)
 # `main` is deliberately NOT re-exported. It blocks in serve_forever(), and a
 # blocking function on a package's public surface is how a test run ended up
 # owning port 8765 for ten hours. Reach it through `python3 -m spacetime_bezier`.
@@ -22,6 +28,7 @@ from .scenarios import (
     SCENARIO_MAP,
     scenario_diverse,
     scenario_original,
+    scenario_station_fence,
     scenario_wall,
     scenario_wall3d,
 )
@@ -32,6 +39,7 @@ __all__ = [
     "OptimizerDebugSession",
     "SessionConfig",
     "bezier_curve",
+    "compute_los_margin",
     "compute_min_clearance",
     "create_spacetime_debug_stepper",
     "create_spacetime_debug_stepper_from_control_points",
@@ -44,6 +52,7 @@ __all__ = [
     "save_outputs",
     "scenario_diverse",
     "scenario_original",
+    "scenario_station_fence",
     "scenario_wall",
     "scenario_wall3d",
 ]

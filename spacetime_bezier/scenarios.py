@@ -157,6 +157,89 @@ def scenario_wall3d() -> dict:
     }
 
 
+def scenario_station_fence() -> dict:
+    """Item B12 -- keep line of sight to a fixed station past a moving fence.
+
+    Three spatial coordinates plus time, and the third spatial coordinate is
+    LOAD-BEARING rather than decorative: the vehicle climbs, and the only reason
+    it climbs is the occlusion constraint.
+
+    Geometry, and why each piece of it is where it is.
+
+    * The **station** sits off to the -y side at low altitude, roughly abeam the
+      mid-path. The vehicle flies +x at y = 5, so the fence sits between them.
+    * The **fence** is wide in x and low in z, and it never comes within a body
+      radius of the vehicle's corridor -- the gap in y is at least 1.5 against a
+      radius of 0.8. It is therefore not an obstacle the vehicle has to dodge:
+      the keep-out rows are present and are not expected to bind. That is the
+      point, not an oversight -- staying visible to the station already implies
+      staying out of the body, so occlusion subsumes collision for this body and
+      the keep-out machinery is demonstrated by the other scenarios.
+    * The fence's **x extent is finite** (3.0 to 7.0). At the start and end of
+      the horizon the vehicle is far enough along x that the sight line crosses
+      the fence's plane beyond its ends, so the pinned endpoints are visible and
+      the problem is feasible. In the middle the sight line crosses the fence
+      head on, and the only way through is over the top.
+    * The fence's path is **non-straight**: it descends in y and drifts in +x,
+      then reverses on both. That is expressed as a CHAIN of two straight pieces
+      on adjacent time windows whose caps overlap at the joint, which is the
+      construction PAPER_1 sec. "Occluder geometry" requires -- a capsule around
+      a curved centreline is not convex and would break the certificate, while
+      each straight piece is convex on its own.
+
+    The baseline that must be able to fail: with the occlusion rows removed the
+    fence obstructs nothing, so the solver returns an essentially straight
+    trajectory at the flight altitude and loses line of sight across most of the
+    horizon. Two runs, identical but for one constraint block. Both assertions
+    live in `tests/integration/test_station_fence_scenario.py`, not in this
+    docstring.
+    """
+    body_z = 0.1
+    radius = 0.8
+    # Piece 1, t in [0, 5.2]: centre path from (x, 3.6) at t=0 to (x+0.5, 2.0)
+    # at t=5. `pos0` is the position at t=0, which is what the solver extrapolates
+    # from, so the piece endpoints are written at t=0 and the window does the
+    # clipping.
+    piece_a = make_wall(
+        p1=[3.0, 3.6, body_z],
+        p2=[7.0, 3.6, body_z],
+        thickness=radius,
+        spacing=0.8,
+        color="#e67e22",
+        name_prefix="A",
+        vel=[0.1, -0.32, 0.0],
+        t_start=0.0,
+        t_end=5.2,
+    )
+    # Piece 2, t in [4.8, 10]: the reversal. Its position at t=5 matches piece
+    # one's, so `pos0` is that point walked back to t=0 along the new velocity.
+    # The windows OVERLAP on [4.8, 5.2] so the union covers the joint with no
+    # gap for the curve to slip through.
+    piece_b = make_wall(
+        p1=[4.0, 0.4, body_z],
+        p2=[8.0, 0.4, body_z],
+        thickness=radius,
+        spacing=0.8,
+        color="#d35400",
+        name_prefix="B",
+        vel=[-0.1, 0.32, 0.0],
+        t_start=4.8,
+        t_end=10.0,
+    )
+    return {
+        "name": "station_fence",
+        "title": "Line of Sight Past a Moving Fence",
+        "init_curve": {"mode": "straight"},
+        "obstacles": piece_a + piece_b,
+        "start": [0.5, 5.0, 0.5, 0.0],
+        "end": [9.5, 5.0, 0.5, 10.0],
+        # The only scenario carrying this key. Its absence everywhere else is
+        # what keeps every other scenario's problem bit-identical to pre-B12.
+        "stations": [[5.0, -2.0, 0.3]],
+        "T": 10.0,
+    }
+
+
 # (degree, segment count) pairs tried per scenario.
 #
 # Low segment counts were added 2026-08-18. The pre-2026-08-17 geometry used one
@@ -186,6 +269,11 @@ SCENARIO_ELASTIC_WEIGHT = {
     # (measured +0.0751, certificate 0.000, 19 iterations at N10_seg16). Lower
     # weights leave it penetrating by ~0.09 regardless of segment count.
     "wall": 100000.0,
+    # `station_fence` needs the top rung too, and for the same reason: below it
+    # the exact penalty is cheaper to pay than to satisfy, and the run returns a
+    # trajectory standing on occlusion slack. Measured at N8_seg8 -- occlusion
+    # certificate 0.61 at 100, 0.29 at 800, 0.50 at 3000, and 0.0 at 1e5.
+    "station_fence": 100000.0,
 }
 
 
@@ -206,4 +294,10 @@ SCENARIO_MAP = {
     # therefore filters it out of the catalog rather than drawing a false
     # picture; see the comment there.
     "wall3d":   (scenario_wall3d,   [(8, 2), (8, 4), (8, 8), (10, 8)]),
+    # Also four coordinates, so the viewer filters it out for the same reason.
+    # Short list on purpose: the occlusion rows re-aim every iteration, so the
+    # run is an order of magnitude longer than a keep-out-only one, and only
+    # these two configurations were measured to converge with the occlusion
+    # certificate at zero.
+    "station_fence": (scenario_station_fence, [(8, 8), (8, 16)]),
 }
