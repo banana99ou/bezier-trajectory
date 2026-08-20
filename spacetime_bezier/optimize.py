@@ -242,6 +242,59 @@ class DegenerateFreeArrivalError(ValueError):
     """
 
 
+class SpeedCapOutOfRangeError(ValueError):
+    """``v_max`` is not a number the cone formulation can carry."""
+
+
+# A RANGE CHECK, not a numerical guarantee, and the difference is measured.
+#
+# The cone is `|| dx || <= v_max * dt`. As `v_max` grows the two sides separate
+# by orders of magnitude, Clarabel's scaling degrades, and the run reports
+# `qp_failure` or `first_qp_infeasible` with `speed_cap_violation` 0.00 -- a
+# failure that reads as a satisfied constraint. On `original` N8_seg4 with a
+# pinned arrival that degradation is already visible well BELOW this bound:
+#
+#     v_max   1e1 .. 3e4   stationary, converged, clearance +0.6204 (== no cap)
+#     v_max   1e5          qp_failure at iteration 8,  violation 0.00
+#     v_max   3e5          qp_failure at iteration 2,  violation 0.00
+#     v_max   1e6          first_qp_infeasible at iteration 1, violation 0.00
+#
+# So 1e6 does not separate "solves" from "does not solve" -- nothing scalar
+# does, because the threshold moves with the scenario, the segment count and the
+# trust radius. What this bound excludes is input that is nonsense on its face
+# (negative, zero, infinite, absurd), and what surfaces the rest is the
+# `first_qp_infeasible` stop label plus the gate condition on
+# `speed_cap_violation`. Documented rather than tuned: a bound presented as a
+# safety threshold that is not one is worse than no bound.
+MAX_SPEED_CAP = 1e6
+
+
+def check_speed_cap_is_representable(v_max) -> None:
+    """Refuse a ``v_max`` that is outside the representable range.
+
+    ``None`` is how "no cap" is spelled and is always accepted. Everything else
+    must be a positive finite number no larger than ``MAX_SPEED_CAP``. Zero and
+    negatives are refused rather than silently reinterpreted as "off": the Rust
+    builder does treat them as off, and an unnoticed sign error that turns a cap
+    into no cap is exactly the failure this project keeps finding.
+
+    **Passing this check does not mean the cone will solve.** See
+    ``MAX_SPEED_CAP`` for the measured degradation, which begins around 1e5 on
+    `original` -- an order of magnitude below the bound.
+    """
+    if v_max is None:
+        return
+    value = float(v_max)
+    if not (value > 0.0) or not math.isfinite(value) or value > MAX_SPEED_CAP:
+        raise SpeedCapOutOfRangeError(
+            f"v_max={v_max!r} is outside the representable range "
+            f"(0, {MAX_SPEED_CAP:g}]. Pass None for no cap. Above the upper "
+            "bound the second-order cone degenerates numerically and the run "
+            "reports qp_failure with a speed_cap_violation of 0.00, which reads "
+            "as a satisfied constraint."
+        )
+
+
 def check_free_arrival_is_costed(free_arrival_time, time_weight) -> None:
     """Refuse a freed arrival time that nothing in the objective can price.
 
@@ -269,6 +322,10 @@ _STOP_REASONS = {
     2: "trust_collapse (gave up unless certified)",
     3: "qp_failure (gave up)",
     4: "stationary",
+    5: (
+        "first_qp_infeasible -- trust radius may be too small to reach the speed "
+        "cap from the initial guess (gave up)"
+    ),
     -1: "still running / not reported",
 }
 
@@ -298,8 +355,12 @@ def _optimize_spacetime_rust(
     if _bezier_opt_rs is None or not hasattr(_bezier_opt_rs, "optimize_spacetime_bezier"):
         raise RuntimeError("Rust space-time optimizer is not available in bezier_opt.")
 
+    # Order matters: `v_max=0.0` with a time penalty is the uncapped-artifact
+    # configuration first and an out-of-range cap second, and the first is the
+    # more informative refusal.
     check_time_penalty_is_capped(v_max, time_weight)
     check_free_arrival_is_costed(free_arrival_time, time_weight)
+    check_speed_cap_is_representable(v_max)
 
     P_init = np.asarray(P_init, dtype=float)
     n_cp, dim = P_init.shape
@@ -641,6 +702,12 @@ def optimize_scenario(
             "arrival_on_min_dt_floor": float(
                 opt_info.get("arrival_on_min_dt_floor", 0.0)
             ),
+            # The upper clamp on a freed arrival, and whether the answer is
+            # sitting on it. Also not a gate condition: an arrival at the bound
+            # is a legitimate answer to the problem as posed, it just was not
+            # posed by the geometry.
+            "time_ub_used": float(opt_info.get("time_ub_used", float("nan"))),
+            "arrival_on_time_ub": float(opt_info.get("arrival_on_time_ub", 0.0)),
         }
         results[key]["figure_grade"] = is_figure_grade(results[key])
         results[key]["figure_grade_reasons"] = figure_grade_failures(results[key])

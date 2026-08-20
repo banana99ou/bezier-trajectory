@@ -845,6 +845,20 @@ pub mod stop_reason {
     pub const QP_FAILURE: f64 = 3.0;
     /// K consecutive iterations where the model predicts no achievable progress.
     pub const STATIONARY: f64 = 4.0;
+    /// The FIRST subproblem could not be solved, and a hard cone was present.
+    ///
+    /// Distinguished from `QP_FAILURE` because the two have different causes and
+    /// different remedies, and reporting them identically made a solvable
+    /// problem look unsolvable. The speed-cap cones carry no slack, so the
+    /// initial guess has to be reachable from inside the trust box: a
+    /// straight-line seed that violates the cap by more than one trust radius
+    /// makes iteration 1 genuinely infeasible even though the PROBLEM is
+    /// feasible. Measured on `original` with v_max=1.0 and a freed arrival --
+    /// trust 0.5 fails, trust 8.0 converges cleanly on the same problem.
+    ///
+    /// This is a LABEL, not a repair. The loop still gives up; it just says
+    /// something the reader can act on.
+    pub const FIRST_QP_INFEASIBLE: f64 = 5.0;
     /// Still running.
     pub const RUNNING: f64 = -1.0;
 }
@@ -986,7 +1000,15 @@ pub fn scp_iterate(
     );
 
     if step.solver_status == "Failed" {
-        state.stop = stop_reason::QP_FAILURE;
+        // A first-iteration failure WITH cones present is a different diagnosis
+        // from a failure part-way through: the trust box may simply be too small
+        // to reach cap-feasibility from the initial guess. See
+        // `stop_reason::FIRST_QP_INFEASIBLE`.
+        state.stop = if state.iteration == 1 && !pre.speed_cap.is_empty() {
+            stop_reason::FIRST_QP_INFEASIBLE
+        } else {
+            stop_reason::QP_FAILURE
+        };
         return ScpIteration {
             step,
             outcome: "failed",
@@ -1307,6 +1329,27 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     // feasibility gate is deliberately not conditioned on it. It travels in the
     // row so a number that is a property of `min_dt` cannot reach a table
     // looking like a property of the problem.
+    // The OTHER end of the freed arrival, and it is just as invisible.
+    //
+    // `time_ub` reaches this function as `P_init[-1, -1] * time_ub_scale` -- the
+    // initial guess's own arrival, scaled by a default of 1.5. A "freed" arrival
+    // is therefore clamped at 1.5x whatever the seed happened to propose, and a
+    // run that wants more comes back sitting exactly on the bound with no signal
+    // that the bound is what set it. Measured on `original` with v_max=0.75: the
+    // arrival returns 15.0 = 10.0 * 1.5 and moves to 30.0 and 60.0 when
+    // `time_ub_scale` is raised to 3.0 and 6.0.
+    //
+    // Exported so the bound is part of the result, with a flag for the case that
+    // matters: the returned arrival is ON it.
+    info.insert("time_ub_used".to_string(), time_ub);
+    info.insert(
+        "arrival_on_time_ub".to_string(),
+        if free_arrival_time && (arrival_time - time_ub).abs() <= 1e-6 {
+            1.0
+        } else {
+            0.0
+        },
+    );
     let min_dt_floor = p_init[dim - 1] + min_dt * ((np1 - 1) as f64);
     info.insert(
         "arrival_on_min_dt_floor".to_string(),
