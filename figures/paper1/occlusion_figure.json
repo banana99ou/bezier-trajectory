@@ -1,0 +1,29 @@
+{
+  "generated": "2026-08-20T12:26:22",
+  "git": "950a5ec",
+  "N": 8,
+  "n_seg": 8,
+  "elastic_weight": 100000.0,
+  "constrained": {
+    "min_clearance": 1.1625106567714947,
+    "min_los_margin": 0.3378725858644156,
+    "max_z": 2.118996390474269,
+    "koz_certificate": 0.0,
+    "occlusion_certificate": 0.0,
+    "iterations": 124
+  },
+  "baseline": {
+    "min_los_margin": -0.4841900546722688,
+    "los_loss_interval": [
+      1.2664332091315167,
+      9.048477764581367
+    ],
+    "max_z": 0.5000000000116425
+  },
+  "fence_top": 0.9,
+  "station": [
+    5.0,
+    -2.0,
+    0.3
+  ]
+}
