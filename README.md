@@ -154,7 +154,7 @@ the returned iterate AND clearance > 0 against the true obstacle trajectories AN
 | Key | Best config | Clearance | Iters | Elastic weight | Figure-grade |
 |-----|-------------|-----------|-------|----------------|--------------|
 | `original` | N8_seg4 | **+0.620** | 9 | 100 | **yes — all 5 configs** |
-| `diverse` | N8_seg4 | **+0.1136** | 9 | 800 (10000 at 8–16 seg) | **yes — all 5 configs** |
+| `diverse` | N8_seg4 | **+0.1136** | 9 | 800 (3000–10000 at 8–16 seg; N10_seg16 certifies at 3000) | **yes — all 5 configs** |
 | `wall` | N10_seg16 | **+0.0751** | 19 | 100000 | **only this config** — five others fail, incl. N8_seg2 which *clears* (+0.102) but is uncertified: the exact case the gate exists to catch |
 | `wall3d` | N8_seg2 | **+0.1623** | 9 | 100 | **yes — all 4 configs**, first ladder rung |
 | `station_fence` | N8_seg8 | +1.163 | 124 | 100000 | **yes — both configs.** Clearance is slack by construction (occlusion subsumes keep-out); the binding numbers are the independent min line-of-sight margin **+0.338** and the occlusion certificate **0.000** |

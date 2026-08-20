@@ -394,10 +394,13 @@ def render(args, payload, trace, warnings, rc, ident, geo_html='') -> str:
         <td>{abs(rep_clear - rc['clearance']):.2e}</td></tr>
     {occl_pair}
     </table>
-    <p style="font-size:12px">The recomputed certificate calls the solver's own row
-    builder at the returned control points — same code, second invocation. The
-    clearance is the genuinely independent computation (Python sampling of the
-    true obstacle motion). Disagreement in either pair is a finding, not noise.</p>"""
+    <p style="font-size:12px">Honesty note on what each pair can catch. The certificate
+    pair calls the SAME Rust builder on both legs, so it can only expose plumbing
+    mismatches (row embedding, subdivision matrices) — a wrong geometry moves both legs
+    identically and this pair stays at zero delta. The clearance pair is the genuinely
+    independent one (separate implementation, separate language), though both legs sample
+    uniformly in the curve parameter, so they share that method's blind spots. A clearance
+    disagreement is a finding; a certificate agreement proves plumbing, not geometry.</p>"""
 
     # -- timeline ------------------------------------------------------------
     if trace:

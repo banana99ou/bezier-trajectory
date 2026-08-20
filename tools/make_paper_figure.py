@@ -58,18 +58,33 @@ def solve_pair(N: int, n_seg: int):
 
 
 def figure_grade_or_die(info: dict, clearance: float, label: str):
-    """Gate 1. Mirrors the B7 conditions; refuses rather than renders."""
-    reasons = []
-    if not bool(info.get("converged", 0.0)):
-        reasons.append("did not converge")
-    if float(info.get("koz_violation_reference", np.nan)) > 1e-6:
-        reasons.append("keep-out certificate violated")
-    if float(info.get("occlusion_violation_reference", 0.0)) > 1e-6:
-        reasons.append("occlusion certificate violated")
-    if float(info.get("total_koz_slack_returned", np.nan)) > 1e-8:
-        reasons.append("standing on slack")
-    if not clearance > 0.0:
-        reasons.append("penetrates")
+    """Gate 1: the item-B7 predicate itself, never a reimplementation.
+
+    An earlier version of this function rewrote the conditions inline with
+    `if x > tol`, which INVERTS the gate's NaN polarity: the real gate is
+    written `if not (x <= tol)` precisely so that a missing or NaN input
+    (stale extension, no accepted step) FAILS. The rewrite drew in exactly
+    those cases. Adversarial review 2026-08-20, finding 1. So: map the info
+    keys to row keys with NaN defaults -- absent evidence must refuse -- and
+    call `figure_grade_failures`, which also inherits any condition the gate
+    grows later, provided its row key is forwarded here.
+    """
+    from spacetime_bezier.optimize import figure_grade_failures
+
+    row = {
+        "converged": bool(info.get("converged", 0.0)),
+        "stop_label": str(info.get("stop_label", "unknown")),
+        "certificate_violation": float(info.get("koz_violation_reference", np.nan)),
+        # This scenario always has a station, so a missing occlusion key means
+        # a stale extension, not "no occlusion" -- default NaN, which fails.
+        "occlusion_violation": float(info.get("occlusion_violation_reference", np.nan)),
+        "total_slack": float(info.get("total_koz_slack_returned", np.nan)),
+        "min_clearance": float(clearance),
+    }
+    for passthrough in ("speed_cap_violation", "occlusion_planes_dropped"):
+        if passthrough in info:
+            row[passthrough] = float(info[passthrough])
+    reasons = figure_grade_failures(row)
     if reasons:
         sys.exit(f"REFUSING to draw: {label} is not figure-grade: {'; '.join(reasons)}")
 
@@ -145,6 +160,9 @@ def main():
 
     git = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
                          capture_output=True, text=True, cwd=REPO).stdout.strip()
+    if subprocess.run(["git", "status", "--porcelain"],
+                      capture_output=True, text=True, cwd=REPO).stdout.strip():
+        git += "+dirty"
     sidecar = {
         "generated": datetime.datetime.now().isoformat(timespec="seconds"),
         "git": git, "N": args.N, "n_seg": args.seg, "elastic_weight": weight,
