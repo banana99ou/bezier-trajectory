@@ -1,4 +1,8 @@
-use bezier_opt_core::{optimizer, spacetime_constraints::SpacetimeObstacleData, spacetime_optimizer};
+use bezier_opt_core::{
+    optimizer,
+    spacetime_constraints::{SpacetimeObstacleData, StationData},
+    spacetime_optimizer,
+};
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -96,6 +100,31 @@ fn optimize_orbital_docking<'py>(
     Ok((p_opt, info))
 }
 
+/// Flatten an optional `(n_stations, spatial_dim)` array, rejecting a width that
+/// does not match the problem's spatial dimension. A silently-transposed or
+/// short station array would place the observer somewhere nobody asked for, and
+/// every occlusion row would then certify the wrong geometry.
+fn station_arrays(
+    stations: Option<PyReadonlyArray2<'_, f64>>,
+    spatial_dim: usize,
+) -> PyResult<(Vec<f64>, usize)> {
+    match stations {
+        None => Ok((Vec::new(), 0)),
+        Some(arr) => {
+            let a = arr.as_array();
+            if a.shape()[0] > 0 && a.shape()[1] != spatial_dim {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Station array must have spatial_dim={}, got {:?}",
+                    spatial_dim,
+                    a.shape()
+                )));
+            }
+            let n = a.shape()[0];
+            Ok((a.iter().copied().collect(), n))
+        }
+    }
+}
+
 #[pyfunction]
 #[pyo3(signature = (
     p_init,
@@ -119,6 +148,7 @@ fn optimize_orbital_docking<'py>(
     v_max = None,
     time_weight = 0.0,
     free_arrival_time = false,
+    stations = None,
 ))]
 fn optimize_spacetime_bezier<'py>(
     py: Python<'py>,
@@ -146,6 +176,10 @@ fn optimize_spacetime_bezier<'py>(
     // Linear arrival-time penalty (item B10).
     time_weight: f64,
     free_arrival_time: bool,
+    // Fixed stations the vehicle must keep line of sight to (item B12). `None`
+    // means no occlusion rows at all, which is the default, so every scenario
+    // that predates B12 solves the identical problem.
+    stations: Option<PyReadonlyArray2<'py, f64>>,
 ) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyDict>)> {
     let p_arr = p_init.as_array();
     let np1 = p_arr.shape()[0];
@@ -228,6 +262,12 @@ fn optimize_spacetime_bezier<'py>(
         spatial_dim,
     };
 
+    let (station_vec, n_stations) = station_arrays(stations, spatial_dim)?;
+    let station_data = StationData {
+        pos: &station_vec,
+        n_stations,
+    };
+
     let result = spacetime_optimizer::optimize_spacetime(
         &p_flat,
         np1,
@@ -243,6 +283,7 @@ fn optimize_spacetime_bezier<'py>(
         time_lb,
         time_ub,
         &obstacles,
+        &station_data,
         elastic_weight,
         cap_bulge_ratio,
         v_max.unwrap_or(f64::NAN),
@@ -354,6 +395,112 @@ fn spacetime_koz_rows_exact<'py>(
         .into())
 }
 
+/// The EXACT occlusion half-spaces at a given control polygon (item B12).
+///
+/// One plane per (segment, occluder piece, station), shared by every control
+/// point of that segment -- the same rows the certificate is evaluated with.
+/// Exposed so a test can check the two properties the guarantee rests on: that
+/// the piece body CONTAINS the true occluder across the window it was built for,
+/// and that the half-space contains the shadow that body casts.
+///
+/// Returns (normals, lower_bounds, segment_idx, cp_idx, obstacle_idx,
+/// station_idx, body_centers, body_radii, window_lo, window_hi, margins).
+#[pyfunction]
+#[pyo3(signature = (
+    p, obstacle_pos0, obstacle_vel, obstacle_r, stations,
+    obstacle_t_start = None, obstacle_t_end = None, n_seg = 8,
+))]
+#[allow(clippy::too_many_arguments)]
+fn spacetime_occlusion_rows_exact<'py>(
+    py: Python<'py>,
+    p: PyReadonlyArray2<'py, f64>,
+    obstacle_pos0: PyReadonlyArray2<'py, f64>,
+    obstacle_vel: PyReadonlyArray2<'py, f64>,
+    obstacle_r: PyReadonlyArray1<'py, f64>,
+    stations: PyReadonlyArray2<'py, f64>,
+    obstacle_t_start: Option<PyReadonlyArray1<'py, f64>>,
+    obstacle_t_end: Option<PyReadonlyArray1<'py, f64>>,
+    n_seg: usize,
+) -> PyResult<PyObject> {
+    let p_arr = p.as_array();
+    let np1 = p_arr.shape()[0];
+    let dim = p_arr.shape()[1];
+    let spatial_dim = dim - 1;
+    let p_flat: Vec<f64> = p_arr.iter().copied().collect();
+
+    let n_obs = obstacle_pos0.as_array().shape()[0];
+    let pos0: Vec<f64> = obstacle_pos0.as_array().iter().copied().collect();
+    let vel: Vec<f64> = obstacle_vel.as_array().iter().copied().collect();
+    let radii: Vec<f64> = obstacle_r.as_array().iter().copied().collect();
+    let t_start: Vec<f64> = obstacle_t_start
+        .map(|a| a.as_array().iter().copied().collect())
+        .unwrap_or_else(|| vec![f64::NEG_INFINITY; n_obs]);
+    let t_end: Vec<f64> = obstacle_t_end
+        .map(|a| a.as_array().iter().copied().collect())
+        .unwrap_or_else(|| vec![f64::INFINITY; n_obs]);
+
+    let obstacles = SpacetimeObstacleData {
+        pos0: &pos0,
+        vel: &vel,
+        radii: &radii,
+        t_start: &t_start,
+        t_end: &t_end,
+        n_obs,
+        spatial_dim,
+    };
+    let (station_vec, n_stations) = station_arrays(Some(stations), spatial_dim)?;
+    let station_data = StationData {
+        pos: &station_vec,
+        n_stations,
+    };
+    let a_list = bezier_opt_core::de_casteljau::segment_matrices_equal_params(np1 - 1, n_seg);
+
+    let rows = match bezier_opt_core::spacetime_constraints::build_spacetime_occlusion_constraints(
+        &a_list,
+        &p_flat,
+        np1,
+        dim,
+        &obstacles,
+        &station_data,
+    ) {
+        Some(b) => b.rows,
+        None => Vec::new(),
+    };
+
+    let empty2 = |width: usize| PyArray2::from_vec2(py, &vec![vec![0.0; width]; 0]);
+    let normals_arr = if rows.is_empty() {
+        empty2(spatial_dim)
+    } else {
+        PyArray2::from_vec2(py, &rows.iter().map(|r| r.normal.clone()).collect::<Vec<_>>())
+    }
+    .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
+    let centers_arr = if rows.is_empty() {
+        empty2(spatial_dim)
+    } else {
+        PyArray2::from_vec2(
+            py,
+            &rows.iter().map(|r| r.body_center.clone()).collect::<Vec<_>>(),
+        )
+    }
+    .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
+
+    Ok((
+        normals_arr,
+        PyArray1::from_vec(py, rows.iter().map(|r| r.lower_bound).collect::<Vec<_>>()),
+        PyArray1::from_vec(py, rows.iter().map(|r| r.segment_idx as i32).collect::<Vec<_>>()),
+        PyArray1::from_vec(py, rows.iter().map(|r| r.cp_idx as i32).collect::<Vec<_>>()),
+        PyArray1::from_vec(py, rows.iter().map(|r| r.obstacle_idx as i32).collect::<Vec<_>>()),
+        PyArray1::from_vec(py, rows.iter().map(|r| r.station_idx as i32).collect::<Vec<_>>()),
+        centers_arr,
+        PyArray1::from_vec(py, rows.iter().map(|r| r.body_radius).collect::<Vec<_>>()),
+        PyArray1::from_vec(py, rows.iter().map(|r| r.t_lo).collect::<Vec<_>>()),
+        PyArray1::from_vec(py, rows.iter().map(|r| r.t_hi).collect::<Vec<_>>()),
+        PyArray1::from_vec(py, rows.iter().map(|r| r.margin).collect::<Vec<_>>()),
+    )
+        .into_pyobject(py)?
+        .into())
+}
+
 /// Opaque handle holding precomputed SCP data and obstacle arrays.
 /// Exposes a `step()` method that runs one SCP iteration.
 #[pyclass]
@@ -366,6 +513,8 @@ struct SpacetimeScpContext {
     t_end: Vec<f64>,
     n_obs: usize,
     spatial_dim: usize,
+    stations: Vec<f64>,
+    n_stations: usize,
     elastic_weight: f64,
     tol: f64,
     cap_bulge_ratio: f64,
@@ -399,6 +548,7 @@ impl SpacetimeScpContext {
         v_max = None,
         time_weight = 0.0,
         free_arrival_time = false,
+        stations = None,
     ))]
     fn new(
         p_init: PyReadonlyArray2<'_, f64>,
@@ -421,6 +571,7 @@ impl SpacetimeScpContext {
         v_max: Option<f64>,
         time_weight: f64,
         free_arrival_time: bool,
+        stations: Option<PyReadonlyArray2<'_, f64>>,
     ) -> PyResult<Self> {
         let p_arr = p_init.as_array();
         let np1 = p_arr.shape()[0];
@@ -449,6 +600,7 @@ impl SpacetimeScpContext {
 
         let _ = scp_prox_weight; // the trust region does this job; see scp_step
         let state = spacetime_optimizer::ScpState::new(&p_flat, scp_trust_radius);
+        let (station_vec, n_stations) = station_arrays(stations, spatial_dim)?;
 
         Ok(Self {
             precomputed: pre,
@@ -459,6 +611,8 @@ impl SpacetimeScpContext {
             t_end,
             n_obs,
             spatial_dim,
+            stations: station_vec,
+            n_stations,
             elastic_weight,
             tol,
             cap_bulge_ratio,
@@ -498,10 +652,16 @@ impl SpacetimeScpContext {
             spatial_dim: self.spatial_dim,
         };
 
+        let station_data = StationData {
+            pos: &self.stations,
+            n_stations: self.n_stations,
+        };
+
         let iter_out = spacetime_optimizer::scp_iterate(
             &mut self.state,
             &self.precomputed,
             &obstacles,
+            &station_data,
             self.elastic_weight,
             self.tol,
             self.cap_bulge_ratio,
@@ -544,6 +704,11 @@ impl SpacetimeScpContext {
         info.set_item("converged", result.converged)?;
         info.set_item("cost", result.cost)?;
         info.set_item("koz_row_count", result.koz_rows.len())?;
+        info.set_item("occlusion_row_count", result.occlusion_rows.len())?;
+        info.set_item(
+            "occlusion_total_slack",
+            result.occlusion_slack_per_row.iter().sum::<f64>(),
+        )?;
         // The accept/reject decision. `converged` above is always false -- a single
         // subproblem never decides that; the state does.
         info.set_item("p_candidate", p_candidate)?;
@@ -619,6 +784,7 @@ fn bezier_opt(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(optimize_orbital_docking, m)?)?;
     m.add_function(wrap_pyfunction!(optimize_spacetime_bezier, m)?)?;
     m.add_function(wrap_pyfunction!(spacetime_koz_rows_exact, m)?)?;
+    m.add_function(wrap_pyfunction!(spacetime_occlusion_rows_exact, m)?)?;
     m.add_class::<SpacetimeScpContext>()?;
     Ok(())
 }

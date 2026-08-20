@@ -2,7 +2,9 @@ use crate::bezier;
 use crate::constraints::LinearConstraint;
 use crate::de_casteljau;
 use crate::optimizer::{solve_qp_with_socs, OptResult, SocBlock};
-use crate::spacetime_constraints::{self, KozRowData, SpacetimeObstacleData};
+use crate::spacetime_constraints::{
+    self, KozRowData, OcclusionRowData, SpacetimeObstacleData, StationData,
+};
 use std::collections::HashMap;
 
 /// Trust radius used when a caller supplies none.
@@ -236,6 +238,55 @@ fn koz_violation_rebuilt_at(
     }
 }
 
+/// Violation of the OCCLUSION half-spaces rebuilt AT `x` (item B12).
+///
+/// The occlusion rows are physics-adjacent mission constraints and they carry the
+/// paper's guarantee, so they are certified exactly as the KOZ rows are: rebuilt
+/// at the point being graded, never read off the rows the QP was handed. The
+/// approximation each row stands on is built from `x`'s own segment time extents,
+/// so evaluating here is self-consistent — the certificate cannot be reporting a
+/// window the trajectory does not occupy.
+fn occlusion_violation_rebuilt_at(
+    x: &[f64],
+    pre: &ScpPrecomputed,
+    obstacles: &SpacetimeObstacleData<'_>,
+    stations: &StationData<'_>,
+) -> f64 {
+    let nvars = pre.np1 * pre.dim;
+    match spacetime_constraints::build_spacetime_occlusion_constraints(
+        &pre.a_list,
+        x,
+        pre.np1,
+        pre.dim,
+        obstacles,
+        stations,
+    ) {
+        Some(bundle) => row_violation(
+            x,
+            &bundle.constraint.a,
+            &bundle.constraint.lb,
+            0,
+            bundle.constraint.n_rows,
+            nvars,
+        ),
+        None => 0.0,
+    }
+}
+
+/// Both relaxable blocks, rebuilt at `x`. This is the quantity the SCvx ratio
+/// test and every convergence guard must use: a loop that graded only the KOZ
+/// block could declare success on a trajectory that has lost line of sight.
+fn relaxable_violation_rebuilt_at(
+    x: &[f64],
+    pre: &ScpPrecomputed,
+    obstacles: &SpacetimeObstacleData<'_>,
+    stations: &StationData<'_>,
+    cap_bulge_ratio: f64,
+) -> f64 {
+    koz_violation_rebuilt_at(x, pre, obstacles, cap_bulge_ratio)
+        + occlusion_violation_rebuilt_at(x, pre, obstacles, stations)
+}
+
 fn append_constraint(
     constraint: &LinearConstraint,
     all_a_rows: &mut Vec<f64>,
@@ -285,6 +336,13 @@ pub struct ScpStepResult {
     pub cost: f64,
     pub koz_rows: Vec<KozRowData>,
     pub koz_slack_per_row: Vec<f64>,
+    /// Occlusion rows built at the reference (item B12). Empty when no station
+    /// was supplied, which is the default.
+    pub occlusion_rows: Vec<OcclusionRowData>,
+    /// Elastic slack the subproblem bought on the occlusion rows. Kept separate
+    /// from the KOZ slack because they are different constraints and a run that
+    /// stands on one is not standing on the other.
+    pub occlusion_slack_per_row: Vec<f64>,
 
     // ---- SCvx quantities. Populated only when `use_scvx` is true. ----
     //
@@ -377,6 +435,8 @@ fn failed_step(
         cost: quadratic_cost(&pre.h_energy, &pre.f_linear, p_current, nvars),
         koz_rows: Vec::new(),
         koz_slack_per_row: Vec::new(),
+        occlusion_rows: Vec::new(),
+        occlusion_slack_per_row: Vec::new(),
         is_candidate: false,
         l_p: f64::NAN,
         l_c: f64::NAN,
@@ -394,10 +454,12 @@ fn failed_step(
 /// On the SCvx path the trust region is a constraint instead of a clip, and the
 /// returned point is a CANDIDATE: this function does not decide whether to take
 /// it. The caller runs the ratio test.
+#[allow(clippy::too_many_arguments)]
 pub fn scp_step(
     p_current: &[f64],
     pre: &ScpPrecomputed,
     obstacles: &SpacetimeObstacleData<'_>,
+    stations: &StationData<'_>,
     scp_prox_weight: f64,
     scp_trust_radius: f64,
     elastic_weight: f64,
@@ -436,6 +498,14 @@ pub fn scp_step(
         }
     }
 
+    // Occlusion rows (item B12), with the same split the KOZ rows use: the QP
+    // gets the SELF-CONSISTENT rows carrying the rotation term, the certificate
+    // is always rebuilt from the exact ones. Both reproduce the true margin at
+    // the reference, so `vlin_p` stays equal to the true violation there.
+    let occlusion_bundle = spacetime_constraints::build_spacetime_occlusion_constraints_linearized(
+        &pre.a_list, p_current, np1, dim, obstacles, stations,
+    );
+
     // Objective: the parameter-domain smoothness regularizer on the spatial
     // control points, and nothing else. NOT acceleration energy -- see
     // `build_smoothness_regularizer_h`.
@@ -462,8 +532,25 @@ pub fn scp_step(
     append_constraint(&pre.boundary, &mut all_a_rows, &mut all_lb, &mut all_ub, &mut total_rows);
     append_constraint(&pre.monotonicity, &mut all_a_rows, &mut all_lb, &mut all_ub, &mut total_rows);
 
+    // The RELAXABLE block: keep-out rows first, occlusion rows immediately after,
+    // contiguous so one slack range covers both.
+    //
+    // ELASTIC TREATMENT, decided deliberately (item B12). Occlusion rows DO
+    // participate in the elastic relaxation, for the same reason the KOZ rows do:
+    // a straight-line initial guess generally starts inside the shadow, and a hard
+    // occlusion row would make the very first subproblem infeasible and report a
+    // QP failure instead of a repair step. What carries the guarantee is not
+    // hardness but the certificate — `occlusion_violation_rebuilt_at` is evaluated
+    // with these EXACT rows at the RETURNED iterate, the feasibility gate fails on
+    // a nonzero value, and the same gate already fails a run whose total slack is
+    // nonzero. The speed cap is the opposite choice and stays hard, because it has
+    // a cone to live in and no repair phase to survive.
     let koz_row_start = total_rows;
     if let Some(ref bundle) = koz_bundle {
+        append_constraint(&bundle.constraint, &mut all_a_rows, &mut all_lb, &mut all_ub, &mut total_rows);
+    }
+    let n_koz_only = total_rows - koz_row_start;
+    if let Some(ref bundle) = occlusion_bundle {
         append_constraint(&bundle.constraint, &mut all_a_rows, &mut all_lb, &mut all_ub, &mut total_rows);
     }
     let n_koz = total_rows - koz_row_start;
@@ -647,12 +734,22 @@ pub fn scp_step(
     let _ = tol;
     let converged = false;
 
-    // Move per-row metadata out of the bundle
+    // Move per-row metadata out of the bundles
     let koz_rows_out = if let Some(bundle) = koz_bundle {
         bundle.rows
     } else {
         Vec::new()
     };
+    let occlusion_rows_out = if let Some(bundle) = occlusion_bundle {
+        bundle.rows
+    } else {
+        Vec::new()
+    };
+    // Split the one slack vector back into the two blocks it covers. The rows
+    // were appended contiguously, keep-out first, so the boundary is exactly
+    // `n_koz_only`.
+    let occlusion_slack_per_row = koz_slack_per_row[n_koz_only.min(koz_slack_per_row.len())..].to_vec();
+    let koz_slack_per_row = koz_slack_per_row[..n_koz_only.min(koz_slack_per_row.len())].to_vec();
 
     ScpStepResult {
         p_new: x_result,
@@ -666,6 +763,8 @@ pub fn scp_step(
         cost,
         koz_rows: koz_rows_out,
         koz_slack_per_row,
+        occlusion_rows: occlusion_rows_out,
+        occlusion_slack_per_row,
         is_candidate: true,
         l_p,
         l_c,
@@ -809,10 +908,12 @@ pub struct ScpIteration {
 ///
 /// This is the ONLY place a step is accepted. The batch loop and the step
 /// debugger both call it, so a debug session cannot diverge from a batch run.
+#[allow(clippy::too_many_arguments)]
 pub fn scp_iterate(
     state: &mut ScpState,
     pre: &ScpPrecomputed,
     obstacles: &SpacetimeObstacleData<'_>,
+    stations: &StationData<'_>,
     elastic_weight: f64,
     tol: f64,
     cap_bulge_ratio: f64,
@@ -825,6 +926,7 @@ pub fn scp_iterate(
         &state.p,
         pre,
         obstacles,
+        stations,
         0.0,
         state.trust,
         elastic_weight,
@@ -863,7 +965,7 @@ pub fn scp_iterate(
     let (quad_p, scale_p) = quadratic_cost_scaled(&pre.h_energy, &pre.f_linear, &state.p, nvars);
     let (quad_c, scale_c) = quadratic_cost_scaled(&pre.h_energy, &pre.f_linear, &cand, nvars);
     let vtrue_p = step.vlin_p; // rows were built at p; exact there
-    let vtrue_c = koz_violation_rebuilt_at(&cand, pre, obstacles, cap_bulge_ratio);
+    let vtrue_c = relaxable_violation_rebuilt_at(&cand, pre, obstacles, stations, cap_bulge_ratio);
     let t_p = quad_p + w_s * vtrue_p;
     let t_c = quad_c + w_s * vtrue_c;
     let pred = step.l_p - step.l_c;
@@ -1025,6 +1127,7 @@ pub fn optimize_spacetime(
     time_lb: f64,
     time_ub: f64,
     obstacles: &SpacetimeObstacleData<'_>,
+    stations: &StationData<'_>,
     elastic_weight: f64,
     cap_bulge_ratio: f64,
     v_max: f64,
@@ -1056,7 +1159,9 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     }
 
     while state.running() && (state.iteration as usize) < max_iter {
-        let r = scp_iterate(&mut state, &pre, obstacles, elastic_weight, tol, cap_bulge_ratio);
+        let r = scp_iterate(
+            &mut state, &pre, obstacles, stations, elastic_weight, tol, cap_bulge_ratio,
+        );
         if trace {
             let cols = [
                 r.rho,
@@ -1180,6 +1285,14 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     info.insert(
         "koz_violation_reference".to_string(),
         koz_violation_rebuilt_at(&p, &pre, obstacles, cap_bulge_ratio),
+    );
+    // The occlusion certificate, kept as its own key rather than folded into the
+    // keep-out one: they are different guarantees and a run that fails one has
+    // not failed the other. Zero by construction when no station was supplied.
+    // The feasibility gate in optimize.py reads this key.
+    info.insert(
+        "occlusion_violation_reference".to_string(),
+        occlusion_violation_rebuilt_at(&p, &pre, obstacles, stations),
     );
     info.insert("koz_violation_candidate".to_string(), state.last_vtrue_c);
     // Kept for provenance: what the old key would have said.

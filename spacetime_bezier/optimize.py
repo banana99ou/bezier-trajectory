@@ -109,6 +109,13 @@ def figure_grade_failures(row: dict) -> list[str]:
     certificate = float(row.get("certificate_violation", float("nan")))
     if not certificate <= FIGURE_GRADE_CERTIFICATE_TOL:
         reasons.append(f"hull certificate violated by {certificate:.3e}")
+    # Occlusion (item B12) is a separate guarantee and gets a separate gate
+    # condition: the keep-out certificate says nothing about line of sight, so it
+    # cannot stand in for this. Defaults to 0.0, which is what a run with no
+    # station genuinely has -- zero occlusion rows cannot be violated.
+    occlusion = float(row.get("occlusion_violation", 0.0))
+    if not occlusion <= FIGURE_GRADE_CERTIFICATE_TOL:
+        reasons.append(f"line of sight lost, occlusion certificate {occlusion:.3e}")
     clearance = float(row.get("min_clearance", float("nan")))
     if not clearance > 0.0:
         reasons.append(f"penetrates by {-clearance:.3e}")
@@ -184,6 +191,7 @@ def _optimize_spacetime_rust(
     v_max: float | None = None,
     time_weight: float = 0.0,
     free_arrival_time: bool = False,
+    stations=None,
     verbose: bool = True,
 ) -> tuple[np.ndarray, dict]:
     """Call the native Rust backend for the space-time optimizer."""
@@ -197,6 +205,14 @@ def _optimize_spacetime_rust(
     spatial_dim = dim - 1
     pos0, vel, radius, t_start, t_end = obstacle_array_bundle(obstacles, spatial_dim)
     time_upper = float(P_init[-1, -1]) * float(time_ub_scale)
+    # No station means no occlusion rows at all (item B12), which is the default
+    # and reproduces every pre-B12 run bit for bit. `None` is passed through
+    # rather than an empty array so the Rust side has one code path for "off".
+    station_arr = None
+    if stations is not None:
+        station_arr = np.asarray(stations, dtype=float).reshape(-1, spatial_dim)
+        if station_arr.shape[0] == 0:
+            station_arr = None
 
     P_opt, info = _bezier_opt_rs.optimize_spacetime_bezier(
         p_init=P_init,
@@ -220,6 +236,7 @@ def _optimize_spacetime_rust(
         v_max=v_max,
         time_weight=float(time_weight),
         free_arrival_time=bool(free_arrival_time),
+        stations=station_arr,
     )
     P_opt = np.asarray(P_opt, dtype=float)
     info = dict(info)
@@ -290,6 +307,7 @@ def optimize_spacetime_from_control_points(
     v_max: float | None = None,
     time_weight: float = 0.0,
     free_arrival_time: bool = False,
+    stations=None,
     verbose: bool = True,
 ) -> tuple[np.ndarray, dict]:
     """Optimize a space-time Bezier curve from an initial control polygon.
@@ -314,6 +332,7 @@ def optimize_spacetime_from_control_points(
         v_max=v_max,
         time_weight=time_weight,
         free_arrival_time=free_arrival_time,
+        stations=stations,
         verbose=verbose,
     )
 
@@ -339,6 +358,7 @@ def optimize_spacetime(
     v_max: float | None = None,
     time_weight: float = 0.0,
     free_arrival_time: bool = False,
+    stations=None,
     verbose: bool = True,
     init_curve: dict | None = None,
 ) -> tuple[np.ndarray, dict]:
@@ -368,6 +388,7 @@ def optimize_spacetime(
         v_max=v_max,
         time_weight=time_weight,
         free_arrival_time=free_arrival_time,
+        stations=stations,
         verbose=verbose,
     )
 
@@ -400,6 +421,9 @@ def optimize_scenario(
     p_start = scenario["start"]
     p_end = scenario["end"]
     init_curve = scenario.get("init_curve")
+    # Absent key means no occlusion rows (item B12). Every scenario that predates
+    # B12 therefore solves exactly the problem it always did.
+    stations = scenario.get("stations")
 
     results = {}
     for N, n_seg in configs:
@@ -433,6 +457,7 @@ def optimize_scenario(
                 v_max=v_max,
                 time_weight=time_weight,
                 free_arrival_time=free_arrival_time,
+                stations=stations,
                 verbose=verbose,
                 init_curve=init_curve,
             )
@@ -440,9 +465,19 @@ def optimize_scenario(
                 P_try, obstacles, dim=len(p_start), n_eval=3000
             )
             cert_try = float(info_try.get("koz_violation_reference", float("nan")))
+            # The ladder must not stop on a run that has lost line of sight, so
+            # the occlusion certificate joins the keep-out one in the stopping
+            # test. Zero when there is no station.
+            occ_try = float(info_try.get("occlusion_violation_reference", 0.0))
+            cleared_try = (
+                bool(info_try.get("converged", 0.0))
+                and cert_try <= 1e-6
+                and occ_try <= 1e-6
+                and clearance_try > 0.0
+            )
             # Same ordering the scenario-level `_rank` uses to pick `best`.
             rank_try = (
-                bool(info_try.get("converged", 0.0)) and cert_try <= 1e-6 and clearance_try > 0.0,
+                cleared_try,
                 clearance_try > 0.0,
                 clearance_try,
             )
@@ -456,8 +491,8 @@ def optimize_scenario(
                 )
             if verbose:
                 print(f"  w={candidate_weight:g}: clearance={clearance_try:.4f}, "
-                      f"certificate={cert_try:.4g}")
-            if bool(info_try.get("converged", 0.0)) and cert_try <= 1e-6 and clearance_try > 0.0:
+                      f"certificate={cert_try:.4g}, occlusion={occ_try:.4g}")
+            if cleared_try:
                 break
 
         backend_used = opt_info["backend"]
@@ -471,6 +506,7 @@ def optimize_scenario(
         # can pass the first while failing the second -- so both are recorded and
         # neither is allowed to stand in for the other.
         certificate = float(opt_info.get("koz_violation_reference", float("nan")))
+        occlusion = float(opt_info.get("occlusion_violation_reference", 0.0))
         total_slack = float(opt_info.get("total_koz_slack_returned", float("nan")))
         results[key] = {
             "N": int(N),
@@ -485,6 +521,8 @@ def optimize_scenario(
             "iterations": int(opt_info.get("iterations", -1)),
             "certificate_violation": certificate,
             "certified": bool(certificate <= 1e-6),
+            "occlusion_violation": occlusion,
+            "occlusion_certified": bool(occlusion <= 1e-6),
             "total_slack": total_slack,
             "accept_count": int(opt_info.get("accept_count", 0)),
             "reject_count": int(opt_info.get("reject_count", 0)),

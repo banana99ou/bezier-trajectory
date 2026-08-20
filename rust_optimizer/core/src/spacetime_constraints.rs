@@ -10,6 +10,16 @@ pub struct SpacetimeObstacleData<'a> {
     pub spatial_dim: usize,
 }
 
+/// Fixed observation stations the vehicle must keep line of sight to.
+///
+/// Purely spatial: a station is a point, not a body, and it does not move. An
+/// empty set is the default and produces zero occlusion rows, so every scenario
+/// that predates item B12 solves the identical problem it always did.
+pub struct StationData<'a> {
+    pub pos: &'a [f64], // (n_stations, spatial_dim) row-major
+    pub n_stations: usize,
+}
+
 /// Per-row metadata for a single KOZ constraint.
 pub struct KozRowData {
     pub segment_idx: usize,
@@ -354,6 +364,511 @@ fn build_koz_rows(
     }
 
     Some(KozConstraintBundle {
+        constraint: LinearConstraint {
+            a,
+            lb: lbs,
+            ub: vec![f64::INFINITY; n_rows],
+            n_rows,
+            n_vars,
+        },
+        rows: row_meta,
+    })
+}
+
+// ===========================================================================
+// Line-of-sight occlusion (item B12)
+// ===========================================================================
+
+/// Per-row metadata for a single occlusion constraint.
+pub struct OcclusionRowData {
+    pub segment_idx: usize,
+    pub cp_idx: usize,
+    pub obstacle_idx: usize,
+    pub station_idx: usize,
+    /// Unit outward normal. SPATIAL only — see `build_spacetime_occlusion_constraints`
+    /// for why the time coefficient is zero here and must not be zero for a KOZ row.
+    pub normal: Vec<f64>,
+    /// Centre of the piece's convex outer approximation.
+    pub body_center: Vec<f64>,
+    /// Radius of that approximation, obstacle radius plus the inflation.
+    pub body_radius: f64,
+    /// Effective time window this piece's approximation was built for.
+    pub t_lo: f64,
+    pub t_hi: f64,
+    pub lower_bound: f64,
+    pub margin: f64,
+}
+
+pub struct OcclusionConstraintBundle {
+    pub constraint: LinearConstraint,
+    pub rows: Vec<OcclusionRowData>,
+}
+
+/// Some unit vector orthogonal to `e`, chosen by killing the axis `e` leans on
+/// least so the subtraction never cancels.
+fn any_orthogonal(e: &[f64]) -> Vec<f64> {
+    let n = e.len();
+    let mut axis = 0usize;
+    for d in 1..n {
+        if e[d].abs() < e[axis].abs() {
+            axis = d;
+        }
+    }
+    let mut v = vec![0.0; n];
+    v[axis] = 1.0;
+    let proj = dot(&v, e);
+    for d in 0..n {
+        v[d] -= proj * e[d];
+    }
+    let norm = dot(&v, &v).sqrt();
+    if norm <= 1e-12 {
+        let mut fallback = vec![0.0; n];
+        fallback[(axis + 1) % n] = 1.0;
+        return fallback;
+    }
+    v.iter().map(|x| x / norm).collect()
+}
+
+/// The convex outer approximation of one occluder piece over `[ta, tb]`.
+///
+/// **The space-time shadow of a moving occluder is not convex** — measured
+/// 2026-08-19, recorded in `PAPER_1.md` §"The demo scenario and its figure". The
+/// dominant mechanism is the shadow cone ROTATING as the occluder crosses the
+/// sight line, so the exact swept shadow has no supporting half-space and a plane
+/// against it would certify nothing.
+///
+/// The remedy is a CONSERVATIVE outer approximation that must CONTAIN the true
+/// shadow, so that avoiding the approximation implies visibility. Here it is the
+/// single ball that contains every instantaneous obstacle ball across the window:
+///
+/// ```text
+/// centre = obstacle position at the window midpoint
+/// radius = obstacle radius + |velocity| * (window length) / 2
+/// ```
+///
+/// **The inflation is `|velocity| * (window length) / 2`** — the furthest the
+/// obstacle travels from the midpoint inside the window. Every `ball(c(t), r)`
+/// for `t` in the window therefore sits inside `ball(centre, radius)`, so every
+/// instantaneous shadow sits inside the approximation's shadow, and the union
+/// over the window does too. Larger than the truth, never smaller: the safe
+/// direction, the same character as the hull certificate. The inflation shrinks
+/// linearly with the window, which is why the piece count is a reported
+/// approximation parameter rather than a tuning knob.
+///
+/// The window is the intersection of the piece's own `[t_start, t_end]` with the
+/// time extent the SEGMENT currently occupies — which is a function of the
+/// control points, so this approximation is rebuilt from the current iterate on
+/// every SCP iteration. That is the paper's claim, not an implementation detail.
+fn occluder_piece_body(
+    obstacles: &SpacetimeObstacleData<'_>,
+    obs_idx: usize,
+    ta: f64,
+    tb: f64,
+) -> (Vec<f64>, f64) {
+    let sd = obstacles.spatial_dim;
+    let t_mid = 0.5 * (ta + tb);
+    let half_window = 0.5 * (tb - ta);
+    let mut center = vec![0.0; sd];
+    let mut speed_sq = 0.0;
+    for d in 0..sd {
+        let base = obs_idx * sd + d;
+        center[d] = obstacles.pos0[base] + obstacles.vel[base] * t_mid;
+        speed_sq += obstacles.vel[base] * obstacles.vel[base];
+    }
+    (center, obstacles.radii[obs_idx] + speed_sq.sqrt() * half_window)
+}
+
+/// A supporting half-space of the shadow that `ball(center, radius)` casts from
+/// `station`, aimed at `query`.
+///
+/// **Why a half-space of the shadow is available at all.** The shadow of a convex
+/// body from a point observer is convex (PAPER_1 Part A §5, derived here). For a
+/// direction `n` the shadow's support value is attained on the body itself,
+/// because every shadow point is a body point pushed AWAY from the station:
+///
+/// ```text
+/// shadow = { station + λ (y − station) : y ∈ body, λ ≥ 1 }
+/// n · (station + λ (y − station)) = n · station + λ n · (y − station)
+/// ```
+///
+/// so as long as `n · (y − station) ≤ 0` for every body point — i.e. the station
+/// lies in the free half-space — the value decreases in λ and the maximum is at
+/// λ = 1. The tight supporting half-space is therefore
+///
+/// ```text
+/// n · x  ≤  n · center + radius        (the body's own support value)
+/// ```
+///
+/// and the constraint handed to the solver is its complement, `n · x ≥ offset`.
+/// **The validity condition is exactly `n · station ≥ offset`**: the station must
+/// be on the free side, otherwise the half-space does not contain the shadow and
+/// certifies nothing. Both branches below establish it, and the second one
+/// establishes it with equality.
+///
+/// Returns `None` when the station lies inside the inflated body. No plane
+/// separates anything then — the sight line starts blocked — and emitting one
+/// would be emitting a row that asserts nothing.
+struct ShadowPlane {
+    /// Unit outward normal; the free side is `n · x >= offset`.
+    normal: Vec<f64>,
+    offset: f64,
+    /// Everything the rotation term needs, and nothing it does not.
+    rot: ShadowRotation,
+}
+
+/// How the aiming direction moves when the segment centroid moves. Which of the
+/// two branches produced the plane decides the formula, so the branch is carried
+/// rather than re-derived.
+enum ShadowRotation {
+    /// Branch 1, sight line clear. `foot_norm` is the distance from the body
+    /// centre to the sight segment, `tau` where the foot sits along it, and
+    /// `to_query`/`to_center` the two offsets from the station.
+    Clear {
+        foot_norm: f64,
+        tau: f64,
+        to_query: Vec<f64>,
+        to_center: Vec<f64>,
+        clamped: bool,
+    },
+    /// Branch 2, plane rolled through the station. `e1` is the station-to-body
+    /// axis, `e2` the lateral direction the plane was rolled toward, and
+    /// `lat_norm` the length that direction was normalized by.
+    Rolled {
+        e1: Vec<f64>,
+        e2: Vec<f64>,
+        lat_norm: f64,
+        cos_a: f64,
+    },
+}
+
+fn shadow_plane(
+    station: &[f64],
+    query: &[f64],
+    center: &[f64],
+    radius: f64,
+) -> Option<ShadowPlane> {
+    let sd = center.len();
+    let to_center: Vec<f64> = (0..sd).map(|d| center[d] - station[d]).collect();
+    let dist_station = dot(&to_center, &to_center).sqrt();
+    if dist_station <= radius * (1.0 + 1e-9) {
+        return None;
+    }
+
+    // Branch 1 — the sight line is clear. Aim the normal along the shortest
+    // offset from the body centre to the sight segment [station, query]. The
+    // resulting row reproduces the exact line-of-sight margin at the reference,
+    // the same property the KOZ rows have.
+    let seg: Vec<f64> = (0..sd).map(|d| query[d] - station[d]).collect();
+    let seg_sq = dot(&seg, &seg);
+    let tau_raw = if seg_sq > 1e-12 {
+        dot(&to_center, &seg) / seg_sq
+    } else {
+        0.0
+    };
+    let tau = tau_raw.clamp(0.0, 1.0);
+    let clamped = seg_sq <= 1e-12 || tau_raw <= 0.0 || tau_raw >= 1.0;
+    let foot: Vec<f64> = (0..sd).map(|d| station[d] + tau * seg[d]).collect();
+    let off: Vec<f64> = (0..sd).map(|d| foot[d] - center[d]).collect();
+    let off_norm = dot(&off, &off).sqrt();
+    if off_norm > 1e-12 {
+        let n: Vec<f64> = off.iter().map(|v| v / off_norm).collect();
+        let offset = dot(&n, center) + radius;
+        if dot(&n, station) >= offset - 1e-12 {
+            return Some(ShadowPlane {
+                normal: n,
+                offset,
+                rot: ShadowRotation::Clear {
+                    foot_norm: off_norm,
+                    tau,
+                    to_query: seg,
+                    to_center,
+                    clamped,
+                },
+            });
+        }
+    }
+
+    // Branch 2 — the query is inside the shadow, so branch 1's plane would put
+    // the STATION on the forbidden side and certify nothing. Roll the plane
+    // around the body until it passes through the station, keeping the query's
+    // side. That is the limiting valid member of the family: `n · station`
+    // equals the offset exactly, so the validity condition holds with equality
+    // and the row still pushes the query out along `n`.
+    let e1: Vec<f64> = to_center.iter().map(|v| v / dist_station).collect();
+    let mut lateral: Vec<f64> = (0..sd).map(|d| query[d] - station[d]).collect();
+    let proj = dot(&lateral, &e1);
+    for d in 0..sd {
+        lateral[d] -= proj * e1[d];
+    }
+    let lat_norm = dot(&lateral, &lateral).sqrt();
+    let e2: Vec<f64> = if lat_norm > 1e-9 {
+        lateral.iter().map(|v| v / lat_norm).collect()
+    } else {
+        // The query sits on the station-to-body axis: every direction is
+        // equally good, so any of them is picked rather than none.
+        any_orthogonal(&e1)
+    };
+    let sin_a = radius / dist_station;
+    let cos_a = (1.0 - sin_a * sin_a).max(0.0).sqrt();
+    let n: Vec<f64> = (0..sd)
+        .map(|d| -sin_a * e1[d] + cos_a * e2[d])
+        .collect();
+    let offset = dot(&n, center) + radius;
+    Some(ShadowPlane {
+        normal: n,
+        offset,
+        rot: ShadowRotation::Rolled {
+            e1,
+            e2,
+            lat_norm: lat_norm.max(1e-9),
+            cos_a,
+        },
+    })
+}
+
+/// The part of `d_k` that moves the aiming direction when the segment centroid
+/// moves — the occlusion analogue of the KOZ rotation term, and it exists for the
+/// same measured reason.
+///
+/// Freezing the normal at the reference is SOUND: the plane supports the shadow
+/// whoever aimed it, so the certificate is unaffected. What freezing costs is
+/// convergence. A step optimized against a frozen plane lands flush on a plane
+/// that has since pivoted, the next iteration grades it against a plane it never
+/// saw, and the ratio test rejects. Measured on `station_fence` before this term
+/// existed: 12 to 19 rejections per run, trust region collapsing at every
+/// configuration below 16 segments.
+///
+/// Differentiating `g_k = n(m) · (q_k − centre) − R` through the centroid's
+/// effect on `n` gives, with `P = I − n nᵀ` and `d_k = q_k − centre`:
+///
+/// ```text
+/// clear branch:   corr = ( τ · P d_k  +  ((P d_k)·b) (a − 2τ b)/|b|² ) / |u|
+/// rolled branch:  corr = cos_a · (I − e1 e1ᵀ − e2 e2ᵀ) d_k / |lateral|
+/// ```
+///
+/// where `b` is station-to-query, `a` station-to-centre, `u` the offset from the
+/// centre to the sight segment, and `τ` where the foot sits along the sight
+/// segment. A CLAMPED foot does not slide, so its `τ` derivative drops out.
+///
+/// Like the KOZ rotation row this is a first-order model and is NOT conservative;
+/// it is never used for the certificate, which always rebuilds the exact rows.
+fn shadow_rotation_correction(rot: &ShadowRotation, normal: &[f64], d_k: &[f64]) -> Vec<f64> {
+    let sd = d_k.len();
+    match rot {
+        ShadowRotation::Clear {
+            foot_norm,
+            tau,
+            to_query,
+            to_center,
+            clamped,
+        } => {
+            let s_k = dot(normal, d_k);
+            let proj: Vec<f64> = (0..sd).map(|d| d_k[d] - s_k * normal[d]).collect();
+            let b_sq = dot(to_query, to_query);
+            let mut corr: Vec<f64> = (0..sd).map(|d| tau * proj[d] / foot_norm).collect();
+            if !*clamped && b_sq > 1e-12 {
+                let scale = dot(&proj, to_query) / (b_sq * foot_norm);
+                for d in 0..sd {
+                    corr[d] += scale * (to_center[d] - 2.0 * tau * to_query[d]);
+                }
+            }
+            corr
+        }
+        ShadowRotation::Rolled {
+            e1,
+            e2,
+            lat_norm,
+            cos_a,
+        } => {
+            let c1 = dot(e1, d_k);
+            let c2 = dot(e2, d_k);
+            (0..sd)
+                .map(|d| cos_a * (d_k[d] - c1 * e1[d] - c2 * e2[d]) / lat_norm)
+                .collect()
+        }
+    }
+}
+
+/// Line-of-sight occlusion rows: one supporting half-space per
+/// (segment, occluder piece, station), applied to every control point of that
+/// segment.
+///
+/// The claim these rows exist to make true: keeping line of sight to a fixed
+/// station past a moving occluder costs ONE linearized supporting-half-space row
+/// per (segment, occluder-piece, station). The row count below is exactly that,
+/// times the control points of a segment — the same shape as the KOZ block,
+/// where one plane per (segment, obstacle) is asserted at every control point so
+/// the convex-hull property carries it to the whole segment.
+///
+/// A non-straight occluder path is a CHAIN of straight pieces on adjacent time
+/// windows (PAPER_1 §"Occluder geometry"). Each piece is an ordinary obstacle
+/// carrying `t_start`/`t_end`, so this builder needs no chain machinery: it
+/// iterates obstacles, and a piece whose window misses the segment's time extent
+/// emits nothing.
+///
+/// **The time coefficient is zero here, and that is not defect G1 returning.**
+/// G1 was a KOZ plane against a SLANTED tube, where deleting the time component
+/// told the solver that arriving earlier or later could not change clearance. The
+/// object here is different: the piece's outer approximation is a fixed ball over
+/// the window, so its shadow extruded across the window is a PRISM with walls
+/// parallel to the time axis, and a supporting plane of a prism genuinely has no
+/// time component. Time enters through which pieces are active and through the
+/// window the body is built over — both functions of the control points.
+///
+/// The half-space ignores the window's finite height, so it forbids its side for
+/// all time rather than only during the window. Conservative, in the safe
+/// direction, and the reason the occlusion demo does not exhibit waiting.
+///
+/// **The occlusion constraint subsumes collision with the same body**: a sight
+/// line that starts inside the occluder is blocked, so a point satisfying these
+/// rows is outside the body as well. The keep-out rows for that body are present
+/// but not expected to bind.
+pub fn build_spacetime_occlusion_constraints(
+    a_list: &[Vec<f64>],
+    p: &[f64],
+    np1: usize,
+    dim: usize,
+    obstacles: &SpacetimeObstacleData<'_>,
+    stations: &StationData<'_>,
+) -> Option<OcclusionConstraintBundle> {
+    build_occlusion_rows(a_list, p, np1, dim, obstacles, stations, false)
+}
+
+/// The same half-spaces, plus the term that anticipates the plane rotating as the
+/// solver moves the control points. See `shadow_rotation_correction`. Handed to
+/// the QP; never used for the certificate.
+pub fn build_spacetime_occlusion_constraints_linearized(
+    a_list: &[Vec<f64>],
+    p: &[f64],
+    np1: usize,
+    dim: usize,
+    obstacles: &SpacetimeObstacleData<'_>,
+    stations: &StationData<'_>,
+) -> Option<OcclusionConstraintBundle> {
+    build_occlusion_rows(a_list, p, np1, dim, obstacles, stations, true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_occlusion_rows(
+    a_list: &[Vec<f64>],
+    p: &[f64],
+    np1: usize,
+    dim: usize,
+    obstacles: &SpacetimeObstacleData<'_>,
+    stations: &StationData<'_>,
+    with_rotation: bool,
+) -> Option<OcclusionConstraintBundle> {
+    if stations.n_stations == 0 || obstacles.n_obs == 0 {
+        return None;
+    }
+    let spatial_dim = obstacles.spatial_dim;
+    if dim != spatial_dim + 1 {
+        return None;
+    }
+    let n_vars = np1 * dim;
+    let t_idx = dim - 1;
+
+    let mut constraint_rows: Vec<Vec<f64>> = Vec::new();
+    let mut lbs: Vec<f64> = Vec::new();
+    let mut row_meta: Vec<OcclusionRowData> = Vec::new();
+
+    for (seg_idx, a_seg) in a_list.iter().enumerate() {
+        let (q, w, centroid) = segment_points_and_weights(a_seg, p, np1, dim);
+
+        // The time extent this segment currently occupies. The curve's time
+        // values over the segment lie inside the hull of its own control point
+        // times, so this bracket contains them — conservative, and a function of
+        // the optimization variables, which is what makes the approximation
+        // adaptive.
+        let mut seg_t_lo = f64::INFINITY;
+        let mut seg_t_hi = f64::NEG_INFINITY;
+        for k in 0..np1 {
+            let t_val = q[k * dim + t_idx];
+            seg_t_lo = seg_t_lo.min(t_val);
+            seg_t_hi = seg_t_hi.max(t_val);
+        }
+
+        for st_idx in 0..stations.n_stations {
+            let station = &stations.pos[st_idx * spatial_dim..(st_idx + 1) * spatial_dim];
+
+            for obs_idx in 0..obstacles.n_obs {
+                let t_lo = obstacles.t_start[obs_idx].max(seg_t_lo);
+                let t_hi = obstacles.t_end[obs_idx].min(seg_t_hi);
+                if t_hi < t_lo || !t_lo.is_finite() || !t_hi.is_finite() {
+                    continue;
+                }
+
+                let (center, body_radius) = occluder_piece_body(obstacles, obs_idx, t_lo, t_hi);
+                let Some(plane) =
+                    shadow_plane(station, &centroid[..spatial_dim], &center, body_radius)
+                else {
+                    continue;
+                };
+                let n = &plane.normal;
+                let offset = plane.offset;
+
+                for k in 0..np1 {
+                    let mut lhs = 0.0;
+                    for d in 0..spatial_dim {
+                        lhs += n[d] * q[k * dim + d];
+                    }
+                    let margin = lhs - offset;
+
+                    let mut row = vec![0.0; n_vars];
+                    let corr = if with_rotation {
+                        let d_k: Vec<f64> =
+                            (0..spatial_dim).map(|d| q[k * dim + d] - center[d]).collect();
+                        Some(shadow_rotation_correction(&plane.rot, n, &d_k))
+                    } else {
+                        None
+                    };
+                    for j in 0..np1 {
+                        let a_kj = a_seg[k * np1 + j];
+                        for d in 0..spatial_dim {
+                            row[j * dim + d] += a_kj * n[d];
+                            if let Some(ref c) = corr {
+                                row[j * dim + d] += w[j] * c[d];
+                            }
+                        }
+                    }
+
+                    // Bound chosen so the row reproduces `margin` exactly at
+                    // x = p, for both row types. With no rotation term this is
+                    // just `offset`.
+                    let grad_dot_p = (0..n_vars).map(|idx| row[idx] * p[idx]).sum::<f64>();
+                    let lb = grad_dot_p - margin;
+
+                    row_meta.push(OcclusionRowData {
+                        segment_idx: seg_idx,
+                        cp_idx: k,
+                        obstacle_idx: obs_idx,
+                        station_idx: st_idx,
+                        normal: n.clone(),
+                        body_center: center.clone(),
+                        body_radius,
+                        t_lo,
+                        t_hi,
+                        lower_bound: lb,
+                        margin,
+                    });
+                    constraint_rows.push(row);
+                    lbs.push(lb);
+                }
+            }
+        }
+    }
+
+    if constraint_rows.is_empty() {
+        return None;
+    }
+
+    let n_rows = constraint_rows.len();
+    let mut a = vec![0.0; n_rows * n_vars];
+    for (i, row) in constraint_rows.iter().enumerate() {
+        a[i * n_vars..(i + 1) * n_vars].copy_from_slice(row);
+    }
+
+    Some(OcclusionConstraintBundle {
         constraint: LinearConstraint {
             a,
             lb: lbs,
