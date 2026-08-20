@@ -194,54 +194,115 @@ def test_time_penalty_without_a_speed_cap_is_refused():
     _solve(v_max=None, time_weight=0.0)
 
 
-def test_the_refused_configuration_really_does_collapse():
-    """Evidence that the guard above guards something, measured not assumed.
+_N_CP = N_DEGREE + 1
+_FLOOR = MIN_DT * (_N_CP - 1)
+# Chord of the obstacle-free problem below, over the shortest time the
+# monotonicity rows allow. A cap above this is SLACK: the collapsed trajectory
+# already obeys it, so the cones constrain nothing.
+_BINDING_THRESHOLD = float(
+    np.hypot(8.5 - 0.5, 8.5 - 1.0) / (MIN_DT * N_DEGREE)
+)  # ~= 13.7
 
-    Calls the Rust binding directly, going around the Python guard, on an
-    obstacle-free problem so nothing but the constraint set can set the answer.
+
+def _obstacle_free_run(v_max, time_weight):
+    """The artifact problem, straight through the Rust binding.
+
+    No obstacles, so nothing but the constraint set and the objective can set
+    the answer, and no Python guard is in the way.
+    """
+    P0 = build_initial_guess([0.5, 1.0, 0.0], [8.5, 8.5, 10.0], _N_CP)
+    _, info = bezier_opt.optimize_spacetime_bezier(
+        p_init=P0,
+        obstacle_pos0=np.zeros((0, 2)),
+        obstacle_vel=np.zeros((0, 2)),
+        obstacle_r=np.zeros((0,)),
+        n_seg=N_SEG,
+        max_iter=400,
+        tol=1e-6,
+        scp_prox_weight=0.3,
+        scp_trust_radius=0.5,
+        elastic_weight=100.0,
+        min_dt=MIN_DT,
+        coord_lb=-20.0,
+        coord_ub=20.0,
+        time_lb=0.0,
+        time_ub=15.0,
+        v_max=v_max,
+        time_weight=time_weight,
+        free_arrival_time=True,
+    )
+    return info
+
+
+def test_the_refused_configuration_really_does_collapse():
+    """Evidence that the guard guards something, measured not assumed.
+
     Without a speed cap the arrival time lands on ``min_dt * gaps`` exactly and
     does not move when the weight changes by a factor of ten -- the signature of
-    an answer that is a property of `min_dt` rather than of the problem. With the
-    cap it lands somewhere the geometry chose.
+    an answer that is a property of `min_dt` rather than of the problem. And the
+    floor flag fires, which is what makes the collapse detectable rather than
+    merely inferable from the number.
     """
-    n_cp = N_DEGREE + 1
-    P0 = build_initial_guess([0.5, 1.0, 0.0], [8.5, 8.5, 10.0], n_cp)
-    no_obs2 = np.zeros((0, 2))
-    no_obs1 = np.zeros((0,))
+    low = _obstacle_free_run(None, 0.5)
+    high = _obstacle_free_run(None, 5.0)
+    assert float(low["arrival_time"]) == pytest.approx(_FLOOR, abs=1e-6)
+    assert float(high["arrival_time"]) == pytest.approx(_FLOOR, abs=1e-6)
+    assert float(low["arrival_on_min_dt_floor"]) == 1.0
+    assert float(high["arrival_on_min_dt_floor"]) == 1.0
 
-    def run(v_max, time_weight):
-        _, info = bezier_opt.optimize_spacetime_bezier(
-            p_init=P0,
-            obstacle_pos0=no_obs2,
-            obstacle_vel=no_obs2,
-            obstacle_r=no_obs1,
-            n_seg=N_SEG,
-            max_iter=400,
-            tol=1e-6,
-            scp_prox_weight=0.3,
-            scp_trust_radius=0.5,
-            elastic_weight=100.0,
-            min_dt=MIN_DT,
-            coord_lb=-20.0,
-            coord_ub=20.0,
-            time_lb=0.0,
-            time_ub=15.0,
-            v_max=v_max,
-            time_weight=time_weight,
-            free_arrival_time=True,
-        )
-        return float(info["arrival_time"])
 
-    floor = MIN_DT * (n_cp - 1)
-    uncapped_low = run(None, 0.5)
-    uncapped_high = run(None, 5.0)
-    assert uncapped_low == pytest.approx(floor, abs=1e-6)
-    assert uncapped_high == pytest.approx(floor, abs=1e-6)
+@pytest.mark.parametrize(
+    "v_max,expect_floor",
+    [
+        (2.0, False),
+        (5.0, False),
+        (13.0, False),
+        (14.0, True),
+        (50.0, True),
+        (1e3, True),
+    ],
+)
+def test_what_matters_is_whether_the_cap_binds_not_whether_it_exists(v_max, expect_floor):
+    """The collapse is reproduced by a cap that is present and SLACK.
 
-    capped = run(2.0, 0.5)
-    assert capped > floor * 2.0, (
-        "with a speed cap the arrival time must be set by the geometry, not by min_dt"
+    ``v_max=2`` used to be the whole proof that "with the cap it lands where the
+    geometry chose". It does -- but so would any value below
+    ``chord / (min_dt * N) ~= 13.7``, and above that the arrival returns exactly
+    ``0.800000 = min_dt * gaps`` again while `UncappedTimePenaltyError` stays
+    silent, because a cap does exist. Parametrizing across the threshold is what
+    makes that visible.
+
+    FAILS IF ``arrival_on_min_dt_floor`` stops tracking the actual returned
+    arrival -- e.g. if it were derived from `v_max` (it would then have to guess
+    this threshold) or from `free_arrival_time` alone (it would fire on every
+    row here).
+    """
+    info = _obstacle_free_run(v_max, 0.5)
+    arrival = float(info["arrival_time"])
+    flag = float(info["arrival_on_min_dt_floor"])
+
+    assert (v_max > _BINDING_THRESHOLD) is expect_floor, (
+        f"the parametrization disagrees with the measured threshold "
+        f"{_BINDING_THRESHOLD:.3f}"
     )
+    if expect_floor:
+        assert arrival == pytest.approx(_FLOOR, abs=1e-6)
+        assert flag == 1.0, "the collapse happened and the flag did not fire"
+    else:
+        assert arrival > _FLOOR * 1.05
+        assert flag == 0.0, "the flag fired on an arrival the geometry chose"
+
+
+def test_the_floor_flag_is_silent_when_the_arrival_is_pinned():
+    """`free_arrival_time=False` cannot collapse, so the flag must never fire.
+
+    FAILS IF the flag stops being conditioned on `free_arrival_time`. `original`
+    is pinned at 10.0 against a floor of 0.8, so the two are far apart and only a
+    flag that had lost its dependence on the returned arrival could fire.
+    """
+    _, pinned = _solve(v_max=V_MAX)
+    assert float(pinned["arrival_time"]) == pytest.approx(10.0, abs=1e-9)
+    assert float(pinned["arrival_on_min_dt_floor"]) == 0.0
 
 
 TIME_WEIGHTS = (0.1, 1.0, 100.0)

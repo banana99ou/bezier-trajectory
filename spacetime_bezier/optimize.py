@@ -171,7 +171,23 @@ def is_figure_grade(row: dict) -> bool:
 
 
 class UncappedTimePenaltyError(ValueError):
-    """A time penalty was requested with no speed cap to hold it back."""
+    """A time penalty was requested with no speed cap to hold it back.
+
+    **This guard is necessary and not sufficient, and the difference is
+    measured.** What produces the artifact is a cap that does not BIND, and "no
+    cap at all" is only the extreme case of that. On the obstacle-free problem
+    with ``min_dt=0.1`` and ``N=8``, any ``v_max`` above
+    ``chord / (min_dt * N) ~= 13.7`` leaves the cones slack, and the arrival time
+    returns exactly ``min_dt * gaps = 0.800000`` -- the same collapse, with this
+    guard passing.
+
+    The detector for the case the guard cannot see is the info flag
+    ``arrival_on_min_dt_floor``: it compares the RETURNED arrival against
+    ``t_start + min_dt * (control-point gaps)`` and is set when they agree to
+    1e-6. It is a flag on the result, not a refusal, because a non-binding cap is
+    a legitimate configuration -- the number it produces just is not a
+    measurement of the scenario.
+    """
 
 
 def check_time_penalty_is_capped(v_max, time_weight) -> None:
@@ -574,6 +590,12 @@ def optimize_scenario(
             "elastic_weight": float(used_weight),
             "speed_cap_violation": float(opt_info.get("speed_cap_violation", 0.0)),
             "arrival_time": float(opt_info.get("arrival_time", float("nan"))),
+            # Not a gate condition -- see the Rust export. It flags an arrival
+            # time that is a property of `min_dt` rather than of the scenario,
+            # which is a modelling artifact and not a constraint violation.
+            "arrival_on_min_dt_floor": float(
+                opt_info.get("arrival_on_min_dt_floor", 0.0)
+            ),
         }
         results[key]["figure_grade"] = is_figure_grade(results[key])
         results[key]["figure_grade_reasons"] = figure_grade_failures(results[key])

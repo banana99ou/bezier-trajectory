@@ -1290,7 +1290,32 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     // Arrival time IS the last control point's time coordinate: a Bezier passes
     // through its last control point. Exported so a sweep over `time_weight` can
     // be read straight off the info dict.
-    info.insert("arrival_time".to_string(), p[(np1 - 1) * dim + (dim - 1)]);
+    let arrival_time = p[(np1 - 1) * dim + (dim - 1)];
+    info.insert("arrival_time".to_string(), arrival_time);
+    // THE ARTIFACT DETECTOR for formulation decision 5.
+    //
+    // When nothing effective opposes the linear time penalty, the arrival time
+    // collapses onto the only remaining floor -- the start time plus `min_dt`
+    // times the number of control-point gaps -- and does so for every scenario,
+    // independent of geometry. The Python guard refuses `time_weight > 0` with
+    // NO cap, but "a cap exists" is a proxy for "a cap binds": with `v_max`
+    // above chord/(min_dt * N) the cones are slack and the collapse reproduces
+    // exactly while the guard passes. This flag measures the collapse itself
+    // rather than a precondition for it.
+    //
+    // It is a flag on a PREFERENCE, not a constraint violation, so the
+    // feasibility gate is deliberately not conditioned on it. It travels in the
+    // row so a number that is a property of `min_dt` cannot reach a table
+    // looking like a property of the problem.
+    let min_dt_floor = p_init[dim - 1] + min_dt * ((np1 - 1) as f64);
+    info.insert(
+        "arrival_on_min_dt_floor".to_string(),
+        if free_arrival_time && (arrival_time - min_dt_floor).abs() <= 1e-6 {
+            1.0
+        } else {
+            0.0
+        },
+    );
     info.insert("speed_cap_violation".to_string(), speed_cap_viol);
     info.insert("stop_reason".to_string(), state.stop);
     info.insert(
