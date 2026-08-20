@@ -61,6 +61,7 @@ P_opt, info = optimize_spacetime(
     obstacles=sc["obstacles"], n_seg=req["seg"], max_iter=req["max_iter"],
     tol=req["tol"], scp_trust_radius=req["trust_radius"], min_dt=req["min_dt"],
     elastic_weight=weight, verbose=False, init_curve=sc.get("init_curve"),
+    stations=sc.get("stations"),
 )
 json.dump({
     "P": np.asarray(P_opt, float).tolist(),
@@ -69,6 +70,7 @@ json.dump({
     "obstacles": sc["obstacles"],
     "start": list(map(float, sc["start"])), "end": list(map(float, sc["end"])),
     "elastic_weight": float(weight),
+    "stations": sc.get("stations"),
 }, sys.stdout)
 """
 
@@ -163,8 +165,15 @@ def recompute(payload: dict, n_seg: int) -> dict:
         })
     cert = sum(max(0.0, -row["slack"]) for row in ledger)
     clearance = float(compute_min_clearance(P, obstacles, dim=dim, n_eval=20001))
+    los = None
+    if payload.get("stations"):
+        from spacetime_bezier.geometry import compute_los_margin
+        t_v, m_v = compute_los_margin(P, payload["stations"][0], obstacles,
+                                      dim=dim, n_eval=2001)
+        los = {"t": [float(x) for x in t_v], "m": [float(x) for x in m_v],
+               "min": float(min(m_v))}
     return {"ledger": ledger, "certificate": cert, "clearance": clearance,
-            "P": P.tolist(), "dim": dim}
+            "P": P.tolist(), "dim": dim, "los": los}
 
 
 def geometry_data(payload: dict, rc: dict) -> dict:
@@ -362,6 +371,17 @@ def render(args, payload, trace, warnings, rc, ident, geo_html='') -> str:
     # -- the pairs -----------------------------------------------------------
     rep_cert = float(info.get("koz_violation_reference", float("nan")))
     rep_clear = float(info.get("min_clearance", float("nan")))
+    occl_pair = ""
+    if rc.get("los") is not None:
+        rep_occl = float(info.get("occlusion_violation_reference", float("nan")))
+        # The occlusion certificate (solver rows) and the sampled LOS margin are
+        # DIFFERENT quantities -- one is a sum of row violations, the other a
+        # worst-case true margin. Shown side by side, not differenced.
+        occl_pair = (
+            f"<tr><td>occlusion certificate @ returned P / independent min LOS margin"
+            f" (positive = visible)</td><td>{rep_occl:.6g}</td>"
+            f"<td>{rc['los']['min']:.6g}</td><td>—</td></tr>"
+        )
     pairs = f"""
     <h2>Paired checks (reported vs recomputed — both always shown)</h2>
     <table border=1 cellpadding=4 style="border-collapse:collapse;font-family:monospace">
@@ -372,6 +392,7 @@ def render(args, payload, trace, warnings, rc, ident, geo_html='') -> str:
     <tr><td>min clearance (solver 1500 samples vs 20001 here)</td>
         <td>{rep_clear:.6g}</td><td>{rc['clearance']:.6g}</td>
         <td>{abs(rep_clear - rc['clearance']):.2e}</td></tr>
+    {occl_pair}
     </table>
     <p style="font-size:12px">The recomputed certificate calls the solver's own row
     builder at the returned control points — same code, second invocation. The
@@ -443,7 +464,15 @@ def render(args, payload, trace, warnings, rc, ident, geo_html='') -> str:
         "on the min_dt floor — the timing profile is an objective artifact, do not "
         "read it as a result</b>" if on_floor else "no gaps on the min_dt floor"
     )
+    los_html = ""
+    if rc.get("los") is not None:
+        badge = ("<b style='color:#b00'>LINE OF SIGHT LOST</b>"
+                 if rc["los"]["min"] < 0 else "line of sight held everywhere")
+        los_html = (f"<h2>Line-of-sight margin vs time (independent sampling)</h2>"
+                    f"{svg_line(rc['los']['m'], color='#2255bb')}"
+                    f"<p style='font-size:12px'>min = {rc['los']['min']:.4g} — {badge}.</p>")
     strip = f"""
+    {los_html}
     <h2>Control-point time coordinates</h2>
     {svg_line([float(t) for t in times], color="#22aa55")}
     <p style="font-size:12px">t per control point, index order. {floor_note}.
