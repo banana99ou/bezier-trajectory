@@ -21,13 +21,78 @@ fixed first, and the rest is aligned to it.
 
 ---
 
+# 제출 일정 — 2026년 9월 4일
+
+## 학회 날짜
+
+**한국항공우주학회 2026년도 추계학술대회**
+
+| 항목 | 날짜 |
+|---|---|
+| **논문 제출 마감** | **2026년 9월 4일(금)** — 온라인 |
+| 사전등록 마감 | 2026년 10월 30일(금) |
+| 학술대회 | 2026년 11월 10일(화) ~ 13일(금) |
+| 장소 | 하이원리조트 (강원도 정선) |
+
+마감일에 내는 것은 **두 개**다. 학회 템플릿(한글 또는 MS-Word) **2페이지** 원고, 그리고 제출
+웹페이지 입력란에 따로 쓰는 **400자 이내 초록**. 원고의 초록을 붙여넣는 것이 아니라 별도
+산출물이며, 마감은 같다.
+
+## 역산 마일스톤
+
+순서는 임의가 아니다 — 아래 §"What the formulation change means for the paper" 5번("동결
+전까지 수치 없음")이 측정을 동결 **이후 한 번**으로 못박으므로, 측정·그림·집필은 전부 동결
+뒤에 직렬로 붙는다.
+
+| 날짜 | 항목 |
+|---|---|
+| 8/19 ~ 8/23 | **정식화 동결** — solver item B8, item B9, item B10 |
+| 8/24 | solver item B7 — 실현가능성 게이트 (`total_slack > 0`인 실행은 그림을 만들 수 없다) |
+| 8/25 | solver item B11 — 3차원 공간 더하기 시간 실행 1회 |
+| 8/26 ~ 8/27 | **측정 1회 통과** (solver item B3). 이 구간 이전의 어떤 수치도 논문에 들어가지 않는다 |
+| 8/28 ~ 8/30 | 그림 — paper item A6로 슬롯을 먼저 정의한 뒤 제작 |
+| 8/31 ~ 9/2 | 2페이지 원고 + 400자 초록 |
+| 9/3 (목) | 예비일 |
+| **9/4 (금)** | **제출** |
+
+## 일정 리스크
+
+- **solver item B9가 가장 큰 미지수다.** 속도 상한을 하드 제약으로 넣으려면 `solve_qp`에
+  2차 원뿔(second-order cone)을 배관해야 하고, 그게 아니면 축별 선형 대체안으로 간다.
+  전자는 하루짜리 작업이 아닐 수 있다. solver item B10이 item B9와 **함께** 착륙해야 하므로
+  이 항목이 미끄러지면 8/23 동결 전체가 미끄러진다.
+- **완충이 9/3 하루뿐이다.** 동결이 이틀 밀리면 예비일이 사라지고, 사흘 밀리면 그림이나
+  집필 중 하나를 잘라야 한다.
+- **solver item B12(폐색 제약 빌더)는 조각별 시공간 볼록성 검사에 게이트되어 있다.** 그
+  검사가 실패하면 폐색 데모는 이번 논문에서 빠진다. 위 마일스톤 표는 item B12를 포함하지
+  않는다 — 포함시키려면 어느 칸을 줄일지 먼저 정해야 한다.
+
+## 마감일 재확인
+
+출처는 한국항공우주학회 2026년도 추계학술대회 논문모집안내 페이지
+(`Conference/ConferenceView.asp?AC=0&CODE=CC20260701`). **`ksas.or.kr`는 HTTPS로 응답하지
+않는다** (타임아웃) — HTTP로만 열리고, 페이지 인코딩은 EUC-KR이다. 웹 조회 도구는 HTTP를
+HTTPS로 승격하므로 실패한다.
+
+```bash
+curl -s "http://ksas.or.kr/Conference/ConferenceView.asp?AC=0&CODE=CC20260701" \
+  | iconv -f EUC-KR -t UTF-8 | grep "9월 4일"
+```
+
+결과가 비면 마감이 바뀐 것이다. 작년 추계는 마감이 연장된 전례가 있다. 2026년도 학술행사는
+셋뿐이다 — 춘계(3/31~4/3, 제주 신화월드), 우주(6/24~26, 파라다이스호텔 부산), 추계(위).
+**겨울 학술대회는 존재하지 않는다.** 11월 하이원 추계가 통칭 "겨울 학회"다.
+
+---
+
 # Decisions — 2026-08-19
 
 Taken in conversation. Recorded here because they change what Part A and Part B are
 allowed to claim. **Part A below is unmodified** — it is byte-identical to the
 committed `PAPER_CLAIM.md` — so where this section and Part A disagree, this section
-is newer. The full formulation reasoning lives in `CLAUDE.md` §"Formulation
-decisions"; this is the paper-facing half.
+is newer. `CLAUDE.md` §"Formulation decisions" carries the same decisions as
+one-line guardrails; the derivation that justifies them is §"The derivation behind the
+decisions" below.
 
 ## The one-liner
 
@@ -63,6 +128,150 @@ published it in August 2025. Never open with "time as a coordinate."
    objective change. The draft the PI reads carries none — as the abstract slot in
    Part B already assumes.
 
+## The derivation behind the decisions
+
+Worked out 2026-08-19. This is the math under the five items above, and it *shrinks* them:
+the largest-looking piece of work turns out to be impossible and unnecessary at the same time.
+
+### Velocity and acceleration are not polynomial in the control points
+
+The lifted Bezier is drawn by a parameter running 0 to 1. Standard Bezier differencing already
+gives both derivatives *with respect to that parameter*, linearly in the control points — that
+is what the D and E matrices in `orbital_docking/bezier.py` do. The first derivative is a
+lower-degree Bezier whose control points are the gaps between consecutive control points scaled
+by the degree; the second uses second differences.
+
+The trouble is only in converting to real time.
+
+- **Physical velocity** is the spatial gap per parameter divided by the time gap per parameter —
+  a **ratio of two Beziers**. Not a polynomial, so not a Bezier.
+- **Physical acceleration** is the spatial second derivative times the time first derivative,
+  minus the spatial first derivative times the time second derivative, all over the time first
+  derivative **cubed**. A ratio with a cubic denominator.
+
+**Consequence: no quadratic acceleration energy exists.** There is no matrix that makes
+acceleration energy a quadratic form in the control points, because acceleration is not
+polynomial in them. "Re-derive the energy matrix" is not a task that can succeed. Recorded so it
+is not attempted a second time.
+
+### The slant limit is provably sufficient
+
+A velocity *bound* is far friendlier than a velocity *cost*. Write it with the denominator
+cleared:
+
+> the spatial gap per parameter, in norm, is at most the speed limit times the time gap per
+> parameter.
+
+Both sides are now polynomials of the same degree, and both are weighted averages of their own
+control points with weights that are non-negative and sum to one. By the triangle inequality, if
+every control point of the left side satisfies the bound against the matching control point of
+the right side, the whole curve does. So the constraint reduces to, for every consecutive pair of
+control points:
+
+> the spatial distance between them is at most the speed limit times the time between them.
+
+That is the slant limit, literally: each leg of the control polygon may not lean more than the
+speed limit away from the time axis. It is convex, it acts on control points directly, and it is
+a **sufficient** condition — conservative in the safe direction, the same character as the hull
+certificate.
+
+Two conditions on it:
+
+1. Clearing the denominator is legal only because time strictly increases along the curve. The
+   existing time-monotonicity constraint therefore becomes **physics-load-bearing**, not merely a
+   sanity constraint.
+2. A norm bound is a second-order cone, and the QP wrapper currently emits only zero and
+   nonnegative cones. Clarabel supports the second-order cone; the wrapper does not plumb it yet.
+   **Fallback that needs no wrapper change:** bound each spatial axis separately with linear
+   rows — more conservative, same sufficiency argument.
+
+### The acceleration bound is bilinear, so linearize it
+
+Clearing denominators on an acceleration bound leaves products of Beziers on both sides. Those
+are still polynomial, so control points still bound them — but the control points of a product
+are **bilinear** in ours, so the constraint is not convex. That is fine: there is already an SCP
+loop. Linearize the acceleration bound each iteration exactly as the keep-out rows are
+linearized, and let the trust region keep it valid. No new machinery.
+
+### Rename the objective, do not re-derive it
+
+Since no quadratic acceleration energy exists, stop trying to build one. The current term is a
+**smoothness regularizer on the control polygon in the parameter domain**. Call it that, and put
+the physics in hard constraints where it belongs. MADER does exactly this — parameter-domain jerk
+in the cost, dynamic limits as separate constraints.
+
+**The term is blind to timing — state it this sharply, because the softer wording invites the
+wrong reading.** The energy objective loops over the spatial coordinates only and never writes
+into the time column, so its value is a function of the spatial control points *alone*. Hold every
+spatial control point fixed and move the time coordinates however you like — wait nine seconds
+then dash across in one, or cruise evenly for ten — and the objective returns the **same number**.
+It cannot tell them apart. Minimizing it therefore improves nothing about physical velocity or
+acceleration, which are entirely statements about timing. The physics is bounded by the slant
+limit and the linearized acceleration cap, never by the cost.
+
+*This is checkable, and it is checked:* build two control-point sets with equal spatial
+coordinates and different time coordinates; the objective must score them identically.
+
+### Arrival time is linear, so the subproblem stays a QP
+
+A Bezier passes through its last control point, so the arrival time **is** the time coordinate of
+that control point. A time penalty is therefore a linear cost on a single variable. Quadratic
+smoothness plus linear time penalty keeps the subproblem a QP; nothing about the solver
+architecture changes.
+
+> **Trap, recorded so it is recognised rather than rediscovered.** Add the time penalty *without*
+> the speed cap and the arrival time collapses to the only floor that exists — the minimum time
+> separation times the number of control-point gaps, roughly 1.0 s at current settings —
+> regardless of scenario. A run reporting that has produced an artifact, not a result. This is why
+> the two must land together.
+
+### Linearization handles a non-convex free side, never a non-convex forbidden set
+
+Linearize, one supporting half-space per segment, trust region to keep it valid — that is the
+method, and it is what makes the formulation decomposition-free. Going left and going right being
+different plans is handled by side commitment. But if the *forbidden region itself* is non-convex
+there is no supporting half-space at all: no single plane holds the whole region on one side, the
+plane certifies nothing, and a segment's hull can straddle it. The keep-out tube is a capsule,
+hence convex, which is the only reason one plane per segment certifies anything. This is the
+constraint that gates the occlusion work below.
+
+## Occluder geometry
+
+The paper-facing choices — which occluder, where the station sits, what the figure shows — are in
+§"The demo scenario and its figure". This section is the geometry, which outlives any one paper.
+
+**A curved obstacle path needs no new geometry.** A capsule around a *curved* centreline is not
+convex and would break the certificate. Instead represent curving motion as a **chain of straight
+tubes on adjacent time windows** — one convex capsule per piece, caps overlapping at the joints so
+the union covers the swept region conservatively. The tube builder already clips each tube against
+its start and end time, so this works with today's code; the piece count is a reported
+approximation parameter. The shadow of such an occluder is then a chain of per-piece shadows
+rather than one twisting object over the whole horizon — the same decomposition idea applied
+twice.
+
+**What decides occlusion difficulty is whether the occluder moves, not which side you want.** The
+problem first presents itself as *stay hidden* against *stay visible*, with hidden looking far
+cheaper. That axis is a decoy: the two differ only in which side of the shadow the curve lives on.
+
+- **Static observer, static occluder.** The hidden region is the same convex set at every instant,
+  so in space-time it is a convex prism. Trivially convex, either side, no lemma needed.
+- **Moving occluder.** The shadow's apex stays at the observer while the body slides, so the cone
+  rotates and its width changes, neither of them linearly in time. The space-time shadow twists.
+
+**Open idea, unverified: clip the tube around the contact point, not around the segment.** The
+clipping question is *where to centre the window*, and the obvious answer — a ball around the
+segment's control-point hull — is probably the wrong one. What matters is not the segment's whole
+neighbourhood but the place where the segment threatens to touch the tube. So centre the clip on
+the **closest point of the keep-out region** — the point on the tube's centreline nearest the
+segment — and take a window along the centreline parameter either side of it. Threading a needle
+through an armpit: what governs the pass is the geometry right at the pinch, not a sphere drawn
+around the whole thread. Two reasons it looks right — the local straight approximation is tightest
+exactly where the constraint is active, so the supporting plane sits tangent at the point that
+actually binds; and the window becomes one-dimensional, an interval in the centreline parameter,
+instead of a spatial ball. The tube builder already computes that closest point, so the
+information needed to centre the window is present today. **Not settled:** how wide the interval
+must be for the drop to stay sound, and whether the same interval serves the shadow region.
+
 ## Waiting: shown, but not the differentiator
 
 Decided 2026-08-19. The paper **does** state that the method produces waiting — it is true of the
@@ -83,8 +292,8 @@ So: claim waiting as a capability, claim decomposition-free as the contribution.
 ## The demo scenario and its figure
 
 Decided 2026-08-19, in stages. The tube-chain geometry behind it is derived in
-[`doc/notes/005_formulation_freeze.md`](doc/notes/005_formulation_freeze.md) Part 3 — that note
-carries the math; this section carries every paper-facing choice.
+§"Occluder geometry" above — that section carries the math; this one carries every paper-facing
+choice.
 
 **Occlusion goes into paper 1, with a moving occluder on a non-straight path.** The
 static-occluder alternative was considered and rejected: a static shadow extruded along time is a
@@ -135,11 +344,18 @@ and the proof are different panels:
   zero, the constrained run stays above it. This panel is dimension-free and is the part a
   reviewer actually checks.
 
-**Gate before any code** (solver item B12, the occlusion constraint builder): run the numerical
-convexity check on the space-time shadow set, per tube piece. The shadow of a convex body from a
-point observer is convex at a single instant, but the observer-to-occluder distance changes with
-time, so the cone's half-angle varies nonlinearly along the time axis. If the per-piece shadow is
-not convex, §3.2's outer approximation becomes mandatory rather than optional.
+**The gate has run — the result, measured 2026-08-19.** The space-time shadow of a moving
+occluder is **not convex**, and the mechanism is not the one this section originally predicted.
+The half-angle change from varying observer distance is the *minor* contributor; the dominant one
+is the **cone rotating** as the occluder crosses the sight line — purely tangential motion, where
+the distance barely changes, violates convexity an order of magnitude worse than radial motion.
+The stationary control case comes out exactly convex, so the check is one that can fail. Per-piece
+violation falls roughly as the square of the piece's time window; below segment counts of about 16
+the convex hull of a piece's shadow overshoots the true shadow by a fraction of the occluder
+radius that cannot be ignored. **Consequence: §3.2's conservative outer approximation is
+mandatory, not optional, at the segment counts the scenarios actually use.** When quoting this,
+quote the violation magnitude and the window length — the failure *fraction* depends on the
+sampling box and is a property of the measure, not the geometry.
 
 ## The question for the PI
 

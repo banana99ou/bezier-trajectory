@@ -3,11 +3,12 @@
 __pycache__
 *.code-workspace
 .git_corrupt_*
-ref/*
+doc/refs/papers/*
 cache
 doc/20250902_보안성검토(KSAS정현용_Pcd)
 artifacts
 target/
-.cursor/
+.cursor
 .specstory
 .vscode/settings.json
+figures/debug/
