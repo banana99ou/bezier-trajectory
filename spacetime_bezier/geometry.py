@@ -111,6 +111,70 @@ def compute_min_clearance(P, obstacles: list[dict], dim: int, n_eval: int = 1500
     return float(worst)
 
 
+def compute_los_margin(P, station, obstacles: list[dict], dim: int, n_eval: int = 1500):
+    """Line-of-sight margin along the curve, sampled against the TRUE geometry.
+
+    This is the independent leg of the pair. It does **not** call the Rust
+    occlusion builder, does not know what a shadow plane is, and never sees the
+    convex outer approximation the solver optimized against. It samples the
+    returned curve, reconstructs each obstacle's own position at the sample's own
+    time, and measures the sight segment directly. If it and the solver's
+    certificate ever disagree, one of them is wrong and the disagreement is the
+    finding -- which is the only reason to have two.
+
+    At each sample the margin is
+
+        distance( segment[station, vehicle position], obstacle centre at t )  -  r
+
+    which is positive exactly when the sight line clears the body, because a
+    sphere blocks the segment precisely when the segment passes within `r` of its
+    centre. The reported margin is the minimum over the obstacles active at that
+    time; an inactive obstacle blocks nothing, and a sample where nothing is
+    active reports ``+inf``.
+
+    Returns ``(t_values, margins)``, both shaped ``(n_eval,)``. Times come back
+    alongside because the margin-versus-time panel is the figure that proves the
+    claim, and a margin array with no time axis cannot be plotted against one.
+    """
+    pts = bezier_curve(np.asarray(P, dtype=float), num_pts=int(n_eval))
+    spatial_dim = dim - 1
+    t_values = pts[:, -1]
+    positions = pts[:, :spatial_dim]
+    s = np.asarray(station, dtype=float).reshape(-1)
+    if s.shape[0] != spatial_dim:
+        raise ValueError(f"Station must have {spatial_dim} spatial coordinates, got {s.shape[0]}")
+
+    margins = np.full(t_values.shape, np.inf, dtype=float)
+    if not obstacles:
+        return t_values, margins
+
+    seg = positions - s[None, :]              # station -> vehicle, per sample
+    seg_sq = np.einsum("ij,ij->i", seg, seg)
+    safe_sq = np.where(seg_sq > 1e-24, seg_sq, 1.0)
+
+    for obs in obstacles:
+        pos0 = np.asarray(obs["pos0"], dtype=float)
+        vel = np.asarray(obs["vel"], dtype=float)
+        radius = float(obs["r"])
+        t0 = float(obs.get("t_start", -np.inf))
+        t1 = float(obs.get("t_end", np.inf))
+        active = (t_values >= t0) & (t_values <= t1)
+        if not active.any():
+            continue
+
+        centers = pos0[None, :] + vel[None, :] * t_values[:, None]
+        # Foot of the perpendicular from the obstacle centre onto the sight
+        # SEGMENT -- clamped, because the body only blocks what lies between the
+        # station and the vehicle, not what lies behind either of them.
+        tau = np.einsum("ij,ij->i", centers - s[None, :], seg) / safe_sq
+        tau = np.clip(np.where(seg_sq > 1e-24, tau, 0.0), 0.0, 1.0)
+        foot = s[None, :] + tau[:, None] * seg
+        dist = np.linalg.norm(foot - centers, axis=1) - radius
+        margins = np.where(active, np.minimum(margins, dist), margins)
+
+    return t_values, margins
+
+
 def bezier_obstacle_from_moving(obstacle: dict, T: float) -> dict:
     """Convert a legacy ``{pos0, vel, r, [t_start], [t_end]}`` obstacle into the
     wire-format BezierObstacle shape used by the sandbox: two control points in
