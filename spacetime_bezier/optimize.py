@@ -216,6 +216,50 @@ def check_time_penalty_is_capped(v_max, time_weight) -> None:
         )
 
 
+class DegenerateFreeArrivalError(ValueError):
+    """The arrival time was freed and then left out of the objective.
+
+    The smoothness regularizer is blind to the time coordinate -- measured, not
+    assumed: the Rust cost oracle returns bit-identical values for a cruise and a
+    wait-then-dash with the same spatial control points. With ``time_weight=0``
+    the linear term is zero as well, so with ``free_arrival_time=True`` the
+    arrival time appears in NO term of the objective. It is a free variable of a
+    function that does not depend on it.
+
+    What comes back is therefore whichever point on the flat optimal face the
+    interior-point solver happened to centre on. Measured on the obstacle-free
+    problem, `converged=1`, `stop_reason=stationary`, `cost` ~1e-12 at every row:
+
+        trust radius   0.10   0.25   0.50   1.00   2.00
+        arrival       10.08  10.26  10.52  11.04  12.24
+
+    A 2.2 s spread driven by a knob that is not part of the problem, reported as
+    a converged measurement. A speed cap does not repair it: the cap bounds the
+    arrival from below and the objective is still flat above that bound.
+
+    Pass a positive ``time_weight`` to make the arrival mean something, or leave
+    ``free_arrival_time=False`` (the default) to pin it.
+    """
+
+
+def check_free_arrival_is_costed(free_arrival_time, time_weight) -> None:
+    """Refuse a freed arrival time that nothing in the objective can price.
+
+    Same reasoning as ``check_time_penalty_is_capped`` and the same remedy: raise
+    rather than warn, because the returned number is indistinguishable from a
+    real one once it reaches a table.
+    """
+    if bool(free_arrival_time) and float(time_weight) == 0.0:
+        raise DegenerateFreeArrivalError(
+            "free_arrival_time=True with time_weight=0 leaves the arrival time "
+            "in no term of the objective, so the reported value is an "
+            "interior-point tie-break on a flat optimal face -- measured to "
+            "swing 10.08 -> 12.24 with the trust radius alone while reporting "
+            "converged and stationary. Pass time_weight > 0 (with a speed cap), "
+            "or leave free_arrival_time=False."
+        )
+
+
 # Mirrors `stop_reason` in rust_optimizer/core/src/spacetime_optimizer.rs.
 # Only `merit_streak` and `stationary` are success claims; the rest mean the loop
 # gave up, and the labels say so rather than leaving it to the reader.
@@ -255,6 +299,7 @@ def _optimize_spacetime_rust(
         raise RuntimeError("Rust space-time optimizer is not available in bezier_opt.")
 
     check_time_penalty_is_capped(v_max, time_weight)
+    check_free_arrival_is_costed(free_arrival_time, time_weight)
 
     P_init = np.asarray(P_init, dtype=float)
     n_cp, dim = P_init.shape
