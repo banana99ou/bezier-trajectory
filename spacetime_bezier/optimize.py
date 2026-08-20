@@ -53,6 +53,76 @@ except ImportError:  # pragma: no cover - exercised when the native extension is
     _bezier_opt_rs = None
 
 
+# ---------------------------------------------------------------------------
+# Feasibility gate (item B7)
+#
+# "A run with total_slack > 0 cannot produce a figure." The four conditions are
+# independent and none may stand in for another:
+#
+#   converged     -- the loop stopped for a principled reason, not the cap.
+#   certificate   -- the control-point hull satisfies the half-spaces it
+#                    generates, rebuilt at the RETURNED iterate. This is the
+#                    property the paper claims; clearance is not.
+#   clearance     -- the sampled curve misses the TRUE obstacle trajectories.
+#                    Re-verified in Python against the obstacles themselves, not
+#                    against the hulls the solver used, which is the condition
+#                    PAPER_1 sec. 6 requires because an adaptively-built hull is
+#                    valid only inside the time span it was built for.
+#   total_slack   -- the elastic relaxation bought nothing. Every subproblem is
+#                    solved elastically, so a converged, certified, clearing run
+#                    can still have been standing on slack; this is the condition
+#                    that catches it.
+#
+# NaN fails every comparison, so a run that never accepted a step (slack unknown)
+# is not figure-grade. That is the intended answer for "no evidence".
+# ---------------------------------------------------------------------------
+
+FIGURE_GRADE_CERTIFICATE_TOL = 1e-6
+
+# Measured 2026-08-20, not chosen. Clarabel is an interior-point method, so the
+# slack variables approach zero from above and never reach it, and `total_slack`
+# is a SUM over rows -- 108 rows on `original`, 4400 on `wall` N10_seg16 -- so
+# the residue also grows with problem size. At the recorded configurations:
+#
+#     wall   N10_seg16   2.4e-14        original N8_seg4   1.3e-10
+#     wall3d N8_seg2     3.8e-11        diverse  N8_seg4   1.4e-09
+#
+# All four are converged and carry a hull certificate of 0.0 to 2.2e-10 at the
+# returned iterate, so none of them is standing on relaxation; the numbers are
+# convergence noise. A threshold at 1e-10 would reject `original` and `diverse`
+# -- the two runs the gate exists to pass -- so it would be measuring the solver
+# and not the trajectory.
+#
+# 1e-8 sits two orders above the worst observed residue and six or more below any
+# relaxation that could hide a violation: a genuine one is of the order of the
+# clearance itself, 0.01 to 1. Anything in between separates them, and the
+# guarantee is carried by the certificate above, which is evaluated against the
+# EXACT rows rebuilt at the returned iterate.
+FIGURE_GRADE_SLACK_TOL = 1e-8
+
+
+def figure_grade_failures(row: dict) -> list[str]:
+    """Every reason ``row`` is not figure-grade. Empty list means it is."""
+    reasons = []
+    if not bool(row.get("converged", False)):
+        reasons.append(f"not converged ({row.get('stop_label', 'unknown')})")
+    certificate = float(row.get("certificate_violation", float("nan")))
+    if not certificate <= FIGURE_GRADE_CERTIFICATE_TOL:
+        reasons.append(f"hull certificate violated by {certificate:.3e}")
+    clearance = float(row.get("min_clearance", float("nan")))
+    if not clearance > 0.0:
+        reasons.append(f"penetrates by {-clearance:.3e}")
+    slack = float(row.get("total_slack", float("nan")))
+    if not slack <= FIGURE_GRADE_SLACK_TOL:
+        reasons.append(f"elastic slack {slack:.3e} > {FIGURE_GRADE_SLACK_TOL:g}")
+    return reasons
+
+
+def is_figure_grade(row: dict) -> bool:
+    """True only when every gate condition holds. See ``figure_grade_failures``."""
+    return not figure_grade_failures(row)
+
+
 class UncappedTimePenaltyError(ValueError):
     """A time penalty was requested with no speed cap to hold it back."""
 
@@ -401,6 +471,7 @@ def optimize_scenario(
         # can pass the first while failing the second -- so both are recorded and
         # neither is allowed to stand in for the other.
         certificate = float(opt_info.get("koz_violation_reference", float("nan")))
+        total_slack = float(opt_info.get("total_koz_slack_returned", float("nan")))
         results[key] = {
             "N": int(N),
             "n_seg": int(n_seg),
@@ -414,12 +485,22 @@ def optimize_scenario(
             "iterations": int(opt_info.get("iterations", -1)),
             "certificate_violation": certificate,
             "certified": bool(certificate <= 1e-6),
+            "total_slack": total_slack,
             "accept_count": int(opt_info.get("accept_count", 0)),
             "reject_count": int(opt_info.get("reject_count", 0)),
             "returned_best_iterate": bool(opt_info.get("returned_best_iterate", 0.0)),
             "trust_radius": float(scp_trust_radius),
             "elastic_weight": float(used_weight),
+            "speed_cap_violation": float(opt_info.get("speed_cap_violation", 0.0)),
+            "arrival_time": float(opt_info.get("arrival_time", float("nan"))),
         }
+        results[key]["figure_grade"] = is_figure_grade(results[key])
+        results[key]["figure_grade_reasons"] = figure_grade_failures(results[key])
+        if verbose and not results[key]["figure_grade"]:
+            print(
+                "  NOT FIGURE-GRADE: "
+                + "; ".join(results[key]["figure_grade_reasons"])
+            )
 
     def _rank(item):
         _, v = item
