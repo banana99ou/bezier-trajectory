@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Spacetime Sanity Viewer</title>
+<script src="/static/plotly.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1c2330; --muted: #66707f;
+    --line: #d9dee5; --good: #1a7f37; --bad: #c0332b; --accent: #1f6feb;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  #banner { display: none; background: var(--bad); color: #fff; padding: 10px 16px;
+            font-weight: 600; white-space: pre-line; }
+  #banner.show { display: block; }
+  #provenance { background: #1c2330; color: #c7cdd6; padding: 6px 16px; font-size: 12px;
+                display: flex; gap: 18px; flex-wrap: wrap; }
+  #provenance b { color: #fff; font-weight: 600; }
+  #provenance .warn { color: #ffb84d; font-weight: 700; }
+  main { display: flex; gap: 12px; padding: 12px; align-items: flex-start; }
+  aside { width: 250px; flex: none; background: var(--panel); border: 1px solid var(--line);
+          border-radius: 8px; padding: 12px; }
+  aside label { display: block; margin: 10px 0 3px; color: var(--muted); font-size: 12px; }
+  aside select, aside input { width: 100%; padding: 5px 6px; border: 1px solid var(--line);
+          border-radius: 5px; font: inherit; background: #fff; color: var(--ink); }
+  aside .row { display: flex; gap: 8px; }
+  aside .row > div { flex: 1; }
+  button { margin-top: 12px; width: 100%; padding: 8px; border: 0; border-radius: 6px;
+           background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { background: #9db8e8; cursor: wait; }
+  #status { margin-top: 8px; font-size: 12px; color: var(--muted); min-height: 17px; }
+  .toggles { margin-top: 10px; font-size: 13px; }
+  .toggles label { display: flex; gap: 6px; align-items: center; margin: 4px 0; color: var(--ink); }
+  section { flex: 1; min-width: 0; }
+  #view3d { height: 52vh; min-height: 340px; background: var(--panel);
+            border: 1px solid var(--line); border-radius: 8px; }
+  #sliceRow { display: flex; gap: 12px; margin-top: 12px; align-items: stretch; }
+  #view2d { flex: 1; min-width: 0; height: 340px; background: var(--panel);
+            border: 1px solid var(--line); border-radius: 8px; }
+  #verdict { width: 330px; flex: none; background: var(--panel); border: 1px solid var(--line);
+             border-radius: 8px; padding: 12px; font-size: 13px; }
+  .chip { display: inline-block; padding: 2px 9px; border-radius: 999px; color: #fff;
+          font-size: 12px; font-weight: 700; margin: 0 4px 6px 0; }
+  .chip.good { background: var(--good); } .chip.bad { background: var(--bad); }
+  #verdict table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  #verdict td { padding: 2px 0; border-bottom: 1px solid #eef1f4; }
+  #verdict td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  #crosscheck { margin-top: 8px; padding: 6px 8px; border-radius: 6px; font-weight: 600; }
+  #crosscheck.good { background: #e6f4ea; color: var(--good); }
+  #crosscheck.bad { background: #fbe9e7; color: var(--bad); }
+  #timeRow { display: flex; align-items: center; gap: 10px; margin-top: 10px;
+             background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+             padding: 8px 14px; }
+  #timeRow input[type=range] { flex: 1; }
+  #timeVal { width: 90px; text-align: right; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div id="banner"></div>
+<div id="provenance">connecting&hellip;</div>
+<main>
+  <aside>
+    <label>Scenario</label>
+    <select id="scenarioSel"></select>
+    <label>Configuration (degree / segments)</label>
+    <select id="configSel"></select>
+    <div class="row">
+      <div><label>Degree N</label><input id="inN" type="number" min="1" step="1"></div>
+      <div><label>Segments</label><input id="inSeg" type="number" min="1" step="1"></div>
+    </div>
+    <label>Elastic weight (exact penalty)</label>
+    <input id="inWeight" type="number" min="0" step="any">
+    <div class="row">
+      <div><label>Max iterations</label><input id="inMaxIter" type="number" min="1" step="1"></div>
+      <div><label>Tolerance</label><input id="inTol" type="number" min="0" step="any"></div>
+    </div>
+    <button id="btnSolve">Solve</button>
+    <div id="status"></div>
+    <div class="toggles">
+      <label><input id="tgInit" type="checkbox"> initial guess</label>
+      <label><input id="tgPoly" type="checkbox"> control polygon</label>
+    </div>
+  </aside>
+  <section>
+    <div id="view3d"></div>
+    <div id="sliceRow">
+      <div id="view2d"></div>
+      <div id="verdict">no solve yet</div>
+    </div>
+    <div id="timeRow">
+      <span>t</span>
+      <input id="tSlider" type="range" min="0" max="10" step="0.02" value="0">
+      <span id="timeVal">0.00</span>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const N_XCHECK = 3000;          // matches the server's compute_min_clearance n_eval
+const XCHECK_TOL = 1e-6;
+
+let CATALOG = null;
+let RESP = null;                // last /api/solve response — the only thing drawn
+let SAMPLES = null;             // N_XCHECK points [[x,y,t]...] of RESP.control_points
+let XCHECK = null;              // {client, server, ok}
+let HEALTH = null;
+let bounds2d = null;
+
+/* ---------- independent curve math (the deliberate duplication) ---------- */
+
+function bezierPoint(cps, tau) {
+  const n = cps.length;
+  const buf = new Array(n);
+  for (let i = 0; i < n; i++) buf[i] = [cps[i][0], cps[i][1], cps[i][2]];
+  for (let r = 1; r < n; r++)
+    for (let i = 0; i < n - r; i++)
+      for (let d = 0; d < 3; d++)
+        buf[i][d] = (1 - tau) * buf[i][d] + tau * buf[i + 1][d];
+  return buf[0];
+}
+
+function sampleCurve(cps, m) {
+  const out = new Array(m);
+  for (let i = 0; i < m; i++) out[i] = bezierPoint(cps, i / (m - 1));
+  return out;
+}
+
+// Same semantics as geometry.compute_min_clearance: a sample counts against an
+// obstacle only when t_start <= t <= t_end (missing bounds are infinite).
+function minClearance(pts, obstacles) {
+  let worst = Infinity;
+  for (const ob of obstacles) {
+    const t0 = (ob.t_start ?? -Infinity), t1 = (ob.t_end ?? Infinity);
+    for (const p of pts) {
+      const t = p[2];
+      if (t < t0 || t > t1) continue;
+      const dx = p[0] - (ob.pos0[0] + ob.vel[0] * t);
+      const dy = p[1] - (ob.pos0[1] + ob.vel[1] * t);
+      const d = Math.hypot(dx, dy) - ob.r;
+      if (d < worst) worst = d;
+    }
+  }
+  return worst;
+}
+
+// Curve point at time t (time is monotone along the curve by construction).
+function pointAtTime(t) {
+  if (!SAMPLES) return null;
+  let lo = 0, hi = SAMPLES.length - 1;
+  if (t <= SAMPLES[0][2]) return SAMPLES[0];
+  if (t >= SAMPLES[hi][2]) return SAMPLES[hi];
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (SAMPLES[mid][2] <= t) lo = mid; else hi = mid;
+  }
+  const a = SAMPLES[lo], b = SAMPLES[hi];
+  const w = (t - a[2]) / Math.max(b[2] - a[2], 1e-12);
+  return [a[0] + w * (b[0] - a[0]), a[1] + w * (b[1] - a[1]), t];
+}
+
+/* ------------------------------ 3D scene ------------------------------ */
+
+function tubeTrace(ob, tLo, tHi) {
+  const nT = 24, nC = 24;
+  const xs = [], ys = [], zs = [], I = [], J = [], K = [];
+  for (let k = 0; k < nT; k++) {
+    const t = tLo + (tHi - tLo) * k / (nT - 1);
+    const cx = ob.pos0[0] + ob.vel[0] * t, cy = ob.pos0[1] + ob.vel[1] * t;
+    for (let c = 0; c < nC; c++) {
+      const a = 2 * Math.PI * c / nC;
+      xs.push(cx + ob.r * Math.cos(a)); ys.push(cy + ob.r * Math.sin(a)); zs.push(t);
+    }
+  }
+  for (let k = 0; k < nT - 1; k++)
+    for (let c = 0; c < nC; c++) {
+      const a = k * nC + c, b = k * nC + (c + 1) % nC;
+      const d = (k + 1) * nC + c, e = (k + 1) * nC + (c + 1) % nC;
+      I.push(a, b); J.push(b, e); K.push(d, d);
+    }
+  for (const [ring, tCap] of [[0, tLo], [nT - 1, tHi]]) {
+    const center = xs.length;
+    xs.push(ob.pos0[0] + ob.vel[0] * tCap); ys.push(ob.pos0[1] + ob.vel[1] * tCap); zs.push(tCap);
+    for (let c = 0; c < nC; c++) {
+      I.push(ring * nC + c); J.push(ring * nC + (c + 1) % nC); K.push(center);
+    }
+  }
+  return { type: "mesh3d", x: xs, y: ys, z: zs, i: I, j: J, k: K,
+           color: ob.color || "#8899aa", opacity: 0.3, flatshading: true,
+           name: ob.name || "obstacle", hoverinfo: "name", showlegend: false };
+}
+
+function render3D() {
+  if (!RESP) return;
+  const tEnd = Math.max(RESP.T, SAMPLES[SAMPLES.length - 1][2]);
+  const traces = [];
+  for (const ob of RESP.obstacles) {
+    const lo = Math.max(0, ob.t_start ?? 0), hi = Math.min(tEnd, ob.t_end ?? tEnd);
+    if (hi > lo) traces.push(tubeTrace(ob, lo, hi));
+  }
+  if ($("tgInit").checked) {
+    const init = sampleCurve(RESP.init_control_points, 120);
+    traces.push({ type: "scatter3d", mode: "lines", name: "initial guess",
+      x: init.map(p => p[0]), y: init.map(p => p[1]), z: init.map(p => p[2]),
+      line: { color: "#9aa4b0", width: 3, dash: "dot" }, hoverinfo: "name" });
+  }
+  if ($("tgPoly").checked) {
+    const cp = RESP.control_points;
+    traces.push({ type: "scatter3d", mode: "lines+markers", name: "control polygon",
+      x: cp.map(p => p[0]), y: cp.map(p => p[1]), z: cp.map(p => p[2]),
+      line: { color: "#d29922", width: 2 }, marker: { size: 3, color: "#d29922" } });
+  }
+  const step = Math.max(1, Math.floor(SAMPLES.length / 400));
+  const cv = SAMPLES.filter((_, i) => i % step === 0);
+  traces.push({ type: "scatter3d", mode: "lines", name: "trajectory",
+    x: cv.map(p => p[0]), y: cv.map(p => p[1]), z: cv.map(p => p[2]),
+    line: { color: "#1f6feb", width: 6 }, hoverinfo: "name" });
+  traces.push({ type: "scatter3d", mode: "markers", name: "endpoints",
+    x: [RESP.start[0], RESP.end[0]], y: [RESP.start[1], RESP.end[1]],
+    z: [RESP.start[2], RESP.end[2]],
+    marker: { size: 5, color: ["#1a7f37", "#c0332b"] }, hoverinfo: "name" });
+  const pt = pointAtTime(parseFloat($("tSlider").value));
+  traces.push({ type: "scatter3d", mode: "markers", name: "now",
+    x: [pt[0]], y: [pt[1]], z: [pt[2]],
+    marker: { size: 6, color: "#111", symbol: "diamond" }, hoverinfo: "name" });
+
+  Plotly.react($("view3d"), traces, {
+    uirevision: "keep",
+    margin: { l: 0, r: 0, t: 0, b: 0 },
+    showlegend: false,
+    scene: { uirevision: "keep", aspectmode: "data",
+             xaxis: { title: "x" }, yaxis: { title: "y" }, zaxis: { title: "t" } },
+  }, { displaylogo: false, responsive: true });
+}
+
+/* ------------------------------ 2D slice ------------------------------ */
+
+function computeBounds2d() {
+  let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+  const eat = (x, y, r) => {
+    xMin = Math.min(xMin, x - r); xMax = Math.max(xMax, x + r);
+    yMin = Math.min(yMin, y - r); yMax = Math.max(yMax, y + r);
+  };
+  for (const p of SAMPLES) eat(p[0], p[1], 0);
+  const tEnd = Math.max(RESP.T, SAMPLES[SAMPLES.length - 1][2]);
+  for (const ob of RESP.obstacles) {
+    const lo = Math.max(0, ob.t_start ?? 0), hi = Math.min(tEnd, ob.t_end ?? tEnd);
+    for (const t of [lo, hi]) eat(ob.pos0[0] + ob.vel[0] * t, ob.pos0[1] + ob.vel[1] * t, ob.r);
+  }
+  const pad = 0.06 * Math.max(xMax - xMin, yMax - yMin, 1);
+  bounds2d = { x: [xMin - pad, xMax + pad], y: [yMin - pad, yMax + pad] };
+}
+
+function renderSlice(t) {
+  if (!RESP) return;
+  $("timeVal").textContent = t.toFixed(2) + " / " + RESP.T.toFixed(1);
+  const shapes = [];
+  for (const ob of RESP.obstacles) {
+    const t0 = (ob.t_start ?? -Infinity), t1 = (ob.t_end ?? Infinity);
+    if (t < t0 || t > t1) continue;   // inactive obstacles are absent, not ghosted
+    const cx = ob.pos0[0] + ob.vel[0] * t, cy = ob.pos0[1] + ob.vel[1] * t;
+    shapes.push({ type: "circle", xref: "x", yref: "y",
+      x0: cx - ob.r, x1: cx + ob.r, y0: cy - ob.r, y1: cy + ob.r,
+      line: { color: ob.color || "#8899aa", width: 1.5 },
+      fillcolor: (ob.color || "#8899aa") + "55" });
+  }
+  const step = Math.max(1, Math.floor(SAMPLES.length / 400));
+  const path = SAMPLES.filter((_, i) => i % step === 0);
+  const trail = path.filter(p => p[2] <= t);
+  const pt = pointAtTime(t);
+  const traces = [
+    { type: "scatter", mode: "lines", name: "full path",
+      x: path.map(p => p[0]), y: path.map(p => p[1]),
+      line: { color: "#c3d4f0", width: 2 }, hoverinfo: "skip" },
+    { type: "scatter", mode: "lines", name: "flown",
+      x: trail.map(p => p[0]), y: trail.map(p => p[1]),
+      line: { color: "#1f6feb", width: 3 }, hoverinfo: "skip" },
+    { type: "scatter", mode: "markers", name: "vehicle",
+      x: [pt[0]], y: [pt[1]], marker: { size: 10, color: "#111" }, hoverinfo: "x+y" },
+  ];
+  Plotly.react($("view2d"), traces, {
+    uirevision: "keep", margin: { l: 35, r: 10, t: 10, b: 30 }, showlegend: false,
+    xaxis: { range: bounds2d.x, zeroline: false },
+    yaxis: { range: bounds2d.y, scaleanchor: "x", scaleratio: 1, zeroline: false },
+    shapes,
+  }, { displaylogo: false, responsive: true });
+}
+
+/* -------------------------- verdict + trust UI -------------------------- */
+
+function fmt(v, digits = 4) {
+  if (v === null || v === undefined || Number.isNaN(v)) return "not reported";
+  return (Math.abs(v) < 1e-3 && v !== 0) ? v.toExponential(2) : v.toFixed(digits);
+}
+
+function renderVerdict() {
+  const v = RESP.verdict, i = RESP.info;
+  const chip = (ok, yes, no) =>
+    `<span class="chip ${ok ? "good" : "bad"}">${ok ? yes : no}</span>`;
+  const rows = [
+    ["min clearance (sampled)", fmt(v.min_clearance)],
+    ["certificate violation", fmt(v.certificate_violation)],
+    ["stop reason", v.stop_label],
+    ["iterations", v.iterations],
+    ["elastic weight", v.elastic_weight],
+    ["accept / reject steps", `${i.accept_count ?? "?"} / ${i.reject_count ?? "?"}`],
+    ["returned best-feasible fallback", v.returned_best_iterate ? "YES" : "no"],
+  ];
+  const xc = XCHECK.client === Infinity ? "inf" : fmt(XCHECK.client, 6);
+  $("verdict").innerHTML =
+    chip(v.feasible, "feasible", "PENETRATES") +
+    chip(v.converged, "converged", "NOT CONVERGED") +
+    chip(v.certified, "certified", "NO CERTIFICATE") +
+    "<table>" + rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("") + "</table>" +
+    `<div id="crosscheck" class="${XCHECK.ok ? "good" : "bad"}">` +
+    `cross-check: client ${xc} vs server ${fmt(XCHECK.server, 6)} — ` +
+    (XCHECK.ok ? "agree" : "DISAGREE: do not trust this picture") + `</div>`;
+}
+
+function renderBanner() {
+  const problems = [];
+  if (HEALTH && HEALTH.extension_build_time === null)
+    problems.push("This server has no Rust extension loaded — solves cannot run.");
+  if (RESP) {
+    const v = RESP.verdict;
+    if (!v.feasible)
+      problems.push(`SAMPLED CURVE PENETRATES AN OBSTACLE (clearance ${fmt(v.min_clearance)}). Not figure-grade.`);
+    if (!v.certified)
+      problems.push(`HULL CERTIFICATE VIOLATED (${fmt(v.certificate_violation)}). The convex-hull guarantee does not hold for this run.`);
+    if (!XCHECK.ok)
+      problems.push("CLIENT AND SERVER CLEARANCE DISAGREE — the picture may not show the returned solution.");
+  }
+  $("banner").textContent = problems.join("\n");
+  $("banner").className = problems.length ? "show" : "";
+}
+
+function fmtBuildTime(epoch) {
+  if (epoch === null || epoch === undefined) return "NONE";
+  const d = new Date(epoch * 1000);
+  return d.toLocaleDateString() + " " + d.toLocaleTimeString();
+}
+
+function renderProvenance() {
+  const parts = [];
+  if (HEALTH) {
+    parts.push(`<span>commit <b>${HEALTH.git_commit ?? "unknown"}</b>${HEALTH.git_dirty ? ' <span class="warn">+dirty</span>' : ""}</span>`);
+    parts.push(HEALTH.extension_build_time === null
+      ? `<span class="warn">rust extension: NOT LOADED</span>`
+      : `<span>rust extension built <b>${fmtBuildTime(HEALTH.extension_build_time)}</b></span>`);
+    parts.push(`<span>server pid ${HEALTH.pid}, up since ${HEALTH.started}</span>`);
+  }
+  if (RESP) {
+    const p = RESP.provenance;
+    parts.push(`<span>solved <b>${p.solved_at}</b> in <b>${p.solve_ms} ms</b>${p.cached ? " (cached)" : ""}</span>`);
+    if (HEALTH && p.extension_build_time !== HEALTH.extension_build_time)
+      parts.push(`<span class="warn">extension changed since this solve — re-solve</span>`);
+  }
+  $("provenance").innerHTML = parts.join("");
+}
+
+/* ------------------------------- control ------------------------------- */
+
+async function fetchJSON(url, opts) {
+  const r = await fetch(url, opts);
+  const body = await r.json();
+  if (!r.ok) throw new Error(body.error || body.traceback || `HTTP ${r.status}`);
+  return body;
+}
+
+let solveSeq = 0;
+async function solve() {
+  const seq = ++solveSeq;
+  const req = {
+    scenario: $("scenarioSel").value,
+    N: parseInt($("inN").value, 10),
+    n_seg: parseInt($("inSeg").value, 10),
+    elastic_weight: parseFloat($("inWeight").value),
+    max_iter: parseInt($("inMaxIter").value, 10),
+    tol: parseFloat($("inTol").value),
+  };
+  $("btnSolve").disabled = true;
+  $("status").textContent = `solving ${req.scenario} N${req.N}_seg${req.n_seg}…`;
+  const t0 = performance.now();
+  try {
+    const resp = await fetchJSON("/api/solve", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
+    if (seq !== solveSeq) return;         // a newer request superseded this one
+    RESP = resp;
+    SAMPLES = sampleCurve(resp.control_points, N_XCHECK);
+    const client = minClearance(SAMPLES, resp.obstacles);
+    const server = resp.verdict.min_clearance;
+    XCHECK = { client, server,
+               ok: server !== null && Math.abs(client - server) <= XCHECK_TOL };
+    computeBounds2d();
+    const tEnd = Math.max(resp.T, SAMPLES[SAMPLES.length - 1][2]);
+    $("tSlider").max = tEnd;
+    render3D();
+    renderSlice(parseFloat($("tSlider").value));
+    renderVerdict();
+    renderBanner();
+    renderProvenance();
+    $("status").textContent =
+      `done in ${((performance.now() - t0) / 1000).toFixed(2)} s` +
+      (resp.provenance.cached ? " (server cache)" : "");
+  } catch (err) {
+    if (seq === solveSeq) $("status").textContent = "solve failed: " + err.message;
+  } finally {
+    if (seq === solveSeq) $("btnSolve").disabled = false;
+  }
+}
+
+let debounceTimer = null;
+function solveSoon() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(solve, 300);
+}
+
+function applyScenarioDefaults() {
+  const sc = CATALOG[$("scenarioSel").value];
+  $("configSel").innerHTML = sc.configs
+    .map(([N, s], idx) => `<option value="${idx}">N${N} / ${s} segments</option>`).join("");
+  $("inWeight").value = sc.default_elastic_weight;
+  $("inMaxIter").value = sc.solve_defaults.max_iter;
+  $("inTol").value = sc.solve_defaults.tol;
+  applyConfig();
+}
+
+function applyConfig() {
+  const sc = CATALOG[$("scenarioSel").value];
+  const [N, s] = sc.configs[parseInt($("configSel").value, 10)];
+  $("inN").value = N;
+  $("inSeg").value = s;
+}
+
+async function init() {
+  try {
+    [HEALTH, CATALOG] = await Promise.all([
+      fetchJSON("/api/health"), fetchJSON("/api/scenarios"),
+    ]);
+  } catch (err) {
+    $("provenance").innerHTML = `<span class="warn">server unreachable: ${err.message}</span>`;
+    return;
+  }
+  renderProvenance();
+  renderBanner();
+  $("scenarioSel").innerHTML = Object.values(CATALOG)
+    .map(sc => `<option value="${sc.name}">${sc.title}</option>`).join("");
+  applyScenarioDefaults();
+
+  $("scenarioSel").addEventListener("change", () => { applyScenarioDefaults(); solveSoon(); });
+  $("configSel").addEventListener("change", () => { applyConfig(); solveSoon(); });
+  for (const id of ["inN", "inSeg", "inWeight", "inMaxIter", "inTol"])
+    $(id).addEventListener("change", solveSoon);
+  $("btnSolve").addEventListener("click", solve);
+  $("tgInit").addEventListener("change", render3D);
+  $("tgPoly").addEventListener("change", render3D);
+  $("tSlider").addEventListener("input", () => {
+    const t = parseFloat($("tSlider").value);
+    renderSlice(t);
+    render3D();
+  });
+  solve();
+}
+
+init();
+</script>
+</body>
+</html>

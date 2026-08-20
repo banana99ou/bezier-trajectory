@@ -26,7 +26,7 @@ The central claim is decomposition-free, not the space-time lift. Performance is
 The goal is not "make the solver good." It is: **make the paper's claims true of the code.** Two failure modes it exists to exclude:
 
 1. The paper claims a convex-hull guarantee the code does not implement. (Closed by the G1 and G2 fixes; it is what the certificate exists to keep closed.)
-2. A figure comes from a run where elastic slack hid a constraint violation. (**Still open** — item B7, the feasibility gate, is not built.)
+2. A figure comes from a run where elastic slack hid a constraint violation. (Closed 2026-08-20 — B7's `figure_grade` gate, and `tools/make_paper_figure.py` refuses to draw a run that fails it.)
 
 ## Formulation decisions — frozen 2026-08-19 (item A1)
 
@@ -161,11 +161,13 @@ Full quickstart — install, build, run, test — is [`README.md`](README.md) §
 two things that are guardrails rather than instructions:
 
 ```bash
-python3 -m spacetime_bezier   # THE entrypoint. There is exactly one.
+python3 -m spacetime_bezier          # the sandbox — drag obstacles, live re-solve
+python3 -m spacetime_bezier.viewer   # the sanity viewer — one solve, nothing stored
 ```
 
-- It exits 1 if the port is busy, naming the pid and warning when that process loaded the Rust
-  extension before your last build. Do not work around that by changing the port.
+- **Two ways in, never two servers.** Both bind 8767, and both exit 1 when it is held, naming the
+  pid and warning when that process loaded the Rust extension before your last build. The shared
+  port is the mutual exclusion — do not work around it by changing the port.
 - `python3 -m spacetime_bezier.io` and `.sandbox` are **not** entrypoints, as of 2026-08-18. They
   bound a second default port (8765 against 8767), which is how two sandboxes ended up live at
   once — the older four days stale on a different interpreter, answering with pre-G1/G2 geometry
@@ -184,7 +186,10 @@ The B8–B10 freeze landed and the one-pass re-measurement ran **2026-08-20** (i
 The full tree is [`README.md`](README.md) § Repo map — not repeated here. Only the entries that
 carry a warning or are easy to mistake:
 
-- `spacetime_bezier/__main__.py` -- **the** entrypoint. `io.py` and `sandbox.py` are not, as of 2026-08-18
+- `spacetime_bezier/__main__.py` -- the sandbox entrypoint. `io.py` and `sandbox.py` are not, as of 2026-08-18
+- `spacetime_bezier/viewer.py` -- the sanity viewer, the second entrypoint. Nothing stored, the solve
+  path is just the solve, and the client only draws -- verdict fields are computed server-side from the
+  solver's own numbers. Serves `static/viewer.html`; shares port 8767 so it cannot run beside the sandbox
 - `spacetime_bezier/optimize.py` -- public API, the elastic-weight ladder, `optimize_scenario`
 - `rust_optimizer/core/src/spacetime_constraints.rs` -- KOZ capsule geometry; both fixed defects lived here
 - `rust_optimizer/core/src/spacetime_optimizer.rs` -- SCP loop, ratio test, certificate at the returned iterate

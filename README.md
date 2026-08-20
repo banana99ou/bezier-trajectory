@@ -39,6 +39,9 @@ uncertain hazards, receding horizon. Do not mix their claims.
 │   ├── objective.py             initial guess; energy matrix (Rust builds the one used)
 │   ├── sandbox.py               interactive HTTP server, live re-solve on drag
 │   ├── io.py                    JSON I/O, scenario baking, viewer launcher
+│   ├── viewer.py                sanity-check viewer server — `python3 -m spacetime_bezier.viewer`;
+│   │                            binds the same 8767 as the sandbox and refuses to share it
+│   ├── static/                  viewer.html + plotly.min.js, served by viewer.py
 │   ├── rust_debug_stepper.py    steps the real Rust run via its emitted trace
 │   ├── debug_session.py         stateful session for the step-debugger UI
 │   ├── debug_trace.py           DebugFrame schema
