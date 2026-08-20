@@ -230,6 +230,55 @@ fn build_ctrl_accel_quadratic(
     (h, f, c_const)
 }
 
+/// One second-order cone block: `b - A x` must lie in the cone of dimension
+/// `cone_dim`, i.e. its first entry bounds the norm of the rest.
+///
+/// Added for the slant-limit speed cap (item B9). A norm bound is a second-order
+/// cone and cannot be written as linear rows without being made more
+/// conservative, so the cone is plumbed through rather than approximated.
+#[derive(Clone, Debug)]
+pub struct SocBlock {
+    /// `(cone_dim, n)` row-major.
+    pub a: Vec<f64>,
+    /// `(cone_dim,)`.
+    pub b: Vec<f64>,
+    pub cone_dim: usize,
+}
+
+impl SocBlock {
+    /// Slack `b - A x`. Feasible when `s[0] >= ||s[1..]||`.
+    pub fn slack(&self, x: &[f64], n: usize) -> Vec<f64> {
+        (0..self.cone_dim)
+            .map(|r| {
+                let ax: f64 = (0..n).map(|c| self.a[r * n + c] * x[c]).sum();
+                self.b[r] - ax
+            })
+            .collect()
+    }
+
+    /// How badly `x` violates this cone: `||s[1..]|| - s[0]`, clipped at zero.
+    pub fn violation(&self, x: &[f64], n: usize) -> f64 {
+        let s = self.slack(x, n);
+        let tail = s[1..].iter().map(|v| v * v).sum::<f64>().sqrt();
+        (tail - s[0]).max(0.0)
+    }
+
+    /// The same block with `extra` all-zero columns appended, for the elastic
+    /// subproblem's widened variable vector.
+    pub fn widened(&self, n: usize, extra: usize) -> SocBlock {
+        let n_ext = n + extra;
+        let mut a = vec![0.0; self.cone_dim * n_ext];
+        for r in 0..self.cone_dim {
+            a[r * n_ext..r * n_ext + n].copy_from_slice(&self.a[r * n..(r + 1) * n]);
+        }
+        SocBlock {
+            a,
+            b: self.b.clone(),
+            cone_dim: self.cone_dim,
+        }
+    }
+}
+
 /// Solve a QP: min 0.5 x^T P x + q^T x  s.t.  l <= Ax <= u
 /// using Clarabel (interior-point conic solver). Returns the solution x.
 pub(crate) fn solve_qp(
@@ -240,6 +289,25 @@ pub(crate) fn solve_qp(
     constraints_ub: &[f64], // (m,)
     n: usize,
     m: usize,
+) -> Option<Vec<f64>> {
+    solve_qp_with_socs(h, f, constraints_a, constraints_lb, constraints_ub, n, m, &[])
+}
+
+/// As `solve_qp`, plus a list of second-order cone blocks.
+///
+/// The cone blocks are appended after the zero and nonnegative blocks, which is
+/// the order Clarabel's `cones` list must match. With an empty `socs` this is
+/// byte-for-byte the previous problem, which is why `solve_qp` delegates here
+/// rather than the two diverging.
+pub(crate) fn solve_qp_with_socs(
+    h: &[f64],         // (n, n) row-major
+    f: &[f64],         // (n,)
+    constraints_a: &[f64], // (m, n) row-major
+    constraints_lb: &[f64], // (m,)
+    constraints_ub: &[f64], // (m,)
+    n: usize,
+    m: usize,
+    socs: &[SocBlock],
 ) -> Option<Vec<f64>> {
     use clarabel::algebra::CscMatrix;
     use clarabel::solver::{DefaultSettingsBuilder, DefaultSolver, IPSolver, SolverStatus};
@@ -398,6 +466,26 @@ pub(crate) fn solve_qp(
     }
     if n_ineq2 > 0 {
         cones2.push(clarabel::solver::SupportedConeT::NonnegativeConeT(n_ineq2));
+    }
+
+    // Second-order cone blocks last, matching the order of `cones2`. Each block
+    // contributes `cone_dim` rows of A and b verbatim: Clarabel's `Ax + s = b`
+    // with `s` in the cone is exactly the `b - Ax` convention SocBlock stores.
+    for block in socs {
+        for r in 0..block.cone_dim {
+            let mut sparse_row = Vec::new();
+            for col in 0..n {
+                let val = block.a[r * n + col];
+                if val.abs() > 1e-20 {
+                    sparse_row.push((col, val));
+                }
+            }
+            a_rows2.push(sparse_row);
+            b_vals2.push(block.b[r]);
+        }
+        cones2.push(clarabel::solver::SupportedConeT::SecondOrderConeT(
+            block.cone_dim,
+        ));
     }
 
     let total_rows2 = a_rows2.len();

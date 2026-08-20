@@ -53,6 +53,36 @@ except ImportError:  # pragma: no cover - exercised when the native extension is
     _bezier_opt_rs = None
 
 
+class UncappedTimePenaltyError(ValueError):
+    """A time penalty was requested with no speed cap to hold it back."""
+
+
+def check_time_penalty_is_capped(v_max, time_weight) -> None:
+    """Refuse the one configuration that can only produce an artifact.
+
+    Formulation decision 5 and PAPER_1 sec. "Arrival time is linear": a linear
+    penalty on the arrival time with **no** speed cap has nothing opposing it.
+    The smoothness regularizer is blind to timing (item B8), and the only
+    remaining floor on arrival is the time-monotonicity minimum separation, so
+    the optimum collapses to ``t_start + min_dt * (number of control-point
+    gaps)`` -- roughly 1.0 s at the shipped settings -- *for every scenario*,
+    independent of geometry. A run reporting that has measured the constraint
+    set, not the problem.
+
+    That is why item B9 and item B10 land together. Raising here is deliberate:
+    a warning is something a batch sweep discards, and the resulting numbers are
+    indistinguishable from real ones once they reach a table.
+    """
+    if float(time_weight) > 0.0 and (v_max is None or not float(v_max) > 0.0):
+        raise UncappedTimePenaltyError(
+            "time_weight > 0 with no speed cap (v_max) is an artifact generator: "
+            "nothing opposes the time penalty, so the arrival time collapses to "
+            "min_dt times the number of control-point gaps regardless of the "
+            "scenario. Pass v_max, or set time_weight=0. "
+            "(Formulation decision 5 -- items B9 and B10 land together.)"
+        )
+
+
 # Mirrors `stop_reason` in rust_optimizer/core/src/spacetime_optimizer.rs.
 # Only `merit_streak` and `stationary` are success claims; the rest mean the loop
 # gave up, and the labels say so rather than leaving it to the reader.
@@ -81,11 +111,16 @@ def _optimize_spacetime_rust(
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
     cap_bulge_ratio: float = 2.0,
+    v_max: float | None = None,
+    time_weight: float = 0.0,
+    free_arrival_time: bool = False,
     verbose: bool = True,
 ) -> tuple[np.ndarray, dict]:
     """Call the native Rust backend for the space-time optimizer."""
     if _bezier_opt_rs is None or not hasattr(_bezier_opt_rs, "optimize_spacetime_bezier"):
         raise RuntimeError("Rust space-time optimizer is not available in bezier_opt.")
+
+    check_time_penalty_is_capped(v_max, time_weight)
 
     P_init = np.asarray(P_init, dtype=float)
     n_cp, dim = P_init.shape
@@ -112,6 +147,9 @@ def _optimize_spacetime_rust(
         time_lb=time_lb,
         time_ub=time_upper,
         cap_bulge_ratio=cap_bulge_ratio,
+        v_max=v_max,
+        time_weight=float(time_weight),
+        free_arrival_time=bool(free_arrival_time),
     )
     P_opt = np.asarray(P_opt, dtype=float)
     info = dict(info)
@@ -179,6 +217,9 @@ def optimize_spacetime_from_control_points(
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
     cap_bulge_ratio: float = 2.0,
+    v_max: float | None = None,
+    time_weight: float = 0.0,
+    free_arrival_time: bool = False,
     verbose: bool = True,
 ) -> tuple[np.ndarray, dict]:
     """Optimize a space-time Bezier curve from an initial control polygon.
@@ -200,6 +241,9 @@ def optimize_spacetime_from_control_points(
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
         cap_bulge_ratio=cap_bulge_ratio,
+        v_max=v_max,
+        time_weight=time_weight,
+        free_arrival_time=free_arrival_time,
         verbose=verbose,
     )
 
@@ -222,6 +266,9 @@ def optimize_spacetime(
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
     cap_bulge_ratio: float = 2.0,
+    v_max: float | None = None,
+    time_weight: float = 0.0,
+    free_arrival_time: bool = False,
     verbose: bool = True,
     init_curve: dict | None = None,
 ) -> tuple[np.ndarray, dict]:
@@ -248,6 +295,9 @@ def optimize_spacetime(
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
         cap_bulge_ratio=cap_bulge_ratio,
+        v_max=v_max,
+        time_weight=time_weight,
+        free_arrival_time=free_arrival_time,
         verbose=verbose,
     )
 
@@ -261,6 +311,9 @@ def optimize_scenario(
     scp_trust_radius: float = DEFAULT_TRUST_RADIUS,
     elastic_weight: float | None = None,
     min_dt: float = 0.1,
+    v_max: float | None = None,
+    time_weight: float = 0.0,
+    free_arrival_time: bool = False,
     verbose: bool = True,
 ) -> dict:
     """Run optimization for all requested degree/segment-count pairs.
@@ -307,6 +360,9 @@ def optimize_scenario(
                 scp_trust_radius=scp_trust_radius,
                 elastic_weight=candidate_weight,
                 min_dt=min_dt,
+                v_max=v_max,
+                time_weight=time_weight,
+                free_arrival_time=free_arrival_time,
                 verbose=verbose,
                 init_curve=init_curve,
             )

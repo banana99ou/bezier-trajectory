@@ -1,7 +1,7 @@
 use crate::bezier;
 use crate::constraints::LinearConstraint;
 use crate::de_casteljau;
-use crate::optimizer::{solve_qp, OptResult};
+use crate::optimizer::{solve_qp_with_socs, OptResult, SocBlock};
 use crate::spacetime_constraints::{self, KozRowData, SpacetimeObstacleData};
 use std::collections::HashMap;
 
@@ -107,7 +107,7 @@ fn compute_min_clearance(
 /// `scale` is the sum of absolute term magnitudes — the standard floating-point
 /// error bound for a quadratic form. Noise in the value is bounded by roughly
 /// `eps · scale`, which stays meaningful when the value itself cancels to zero.
-fn quadratic_cost_scaled(h: &[f64], x: &[f64], nvars: usize) -> (f64, f64) {
+fn quadratic_cost_scaled(h: &[f64], f: &[f64], x: &[f64], nvars: usize) -> (f64, f64) {
     let mut value = 0.0;
     let mut scale = 0.0;
     for i in 0..nvars {
@@ -116,18 +116,29 @@ fn quadratic_cost_scaled(h: &[f64], x: &[f64], nvars: usize) -> (f64, f64) {
             value += term;
             scale += term.abs();
         }
+        let lin = f[i] * x[i];
+        value += lin;
+        scale += lin.abs();
     }
     (value, scale)
 }
 
-fn quadratic_cost(h: &[f64], x: &[f64], nvars: usize) -> f64 {
+/// The subproblem's objective evaluated at `x`: quadratic smoothness plus the
+/// linear time penalty.
+///
+/// The linear term MUST appear here as well as in the QP. The ratio test grades
+/// the step against this function, so a cost term present in the solver but
+/// absent from the merit would mean the solver is minimizing something other
+/// than what is being measured — and the resulting rho would look like model
+/// error when it is bookkeeping error.
+fn quadratic_cost(h: &[f64], f: &[f64], x: &[f64], nvars: usize) -> f64 {
     let mut cost = 0.0;
     for i in 0..nvars {
         let mut hx = 0.0;
         for j in 0..nvars {
             hx += h[i * nvars + j] * x[j];
         }
-        cost += 0.5 * x[i] * hx;
+        cost += 0.5 * x[i] * hx + f[i] * x[i];
     }
     cost
 }
@@ -246,9 +257,17 @@ fn append_constraint(
 pub struct ScpPrecomputed {
     pub a_list: Vec<Vec<f64>>,
     pub h_energy: Vec<f64>,
+    /// Linear cost. All zeros unless a time penalty is set, in which case the
+    /// single nonzero entry is `time_weight` on the last control point's time
+    /// coordinate — which IS the arrival time, because a Bezier passes through
+    /// its last control point (item B10).
+    pub f_linear: Vec<f64>,
     pub boundary: LinearConstraint,
     pub monotonicity: LinearConstraint,
     pub box_constraints: LinearConstraint,
+    /// Slant-limit speed cap, one cone per control-polygon leg. Empty when no
+    /// cap was requested.
+    pub speed_cap: Vec<SocBlock>,
     pub np1: usize,
     pub dim: usize,
 }
@@ -291,6 +310,10 @@ pub struct ScpStepResult {
 }
 
 /// Precompute the data that stays constant across SCP iterations.
+///
+/// `v_max <= 0` or non-finite means no speed cap; `time_weight == 0.0` plus
+/// `free_arrival_time == false` is the pre-B9/B10 problem exactly.
+#[allow(clippy::too_many_arguments)]
 pub fn precompute_scp(
     p_init: &[f64],
     np1: usize,
@@ -301,18 +324,32 @@ pub fn precompute_scp(
     coord_ub: f64,
     time_lb: f64,
     time_ub: f64,
+    v_max: f64,
+    time_weight: f64,
+    free_arrival_time: bool,
 ) -> ScpPrecomputed {
     let n = np1 - 1;
+    let nvars = np1 * dim;
+    let mut f_linear = vec![0.0; nvars];
+    if time_weight != 0.0 {
+        f_linear[(np1 - 1) * dim + (dim - 1)] = time_weight;
+    }
     ScpPrecomputed {
         a_list: de_casteljau::segment_matrices_equal_params(n, n_seg),
         h_energy: build_smoothness_regularizer_h(np1, dim),
+        f_linear,
         boundary: spacetime_constraints::build_boundary_constraints(
-            np1, dim, &p_init[0..dim], &p_init[(np1 - 1) * dim..np1 * dim],
+            np1,
+            dim,
+            &p_init[0..dim],
+            &p_init[(np1 - 1) * dim..np1 * dim],
+            free_arrival_time,
         ),
         monotonicity: spacetime_constraints::build_time_monotonicity(np1, dim, min_dt),
         box_constraints: spacetime_constraints::build_box_constraints(
-            p_init, np1, dim, coord_lb, coord_ub, time_lb, time_ub,
+            p_init, np1, dim, coord_lb, coord_ub, time_lb, time_ub, free_arrival_time,
         ),
+        speed_cap: spacetime_constraints::build_speed_cap_socs(np1, dim, v_max),
         np1,
         dim,
     }
@@ -337,7 +374,7 @@ fn failed_step(
         total_slack: 0.0,
         max_slack: 0.0,
         converged: false,
-        cost: quadratic_cost(&pre.h_energy, p_current, nvars),
+        cost: quadratic_cost(&pre.h_energy, &pre.f_linear, p_current, nvars),
         koz_rows: Vec::new(),
         koz_slack_per_row: Vec::new(),
         is_candidate: false,
@@ -411,7 +448,9 @@ pub fn scp_step(
     // keep compiling; it is not applied.
     let _ = scp_prox_weight;
     let h = pre.h_energy.clone();
-    let f = vec![0.0; nvars];
+    // Linear time penalty (item B10). Zero-filled unless a time weight was set,
+    // so a default run solves the identical QP it always did.
+    let f = pre.f_linear.clone();
 
     // Assemble all constraints
     let mut all_a_rows: Vec<f64> = Vec::new();
@@ -473,7 +512,16 @@ pub fn scp_step(
     let hard_sol = if elastic_available {
         None
     } else {
-        solve_qp(&h, &f, &all_a_rows, &all_lb, &all_ub, nvars, total_rows)
+        solve_qp_with_socs(
+            &h,
+            &f,
+            &all_a_rows,
+            &all_lb,
+            &all_ub,
+            nvars,
+            total_rows,
+            &pre.speed_cap,
+        )
     };
 
     if let Some(x_sol) = hard_sol {
@@ -521,7 +569,19 @@ pub fn scp_step(
             ub_ext.push(f64::INFINITY);
         }
 
-        match solve_qp(&h_ext, &f_ext, &a_ext, &lb_ext, &ub_ext, nvars_ext, ext_nrows) {
+        // The speed cap carries NO slack variable: it is a hard convex
+        // constraint, not something the elastic penalty may buy its way out of.
+        // Its columns are widened with zeros so the cone sees only the original
+        // variables.
+        let socs_ext: Vec<SocBlock> = pre
+            .speed_cap
+            .iter()
+            .map(|b| b.widened(nvars, n_koz))
+            .collect();
+
+        match solve_qp_with_socs(
+            &h_ext, &f_ext, &a_ext, &lb_ext, &ub_ext, nvars_ext, ext_nrows, &socs_ext,
+        ) {
             Some(x_full) => {
                 x_new = x_full[..nvars].to_vec();
                 koz_slack_per_row = x_full[nvars..].to_vec();
@@ -555,8 +615,12 @@ pub fn scp_step(
         let w_s = elastic_weight.max(0.0);
         let vp = row_violation(p_current, &all_a_rows, &all_lb, koz_row_start, n_koz, nvars);
         let vc = row_violation(&x_result, &all_a_rows, &all_lb, koz_row_start, n_koz, nvars);
-        let qp_ = quadratic_cost(&pre.h_energy, p_current, nvars);
-        let qc_ = quadratic_cost(&pre.h_energy, &x_result, nvars);
+        let qp_ = quadratic_cost(&pre.h_energy, &pre.f_linear, p_current, nvars);
+        let qc_ = quadratic_cost(&pre.h_energy, &pre.f_linear, &x_result, nvars);
+        // The speed-cap cones carry no slack, so they belong with the hard rows:
+        // if the reference violates them, `x = p` is not feasible for the
+        // subproblem and the predicted reduction is not guaranteed nonnegative.
+        // The bootstrap branch in `scp_iterate` keys off exactly this.
         let hv = hard_row_violation(
             p_current,
             &all_a_rows,
@@ -566,7 +630,7 @@ pub fn scp_step(
             koz_row_start,
             n_koz,
             nvars,
-        );
+        ) + spacetime_constraints::speed_cap_violation(&pre.speed_cap, p_current, nvars);
         (qp_ + w_s * vp, qc_ + w_s * vc, vp, vc, hv)
     };
 
@@ -576,7 +640,7 @@ pub fn scp_step(
         .sqrt();
 
     let clearance = compute_min_clearance(&x_result, np1, dim, obstacles, 1500);
-    let cost = quadratic_cost(&pre.h_energy, &x_result, nvars);
+    let cost = quadratic_cost(&pre.h_energy, &pre.f_linear, &x_result, nvars);
     // `scp_step` solves one convex subproblem. It does not decide anything: a small
     // step may well be a rejected one. The caller grades the candidate and owns the
     // convergence decision.
@@ -655,6 +719,15 @@ pub struct ScpState {
     pub stop: f64,
     pub best_p: Vec<f64>,
     pub best_clearance: f64,
+    /// Elastic slack of the subproblem whose solution is the CURRENT iterate.
+    ///
+    /// `last_total_slack` is the slack of the most recent subproblem, accepted or
+    /// not. On a rejected step those are different numbers describing different
+    /// trajectories, and the feasibility gate (item B7) has to grade the point it
+    /// actually returns.
+    pub accepted_total_slack: f64,
+    /// The same quantity for `best_p`.
+    pub best_total_slack: f64,
     pub accept_count: usize,
     pub reject_count: usize,
     pub null_step_count: usize,
@@ -690,6 +763,8 @@ impl ScpState {
             stop: stop_reason::RUNNING,
             best_p: p_init.to_vec(),
             best_clearance: f64::NEG_INFINITY,
+            accepted_total_slack: f64::NAN,
+            best_total_slack: f64::NAN,
             accept_count: 0,
             reject_count: 0,
             null_step_count: 0,
@@ -785,8 +860,8 @@ pub fn scp_iterate(
     // measurement of that.
     let cand = step.p_new.clone();
     let w_s = elastic_weight.max(0.0);
-    let (quad_p, scale_p) = quadratic_cost_scaled(&pre.h_energy, &state.p, nvars);
-    let (quad_c, scale_c) = quadratic_cost_scaled(&pre.h_energy, &cand, nvars);
+    let (quad_p, scale_p) = quadratic_cost_scaled(&pre.h_energy, &pre.f_linear, &state.p, nvars);
+    let (quad_c, scale_c) = quadratic_cost_scaled(&pre.h_energy, &pre.f_linear, &cand, nvars);
     let vtrue_p = step.vlin_p; // rows were built at p; exact there
     let vtrue_c = koz_violation_rebuilt_at(&cand, pre, obstacles, cap_bulge_ratio);
     let t_p = quad_p + w_s * vtrue_p;
@@ -923,9 +998,13 @@ pub fn scp_iterate(
 /// they are different points, and reporting one alongside the other's convergence
 /// claim would be quoting two different trajectories.
 fn update_best(state: &mut ScpState, step: &ScpStepResult) {
+    // `state.p` is the just-accepted candidate, so the slack that produced it is
+    // this step's slack. Recorded together with the point, never separately.
+    state.accepted_total_slack = step.total_slack;
     if step.clearance > 0.0 && step.clearance > state.best_clearance {
         state.best_clearance = step.clearance;
         state.best_p = state.p.clone();
+        state.best_total_slack = step.total_slack;
     }
 }
 
@@ -948,10 +1027,16 @@ pub fn optimize_spacetime(
     obstacles: &SpacetimeObstacleData<'_>,
     elastic_weight: f64,
     cap_bulge_ratio: f64,
+    v_max: f64,
+    time_weight: f64,
+    free_arrival_time: bool,
 ) -> OptResult {
     let _ = scp_prox_weight; // see scp_step: the trust region does this job
     let nvars = np1 * dim;
-    let pre = precompute_scp(p_init, np1, dim, n_seg, min_dt, coord_lb, coord_ub, time_lb, time_ub);
+    let pre = precompute_scp(
+        p_init, np1, dim, n_seg, min_dt, coord_lb, coord_ub, time_lb, time_ub, v_max,
+        time_weight, free_arrival_time,
+    );
     let mut state = ScpState::new(p_init, scp_trust_radius);
     // `best` deliberately does NOT start at the initial guess. Seeding it there
     // lets the fallback return the solver's own input when every iterate it
@@ -1012,9 +1097,20 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
         final_clearance = state.best_clearance;
         returned_best = true;
     }
+    // Slack belonging to the point being RETURNED, which is what the feasibility
+    // gate must grade (item B7). NaN only if no step was ever accepted, i.e. the
+    // returned point is the initial guess -- and NaN fails every comparison,
+    // which is the correct outcome for "no evidence".
+    let returned_total_slack = if returned_best {
+        state.best_total_slack
+    } else {
+        state.accepted_total_slack
+    };
+    let speed_cap_viol =
+        spacetime_constraints::speed_cap_violation(&pre.speed_cap, &p, nvars);
 
     let feasible = final_clearance > 0.0 || obstacles.n_obs == 0;
-    let cost = quadratic_cost(&pre.h_energy, &p, nvars);
+    let cost = quadratic_cost(&pre.h_energy, &pre.f_linear, &p, nvars);
 
     let mut info = HashMap::new();
     info.insert("iterations".to_string(), state.iteration as f64);
@@ -1028,6 +1124,15 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     info.insert("final_delta_norm".to_string(), state.last_delta);
     info.insert("total_koz_slack".to_string(), state.last_total_slack);
     info.insert("max_koz_slack".to_string(), state.last_max_slack);
+    info.insert(
+        "total_koz_slack_returned".to_string(),
+        returned_total_slack,
+    );
+    // Arrival time IS the last control point's time coordinate: a Bezier passes
+    // through its last control point. Exported so a sweep over `time_weight` can
+    // be read straight off the info dict.
+    info.insert("arrival_time".to_string(), p[(np1 - 1) * dim + (dim - 1)]);
+    info.insert("speed_cap_violation".to_string(), speed_cap_viol);
     info.insert("stop_reason".to_string(), state.stop);
     info.insert(
         "converged".to_string(),

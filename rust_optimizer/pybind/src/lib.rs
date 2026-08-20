@@ -116,6 +116,9 @@ fn optimize_orbital_docking<'py>(
     time_ub = 15.0,
     elastic_weight = 100.0,
     cap_bulge_ratio = 2.0,
+    v_max = None,
+    time_weight = 0.0,
+    free_arrival_time = false,
 ))]
 fn optimize_spacetime_bezier<'py>(
     py: Python<'py>,
@@ -137,6 +140,12 @@ fn optimize_spacetime_bezier<'py>(
     time_ub: f64,
     elastic_weight: f64,
     cap_bulge_ratio: f64,
+    // Slant-limit speed cap (item B9). `None` means no cap, which is the
+    // default, so every pre-existing scenario reproduces exactly.
+    v_max: Option<f64>,
+    // Linear arrival-time penalty (item B10).
+    time_weight: f64,
+    free_arrival_time: bool,
 ) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyDict>)> {
     let p_arr = p_init.as_array();
     let np1 = p_arr.shape()[0];
@@ -236,6 +245,9 @@ fn optimize_spacetime_bezier<'py>(
         &obstacles,
         elastic_weight,
         cap_bulge_ratio,
+        v_max.unwrap_or(f64::NAN),
+        time_weight,
+        free_arrival_time,
     );
 
     let p_opt = PyArray2::from_vec2(py, &{
@@ -384,6 +396,9 @@ impl SpacetimeScpContext {
         elastic_weight = 100.0,
         tol = 1e-6,
         cap_bulge_ratio = 2.0,
+        v_max = None,
+        time_weight = 0.0,
+        free_arrival_time = false,
     ))]
     fn new(
         p_init: PyReadonlyArray2<'_, f64>,
@@ -403,6 +418,9 @@ impl SpacetimeScpContext {
         elastic_weight: f64,
         tol: f64,
         cap_bulge_ratio: f64,
+        v_max: Option<f64>,
+        time_weight: f64,
+        free_arrival_time: bool,
     ) -> PyResult<Self> {
         let p_arr = p_init.as_array();
         let np1 = p_arr.shape()[0];
@@ -426,6 +444,7 @@ impl SpacetimeScpContext {
 
         let pre = spacetime_optimizer::precompute_scp(
             &p_flat, np1, dim, n_seg, min_dt, coord_lb, coord_ub, time_lb, time_ub,
+            v_max.unwrap_or(f64::NAN), time_weight, free_arrival_time,
         );
 
         let _ = scp_prox_weight; // the trust region does this job; see scp_step

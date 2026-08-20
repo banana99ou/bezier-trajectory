@@ -365,12 +365,34 @@ fn build_koz_rows(
     })
 }
 
-pub fn build_boundary_constraints(np1: usize, dim: usize, p_start: &[f64], p_end: &[f64]) -> LinearConstraint {
+/// Endpoint constraints.
+///
+/// `free_arrival_time` releases exactly one variable: the TIME coordinate of the
+/// last control point (item B10). A Bezier passes through its last control
+/// point, so that coordinate *is* the arrival time, and freeing it is what turns
+/// arrival time into a decision variable. The spatial coordinates of both
+/// endpoints, and every coordinate of the start point, stay pinned — the start
+/// time in particular, because a free start time would let the plan translate in
+/// time for free and the linear time penalty would then measure duration only by
+/// accident.
+///
+/// The freed row is written as `t_last >= t_start_point + (np1-1)*min_dt`,
+/// which is implied by monotonicity anyway; the real bound comes from the box
+/// constraint's `time_ub`. Keeping a row here rather than deleting one keeps the
+/// row count fixed, so nothing downstream has to branch on the flag.
+pub fn build_boundary_constraints(
+    np1: usize,
+    dim: usize,
+    p_start: &[f64],
+    p_end: &[f64],
+    free_arrival_time: bool,
+) -> LinearConstraint {
     let n_vars = np1 * dim;
     let n_rows = 2 * dim;
     let mut a = vec![0.0; n_rows * n_vars];
     let mut lb = vec![0.0; n_rows];
     let mut ub = vec![0.0; n_rows];
+    let t_idx = dim - 1;
 
     for d in 0..dim {
         a[d * n_vars + d] = 1.0;
@@ -379,8 +401,13 @@ pub fn build_boundary_constraints(np1: usize, dim: usize, p_start: &[f64], p_end
 
         let row_idx = dim + d;
         a[row_idx * n_vars + (np1 - 1) * dim + d] = 1.0;
-        lb[row_idx] = p_end[d];
-        ub[row_idx] = p_end[d];
+        if free_arrival_time && d == t_idx {
+            lb[row_idx] = p_start[t_idx];
+            ub[row_idx] = f64::INFINITY;
+        } else {
+            lb[row_idx] = p_end[d];
+            ub[row_idx] = p_end[d];
+        }
     }
 
     LinearConstraint {
@@ -390,6 +417,74 @@ pub fn build_boundary_constraints(np1: usize, dim: usize, p_start: &[f64], p_end
         n_rows,
         n_vars,
     }
+}
+
+/// The slant-limit speed cap, one second-order cone per control-polygon leg
+/// (item B9, formulation decision 4).
+///
+/// For every consecutive pair of control points,
+///
+/// ```text
+/// || P[i+1, spatial] - P[i, spatial] ||  <=  v_max * ( P[i+1, t] - P[i, t] )
+/// ```
+///
+/// **Why this bounds the physical speed of the whole curve.** Physical velocity
+/// is the spatial parameter-derivative over the time parameter-derivative, so
+/// the bound with the denominator cleared reads "spatial gap per parameter, in
+/// norm, at most v_max times the time gap per parameter". Both sides are then
+/// Beziers of the same degree, and a Bezier is a convex combination of its own
+/// control points (Bernstein weights are non-negative and sum to one). By the
+/// triangle inequality, if every control point of the left side obeys the bound
+/// against the matching control point of the right side, the whole curve does.
+/// The degree factor `N` is common to both sides and cancels, which is why this
+/// is written on raw gaps.
+///
+/// **It is sufficient, not necessary** — conservative in the safe direction, the
+/// same character as the hull certificate.
+///
+/// **It depends on time monotonicity.** Clearing the denominator is legal only
+/// because the time gap is strictly positive. `build_time_monotonicity` is
+/// therefore physics-load-bearing here, not merely a sanity constraint. (The
+/// cone itself also forces `Δt >= 0`, so the two agree rather than conflict.)
+///
+/// Returns an empty vector when `v_max` is not a positive finite number, which
+/// is how "no speed cap" is expressed — existing scenarios keep their behaviour.
+pub fn build_speed_cap_socs(np1: usize, dim: usize, v_max: f64) -> Vec<crate::optimizer::SocBlock> {
+    if !(v_max > 0.0) || !v_max.is_finite() {
+        return Vec::new();
+    }
+    let n_vars = np1 * dim;
+    let spatial_dim = dim - 1;
+    let t_idx = dim - 1;
+    let cone_dim = spatial_dim + 1;
+
+    let mut blocks = Vec::with_capacity(np1 - 1);
+    for i in 0..np1 - 1 {
+        // Clarabel wants `b - A x` in the cone, and b is zero here, so every
+        // entry of A is the NEGATIVE of the quantity being bounded.
+        let mut a = vec![0.0; cone_dim * n_vars];
+        // Row 0: v_max * (t_{i+1} - t_i)
+        a[i * dim + t_idx] = v_max;
+        a[(i + 1) * dim + t_idx] = -v_max;
+        // Rows 1..: the spatial gap, componentwise.
+        for d in 0..spatial_dim {
+            let r = d + 1;
+            a[r * n_vars + i * dim + d] = 1.0;
+            a[r * n_vars + (i + 1) * dim + d] = -1.0;
+        }
+        blocks.push(crate::optimizer::SocBlock {
+            a,
+            b: vec![0.0; cone_dim],
+            cone_dim,
+        });
+    }
+    blocks
+}
+
+/// Total slant-limit violation at `p`, summed over legs. Zero when the cap is
+/// off or satisfied.
+pub fn speed_cap_violation(socs: &[crate::optimizer::SocBlock], p: &[f64], n_vars: usize) -> f64 {
+    socs.iter().map(|b| b.violation(p, n_vars)).sum()
 }
 
 pub fn build_time_monotonicity(np1: usize, dim: usize, min_dt: f64) -> LinearConstraint {
@@ -414,6 +509,13 @@ pub fn build_time_monotonicity(np1: usize, dim: usize, min_dt: f64) -> LinearCon
     }
 }
 
+/// Per-variable box. Endpoints are pinned to their initial values.
+///
+/// `free_arrival_time` exempts one variable — the last control point's time —
+/// which is then bounded by `[time_lb, time_ub]` like any interior time
+/// coordinate. Without this the box would re-pin what
+/// `build_boundary_constraints` just released, and freeing the arrival time
+/// would silently do nothing (item B10).
 pub fn build_box_constraints(
     p_init: &[f64],
     np1: usize,
@@ -422,6 +524,7 @@ pub fn build_box_constraints(
     coord_ub: f64,
     time_lb: f64,
     time_ub: f64,
+    free_arrival_time: bool,
 ) -> LinearConstraint {
     let n_vars = np1 * dim;
     let n_rows = n_vars;
@@ -435,7 +538,8 @@ pub fn build_box_constraints(
             let var_idx = i * dim + d;
             a[var_idx * n_vars + var_idx] = 1.0;
 
-            let is_endpoint = i == 0 || i == np1 - 1;
+            let is_endpoint = (i == 0 || i == np1 - 1)
+                && !(free_arrival_time && i == np1 - 1 && d == t_idx);
             if is_endpoint {
                 lb[var_idx] = p_init[var_idx];
                 ub[var_idx] = p_init[var_idx];
