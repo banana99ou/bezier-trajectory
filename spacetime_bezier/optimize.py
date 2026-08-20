@@ -97,26 +97,50 @@ except ImportError:  # pragma: no cover - exercised when the native extension is
 
 FIGURE_GRADE_CERTIFICATE_TOL = 1e-6
 
-# Measured 2026-08-20, not chosen. Clarabel is an interior-point method, so the
-# slack variables approach zero from above and never reach it, and `total_slack`
-# is a SUM over rows -- 108 rows on `original`, 4400 on `wall` N10_seg16 -- so
-# the residue also grows with problem size. At the recorded configurations:
+# Measured, not chosen -- and the previous version of this comment was wrong in
+# every clause, so what it now says is only what was measured.
 #
-#     wall   N10_seg16   2.4e-14        original N8_seg4   1.3e-10
-#     wall3d N8_seg2     3.8e-11        diverse  N8_seg4   1.4e-09
+# Clarabel is an interior-point method, so the slack variables approach zero
+# without reaching it. THE RESIDUE IS DRIVEN BY THE PENALTY WEIGHT, NOT BY THE
+# ROW COUNT. Measured on `original` N8_seg4, where the row count is fixed at 108
+# and only the weight moves:
 #
-# All four are converged and carry a hull certificate of 0.0 to 2.2e-10 at the
-# returned iterate, so none of them is standing on relaxation; the numbers are
-# convergence noise. A threshold at 1e-10 would reject `original` and `diverse`
-# -- the two runs the gate exists to pass -- so it would be measuring the solver
-# and not the trajectory.
+#     w=30    2.57e-01 (not converged)     w=3000   3.00e-11
+#     w=100   1.27e-10                     w=1e4    7.15e-13
+#     w=300   2.84e-10                     w=1e5    1.23e-13
+#     w=800   2.74e-12                     w=1e6   -1.65e-14
 #
-# 1e-8 sits two orders above the worst observed residue and six or more below any
-# relaxation that could hide a violation: a genuine one is of the order of the
-# clearance itself, 0.01 to 1. Anything in between separates them, and the
-# guarantee is carried by the certificate above, which is evaluated against the
-# EXACT rows rebuilt at the returned iterate.
-FIGURE_GRADE_SLACK_TOL = 1e-8
+# Four orders of weight buy four orders of residue at constant row count. The
+# claim that the residue "grows with problem size" does not survive that table.
+#
+# THE RESIDUE CAN BE NEGATIVE. -1.65e-14 above, which is why the comparison below
+# is on the ABSOLUTE value: `slack <= tol` would have passed an arbitrarily large
+# negative number, and a negative total is a solver artifact rather than a
+# credit against a violation.
+#
+# The quoted row counts were wrong too: `wall` N10_seg16 has 2640 KOZ rows, not
+# 4400. Counted with `spacetime_koz_rows_exact` at the straight seed;
+# `original` N8_seg4 has 108, `diverse` N8_seg4 252, `wall3d` N8_seg2 234.
+#
+# THE TWO POPULATIONS, measured across a sweep of `diverse` and `wall3d` at
+# degrees 8-12, 8-32 segments and weights 800 to 1e5:
+#
+#   GOOD  (converged, certificate <= 1e-6, clearance > 0): worst residue
+#         8.51e-9, at `diverse` N10_seg16 with the ladder's w=3000. That is 85%
+#         of the OLD 1e-8 gate -- the gate was within a factor of 1.18 of
+#         rejecting a good run for the solver's arithmetic.
+#   BAD   (a genuine relaxation): the smallest observed is 2.29, at `wall`
+#         N8_seg2 with w=100 -- the historical penetrating run. The rest are
+#         larger: 6.52 (the blob scenario), 7.2 to 9.7 (`diverse` below its
+#         penalty threshold). A genuine relaxation is of the order of the
+#         clearance it bought, which is why the two populations do not overlap.
+#
+# 1e-6 sits 117x above the worst good residue and six orders below the smallest
+# bad one. The gap between the populations is about eight orders wide and this
+# threshold is placed inside it rather than on its edge. The guarantee is carried
+# by the certificate above, which is evaluated against the EXACT rows rebuilt at
+# the returned iterate; this condition only catches a run standing on relaxation.
+FIGURE_GRADE_SLACK_TOL = 1e-6
 
 
 def figure_grade_failures(row: dict) -> list[str]:
@@ -151,7 +175,10 @@ def figure_grade_failures(row: dict) -> list[str]:
     clearance = float(row.get("min_clearance", float("nan")))
     if not clearance > 0.0:
         reasons.append(f"penetrates by {-clearance:.3e}")
-    slack = float(row.get("total_slack", float("nan")))
+    # ABSOLUTE value: the interior-point residue can come back negative
+    # (-1.65e-14 measured), and `slack <= tol` would have passed any negative
+    # number however large. NaN still fails, which is the point of the idiom.
+    slack = abs(float(row.get("total_slack", float("nan"))))
     if not slack <= FIGURE_GRADE_SLACK_TOL:
         reasons.append(f"elastic slack {slack:.3e} > {FIGURE_GRADE_SLACK_TOL:g}")
     # The speed cap is a HARD constraint (formulation decision 4), so a nonzero
@@ -409,7 +436,14 @@ def _optimize_spacetime_rust(
         clearance = float(info.get("min_clearance", math.nan))
         feasible = bool(info.get("feasible", 0.0))
         delta = float(info.get("final_delta_norm", math.nan))
-        total_slack = float(info.get("total_koz_slack", 0.0))
+        # Two different numbers describing two different trajectories. The gate
+        # reads the RETURNED one, so that is the one printed first and the one
+        # labelled as such; the last subproblem's slack was what this line used
+        # to show, which on a rejected or fallback step belongs to a point
+        # nobody received. Both are kept because their disagreement is
+        # informative -- measured 2.24 vs 1.62 on `diverse` N8_seg4.
+        returned_slack = float(info.get("total_koz_slack_returned", math.nan))
+        last_slack = float(info.get("total_koz_slack", math.nan))
         print(
             f"SCP: N={n_cp - 1}, dim={dim}, n_seg={n_seg}, n_cp={n_cp}, n_obs={len(obstacles)}, backend=rust"
         )
@@ -423,7 +457,8 @@ def _optimize_spacetime_rust(
         print(f"  rust result: iterations={iterations}/{max_iter}, clearance={clearance:.4f}")
         print(
             f"  termination: {reason}, converged={converged}, feasible={feasible}, "
-            f"delta={delta:.2e}, koz_slack={total_slack:.2e}"
+            f"delta={delta:.2e}, slack(returned)={returned_slack:.2e}, "
+            f"slack(last subproblem)={last_slack:.2e}"
         )
         if info.get("returned_best_iterate", 0.0):
             print(
