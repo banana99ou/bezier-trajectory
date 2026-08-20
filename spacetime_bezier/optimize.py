@@ -129,11 +129,16 @@ FIGURE_GRADE_CERTIFICATE_TOL = 1e-6
 #         8.51e-9, at `diverse` N10_seg16 with the ladder's w=3000. That is 85%
 #         of the OLD 1e-8 gate -- the gate was within a factor of 1.18 of
 #         rejecting a good run for the solver's arithmetic.
-#   BAD   (a genuine relaxation): the smallest observed is 2.29, at `wall`
-#         N8_seg2 with w=100 -- the historical penetrating run. The rest are
-#         larger: 6.52 (the blob scenario), 7.2 to 9.7 (`diverse` below its
-#         penalty threshold). A genuine relaxation is of the order of the
-#         clearance it bought, which is why the two populations do not overlap.
+#   BAD   (a genuine relaxation): the smallest observed is 1.35, at `wall`
+#         N8_seg2 on the ladder's w=800 rung. That run is worth naming, because
+#         it is the exact case this condition exists for: its SAMPLED clearance
+#         is +0.102, so it passes the clearance condition, and it is standing on
+#         1.35 of slack to do it. The rest of the population runs 1.37 to 1.98
+#         across `wall`, 2.29 (`wall` N8_seg2 pinned at w=100, the historical
+#         penetrating run), 6.52 (the blob scenario), and 7.2 to 9.7 (`diverse`
+#         below its penalty threshold). A genuine relaxation is of the order of
+#         the clearance it bought, which is why the two populations do not
+#         overlap.
 #
 # 1e-6 sits 117x above the worst good residue and six orders below the smallest
 # bad one. The gap between the populations is about eight orders wide and this

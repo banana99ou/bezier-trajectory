@@ -239,11 +239,41 @@ def test_a_penetrating_run_below_the_penalty_threshold_is_not_figure_grade():
     Below the scenario's exact-penalty threshold a penetrating curve is genuinely
     the cheaper answer, so the solver returns one. It is not figure-grade, and it
     is the run that used to be quoted as "wall renders a trajectory 0.112 inside
-    an obstacle". Its slack, 2.29, is the smallest genuine relaxation measured --
-    six orders above the gate.
+    an obstacle". Its slack is 2.29 -- six orders above the gate.
     """
     out = optimize_scenario(scenario_wall(), [(8, 2)], elastic_weight=100.0, verbose=False)
     row = out["results"]["N8_seg2"]
     assert row["min_clearance"] < 0.0
     assert row["figure_grade"] is False
     assert row["total_slack"] > FIGURE_GRADE_SLACK_TOL * 1e5
+
+
+def test_a_clearing_run_can_still_be_standing_on_slack():
+    """Clearance is not the guarantee, measured on a run that has it.
+
+    `wall` N8_seg2 through the weight ladder settles on w=800 with a SAMPLED
+    clearance of +0.102 -- it passes the clearance condition outright -- while
+    holding 1.35 of elastic slack and a hull certificate of 1.35. The sampled
+    curve misses the obstacles; the control-point hull does not. That is the
+    distinction PAPER_1 sec. 6 turns on, and this row is what it looks like.
+
+    Its 1.35 is also the smallest genuine relaxation across the 22 registered
+    configurations -- the closest the bad population comes to the threshold, and
+    still six orders above it.
+
+    FAILS IF the clearance condition is ever allowed to stand in for the
+    certificate or the slack: this row would then be figure-grade.
+    """
+    out = optimize_scenario(scenario_wall(), [(8, 2)], verbose=False)
+    row = out["results"]["N8_seg2"]
+
+    assert row["min_clearance"] > 0.0, (
+        "this run no longer clears, so it cannot show clearance passing while "
+        "the other conditions fail"
+    )
+    assert row["total_slack"] > 1.0
+    assert row["certificate_violation"] > 1.0
+    assert row["figure_grade"] is False
+    reasons = row["figure_grade_reasons"]
+    assert any("elastic slack" in r for r in reasons), reasons
+    assert not any("penetrates" in r for r in reasons), reasons
