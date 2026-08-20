@@ -199,6 +199,12 @@ carry a warning or are easy to mistake:
 
 ## Known Issues
 
+- **`spacetime_bezier/viewer.py` is UNVERIFIED.** Tracked 2026-08-20 because CLAUDE.md already
+  documented it as live, not because it was checked. No test exercises it -- nothing in `tests/`
+  imports it, and no test opens a browser, so the server, the static page, and the verdict fields
+  it computes have never been asserted against anything. It compiles and it starts; that is the
+  whole of the evidence. Treat any picture it draws as unconfirmed until a test covers the
+  request/response path.
 - **A superseded viewer stack is still on disk and still documented as live.**
   `spacetime_bezier/viewer.py` replaced it, but `spacetime_bezier/sandbox.py` (478 lines),
   `figures/spacetime_bezier_interactive.html` (3,868 lines), the `--bake` +
