@@ -63,6 +63,88 @@ P_opt, info = optimize_spacetime(
     elastic_weight=weight, verbose=False, init_curve=sc.get("init_curve"),
     stations=sc.get("stations"),
 )
+# ---- iteration replay: drive the SAME canonical Rust iteration the solve
+# used, via the stepping context, with identical parameters. The replay is the
+# solver's own state per step, never a viewer-side re-derivation. Each frame
+# records the post-step reference, the QP candidate, whether the reference
+# advanced, and the constraint rows built at the pre-step reference (the 24
+# tightest by margin, plus every violated one).
+import bezier_opt
+from spacetime_bezier.geometry import bezier_curve, obstacle_array_bundle
+
+def _capture_replay():
+    dim = len(sc["start"])
+    spatial_dim = dim - 1
+    pos0, vel, radii, t0a, t1a = obstacle_array_bundle(sc["obstacles"], spatial_dim)
+    from spacetime_bezier.objective import build_initial_guess
+    P0 = build_initial_guess(sc["start"], sc["end"], req["N"] + 1,
+                             init_curve=sc.get("init_curve"))
+    st = sc.get("stations")
+    ctx = bezier_opt.SpacetimeScpContext(
+        p_init=np.asarray(P0, float), obstacle_pos0=pos0, obstacle_vel=vel,
+        obstacle_r=radii, obstacle_t_start=t0a, obstacle_t_end=t1a,
+        # These MUST match optimize_spacetime's defaults exactly, or the replay
+        # is a different run -- the drift check below is what catches a mismatch.
+        n_seg=req["seg"], min_dt=req["min_dt"], coord_lb=-20.0, coord_ub=20.0,
+        time_lb=0.0, time_ub=float(P0[-1, -1]) * 1.5,
+        scp_prox_weight=0.5, scp_trust_radius=req["trust_radius"],
+        elastic_weight=weight, tol=req["tol"], cap_bulge_ratio=2.0,
+        stations=(np.asarray(st, float) if st else None),
+    )
+    frames, prev = [], np.asarray(P0, float)
+    n_steps = max(1, min(int(info.get("iterations", 1)), req["max_iter"]))
+    for it in range(1, n_steps + 1):
+        (p_new, sinfo, seg_i, cp_i, obs_i, _it_i,
+         _norm, supports, _cent, _lbs, margins, _slk) = ctx.step()
+        p_new = np.asarray(p_new, float)
+        supports = np.asarray(supports, float).reshape(-1, dim)
+        margins = np.asarray(margins, float)
+        keep = np.argsort(margins)[: max(24, int((margins < 0).sum()))]
+        cand = np.asarray(sinfo["p_candidate"], float) if "p_candidate" in sinfo else p_new
+        frames.append({
+            "it": it,
+            "advanced": bool(not np.allclose(p_new, prev)),
+            "status": str(sinfo.get("solver_status", "?")),
+            "total_slack": float(sinfo.get("total_slack", float("nan"))),
+            "P": p_new.tolist(),
+            "cand": np.asarray(cand, float).reshape(p_new.shape).tolist(),
+            "curve": bezier_curve(p_new, num_pts=120).tolist(),
+            "sup": supports[keep].tolist(),
+            "sup_margin": margins[keep].tolist(),
+        })
+        prev = p_new
+        if str(sinfo.get("solver_status", "")) == "Failed":
+            break
+    # Honesty pair: the replay must land where the solve landed (unless the
+    # best-iterate fallback returned a different point -- reported either way).
+    drift = float(np.max(np.abs(prev - np.asarray(P_opt, float))))
+    return frames, drift
+
+def _shadow_balls():
+    st = sc.get("stations")
+    if not st:
+        return None
+    dim = len(sc["start"])
+    spatial_dim = dim - 1
+    pos0, vel, radii, t0a, t1a = obstacle_array_bundle(sc["obstacles"], spatial_dim)
+    out = bezier_opt.spacetime_occlusion_rows_exact(
+        p=np.asarray(P_opt, float), obstacle_pos0=pos0, obstacle_vel=vel,
+        obstacle_r=radii, stations=np.asarray(st, float),
+        obstacle_t_start=t0a, obstacle_t_end=t1a, n_seg=req["seg"])
+    _n, _lb, _seg, _cp, _obs, _st, centers, rr, t_lo, t_hi, _m = out
+    balls, seen = [], set()
+    for c, r_, a, b in zip(np.asarray(centers, float).reshape(-1, spatial_dim),
+                           np.asarray(rr, float), np.asarray(t_lo, float),
+                           np.asarray(t_hi, float)):
+        key = (round(float(a), 6), round(float(b), 6), round(float(r_), 6))
+        if key in seen:
+            continue
+        seen.add(key)
+        balls.append({"c": [float(x) for x in c], "R": float(r_),
+                      "t0": float(a), "t1": float(b)})
+    return balls
+
+replay_frames, replay_drift = _capture_replay()
 json.dump({
     "P": np.asarray(P_opt, float).tolist(),
     "info": {k: (float(v) if isinstance(v, (int, float)) else v)
@@ -71,6 +153,9 @@ json.dump({
     "start": list(map(float, sc["start"])), "end": list(map(float, sc["end"])),
     "elastic_weight": float(weight),
     "stations": sc.get("stations"),
+    "replay": replay_frames,
+    "replay_drift": replay_drift,
+    "shadow_balls": _shadow_balls(),
 }, sys.stdout)
 """
 
@@ -200,9 +285,23 @@ def geometry_data(payload: dict, rc: dict) -> dict:
             "vel": [float(v) for v in o["vel"]],
             "r": float(o["r"]), "t0": o_t0, "t1": o_t1,
         })
+    sight = None
+    st = payload.get("stations")
+    if st and dim == 4 and rc.get("los") is not None:
+        import numpy as _np
+        station = [float(v) for v in st[0]]
+        t_arr = _np.asarray(rc["los"]["t"]); m_arr = _np.asarray(rc["los"]["m"])
+        lines = []
+        for k in range(0, len(pts), max(1, len(pts) // 16)):
+            tq = float(pts[k, -1])
+            j = int(_np.argmin(_np.abs(t_arr - tq)))
+            lines.append({"v": [float(x) for x in pts[k, :3]],
+                          "m": float(m_arr[j]), "t": tq})
+        sight = {"station": station, "lines": lines}
     return {"curve": pts.tolist(), "cp": P.tolist(), "dim": dim,
             "t_lo": t_lo, "t_hi": t_hi, "obstacles": obstacles,
-            "start": payload["start"], "end": payload["end"]}
+            "start": payload["start"], "end": payload["end"],
+            "sight": sight, "shadow_balls": payload.get("shadow_balls")}
 
 
 def render_geometry(geo: dict) -> str:
@@ -280,12 +379,48 @@ def render_geometry(geo: dict) -> str:
       traces.push({type: "scatter3d", mode: "lines+markers", name: "control polygon",
         x: G.cp.map(p => p[0]), y: G.cp.map(p => p[1]), z: G.cp.map(p => p[2]),
         line: {color: "#888", width: 2, dash: "dot"}, marker: {size: 3, color: "#555"}});
+      if (G.sight) {
+        const st = G.sight.station;
+        traces.push({type: "scatter3d", mode: "markers", name: "station",
+          x: [st[0]], y: [st[1]], z: [st[2]],
+          marker: {size: 7, symbol: "diamond", color: "#117733"}});
+        for (const L of G.sight.lines) {
+          traces.push({type: "scatter3d", mode: "lines", showlegend: false,
+            x: [st[0], L.v[0]], y: [st[1], L.v[1]], z: [st[2], L.v[2]],
+            line: {color: L.m > 0 ? "rgba(20,120,60,0.35)" : "rgba(200,40,40,0.8)",
+                   width: L.m > 0 ? 1 : 3},
+            hovertext: "sight line t=" + L.t.toFixed(2) + " margin=" + L.m.toFixed(3),
+            hoverinfo: "text"});
+        }
+      }
+      if (G.shadow_balls) {
+        // The solver's own inflated occlusion balls (per piece window): the
+        // bodies the sight line must clear, exported by the exact-rows builder.
+        for (const b of G.shadow_balls) {
+          const xs = [], ys = [], zs = [];
+          for (let a = 0; a < 6; a++) for (let k = 0; k <= 12; k++) {
+            const u = Math.PI * a / 6, v = 2 * Math.PI * k / 12;
+            xs.push(b.c[0] + b.R * Math.sin(u) * Math.cos(v));
+            ys.push(b.c[1] + b.R * Math.sin(u) * Math.sin(v));
+            zs.push(b.c[2] + b.R * Math.cos(u));
+          }
+          traces.push({type: "scatter3d", mode: "markers", x: xs, y: ys, z: zs,
+            marker: {size: 1.6, color: "rgba(120,70,160,0.5)"},
+            hovertext: "occlusion ball R=" + b.R.toFixed(2) +
+                       " window [" + b.t0.toFixed(2) + ", " + b.t1.toFixed(2) + "]",
+            hoverinfo: "text", showlegend: false});
+        }
+      }
       const scene = {xaxis: {title: "x"}, yaxis: {title: "y"}, zaxis: {title: "z (altitude)"},
                      aspectmode: "data"};
 """
         caption = ("(x, y, z), TIME AS COLOR on curve and obstacle snapshots alike — "
                    "same color near each other means close at the same moment. "
-                   "Distant colors passing through the same place are NOT a conflict.")
+                   "Distant colors passing through the same place are NOT a conflict. "
+                   "Green diamond = station; sight lines red where the link is lost; "
+                   "purple shells are the solver's own inflated occlusion balls "
+                   "(per piece window, from the exact-rows builder) — the bodies the "
+                   "sight line must clear, i.e. the reason the curve climbs.")
     return f"""
     <h2>Trajectory</h2>
     <p style="font-size:12px">{caption} Drag to rotate; scroll to zoom.</p>
@@ -344,7 +479,177 @@ def fmt(v, nd=4):
     return f"{v:.{nd}g}" if isinstance(v, float) else html.escape(str(v))
 
 
-def render(args, payload, trace, warnings, rc, ident, geo_html='') -> str:
+def render_station_view(payload: dict, rc: dict) -> str:
+    """Film strip: six stills of what the station sees -- occluder disks and
+    the vehicle as angular objects (azimuth/elevation from the station), from
+    the TRUE scenario geometry and the returned curve. Small multiples, not an
+    animation: everything visible at once. Supplementary intuition; the
+    line-of-sight margin strip below remains the proof."""
+    import numpy as np
+    st = payload.get("stations")
+    if not st or rc["dim"] != 4:
+        return ""
+    station = np.asarray(st[0], float)
+    P = np.asarray(rc["P"], float)
+    from spacetime_bezier.geometry import bezier_curve
+    pts = bezier_curve(P, num_pts=2001)          # (x, y, z, t)
+    los = rc.get("los") or {}
+    t_lo, t_hi = float(pts[0, -1]), float(pts[-1, -1])
+    panels = []
+    for tq in [t_lo + (t_hi - t_lo) * k / 5 for k in range(6)]:
+        i = int(np.argmin(np.abs(pts[:, -1] - tq)))  # time is monotone; nearest sample
+        veh = pts[i, :3]
+        d_v = veh - station
+        az_v = float(np.degrees(np.arctan2(d_v[1], d_v[0])))
+        el_v = float(np.degrees(np.arcsin(d_v[2] / max(np.linalg.norm(d_v), 1e-12))))
+        discs = []
+        for o in payload["obstacles"]:
+            if not (float(o.get("t_start", -1e18)) <= pts[i, -1] <= float(o.get("t_end", 1e18))):
+                continue
+            c = np.asarray(o["pos0"], float) + np.asarray(o["vel"], float) * pts[i, -1]
+            d = c - station
+            dist = float(np.linalg.norm(d))
+            if dist <= float(o["r"]):
+                discs.append((0.0, 0.0, 180.0))   # station inside body: all sky
+                continue
+            discs.append((float(np.degrees(np.arctan2(d[1], d[0]))),
+                          float(np.degrees(np.arcsin(d[2] / dist))),
+                          float(np.degrees(np.arcsin(min(1.0, float(o["r"]) / dist))))))
+        m_here = None
+        if los:
+            j = int(np.argmin(np.abs(np.asarray(los["t"]) - pts[i, -1])))
+            m_here = float(los["m"][j])
+        vis = m_here is None or m_here > 0.0
+        # angular window centered between vehicle and occluders
+        all_az = [az_v] + [a for a, _, _ in discs]
+        all_el = [el_v] + [e for _, e, _ in discs]
+        az_c, el_c = sum(all_az) / len(all_az), sum(all_el) / len(all_el)
+        span = 30.0
+        def sx(a): return 80 + (a - az_c) / span * 74
+        def sy(e): return 80 - (e - el_c) / span * 74
+        svg = [f'<svg width="160" height="176" style="background:#f2f4f8">']
+        for a, e, r in discs:
+            svg.append(f'<circle cx="{sx(a):.1f}" cy="{sy(e):.1f}" r="{r/span*74:.1f}" '
+                       f'fill="rgba(180,70,70,0.35)" stroke="#b04040"/>')
+        color = "#117733" if vis else "#bb2222"
+        svg.append(f'<circle cx="{sx(az_v):.1f}" cy="{sy(el_v):.1f}" r="4" fill="{color}"/>')
+        label = f"t={pts[i,-1]:.1f}" + ("" if m_here is None else f"  m={m_here:+.2f}")
+        svg.append(f'<text x="6" y="172" font-size="11" fill="#333">{label}</text></svg>')
+        panels.append("".join(svg))
+    return ("<h2>What the station sees (film strip, true geometry)</h2>"
+            "<p style='font-size:12px'>Angular view from the station: red discs are the "
+            "occluder bodies' angular extent at that instant, the dot is the vehicle "
+            "(green = line of sight held, red = lost). Six stills, not an animation — "
+            "the margin strip below is the proof; this is the physical meaning.</p>"
+            "<div style='display:flex;gap:6px;flex-wrap:wrap'>" + "".join(panels) + "</div>")
+
+
+def render_replay(payload: dict, rc: dict) -> str:
+    """The mechanism panel: one SCP iteration per slider step. The slider is the
+    ITERATION INDEX, never time -- each frame is a complete static space-time
+    scene, and what changes between frames is the solver's reference. Frames
+    carry the solver's own per-step state (stepping context, identical
+    parameters): reference polygon, QP candidate as a ghost, and the tightest
+    constraint-row support points colored by margin (red = violated)."""
+    frames = payload.get("replay") or []
+    if not frames:
+        return ""
+    dim = rc["dim"]
+    if dim not in (3, 4):
+        return "<h2>Iteration replay</h2><p><b>unsupported dim</b></p>"
+    drift = float(payload.get("replay_drift", float("nan")))
+    fell_back = bool(payload.get("info", {}).get("returned_best_iterate", 0.0))
+    drift_note = (
+        f"replay endpoint vs returned control points: max |delta| = {drift:.2e}"
+        + (" — the best-iterate fallback fired, so the returned point is an "
+           "EARLIER iterate than the replay's last frame (expected mismatch)."
+          if fell_back else
+          ". A large value here without the fallback means the replay is not "
+          "the run — do not trust either.")
+    )
+    n_rej = sum(1 for f in frames if not f["advanced"])
+    data = json.dumps({"frames": frames, "dim": dim,
+                       "obstacles": (payload.get("obstacles") or [])})
+    js = """
+      const R = REPLAY_DATA;
+      const dim = R.dim, F = R.frames;
+      const col = (f, i) => f.advanced ? "#2255bb" : "#bb2222";
+      function frameTraces(f) {
+        const t = [];
+        const X = c => c.map(q => q[0]), Y = c => c.map(q => q[1]);
+        const Z3 = c => c.map(q => q[2]);           // (x,y,t) for dim 3
+        const Z4 = c => c.map(q => q[2]);           // (x,y,z) for dim 4
+        const zf = dim === 3 ? Z3 : Z4;
+        t.push({type:"scatter3d", mode:"lines", name:"reference curve",
+          x:X(f.curve), y:Y(f.curve), z:zf(f.curve),
+          line:{color:"#2255bb", width:4}});
+        t.push({type:"scatter3d", mode:"lines+markers", name:"control polygon",
+          x:X(f.P), y:Y(f.P), z:zf(f.P),
+          line:{color:"#88aadd", width:2, dash:"dot"}, marker:{size:3}});
+        t.push({type:"scatter3d", mode:"lines+markers",
+          name:f.advanced ? "candidate (became reference)" : "candidate (REJECTED)",
+          x:X(f.cand), y:Y(f.cand), z:zf(f.cand),
+          line:{color:col(f), width:2, dash:"dash"},
+          marker:{size:2}, opacity:f.advanced ? 0.45 : 0.9});
+        if (f.sup.length) {
+          t.push({type:"scatter3d", mode:"markers", name:"tightest constraint rows",
+            x:X(f.sup), y:Y(f.sup), z:zf(f.sup),
+            marker:{size:4, color:f.sup_margin, colorscale:"RdYlGn", cmin:-0.5, cmax:0.5},
+            text:f.sup_margin.map(m => "margin " + m.toFixed(4)),
+            hoverinfo:"text"});
+        }
+        return t;
+      }
+      // static obstacle context, drawn once (same construction as the main scene)
+      const staticTraces = [];
+      if (dim === 3) {
+        for (const o of R.obstacles) {
+          const t0 = Math.max(o.t_start ?? 0, 0), t1 = Math.min(o.t_end ?? 10, 10);
+          for (let i = 0; i <= 10; i++) {
+            const tt = t0 + (t1 - t0) * i / 10;
+            const cx = o.pos0[0] + o.vel[0]*tt, cy = o.pos0[1] + o.vel[1]*tt;
+            const xs=[], ys=[], zs=[];
+            for (let k = 0; k <= 20; k++) {
+              const th = 2*Math.PI*k/20;
+              xs.push(cx + o.r*Math.cos(th)); ys.push(cy + o.r*Math.sin(th)); zs.push(tt);
+            }
+            staticTraces.push({type:"scatter3d", mode:"lines", x:xs, y:ys, z:zs,
+              line:{color:"rgba(200,60,60,0.25)", width:1}, hoverinfo:"skip",
+              showlegend:false});
+          }
+        }
+      }
+      const plFrames = F.map((f, i) => ({
+        name: String(i),
+        data: staticTraces.concat(frameTraces(f)),
+      }));
+      const steps = F.map((f, i) => ({
+        method: "animate", args: [[String(i)],
+          {mode:"immediate", frame:{duration:0, redraw:true}, transition:{duration:0}}],
+        label: f.it + (f.advanced ? "" : " ✗"),
+      }));
+      const zTitle = dim === 3 ? "t" : "z";
+      Plotly.newPlot("replay", plFrames[0].data, {
+        height: 560, margin:{l:0,r:0,t:24,b:0},
+        scene:{xaxis:{title:"x"}, yaxis:{title:"y"}, zaxis:{title:zTitle},
+               aspectmode:"data"},
+        sliders:[{active:0, steps:steps, currentvalue:{prefix:"SCP iteration: "}}],
+      }).then(gd => { Plotly.addFrames(gd, plFrames); });
+    """
+    return f"""
+    <h2>Iteration replay — the mechanism, one SCP step per slider notch</h2>
+    <p style="font-size:12px">The slider is the <b>iteration index, not time</b>: every frame is a
+    complete static space-time scene; what moves between frames is the solver's reference.
+    Ghost polygon = the QP candidate (red when the ratio test rejected it, marked ✗ on the
+    slider). Dots = the tightest constraint-row support points at that reference, colored by
+    margin (red = violated; the elastic phase is the curve being pushed out of the forbidden
+    region frame by frame). {n_rej} of {len(frames)} steps rejected.
+    {html.escape(drift_note)}</p>
+    <div id="replay"></div>
+    <script>const REPLAY_DATA = {data};{js}</script>"""
+
+
+def render(args, payload, trace, warnings, rc, ident, geo_html='', replay_html='', station_html='') -> str:
     info = payload["info"]
     e = html.escape
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -486,7 +791,7 @@ def render(args, payload, trace, warnings, rc, ident, geo_html='') -> str:
     <title>trace {e(args.scenario)} N{args.N}_seg{args.seg}</title>
     <body style="font-family:sans-serif;max-width:1200px;margin:20px auto">
     <h1>Solver trace — {e(args.scenario)} N{args.N}_seg{args.seg}</h1>
-    {hdr}{warn_html}{geo_html}{pairs}{timeline}{ledger}{strip}</body>"""
+    {hdr}{warn_html}{geo_html}{station_html}{replay_html}{pairs}{timeline}{ledger}{strip}</body>"""
 
 
 def main():
@@ -507,7 +812,10 @@ def main():
     payload, trace, warnings = run_solve(args)
     rc = recompute(payload, args.seg)
     ident = build_identity()
-    page = render(args, payload, trace, warnings, rc, ident, render_geometry(geometry_data(payload, rc)))
+    page = render(args, payload, trace, warnings, rc, ident,
+                  render_geometry(geometry_data(payload, rc)),
+                  render_replay(payload, rc),
+                  render_station_view(payload, rc))
 
     out = args.out or REPO / "figures" / "debug" / (
         f"trace_{args.scenario}_N{args.N}_seg{args.seg}.html")
