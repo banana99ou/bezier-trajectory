@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Space-time Bezier — frontend</title>
+<script src="/static/plotly.min.js"></script>
+<style>
+  :root {
+    --bg:#f5f6f8; --panel:#fff; --ink:#1b2330; --muted:#5f6a79; --line:#d8dde4;
+    --good:#1a7f37; --bad:#c0332b; --warn:#b26a00; --accent:#1f6feb; --dark:#1b2330;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:13px/1.45 -apple-system,"Segoe UI",Helvetica,Arial,sans-serif; }
+  #stale { display:none; background:var(--bad); color:#fff; padding:10px 16px;
+           font-weight:700; white-space:pre-line; }
+  #stale.show { display:block; }
+  header { background:var(--dark); color:#c9d0d9; padding:7px 14px; font-size:12px;
+           display:flex; gap:16px; flex-wrap:wrap; align-items:center; }
+  header b { color:#fff; }
+  header .warn { color:#ffc061; font-weight:700; }
+  header code { font:inherit; font-family:ui-monospace,Menlo,monospace; color:#e6ebf1; }
+  .chip { display:inline-block; padding:2px 9px; border-radius:999px; color:#fff;
+          font-size:11px; font-weight:800; letter-spacing:.02em; }
+  .chip.good { background:var(--good); } .chip.bad { background:var(--bad); }
+  .chip.idle { background:#6b7684; }
+  #reasons { color:#ffb3ad; font-weight:600; }
+  #pairs { display:flex; gap:14px; flex-wrap:wrap; font-family:ui-monospace,Menlo,monospace;
+           font-size:11px; }
+  #pairs span { white-space:nowrap; }
+  main { display:flex; gap:12px; padding:12px; align-items:flex-start; }
+  aside { width:264px; flex:none; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+          padding:11px; margin-bottom:10px; }
+  .card h3 { margin:0 0 6px; font-size:12px; text-transform:uppercase; letter-spacing:.05em;
+             color:var(--muted); }
+  label.f { display:block; margin:8px 0 2px; color:var(--muted); font-size:11px; }
+  select, input[type=text], input[type=number] { width:100%; padding:4px 6px;
+          border:1px solid var(--line); border-radius:5px; font:inherit; background:#fff;
+          color:var(--ink); }
+  .row { display:flex; gap:7px; } .row > div { flex:1; }
+  button { width:100%; padding:8px; border:0; border-radius:6px; background:var(--accent);
+           color:#fff; font:inherit; font-weight:700; cursor:pointer; margin-top:10px; }
+  button:disabled { background:#9db8e8; cursor:wait; }
+  button.ghost { background:#eef1f5; color:var(--ink); font-weight:600; margin-top:6px; }
+  #status { margin-top:7px; font-size:11px; color:var(--muted); min-height:16px;
+            white-space:pre-line; }
+  #status.err { color:var(--bad); font-weight:600; }
+  #echo { margin-top:6px; font-family:ui-monospace,Menlo,monospace; font-size:10.5px;
+          color:var(--muted); word-break:break-all; }
+  .spin { display:inline-block; width:10px; height:10px; border:2px solid #cfd8e3;
+          border-top-color:var(--accent); border-radius:50%; animation:sp .7s linear infinite;
+          vertical-align:-1px; margin-right:5px; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  section { flex:1; min-width:0; }
+  #axisbar { display:flex; gap:7px; align-items:center; flex-wrap:wrap; margin-bottom:7px; }
+  #axisbar button { width:auto; margin:0; padding:4px 11px; background:#e7ebf1; color:var(--ink);
+                    font-weight:600; font-size:12px; }
+  #axisbar button.on { background:var(--accent); color:#fff; }
+  #banner { font-weight:800; font-size:14px; padding:7px 11px; border-radius:6px;
+            background:#fff4d6; border:1px solid #e5cf95; color:#6b4d00; margin-bottom:8px; }
+  #banner .drop { display:block; font-weight:700; color:var(--bad); font-size:12.5px; }
+  #banner .colorby { display:block; font-weight:600; color:#3d4b5c; font-size:12px; }
+  #view3d { height:60vh; min-height:420px; background:var(--panel); border:1px solid var(--line);
+            border-radius:8px; }
+  .toggles label { display:flex; gap:6px; align-items:center; margin:4px 0; font-size:12px; }
+  .toggles .sub { margin:2px 0 8px 20px; display:none; }
+  .toggles .sub.show { display:block; }
+  details.drawer { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+                   margin-top:10px; padding:0 11px 11px; }
+  details.drawer > summary { cursor:pointer; padding:9px 0; font-weight:700; }
+  table.grid { width:100%; border-collapse:collapse; font-family:ui-monospace,Menlo,monospace;
+               font-size:10.5px; }
+  table.grid th, table.grid td { border:1px solid var(--line); padding:2px 4px; text-align:right; }
+  table.grid th { background:#f0f3f7; position:sticky; top:0; }
+  table.grid tr.bad td { background:#fdeceb; }
+  .scroll { max-height:280px; overflow:auto; border:1px solid var(--line); border-radius:6px; }
+  .pairtable { width:100%; border-collapse:collapse; font-family:ui-monospace,Menlo,monospace;
+               font-size:11px; }
+  .pairtable td, .pairtable th { border-bottom:1px solid var(--line); padding:3px 5px;
+               text-align:right; } .pairtable td:first-child, .pairtable th:first-child
+               { text-align:left; font-family:inherit; }
+  .note { font-size:11px; color:var(--muted); margin:6px 0; }
+  #replayRow { display:flex; gap:9px; align-items:center; margin:8px 0; }
+  #replayRow input[type=range] { flex:1; }
+  #replayLabel { font-family:ui-monospace,Menlo,monospace; font-size:11px; min-width:190px; }
+</style>
+</head>
+<body>
+<div id="stale"></div>
+
+<header>
+  <span id="hRun"><b>—</b></span>
+  <span id="hGit">git —</span>
+  <span id="hExt">extension —</span>
+  <span><span id="hGrade" class="chip idle">no run</span> <span id="reasons"></span></span>
+  <span id="pairs"></span>
+</header>
+
+<main>
+<aside>
+  <div class="card">
+    <h3>Configuration</h3>
+    <label class="f">scenario</label>
+    <select id="scenario"></select>
+    <label class="f">registered configs (preset)</label>
+    <select id="preset"></select>
+    <div class="row">
+      <div><label class="f">N (degree)</label><input id="N" type="number" min="1" step="1"></div>
+      <div><label class="f">n_seg</label><input id="n_seg" type="number" min="1" step="1"></div>
+    </div>
+    <label class="f">elastic_weight <span id="ewHint" class="muted"></span></label>
+    <input id="elastic_weight" type="text" placeholder="blank = walk the ladder">
+    <div class="row">
+      <div><label class="f">v_max (blank = off)</label><input id="v_max" type="text" placeholder="off"></div>
+      <div><label class="f">time_weight</label><input id="time_weight" type="text" placeholder="0"></div>
+    </div>
+    <label class="f"><input id="free_arrival_time" type="checkbox"> free_arrival_time</label>
+    <div class="row">
+      <div><label class="f">trust radius</label><input id="trust_radius" type="text"></div>
+      <div><label class="f">max_iter</label><input id="max_iter" type="number" min="1" step="1"></div>
+    </div>
+    <label class="f">tol</label><input id="tol" type="text">
+    <button id="solve">Solve</button>
+    <div id="status"></div>
+    <div id="echo"></div>
+  </div>
+
+  <div class="card toggles">
+    <h3>Layers (all off by default)</h3>
+    <label><input type="checkbox" id="tPoly"> control polygon</label>
+
+    <label><input type="checkbox" id="tNear"> near-active planes</label>
+    <div class="sub" id="subNear">
+      <label class="f">margin threshold <span id="nearVal">0.50</span></label>
+      <input type="range" id="nearThresh" min="0.01" max="3" step="0.01" value="0.5" style="width:100%">
+    </div>
+
+    <label><input type="checkbox" id="tSeg"> all planes for one segment</label>
+    <div class="sub" id="subSeg">
+      <label class="f">segment index</label>
+      <input id="segPick" type="number" min="0" step="1" value="0">
+    </div>
+
+    <label><input type="checkbox" id="tCert"> certificate inspector</label>
+    <div class="sub" id="subCert">
+      <label class="f">segment</label><input id="certSeg" type="number" min="0" step="1" value="0">
+      <label class="f">obstacle</label><input id="certObs" type="number" min="0" step="1" value="0">
+      <div class="note">Scene strips to that segment's control-point hull, its one plane, and
+        that obstacle's tube. The paper's guarantee as one picture.</div>
+    </div>
+
+    <label><input type="checkbox" id="tSpeed"> colour the curve by physical speed</label>
+    <label><input type="checkbox" id="tTrust"> trust boxes <span class="note">(replay only)</span></label>
+  </div>
+</aside>
+
+<section>
+  <div id="axisbar"></div>
+  <div id="banner">Solve to draw something.</div>
+  <div id="view3d"></div>
+
+  <details class="drawer" id="drawer">
+    <summary>Diagnostics — the same scene, one SCP step at a time</summary>
+
+    <div class="note">The replay drives <code>bezier_opt.SpacetimeScpContext</code> with the
+      parameters <code>tools/trace_viewer.py</code>'s child script pins, and reports that
+      script's own drift check. It re-solves, so it costs a second run.</div>
+    <button class="ghost" id="loadReplay" style="width:auto;padding:6px 14px">Load replay + trace</button>
+    <span id="replayStatus" class="note"></span>
+
+    <div id="replayRow" style="display:none">
+      <span id="replayLabel"></span>
+      <input type="range" id="replaySlider" min="0" max="0" value="0">
+      <button class="ghost" id="showResult" style="width:auto;padding:5px 12px;margin:0">Back to result</button>
+    </div>
+    <div id="driftNote" class="note"></div>
+
+    <div id="diagBody"></div>
+  </details>
+</section>
+</main>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------------------
+// The client only draws.
+//
+// Every verdict on this page -- figure_grade and its reasons, the independent
+// clearance, the line-of-sight margin, whether a sight line is lost, the
+// half-space patch corners, the axis banner text -- is computed by the server
+// from the solver's own numbers and arrives as data. Nothing below re-derives a
+// number the backend already produced.
+//
+// Two things ARE tessellated here, and both are parametric surfaces over
+// server-supplied parameters rather than derivations:
+//   * obstacle tubes / spheres, from the scenario's own pos0, vel, r and window,
+//     because the axis picker decides which two spatial coordinates carry the
+//     circle;
+//   * the shadow cone, from the solver-exported inflated ball and the station.
+//     It is a DERIVED object and its legend entry says so.
+// ---------------------------------------------------------------------------
+
+const $ = id => document.getElementById(id);
+const fmt = (v, n) => (v === null || v === undefined || Number.isNaN(v))
+  ? "n/a" : (typeof v === "number" ? v.toPrecision(n || 4) : String(v));
+
+let CAT = null;      // /api/scenarios
+let RES = null;      // last /api/solve response
+let REPLAY = null;   // last /api/replay response
+let VIEW = null;     // the active entry of RES.scenario.views
+let replayIndex = -1; // -1 = show the result, otherwise the frame index
+
+// ---------------------------------------------------------------------------
+// Projection: pick the three displayed columns out of a full lifted-space point.
+// A coordinate selection is a linear map, so the projection of a flat patch is a
+// flat patch -- the shadow of a real supporting hyperplane, never a plane
+// synthesised in the view.
+// ---------------------------------------------------------------------------
+const px = p => p[VIEW.cols[0]], py = p => p[VIEW.cols[1]], pz = p => p[VIEW.cols[2]];
+const C = (arr, f) => arr.map(f);
+
+function timeSpan() {
+  const lo = RES.solution.t_lo, hi = RES.solution.t_hi;
+  return [lo, (hi - lo) || 1];
+}
+
+// --- colours ---------------------------------------------------------------
+function marginColor(m, thresh) {
+  if (m === null || m === undefined) return "rgb(150,150,150)";
+  if (m < 0) return "rgb(200,30,30)";
+  const r = Math.max(0, Math.min(1, m / (thresh || 0.5)));
+  // red -> yellow -> green
+  return r < 0.5
+    ? `rgb(220,${Math.round(60 + 340 * r)},40)`
+    : `rgb(${Math.round(220 - 400 * (r - 0.5))},170,50)`;
+}
+
+// --- obstacle surfaces -----------------------------------------------------
+function obstacleCenter(o, t) {
+  return o.pos0.map((c, i) => c + o.vel[i] * t);
+}
+function obstacleWindow(o) {
+  const [lo, hi] = [RES.solution.t_lo, RES.solution.t_hi];
+  const t0 = Math.max(o.t_start === undefined ? lo : o.t_start, lo);
+  const t1 = Math.min(o.t_end === undefined ? hi : o.t_end, hi);
+  return [t0, t1, o.t_start !== undefined, o.t_end !== undefined];
+}
+
+function tubeTraces(o, oi, opacity) {
+  // Lift view: a circle in the two displayed SPATIAL coordinates, swept along the
+  // slanted centreline over the obstacle's own active window. Solid surface, not
+  // a dot cloud.
+  const [t0, t1, finite0, finite1] = obstacleWindow(o);
+  if (t1 < t0) return [];
+  const [sa, sb] = VIEW.space_idx, nT = 26, nTh = 32, out = [];
+  const X = [], Y = [], Z = [];
+  for (let i = 0; i <= nT; i++) {
+    const t = t0 + (t1 - t0) * i / nT, c = obstacleCenter(o, t);
+    const xr = [], yr = [], zr = [];
+    for (let k = 0; k <= nTh; k++) {
+      const th = 2 * Math.PI * k / nTh;
+      xr.push(c[sa] + o.r * Math.cos(th));
+      yr.push(c[sb] + o.r * Math.sin(th));
+      zr.push(t);
+    }
+    X.push(xr); Y.push(yr); Z.push(zr);
+  }
+  out.push({
+    type: "surface", x: X, y: Y, z: Z, opacity: opacity,
+    colorscale: [[0, "rgb(196,64,64)"], [1, "rgb(196,64,64)"]], showscale: false,
+    hoverinfo: "text", text: `obstacle ${oi}${o.name ? " (" + o.name + ")" : ""} r=${o.r}`,
+    name: oi === 0 ? "obstacle tubes" : undefined, showlegend: oi === 0, legendgroup: "obs",
+  });
+  // The slanted axis itself: a still obstacle is vertical, a moving one leans.
+  const cx = [], cy = [], cz = [];
+  for (let i = 0; i <= nT; i++) {
+    const t = t0 + (t1 - t0) * i / nT, c = obstacleCenter(o, t);
+    cx.push(c[sa]); cy.push(c[sb]); cz.push(t);
+  }
+  out.push({ type: "scatter3d", mode: "lines", x: cx, y: cy, z: cz,
+    line: { color: "#6b1a1a", width: 2 }, hoverinfo: "skip",
+    name: "tube centreline", showlegend: oi === 0, legendgroup: "cl" });
+  // Filled caps, only where the WINDOW is genuinely finite -- a tube clipped by
+  // the plotting horizon must not grow an end it does not have.
+  const cap = (t, show) => {
+    if (!show) return;
+    const c = obstacleCenter(o, t), nR = 6, xr = [], yr = [], zr = [];
+    for (let i = 0; i <= nR; i++) {
+      const rho = o.r * i / nR, xs = [], ys = [], zs = [];
+      for (let k = 0; k <= nTh; k++) {
+        const th = 2 * Math.PI * k / nTh;
+        xs.push(c[sa] + rho * Math.cos(th)); ys.push(c[sb] + rho * Math.sin(th)); zs.push(t);
+      }
+      xr.push(xs); yr.push(ys); zr.push(zs);
+    }
+    out.push({ type: "surface", x: xr, y: yr, z: zr, opacity: opacity,
+      colorscale: [[0, "rgb(168,48,48)"], [1, "rgb(168,48,48)"]], showscale: false,
+      hoverinfo: "text", text: `obstacle ${oi} cap t=${t.toFixed(2)}`, showlegend: false });
+  };
+  cap(t0, finite0 && t0 <= t1); cap(t1, finite1 && t1 >= t0);
+  return out;
+}
+
+function sphereTraces(o, oi, opacity) {
+  // Spatial view: snapshots of the body, coloured by the instant they belong to,
+  // on the SAME scale as the trajectory -- so "same colour and near each other"
+  // means "close at the same moment", and distant colours crossing the same place
+  // are not a conflict.
+  const [t0, t1] = obstacleWindow(o);
+  if (t1 < t0) return [];
+  const [tLo, tSpan] = timeSpan(), nSnap = 6, nU = 14, nV = 20, out = [];
+  for (let s = 0; s < nSnap; s++) {
+    const t = t0 + (t1 - t0) * s / (nSnap - 1 || 1), c = obstacleCenter(o, t);
+    const [a, b, cc] = VIEW.space_idx, X = [], Y = [], Z = [];
+    for (let i = 0; i <= nU; i++) {
+      const u = Math.PI * i / nU, xr = [], yr = [], zr = [];
+      for (let k = 0; k <= nV; k++) {
+        const v = 2 * Math.PI * k / nV;
+        xr.push(c[a] + o.r * Math.sin(u) * Math.cos(v));
+        yr.push(c[b] + o.r * Math.sin(u) * Math.sin(v));
+        zr.push(c[cc] + o.r * Math.cos(u));
+      }
+      X.push(xr); Y.push(yr); Z.push(zr);
+    }
+    const shade = (t - tLo) / tSpan;
+    out.push({
+      type: "surface", x: X, y: Y, z: Z, opacity: opacity,
+      surfacecolor: X.map(r => r.map(() => shade)),
+      colorscale: "Viridis", cmin: 0, cmax: 1, showscale: false,
+      hoverinfo: "text", text: `obstacle ${oi} @ t=${t.toFixed(2)}`,
+      name: "obstacle snapshots (colour = time)",
+      showlegend: oi === 0 && s === 0, legendgroup: "obs",
+    });
+  }
+  return out;
+}
+
+function obstacleTraces(only, opacity) {
+  const out = [];
+  RES.scenario.obstacles.forEach((o, i) => {
+    if (only !== null && only !== i) return;
+    const t = VIEW.kind === "spatial" ? sphereTraces(o, i, opacity) : tubeTraces(o, i, opacity);
+    out.push(...t);
+  });
+  return out;
+}
+
+// --- trajectory ------------------------------------------------------------
+function trajectoryTraces() {
+  const cur = RES.solution.curve, [tLo, tSpan] = timeSpan();
+  if ($("tSpeed").checked) {
+    return [{
+      type: "scatter3d", mode: "markers", name: "trajectory (colour = |dx/dt|)",
+      x: C(cur, px), y: C(cur, py), z: C(cur, pz),
+      marker: {
+        size: 3, color: RES.solution.speed, colorscale: "Plasma",
+        colorbar: { title: "speed", thickness: 12, len: 0.5, x: 1.02 },
+      },
+      text: RES.solution.speed.map(s => "speed " + fmt(s, 4)), hoverinfo: "text",
+    }];
+  }
+  if (VIEW.kind === "spatial") {
+    return [{
+      type: "scatter3d", mode: "markers", name: "trajectory (colour = time)",
+      x: C(cur, px), y: C(cur, py), z: C(cur, pz),
+      marker: {
+        size: 3, colorscale: "Viridis", cmin: 0, cmax: 1,
+        color: cur.map(p => (p[p.length - 1] - tLo) / tSpan),
+        colorbar: { title: "t", thickness: 12, len: 0.5, x: 1.02,
+                    tickvals: [0, 1], ticktext: [tLo.toFixed(1), (tLo + tSpan).toFixed(1)] },
+      },
+      text: cur.map(p => "t = " + p[p.length - 1].toFixed(2)), hoverinfo: "text",
+    }];
+  }
+  return [{
+    type: "scatter3d", mode: "lines", name: "trajectory",
+    x: C(cur, px), y: C(cur, py), z: C(cur, pz), line: { color: "#1155cc", width: 6 },
+    text: cur.map(p => "t = " + p[p.length - 1].toFixed(2)), hoverinfo: "text",
+  }];
+}
+
+function endpointTraces() {
+  const s = RES.scenario.start, e = RES.scenario.end;
+  return [{
+    type: "scatter3d", mode: "markers+text", name: "start / goal",
+    x: [px(s), px(e)], y: [py(s), py(e)], z: [pz(s), pz(e)],
+    text: ["start", "goal"], textposition: "top center",
+    marker: { size: 7, color: ["#0b6", "#333"], symbol: "diamond" },
+  }];
+}
+
+function polygonTraces(P, color) {
+  return [{
+    type: "scatter3d", mode: "lines+markers", name: "control polygon",
+    x: C(P, px), y: C(P, py), z: C(P, pz),
+    line: { color: color || "#8a8a8a", width: 2, dash: "dot" },
+    marker: { size: 4, color: color || "#555" },
+  }];
+}
+
+// --- station, sight lines, shadow cones -------------------------------------
+function stationTraces() {
+  if (!RES.sight) return [];
+  const st = RES.sight.station, out = [];
+  if (VIEW.kind === "spatial") {
+    const [a, b, c] = VIEW.space_idx;
+    out.push({ type: "scatter3d", mode: "markers+text", name: "station",
+      x: [st[a]], y: [st[b]], z: [st[c]], text: ["station"], textposition: "top center",
+      marker: { size: 8, symbol: "diamond", color: "#117733" } });
+  } else {
+    // The station exists at EVERY instant, so in a lifted view it is a line, not
+    // a point. Drawing it as a dot would put it at one time it has no business
+    // being at.
+    const [a, b] = VIEW.space_idx, lo = RES.solution.t_lo, hi = RES.solution.t_hi;
+    out.push({ type: "scatter3d", mode: "lines", name: "station (all t)",
+      x: [st[a], st[a]], y: [st[b], st[b]], z: [lo, hi],
+      line: { color: "#117733", width: 6 } });
+  }
+  return out;
+}
+
+function sightTraces() {
+  if (!RES.sight) return [];
+  const st = RES.sight.station, out = [];
+  let firstKept = true, firstLost = true;
+  RES.sight.lines.forEach(L => {
+    let sx, sy, sz, vx, vy, vz;
+    if (VIEW.kind === "spatial") {
+      const [a, b, c] = VIEW.space_idx;
+      sx = st[a]; sy = st[b]; sz = st[c];
+      vx = L.v[a]; vy = L.v[b]; vz = L.v[c];
+    } else {
+      const [a, b] = VIEW.space_idx;
+      sx = st[a]; sy = st[b]; sz = L.t;
+      vx = L.v[a]; vy = L.v[b]; vz = L.t;
+    }
+    const lost = L.lost, showLegend = lost ? firstLost : firstKept;
+    if (lost) firstLost = false; else firstKept = false;
+    out.push({
+      type: "scatter3d", mode: "lines",
+      name: lost ? "sight line LOST" : "sight line held",
+      showlegend: showLegend, legendgroup: lost ? "lost" : "kept",
+      x: [sx, vx], y: [sy, vy], z: [sz, vz],
+      line: { color: lost ? "rgba(200,40,40,0.95)" : "rgba(20,120,60,0.4)",
+              width: lost ? 5 : 1.5 },
+      hoverinfo: "text",
+      text: `t=${L.t.toFixed(2)} margin=${fmt(L.m, 4)}`,
+    });
+  });
+  return out;
+}
+
+function shadowConeTraces() {
+  // DERIVED, and labelled so in the legend: the cone is tessellated here from the
+  // solver's own exported inflated ball (centre, radius, piece window) and the
+  // station. The balls are the solver's; the wedge between them is this file's.
+  if (!RES.shadow_balls || !RES.shadow_balls.length || !RES.sight) return [];
+  const st = RES.sight.station, out = [];
+  let first = true;
+  RES.shadow_balls.forEach(b => {
+    if (VIEW.kind === "spatial") {
+      const [ia, ib, ic] = VIEW.space_idx;
+      const S = [st[ia], st[ib], st[ic]], Cc = [b.c[ia], b.c[ib], b.c[ic]];
+      const d = [Cc[0] - S[0], Cc[1] - S[1], Cc[2] - S[2]];
+      const L = Math.hypot(d[0], d[1], d[2]);
+      if (!(L > b.R)) return;                       // station inside the body
+      const ax = d.map(v => v / L), alpha = Math.asin(b.R / L), tanA = Math.tan(alpha);
+      // orthonormal frame around the cone axis
+      const seed = Math.abs(ax[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+      let e1 = [seed[1] * ax[2] - seed[2] * ax[1], seed[2] * ax[0] - seed[0] * ax[2],
+                seed[0] * ax[1] - seed[1] * ax[0]];
+      const n1 = Math.hypot(e1[0], e1[1], e1[2]); e1 = e1.map(v => v / n1);
+      const e2 = [ax[1] * e1[2] - ax[2] * e1[1], ax[2] * e1[0] - ax[0] * e1[2],
+                  ax[0] * e1[1] - ax[1] * e1[0]];
+      const sLo = L * Math.cos(alpha) * Math.cos(alpha), sHi = 2.2 * L;
+      const nS = 10, nTh = 26, X = [], Y = [], Z = [];
+      for (let i = 0; i <= nS; i++) {
+        const s = sLo + (sHi - sLo) * i / nS, rad = s * tanA;
+        const xr = [], yr = [], zr = [];
+        for (let k = 0; k <= nTh; k++) {
+          const th = 2 * Math.PI * k / nTh, ct = Math.cos(th), stn = Math.sin(th);
+          xr.push(S[0] + ax[0] * s + rad * (e1[0] * ct + e2[0] * stn));
+          yr.push(S[1] + ax[1] * s + rad * (e1[1] * ct + e2[1] * stn));
+          zr.push(S[2] + ax[2] * s + rad * (e1[2] * ct + e2[2] * stn));
+        }
+        X.push(xr); Y.push(yr); Z.push(zr);
+      }
+      out.push({ type: "surface", x: X, y: Y, z: Z, opacity: 0.22,
+        colorscale: [[0, "rgb(120,70,160)"], [1, "rgb(120,70,160)"]], showscale: false,
+        name: "shadow cone (derived)", showlegend: first, legendgroup: "cone",
+        hoverinfo: "text", text: `shadow cone (derived) R=${b.R.toFixed(2)}` });
+      first = false;
+    } else {
+      // Lift view: the shadow's two walls, extruded over the piece's own time
+      // window. The walls really are parallel to the time axis -- the occlusion
+      // rows carry a zero time coefficient by design -- so this is the geometry,
+      // not a convenience.
+      const [ia, ib] = VIEW.space_idx;
+      const S = [st[ia], st[ib]], Cc = [b.c[ia], b.c[ib]];
+      const d = [Cc[0] - S[0], Cc[1] - S[1]], L = Math.hypot(d[0], d[1]);
+      if (!(L > b.R)) return;
+      const alpha = Math.asin(b.R / L), base = Math.atan2(d[1], d[0]);
+      const t0 = Math.max(b.t0, RES.solution.t_lo), t1 = Math.min(b.t1, RES.solution.t_hi);
+      if (t1 < t0) return;
+      [base - alpha, base + alpha].forEach(ang => {
+        const far = 2.2 * L;
+        const X = [], Y = [], Z = [];
+        for (const t of [t0, t1]) {
+          const xr = [], yr = [], zr = [];
+          for (let i = 0; i <= 8; i++) {
+            const s = L * Math.cos(alpha) + (far - L * Math.cos(alpha)) * i / 8;
+            xr.push(S[0] + s * Math.cos(ang)); yr.push(S[1] + s * Math.sin(ang)); zr.push(t);
+          }
+          X.push(xr); Y.push(yr); Z.push(zr);
+        }
+        out.push({ type: "surface", x: X, y: Y, z: Z, opacity: 0.22,
+          colorscale: [[0, "rgb(120,70,160)"], [1, "rgb(120,70,160)"]], showscale: false,
+          name: "shadow cone (derived)", showlegend: first, legendgroup: "cone",
+          hoverinfo: "text",
+          text: `shadow cone (derived), window [${b.t0.toFixed(2)}, ${b.t1.toFixed(2)}]` });
+        first = false;
+      });
+    }
+  });
+  return out;
+}
+
+// --- half-space patches ----------------------------------------------------
+function planeTraces(planes, thresh, label) {
+  const out = [];
+  let first = true;
+  planes.forEach(pl => {
+    const q = pl.corners;
+    const col = marginColor(pl.margin, thresh);
+    out.push({
+      type: "mesh3d", x: C(q, px), y: C(q, py), z: C(q, pz),
+      i: [0, 0], j: [1, 2], k: [2, 3], opacity: 0.42, color: col, flatshading: true,
+      name: label, showlegend: first, legendgroup: label, hoverinfo: "text",
+      text: `${pl.kind} plane seg ${pl.seg} obs ${pl.obs}` +
+            (pl.station !== undefined ? ` station ${pl.station}` : "") +
+            `\nmargin ${fmt(pl.margin, 4)}`,
+    });
+    const a = pl.free_arrow;
+    out.push({
+      type: "scatter3d", mode: "lines", x: C(a, px), y: C(a, py), z: C(a, pz),
+      line: { color: col, width: 6 }, showlegend: false, legendgroup: label,
+      hoverinfo: "text", text: "free side",
+    });
+    first = false;
+  });
+  return out;
+}
+
+function allPlanes() {
+  return RES.planes.koz.concat(RES.planes.occlusion || []);
+}
+
+function hullTrace(segIdx) {
+  const H = RES.segments.hulls[segIdx];
+  if (!H) return [];
+  return [{
+    type: "mesh3d", x: C(H, px), y: C(H, py), z: C(H, pz),
+    alphahull: 0, opacity: 0.25, color: "#2f6fd0", flatshading: true,
+    name: `segment ${segIdx} control-point hull`, hoverinfo: "skip",
+  }, {
+    type: "scatter3d", mode: "markers", x: C(H, px), y: C(H, py), z: C(H, pz),
+    marker: { size: 4, color: "#2f6fd0" }, name: `segment ${segIdx} control points`,
+  }];
+}
+
+// --- trust boxes (replay only) ---------------------------------------------
+function trustBoxTraces(P, radius) {
+  if (!(radius > 0)) return [];
+  const out = [];
+  P.forEach((p, idx) => {
+    const cx = px(p), cy = py(p), cz = pz(p), r = radius;
+    const lo = [cx - r, cy - r, cz - r], hi = [cx + r, cy + r, cz + r];
+    const V = [];
+    for (const zz of [lo[2], hi[2]]) for (const yy of [lo[1], hi[1]]) for (const xx of [lo[0], hi[0]]) V.push([xx, yy, zz]);
+    const edges = [[0,1],[1,3],[3,2],[2,0],[4,5],[5,7],[7,6],[6,4],[0,4],[1,5],[2,6],[3,7]];
+    const X = [], Y = [], Z = [];
+    edges.forEach(([a, b]) => { X.push(V[a][0], V[b][0], null); Y.push(V[a][1], V[b][1], null);
+                                Z.push(V[a][2], V[b][2], null); });
+    out.push({ type: "scatter3d", mode: "lines", x: X, y: Y, z: Z,
+      line: { color: "rgba(90,90,90,0.55)", width: 1 },
+      name: "trust box (half-width = trust radius)", showlegend: idx === 0,
+      legendgroup: "trust", hoverinfo: "text", text: `trust radius ${fmt(radius, 3)}` });
+  });
+  return out;
+}
+
+// --- scene assembly --------------------------------------------------------
+function buildScene() {
+  const traces = [];
+  const inspector = $("tCert").checked;
+
+  if (inspector) {
+    const seg = Math.max(0, Math.min(RES.segments.n_seg - 1, +$("certSeg").value || 0));
+    const obs = Math.max(0, Math.min(RES.scenario.obstacles.length - 1, +$("certObs").value || 0));
+    traces.push(...obstacleTraces(obs, 0.30));
+    traces.push(...hullTrace(seg));
+    const picked = allPlanes().filter(p => p.seg === seg && p.obs === obs);
+    traces.push(...planeTraces(picked, +$("nearThresh").value, "supporting half-space"));
+    traces.push(...trajectoryTraces());
+    return traces;
+  }
+
+  traces.push(...obstacleTraces(null, 0.30));
+
+  if (replayIndex >= 0 && REPLAY && REPLAY.frames[replayIndex]) {
+    const f = REPLAY.frames[replayIndex];
+    traces.push({ type: "scatter3d", mode: "lines", name: "reference curve",
+      x: C(f.curve, px), y: C(f.curve, py), z: C(f.curve, pz),
+      line: { color: "#1155cc", width: 5 } });
+    traces.push(...polygonTraces(f.P, "#88aadd"));
+    traces.push({ type: "scatter3d", mode: "lines+markers",
+      name: f.advanced ? "candidate (became reference)" : "candidate (REJECTED)",
+      x: C(f.cand, px), y: C(f.cand, py), z: C(f.cand, pz),
+      line: { color: f.advanced ? "#2255bb" : "#bb2222", width: 2, dash: "dash" },
+      marker: { size: 3 }, opacity: f.advanced ? 0.45 : 0.95 });
+    if (f.sup && f.sup.length) {
+      traces.push({ type: "scatter3d", mode: "markers", name: "tightest constraint rows",
+        x: C(f.sup, px), y: C(f.sup, py), z: C(f.sup, pz),
+        marker: { size: 4, color: f.sup_margin, colorscale: "RdYlGn", cmin: -0.5, cmax: 0.5 },
+        text: f.sup_margin.map(m => "margin " + fmt(m, 4)), hoverinfo: "text" });
+    }
+    if ($("tTrust").checked) traces.push(...trustBoxTraces(f.P, f.trust_after));
+    traces.push(...endpointTraces());
+    return traces;
+  }
+
+  traces.push(...trajectoryTraces());
+  traces.push(...endpointTraces());
+  traces.push(...stationTraces());
+  traces.push(...sightTraces());
+  traces.push(...shadowConeTraces());
+  if ($("tPoly").checked) traces.push(...polygonTraces(RES.solution.control_points));
+  if ($("tNear").checked) {
+    const th = +$("nearThresh").value;
+    traces.push(...planeTraces(allPlanes().filter(p => p.margin < th), th, "near-active planes"));
+  }
+  if ($("tSeg").checked) {
+    const seg = +$("segPick").value || 0;
+    traces.push(...planeTraces(allPlanes().filter(p => p.seg === seg),
+                               +$("nearThresh").value, `all planes, segment ${seg}`));
+  }
+  return traces;
+}
+
+function render() {
+  if (!RES || !VIEW) return;
+  const layout = {
+    // Camera survives a re-solve because uirevision is unchanged; it resets when
+    // the axis triple changes, which is a different scene.
+    uirevision: RES.scenario.name + "/" + VIEW.id,
+    margin: { l: 0, r: 0, t: 0, b: 0 },
+    showlegend: true, legend: { x: 0, y: 1, bgcolor: "rgba(255,255,255,0.75)" },
+    scene: {
+      xaxis: { title: VIEW.labels[0] }, yaxis: { title: VIEW.labels[1] },
+      zaxis: { title: VIEW.labels[2] + (VIEW.kind === "lift" ? " (TIME)" : "") },
+      aspectmode: "data",
+    },
+  };
+  Plotly.react("view3d", buildScene(), layout, { responsive: true });
+  drawBanner();
+}
+
+function drawBanner() {
+  const b = $("banner");
+  let html = VIEW.banner;
+  if (VIEW.dropped_note) html += `<span class="drop">${VIEW.dropped_note}</span>`;
+  const coloring = $("tSpeed").checked
+    ? "curve colour = physical speed |dx/dt|"
+    : (VIEW.kind === "spatial" ? "curve colour = time" : "curve drawn as a solid line");
+  html += `<span class="colorby">${coloring}` +
+          (replayIndex >= 0 ? " · showing SCP iteration, not the returned result" : "") +
+          `</span>`;
+  b.innerHTML = html;
+}
+
+// ---------------------------------------------------------------------------
+// Header
+// ---------------------------------------------------------------------------
+function drawHeader() {
+  const p = RES.provenance, v = RES.verdict, r = RES.request;
+  $("hRun").innerHTML = `<b>${RES.scenario.name}</b> <code>N=${r.N} n_seg=${r.n_seg} ` +
+    `w=${fmt(RES.resolved.elastic_weight, 6)}${RES.resolved.ladder_walked ? " (ladder)" : ""} ` +
+    `trust=${r.trust_radius} max_iter=${r.max_iter} tol=${r.tol}` +
+    (r.v_max !== null ? ` v_max=${r.v_max}` : "") +
+    (r.time_weight ? ` time_weight=${r.time_weight}` : "") +
+    (r.free_arrival_time ? " free_arrival" : "") + `</code>`;
+  $("hGit").innerHTML = `git <b>${p.git_commit || "?"}</b>${p.git_dirty ? " +dirty" : ""}`;
+  $("hExt").innerHTML = p.extension_stale === null
+    ? `<span class="warn">extension freshness unknown</span>`
+    : (p.extension_stale
+        ? `<span class="warn">EXTENSION OLDER THAN .rs SOURCES</span>`
+        : `extension newer than sources`);
+  const chip = $("hGrade");
+  chip.className = "chip " + (v.figure_grade ? "good" : "bad");
+  chip.textContent = v.figure_grade ? "FIGURE-GRADE" : "NOT FIGURE-GRADE";
+  $("reasons").textContent = v.figure_grade_reasons.join("; ");
+  const parts = [
+    `clearance reported ${fmt(v.clearance_reported, 6)} / independent ${fmt(v.clearance_independent, 6)} (Δ ${v.clearance_delta === null ? "n/a" : v.clearance_delta.toExponential(1)})`,
+    `certificate ${fmt(v.certificate_reported, 4)} / recomputed ${fmt(v.certificate_recomputed, 4)}`,
+    `slack ${v.total_slack === null ? "n/a" : v.total_slack.toExponential(2)}`,
+    `${v.stop_label} · ${v.iterations} it`,
+  ];
+  if (v.los_min_margin !== undefined && v.los_min_margin !== null) {
+    parts.splice(2, 0, `occlusion cert ${fmt(v.occlusion_reported, 4)} / min LOS margin ${fmt(v.los_min_margin, 4)}${v.los_lost ? " (LOST)" : ""}`);
+  }
+  $("pairs").innerHTML = parts.map(s => `<span>${s}</span>`).join("");
+  const st = $("stale");
+  if (p.extension_stale) {
+    st.className = "show";
+    st.textContent = "The compiled Rust extension is OLDER than the .rs sources. " +
+      "Everything on this page was produced by code you have since edited. Rebuild with " +
+      "`cd rust_optimizer/pybind && maturin develop --release`, restart this server, re-solve.";
+  } else st.className = "";
+}
+
+function drawAxisBar() {
+  const bar = $("axisbar");
+  bar.innerHTML = "";
+  const views = RES.scenario.views;
+  if (views.length > 1) {
+    views.forEach(v => {
+      const b = document.createElement("button");
+      b.textContent = "(" + v.labels.join(",") + ")";
+      b.className = v.id === VIEW.id ? "on" : "";
+      b.onclick = () => { VIEW = v; drawAxisBar(); render(); };
+      bar.appendChild(b);
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics drawer -- same scene, same server, no reload
+// ---------------------------------------------------------------------------
+function drawDiagnostics() {
+  const v = RES.verdict, L = RES.ledger;
+  const row = (a, b, c, d) =>
+    `<tr><td>${a}</td><td>${b}</td><td>${c}</td><td>${d}</td></tr>`;
+  const occl = v.occlusion_reported === null || v.occlusion_reported === undefined ? "" :
+    row("occlusion certificate @ returned P / independent min LOS margin (positive = visible)",
+        fmt(v.occlusion_reported, 6), fmt(v.los_min_margin, 6), "—");
+  let html = `
+  <h4>Paired checks (reported vs recomputed — both always shown)</h4>
+  <table class="pairtable">
+    <tr><th></th><th>solver reported</th><th>recomputed here</th><th>delta</th></tr>
+    ${row("certificate violation (exact rows @ returned P)", fmt(v.certificate_reported, 6),
+          fmt(v.certificate_recomputed, 6),
+          v.certificate_delta === null ? "n/a" : v.certificate_delta.toExponential(2))}
+    ${row("min clearance (solver's own vs independent sampling here)", fmt(v.clearance_reported, 6),
+          fmt(v.clearance_independent, 6),
+          v.clearance_delta === null ? "n/a" : v.clearance_delta.toExponential(2))}
+    ${occl}
+  </table>
+  <p class="note">What each pair can catch. The certificate pair calls the SAME Rust builder on
+  both legs, so it exposes plumbing mismatches only — wrong geometry moves both legs identically
+  and the delta stays at zero. The clearance pair is the independent one (separate implementation,
+  separate language), though both legs sample uniformly in the curve parameter and share that
+  method's blind spots. A clearance disagreement is a finding; a certificate agreement proves
+  plumbing, not geometry.</p>
+
+  <h4>Elastic-weight ladder</h4>
+  <table class="pairtable"><tr><th>weight</th><th>clearance</th><th>certificate</th>
+    <th>occlusion</th><th>cleared</th></tr>` +
+    RES.resolved.rungs.map(r =>
+      `<tr><td>${fmt(r.elastic_weight, 6)}</td><td>${fmt(r.clearance, 5)}</td>
+       <td>${fmt(r.certificate, 4)}</td><td>${fmt(r.occlusion, 4)}</td>
+       <td>${r.cleared ? "yes" : "no"}</td></tr>`).join("") + `</table>
+
+  <h4>Constraint ledger — exact keep-out rows @ returned iterate</h4>
+  <p class="note">${L.total} rows, ${L.violated} violated, ${L.zero_time} with a zero time
+  component. Sorted worst-first${L.truncated ? `, showing the ${L.rows.length} tightest` : ""}.</p>
+  <div class="scroll"><table class="grid">
+    <tr><th>seg</th><th>cp</th><th>obs</th><th>normal (spatial)</th><th>normal (t)</th><th>slack</th></tr>` +
+    L.rows.map(r => `<tr class="${r.slack < 0 ? "bad" : ""}"><td>${r.seg}</td><td>${r.cp}</td>
+      <td>${r.obs}</td><td>${r.n_spatial.map(x => x.toFixed(3)).join(", ")}</td>
+      <td>${r.n_time.toFixed(3)}</td><td>${r.slack.toFixed(5)}</td></tr>`).join("") +
+    `</table></div>`;
+
+  if (L.occlusion_rows && L.occlusion_rows.length) {
+    html += `<h4>Occlusion rows @ returned iterate</h4>
+    <p class="note">${L.occlusion_total} rows. The spatial normal has no time component BY
+    DESIGN — a shadow half-space is a prism with time-parallel walls, and the piece window does
+    the gating.</p>
+    <div class="scroll"><table class="grid">
+      <tr><th>seg</th><th>cp</th><th>obs</th><th>station</th><th>normal</th><th>window</th><th>slack</th></tr>` +
+      L.occlusion_rows.map(r => `<tr class="${r.slack < 0 ? "bad" : ""}"><td>${r.seg}</td>
+        <td>${r.cp}</td><td>${r.obs}</td><td>${r.station}</td>
+        <td>${r.n_spatial.map(x => x.toFixed(3)).join(", ")}</td>
+        <td>[${r.t_lo.toFixed(2)}, ${r.t_hi.toFixed(2)}]</td>
+        <td>${r.slack.toFixed(5)}</td></tr>`).join("") + `</table></div>`;
+  }
+
+  if (REPLAY) {
+    const T = REPLAY.trace;
+    html += `<h4>STTRACE timeline — every step, rejected steps highlighted</h4>
+    <p class="note">${T.length} steps, ${T.filter(r => r.outcome !== "accept").length} rejected.
+    ${REPLAY.warnings.map(w => "⚠ " + w).join(" ")}</p>
+    <div class="scroll"><table class="grid"><tr>` +
+      REPLAY.trace_header.map(c => `<th>${c}</th>`).join("") + `</tr>` +
+      T.map(r => `<tr class="${r.outcome !== "accept" ? "bad" : ""}">` +
+        REPLAY.trace_header.map(c => `<td>${typeof r[c] === "number" ? fmt(r[c], 4) : r[c]}</td>`).join("") +
+        `</tr>`).join("") + `</table></div>`;
+  }
+  $("diagBody").innerHTML = html;
+}
+
+// ---------------------------------------------------------------------------
+// Wiring
+// ---------------------------------------------------------------------------
+function collectRequest() {
+  const val = id => { const s = $(id).value.trim(); return s === "" ? null : s; };
+  return {
+    scenario: $("scenario").value,
+    N: +$("N").value, n_seg: +$("n_seg").value,
+    elastic_weight: val("elastic_weight"),
+    v_max: val("v_max"),
+    time_weight: val("time_weight") === null ? 0 : +val("time_weight"),
+    free_arrival_time: $("free_arrival_time").checked,
+    trust_radius: +$("trust_radius").value,
+    max_iter: +$("max_iter").value,
+    tol: +$("tol").value,
+  };
+}
+
+async function post(path, body) {
+  const res = await fetch(path, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+  return data;
+}
+
+async function doSolve() {
+  const req = collectRequest();
+  $("solve").disabled = true;
+  $("status").className = "";
+  $("status").innerHTML = `<span class="spin"></span>solving…`;
+  $("echo").textContent = JSON.stringify(req);
+  try {
+    const data = await post("/api/solve", req);
+    RES = data; REPLAY = null; replayIndex = -1;
+    $("replayRow").style.display = "none";
+    $("driftNote").textContent = "";
+    $("replayStatus").textContent = "";
+    const views = RES.scenario.views;
+    const keep = VIEW && views.find(v => v.id === VIEW.id);
+    VIEW = keep || views.find(v => v.id === RES.scenario.default_view) || views[0];
+    $("segPick").max = RES.segments.n_seg - 1;
+    $("certSeg").max = RES.segments.n_seg - 1;
+    $("certObs").max = RES.scenario.obstacles.length - 1;
+    drawHeader(); drawAxisBar(); render(); drawDiagnostics();
+    $("status").textContent =
+      `${RES.verdict.iterations} iterations, ${RES.provenance.solve_ms} ms, ` +
+      `weight ${fmt(RES.resolved.elastic_weight, 6)}`;
+  } catch (e) {
+    $("status").className = "err";
+    $("status").textContent = String(e.message || e);
+  } finally {
+    $("solve").disabled = false;
+  }
+}
+
+async function doReplay() {
+  if (!RES) { $("replayStatus").textContent = "solve first"; return; }
+  const req = collectRequest();
+  // The weight the SOLVE resolved to, not the blank field: the replay pins one
+  // weight and the solve may have walked the ladder.
+  req.elastic_weight = RES.resolved.elastic_weight;
+  $("loadReplay").disabled = true;
+  $("replayStatus").innerHTML = `<span class="spin"></span>re-solving with the trace on…`;
+  try {
+    REPLAY = await post("/api/replay", req);
+    const n = REPLAY.frames.length;
+    $("replaySlider").min = 0; $("replaySlider").max = Math.max(0, n - 1);
+    $("replaySlider").value = 0;
+    replayIndex = n ? 0 : -1;
+    $("replayRow").style.display = n ? "flex" : "none";
+    $("driftNote").textContent = REPLAY.drift_note;
+    $("replayStatus").textContent = `${n} frames, ${REPLAY.rejected} rejected`;
+    updateReplayLabel(); render(); drawDiagnostics();
+  } catch (e) {
+    $("replayStatus").textContent = String(e.message || e);
+  } finally {
+    $("loadReplay").disabled = false;
+  }
+}
+
+function updateReplayLabel() {
+  if (!REPLAY || replayIndex < 0) { $("replayLabel").textContent = "showing the result"; return; }
+  const f = REPLAY.frames[replayIndex];
+  $("replayLabel").textContent =
+    `SCP iteration ${f.it}${f.advanced ? "" : " ✗ rejected"} · ${f.status}` +
+    (f.trust_after === null ? "" : ` · trust ${fmt(f.trust_after, 3)}`);
+}
+
+function applyScenario() {
+  const sc = CAT.scenarios[$("scenario").value];
+  const p = $("preset");
+  p.innerHTML = "";
+  sc.configs.forEach(([N, s]) => {
+    const o = document.createElement("option");
+    o.value = `${N},${s}`; o.textContent = `N=${N}, n_seg=${s}`;
+    p.appendChild(o);
+  });
+  p.selectedIndex = 0;
+  applyPreset();
+  $("ewHint").textContent = `(registered: ${sc.registered_elastic_weight})`;
+  if (!sc.drawable) {
+    $("banner").textContent =
+      `Scenario ${sc.name} has ${sc.dim} coordinates; this page draws 3 or 4 and refuses ` +
+      `to guess which column is time.`;
+  }
+}
+
+function applyPreset() {
+  const [N, s] = $("preset").value.split(",");
+  $("N").value = N; $("n_seg").value = s;
+}
+
+function bindToggle(box, sub) {
+  $(box).addEventListener("change", () => {
+    if (sub) $(sub).className = "sub" + ($(box).checked ? " show" : "");
+    render();
+  });
+}
+
+async function boot() {
+  CAT = await (await fetch("/api/scenarios")).json();
+  const sel = $("scenario");
+  Object.keys(CAT.scenarios).forEach(k => {
+    const o = document.createElement("option");
+    o.value = k; o.textContent = `${k} — ${CAT.scenarios[k].title}`;
+    sel.appendChild(o);
+  });
+  const d = CAT.solve_defaults;
+  $("trust_radius").value = d.trust_radius;
+  $("max_iter").value = d.max_iter;
+  $("tol").value = d.tol;
+  $("elastic_weight").placeholder = `blank = ladder (${CAT.elastic_weight_ladder[0]} → ${CAT.elastic_weight_ladder.at(-1)})`;
+  applyScenario();
+
+  sel.addEventListener("change", applyScenario);
+  $("preset").addEventListener("change", applyPreset);
+  $("solve").addEventListener("click", doSolve);
+  $("loadReplay").addEventListener("click", doReplay);
+  $("showResult").addEventListener("click", () => {
+    replayIndex = -1; updateReplayLabel(); render();
+  });
+  $("replaySlider").addEventListener("input", e => {
+    replayIndex = +e.target.value; updateReplayLabel(); render();
+  });
+  bindToggle("tPoly"); bindToggle("tNear", "subNear"); bindToggle("tSeg", "subSeg");
+  bindToggle("tCert", "subCert"); bindToggle("tSpeed"); bindToggle("tTrust");
+  $("nearThresh").addEventListener("input", e => {
+    $("nearVal").textContent = (+e.target.value).toFixed(2); render();
+  });
+  ["segPick", "certSeg", "certObs"].forEach(id =>
+    $(id).addEventListener("input", render));
+}
+
+boot();
+</script>
+</body>
+</html>
