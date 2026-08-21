@@ -161,8 +161,8 @@ Full quickstart — install, build, run, test — is [`README.md`](README.md) §
 two things that are guardrails rather than instructions:
 
 ```bash
-python3 -m spacetime_bezier          # the sandbox — drag obstacles, live re-solve
-python3 -m spacetime_bezier.viewer   # the sanity viewer — one solve, nothing stored
+python3 -m spacetime_bezier          # THE frontend — config panel, solve, one page on 8767
+python3 -m spacetime_bezier.viewer   # superseded sanity viewer, still on disk
 ```
 
 - **Two ways in, never two servers.** Both bind 8767, and both exit 1 when it is held, naming the
@@ -186,8 +186,9 @@ The B8–B10 freeze landed and the one-pass re-measurement ran **2026-08-20** (i
 The full tree is [`README.md`](README.md) § Repo map — not repeated here. Only the entries that
 carry a warning or are easy to mistake:
 
-- `spacetime_bezier/__main__.py` -- the sandbox entrypoint. `io.py` and `sandbox.py` are not, as of 2026-08-18
-- `spacetime_bezier/viewer.py` -- the sanity viewer, the second entrypoint. Nothing stored, the solve
+- `spacetime_bezier/__main__.py` -- serves `frontend.py` as of 2026-08-21, THE entrypoint. `io.py` and `sandbox.py` are not entrypoints (2026-08-18), and the sandbox is no longer what `-m spacetime_bezier` starts
+- `spacetime_bezier/frontend.py` + `static/frontend.html` -- the one frontend (`fe5c510`): config panel, solve endpoint, axis picker with server-supplied banners (t always vertical when shown), opt-in layers all default-off, diagnostics drawer. All verdicts server-side via `figure_grade_failures`; replay reuses the trace viewer's child script by import so parameters cannot drift. **Covered by `tests/integration/test_frontend.py` (33 tests)** -- request/response path, port mutual exclusion, plane patches proven against their own rows
+- `spacetime_bezier/viewer.py` -- superseded by `frontend.py` 2026-08-21, no longer an entrypoint. Nothing stored, the solve
   path is just the solve, and the client only draws -- verdict fields are computed server-side from the
   solver's own numbers. Serves `static/viewer.html`; shares port 8767 so it cannot run beside the sandbox
 - `spacetime_bezier/optimize.py` -- public API, the elastic-weight ladder, `optimize_scenario`

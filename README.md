@@ -97,7 +97,7 @@ pip install -r requirements.txt
 cd rust_optimizer/pybind && PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 maturin develop --release
 cd ../..
 
-# 3. Launch the interactive sandbox (live re-solve on drag)
+# 3. Launch THE frontend (config panel, solve button, in-place scene update)
 python3 -m spacetime_bezier
 # opens http://127.0.0.1:8767/ immediately and solves NOTHING up front;
 # each scenario / degree / segment count you pick is one solve.
