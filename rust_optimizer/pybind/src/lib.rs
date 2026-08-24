@@ -3,7 +3,7 @@ use bezier_opt_core::{
     spacetime_constraints::{SpacetimeObstacleData, StationData},
     spacetime_optimizer,
 };
-use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -125,14 +125,69 @@ fn station_arrays(
     }
 }
 
+
+/// Read the obstacle wire format: lifted Bezier control points.
+///
+/// `obstacle_ctrl` is `(n_obs, n_ctrl, dim)` where the last coordinate of each
+/// control point is TIME. There is no separate `t_start` / `t_end`: the active
+/// window is the first and last control point's time coordinate, so the two can
+/// never disagree. Obstacles of differing degree are degree-elevated on the
+/// Python side before they get here, which is exact.
+fn obstacle_arrays<'py>(
+    obstacle_ctrl: PyReadonlyArray3<'py, f64>,
+    obstacle_r: PyReadonlyArray1<'py, f64>,
+    dim: usize,
+) -> PyResult<(Vec<f64>, usize, Vec<f64>, usize)> {
+    let arr = obstacle_ctrl.as_array();
+    if arr.shape().len() != 3 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "obstacle_ctrl must be 3-D: (n_obs, n_ctrl, spatial_dim + 1)",
+        ));
+    }
+    let (n_obs, n_ctrl, ctrl_dim) = (arr.shape()[0], arr.shape()[1], arr.shape()[2]);
+    if n_obs > 0 && ctrl_dim != dim {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "obstacle_ctrl last axis must be {dim} (spatial_dim + 1), got {ctrl_dim}"
+        )));
+    }
+    if n_obs > 0 && n_ctrl < 2 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "each obstacle needs at least 2 control points",
+        ));
+    }
+    let radii: Vec<f64> = obstacle_r.as_array().iter().copied().collect();
+    if radii.len() != n_obs {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Expected {} obstacle radii, got {}",
+            n_obs,
+            radii.len()
+        )));
+    }
+    // Time must not run backwards along an obstacle: `param_at_time` inverts the
+    // time coordinate affinely and a reversed window makes that inversion
+    // meaningless rather than merely wrong.
+    for m in 0..n_obs {
+        let t0 = arr[[m, 0, dim - 1]];
+        let t1 = arr[[m, n_ctrl - 1, dim - 1]];
+        if !(t1 >= t0) {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "obstacle {m}: control point times run backwards ({t0} to {t1})"
+            )));
+        }
+    }
+    Ok((
+        arr.iter().copied().collect(),
+        n_ctrl.max(2usize),
+        radii,
+        n_obs,
+    ))
+}
+
 #[pyfunction]
 #[pyo3(signature = (
     p_init,
-    obstacle_pos0,
-    obstacle_vel,
+    obstacle_ctrl,
     obstacle_r,
-    obstacle_t_start = None,
-    obstacle_t_end = None,
     n_seg = 8,
     max_iter = 30,
     tol = 1e-6,
@@ -144,7 +199,7 @@ fn station_arrays(
     time_lb = 0.0,
     time_ub = 15.0,
     elastic_weight = 100.0,
-    cap_bulge_ratio = 2.0,
+    sound_clip = false,
     v_max = None,
     time_weight = 0.0,
     free_arrival_time = false,
@@ -153,11 +208,8 @@ fn station_arrays(
 fn optimize_spacetime_bezier<'py>(
     py: Python<'py>,
     p_init: PyReadonlyArray2<'py, f64>,
-    obstacle_pos0: PyReadonlyArray2<'py, f64>,
-    obstacle_vel: PyReadonlyArray2<'py, f64>,
+    obstacle_ctrl: PyReadonlyArray3<'py, f64>,
     obstacle_r: PyReadonlyArray1<'py, f64>,
-    obstacle_t_start: Option<PyReadonlyArray1<'py, f64>>,
-    obstacle_t_end: Option<PyReadonlyArray1<'py, f64>>,
     n_seg: usize,
     max_iter: usize,
     tol: f64,
@@ -169,7 +221,11 @@ fn optimize_spacetime_bezier<'py>(
     time_lb: f64,
     time_ub: f64,
     elastic_weight: f64,
-    cap_bulge_ratio: f64,
+    // PAPER_1 statement (8): clamp the clip radius from below so statement (7)
+    // holds unconditionally and the construction is sound by construction, at the
+    // cost of conservatism where the row binds. Off by default; PAPER_1 calls the
+    // choice an open experimental question.
+    sound_clip: bool,
     // Slant-limit speed cap (item B9). `None` means no cap, which is the
     // default, so every pre-existing scenario reproduces exactly.
     v_max: Option<f64>,
@@ -192,72 +248,12 @@ fn optimize_spacetime_bezier<'py>(
     let spatial_dim = dim - 1;
     let p_flat: Vec<f64> = p_arr.iter().copied().collect();
 
-    let pos0_arr = obstacle_pos0.as_array();
-    let vel_arr = obstacle_vel.as_array();
-    if pos0_arr.shape().len() != 2 || vel_arr.shape().len() != 2 {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            "Obstacle position and velocity arrays must be 2D",
-        ));
-    }
-    if pos0_arr.shape()[1] != spatial_dim || vel_arr.shape()[1] != spatial_dim {
-        return Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "Obstacle arrays must have spatial_dim={}, got pos0={:?}, vel={:?}",
-            spatial_dim,
-            pos0_arr.shape(),
-            vel_arr.shape()
-        )));
-    }
-    if pos0_arr.shape() != vel_arr.shape() {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            "Obstacle position and velocity arrays must have matching shape",
-        ));
-    }
-
-    let n_obs = pos0_arr.shape()[0];
-    let radii_vec: Vec<f64> = obstacle_r.as_array().iter().copied().collect();
-    if radii_vec.len() != n_obs {
-        return Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "Expected {} obstacle radii, got {}",
-            n_obs,
-            radii_vec.len()
-        )));
-    }
-
-    let pos0_vec: Vec<f64> = pos0_arr.iter().copied().collect();
-    let vel_vec: Vec<f64> = vel_arr.iter().copied().collect();
-    let t_start_vec: Vec<f64> = if let Some(arr) = obstacle_t_start {
-        let vals: Vec<f64> = arr.as_array().iter().copied().collect();
-        if vals.len() != n_obs {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "Expected {} obstacle start times, got {}",
-                n_obs,
-                vals.len()
-            )));
-        }
-        vals
-    } else {
-        vec![f64::NEG_INFINITY; n_obs]
-    };
-    let t_end_vec: Vec<f64> = if let Some(arr) = obstacle_t_end {
-        let vals: Vec<f64> = arr.as_array().iter().copied().collect();
-        if vals.len() != n_obs {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "Expected {} obstacle end times, got {}",
-                n_obs,
-                vals.len()
-            )));
-        }
-        vals
-    } else {
-        vec![f64::INFINITY; n_obs]
-    };
+    let (ctrl_vec, n_ctrl, radii_vec, n_obs) = obstacle_arrays(obstacle_ctrl, obstacle_r, dim)?;
 
     let obstacles = SpacetimeObstacleData {
-        pos0: &pos0_vec,
-        vel: &vel_vec,
+        ctrl: &ctrl_vec,
+        n_ctrl,
         radii: &radii_vec,
-        t_start: &t_start_vec,
-        t_end: &t_end_vec,
         n_obs,
         spatial_dim,
     };
@@ -285,7 +281,7 @@ fn optimize_spacetime_bezier<'py>(
         &obstacles,
         &station_data,
         elastic_weight,
-        cap_bulge_ratio,
+        sound_clip,
         v_max.unwrap_or(f64::NAN),
         time_weight,
         free_arrival_time,
@@ -319,21 +315,22 @@ fn optimize_spacetime_bezier<'py>(
 /// rows the QP is given (those carry a rotation term and are explicitly not
 /// conservative).
 ///
-/// Returns (normals, lower_bounds, segment_idx, cp_idx, obstacle_idx).
+/// Returns (normals, lower_bounds, segment_idx, cp_idx, obstacle_idx, rho,
+/// sound, dropped_planes, unsound_clips). The last three are the holes: `sound`
+/// is per row (statement 7), `dropped_planes` counts pairs needing a row that
+/// admits none, `unsound_clips` counts pairs where statement (7) failed.
 #[pyfunction]
 #[pyo3(signature = (
-    p, obstacle_pos0, obstacle_vel, obstacle_r,
-    obstacle_t_start = None, obstacle_t_end = None, n_seg = 8,
+    p, obstacle_ctrl, obstacle_r, n_seg = 8, trust_radius = 0.5, sound_clip = false,
 ))]
 fn spacetime_koz_rows_exact<'py>(
     py: Python<'py>,
     p: PyReadonlyArray2<'py, f64>,
-    obstacle_pos0: PyReadonlyArray2<'py, f64>,
-    obstacle_vel: PyReadonlyArray2<'py, f64>,
+    obstacle_ctrl: PyReadonlyArray3<'py, f64>,
     obstacle_r: PyReadonlyArray1<'py, f64>,
-    obstacle_t_start: Option<PyReadonlyArray1<'py, f64>>,
-    obstacle_t_end: Option<PyReadonlyArray1<'py, f64>>,
     n_seg: usize,
+    trust_radius: f64,
+    sound_clip: bool,
 ) -> PyResult<PyObject> {
     let p_arr = p.as_array();
     let np1 = p_arr.shape()[0];
@@ -341,34 +338,23 @@ fn spacetime_koz_rows_exact<'py>(
     let spatial_dim = dim - 1;
     let p_flat: Vec<f64> = p_arr.iter().copied().collect();
 
-    let n_obs = obstacle_pos0.as_array().shape()[0];
-    let pos0: Vec<f64> = obstacle_pos0.as_array().iter().copied().collect();
-    let vel: Vec<f64> = obstacle_vel.as_array().iter().copied().collect();
-    let radii: Vec<f64> = obstacle_r.as_array().iter().copied().collect();
-    let t_start: Vec<f64> = obstacle_t_start
-        .map(|a| a.as_array().iter().copied().collect())
-        .unwrap_or_else(|| vec![f64::NEG_INFINITY; n_obs]);
-    let t_end: Vec<f64> = obstacle_t_end
-        .map(|a| a.as_array().iter().copied().collect())
-        .unwrap_or_else(|| vec![f64::INFINITY; n_obs]);
+    let (ctrl, n_ctrl, radii, n_obs) = obstacle_arrays(obstacle_ctrl, obstacle_r, dim)?;
 
     let obstacles = SpacetimeObstacleData {
-        pos0: &pos0,
-        vel: &vel,
+        ctrl: &ctrl,
+        n_ctrl,
         radii: &radii,
-        t_start: &t_start,
-        t_end: &t_end,
         n_obs,
         spatial_dim,
     };
     let a_list = bezier_opt_core::de_casteljau::segment_matrices_equal_params(np1 - 1, n_seg);
 
     let bundle = bezier_opt_core::spacetime_constraints::build_spacetime_koz_constraints(
-        &a_list, &p_flat, np1, dim, &obstacles, 2.0,
+        &a_list, &p_flat, np1, dim, &obstacles, trust_radius, sound_clip,
     );
-    let rows = match bundle {
-        Some(b) => b.rows,
-        None => Vec::new(),
+    let (rows, dropped, unsound) = match bundle {
+        Some(b) => (b.rows, b.dropped_planes, b.unsound_clips),
+        None => (Vec::new(), 0usize, 0usize),
     };
 
     let normals: Vec<Vec<f64>> = rows.iter().map(|r| r.normal.clone()).collect();
@@ -376,6 +362,8 @@ fn spacetime_koz_rows_exact<'py>(
     let seg: Vec<i32> = rows.iter().map(|r| r.segment_idx as i32).collect();
     let cp: Vec<i32> = rows.iter().map(|r| r.cp_idx as i32).collect();
     let obs: Vec<i32> = rows.iter().map(|r| r.obstacle_idx as i32).collect();
+    let rho: Vec<f64> = rows.iter().map(|r| r.rho).collect();
+    let sound: Vec<bool> = rows.iter().map(|r| r.sound).collect();
 
     let normals_arr = if normals.is_empty() {
         PyArray2::from_vec2(py, &vec![vec![0.0; dim]; 0])
@@ -390,6 +378,10 @@ fn spacetime_koz_rows_exact<'py>(
         PyArray1::from_vec(py, seg),
         PyArray1::from_vec(py, cp),
         PyArray1::from_vec(py, obs),
+        PyArray1::from_vec(py, rho),
+        sound,
+        dropped,
+        unsound,
     )
         .into_pyobject(py)?
         .into())
@@ -407,20 +399,19 @@ fn spacetime_koz_rows_exact<'py>(
 /// station_idx, body_centers, body_radii, window_lo, window_hi, margins).
 #[pyfunction]
 #[pyo3(signature = (
-    p, obstacle_pos0, obstacle_vel, obstacle_r, stations,
-    obstacle_t_start = None, obstacle_t_end = None, n_seg = 8,
+    p, obstacle_ctrl, obstacle_r, stations, n_seg = 8,
+    trust_radius = 0.5, sound_clip = false,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn spacetime_occlusion_rows_exact<'py>(
     py: Python<'py>,
     p: PyReadonlyArray2<'py, f64>,
-    obstacle_pos0: PyReadonlyArray2<'py, f64>,
-    obstacle_vel: PyReadonlyArray2<'py, f64>,
+    obstacle_ctrl: PyReadonlyArray3<'py, f64>,
     obstacle_r: PyReadonlyArray1<'py, f64>,
     stations: PyReadonlyArray2<'py, f64>,
-    obstacle_t_start: Option<PyReadonlyArray1<'py, f64>>,
-    obstacle_t_end: Option<PyReadonlyArray1<'py, f64>>,
     n_seg: usize,
+    trust_radius: f64,
+    sound_clip: bool,
 ) -> PyResult<PyObject> {
     let p_arr = p.as_array();
     let np1 = p_arr.shape()[0];
@@ -428,23 +419,12 @@ fn spacetime_occlusion_rows_exact<'py>(
     let spatial_dim = dim - 1;
     let p_flat: Vec<f64> = p_arr.iter().copied().collect();
 
-    let n_obs = obstacle_pos0.as_array().shape()[0];
-    let pos0: Vec<f64> = obstacle_pos0.as_array().iter().copied().collect();
-    let vel: Vec<f64> = obstacle_vel.as_array().iter().copied().collect();
-    let radii: Vec<f64> = obstacle_r.as_array().iter().copied().collect();
-    let t_start: Vec<f64> = obstacle_t_start
-        .map(|a| a.as_array().iter().copied().collect())
-        .unwrap_or_else(|| vec![f64::NEG_INFINITY; n_obs]);
-    let t_end: Vec<f64> = obstacle_t_end
-        .map(|a| a.as_array().iter().copied().collect())
-        .unwrap_or_else(|| vec![f64::INFINITY; n_obs]);
+    let (ctrl, n_ctrl, radii, n_obs) = obstacle_arrays(obstacle_ctrl, obstacle_r, dim)?;
 
     let obstacles = SpacetimeObstacleData {
-        pos0: &pos0,
-        vel: &vel,
+        ctrl: &ctrl,
+        n_ctrl,
         radii: &radii,
-        t_start: &t_start,
-        t_end: &t_end,
         n_obs,
         spatial_dim,
     };
@@ -462,6 +442,8 @@ fn spacetime_occlusion_rows_exact<'py>(
         dim,
         &obstacles,
         &station_data,
+        trust_radius,
+        sound_clip,
     )
     .bundle
     {
@@ -508,18 +490,15 @@ fn spacetime_occlusion_rows_exact<'py>(
 #[pyclass]
 struct SpacetimeScpContext {
     precomputed: spacetime_optimizer::ScpPrecomputed,
-    pos0: Vec<f64>,
-    vel: Vec<f64>,
+    ctrl: Vec<f64>,
+    n_ctrl: usize,
     radii: Vec<f64>,
-    t_start: Vec<f64>,
-    t_end: Vec<f64>,
     n_obs: usize,
     spatial_dim: usize,
     stations: Vec<f64>,
     n_stations: usize,
     elastic_weight: f64,
     tol: f64,
-    cap_bulge_ratio: f64,
     /// Trust radius and streak counters live here, not in Python. A stepper that
     /// re-derived them per call would be running a different algorithm from the
     /// batch loop.
@@ -531,11 +510,8 @@ impl SpacetimeScpContext {
     #[new]
     #[pyo3(signature = (
         p_init,
-        obstacle_pos0,
-        obstacle_vel,
+        obstacle_ctrl,
         obstacle_r,
-        obstacle_t_start = None,
-        obstacle_t_end = None,
         n_seg = 8,
         min_dt = 0.1,
         coord_lb = -20.0,
@@ -546,7 +522,7 @@ impl SpacetimeScpContext {
         scp_trust_radius = 0.0,
         elastic_weight = 100.0,
         tol = 1e-6,
-        cap_bulge_ratio = 2.0,
+        sound_clip = false,
         v_max = None,
         time_weight = 0.0,
         free_arrival_time = false,
@@ -554,11 +530,8 @@ impl SpacetimeScpContext {
     ))]
     fn new(
         p_init: PyReadonlyArray2<'_, f64>,
-        obstacle_pos0: PyReadonlyArray2<'_, f64>,
-        obstacle_vel: PyReadonlyArray2<'_, f64>,
+        obstacle_ctrl: PyReadonlyArray3<'_, f64>,
         obstacle_r: PyReadonlyArray1<'_, f64>,
-        obstacle_t_start: Option<PyReadonlyArray1<'_, f64>>,
-        obstacle_t_end: Option<PyReadonlyArray1<'_, f64>>,
         n_seg: usize,
         min_dt: f64,
         coord_lb: f64,
@@ -569,7 +542,7 @@ impl SpacetimeScpContext {
         scp_trust_radius: f64,
         elastic_weight: f64,
         tol: f64,
-        cap_bulge_ratio: f64,
+        sound_clip: bool,
         v_max: Option<f64>,
         time_weight: f64,
         free_arrival_time: bool,
@@ -584,20 +557,11 @@ impl SpacetimeScpContext {
         let spatial_dim = dim - 1;
         let p_flat: Vec<f64> = p_arr.iter().copied().collect();
 
-        let n_obs = obstacle_pos0.as_array().shape()[0];
-        let pos0: Vec<f64> = obstacle_pos0.as_array().iter().copied().collect();
-        let vel: Vec<f64> = obstacle_vel.as_array().iter().copied().collect();
-        let radii: Vec<f64> = obstacle_r.as_array().iter().copied().collect();
-        let t_start = obstacle_t_start
-            .map(|a| a.as_array().iter().copied().collect())
-            .unwrap_or_else(|| vec![f64::NEG_INFINITY; n_obs]);
-        let t_end = obstacle_t_end
-            .map(|a| a.as_array().iter().copied().collect())
-            .unwrap_or_else(|| vec![f64::INFINITY; n_obs]);
+        let (ctrl, n_ctrl, radii, n_obs) = obstacle_arrays(obstacle_ctrl, obstacle_r, dim)?;
 
         let pre = spacetime_optimizer::precompute_scp(
             &p_flat, np1, dim, n_seg, min_dt, coord_lb, coord_ub, time_lb, time_ub,
-            v_max.unwrap_or(f64::NAN), time_weight, free_arrival_time,
+            v_max.unwrap_or(f64::NAN), time_weight, free_arrival_time, sound_clip,
         );
 
         let _ = scp_prox_weight; // the trust region does this job; see scp_step
@@ -606,18 +570,15 @@ impl SpacetimeScpContext {
 
         Ok(Self {
             precomputed: pre,
-            pos0,
-            vel,
+            ctrl,
+            n_ctrl,
             radii,
-            t_start,
-            t_end,
             n_obs,
             spatial_dim,
             stations: station_vec,
             n_stations,
             elastic_weight,
             tol,
-            cap_bulge_ratio,
             state,
         })
     }
@@ -645,11 +606,9 @@ impl SpacetimeScpContext {
     /// candidate is in `info["p_candidate"]`.
     fn step<'py>(&mut self, py: Python<'py>) -> PyResult<PyObject> {
         let obstacles = SpacetimeObstacleData {
-            pos0: &self.pos0,
-            vel: &self.vel,
+            ctrl: &self.ctrl,
+            n_ctrl: self.n_ctrl,
             radii: &self.radii,
-            t_start: &self.t_start,
-            t_end: &self.t_end,
             n_obs: self.n_obs,
             spatial_dim: self.spatial_dim,
         };
@@ -666,7 +625,6 @@ impl SpacetimeScpContext {
             &station_data,
             self.elastic_weight,
             self.tol,
-            self.cap_bulge_ratio,
         );
         let outcome = iter_out.outcome;
         let accepted = iter_out.accepted;

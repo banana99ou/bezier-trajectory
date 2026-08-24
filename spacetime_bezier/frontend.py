@@ -729,14 +729,11 @@ def _koz_planes(P: np.ndarray, obstacles: list[dict], n_seg: int, a_list, dim: i
     import bezier_opt
 
     spatial_dim = dim - 1
-    pos0, vel, radii, t0, t1 = obstacle_array_bundle(obstacles, spatial_dim)
+    obstacle_ctrl, obstacle_radii = obstacle_array_bundle(obstacles, spatial_dim)
     normals, lbs, seg, cp, obs = bezier_opt.spacetime_koz_rows_exact(
         p=P,
-        obstacle_pos0=pos0,
-        obstacle_vel=vel,
-        obstacle_r=radii,
-        obstacle_t_start=t0,
-        obstacle_t_end=t1,
+        obstacle_ctrl=obstacle_ctrl,
+        obstacle_r=obstacle_radii,
         n_seg=n_seg,
     )
     normals = np.asarray(normals, dtype=float).reshape(-1, dim)
@@ -808,15 +805,12 @@ def _occlusion_planes(
     import bezier_opt
 
     spatial_dim = dim - 1
-    pos0, vel, radii, t0, t1 = obstacle_array_bundle(obstacles, spatial_dim)
+    obstacle_ctrl, obstacle_radii = obstacle_array_bundle(obstacles, spatial_dim)
     out = bezier_opt.spacetime_occlusion_rows_exact(
         p=P,
-        obstacle_pos0=pos0,
-        obstacle_vel=vel,
-        obstacle_r=radii,
+        obstacle_ctrl=obstacle_ctrl,
+        obstacle_r=obstacle_radii,
         stations=np.asarray(stations, dtype=float).reshape(-1, spatial_dim),
-        obstacle_t_start=t0,
-        obstacle_t_end=t1,
         n_seg=n_seg,
     )
     normals, lbs, seg, cp, obs, sta, centers, radii_b, win_lo, win_hi, margins = out

@@ -376,7 +376,12 @@ def _optimize_spacetime_rust(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
-    cap_bulge_ratio: float = 2.0,
+    # PAPER_1 statement (8): clamp the clip radius from below by
+    # E + Delta*sqrt(d+1) so statement (7) holds unconditionally and the
+    # construction is sound by construction, at the cost of conservatism where
+    # the row binds. Off by default -- PAPER_1 calls the choice between the two
+    # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
+    sound_clip: bool = False,
     v_max: float | None = None,
     time_weight: float = 0.0,
     free_arrival_time: bool = False,
@@ -397,7 +402,7 @@ def _optimize_spacetime_rust(
     P_init = np.asarray(P_init, dtype=float)
     n_cp, dim = P_init.shape
     spatial_dim = dim - 1
-    pos0, vel, radius, t_start, t_end = obstacle_array_bundle(obstacles, spatial_dim)
+    obstacle_ctrl, obstacle_radii = obstacle_array_bundle(obstacles, spatial_dim)
     time_upper = float(P_init[-1, -1]) * float(time_ub_scale)
     # No station means no occlusion rows at all (item B12), which is the default
     # and reproduces every pre-B12 run bit for bit. `None` is passed through
@@ -410,11 +415,8 @@ def _optimize_spacetime_rust(
 
     P_opt, info = _bezier_opt_rs.optimize_spacetime_bezier(
         p_init=P_init,
-        obstacle_pos0=pos0,
-        obstacle_vel=vel,
-        obstacle_r=radius,
-        obstacle_t_start=t_start,
-        obstacle_t_end=t_end,
+        obstacle_ctrl=obstacle_ctrl,
+        obstacle_r=obstacle_radii,
         n_seg=n_seg,
         max_iter=max_iter,
         tol=tol,
@@ -426,7 +428,7 @@ def _optimize_spacetime_rust(
         coord_ub=coord_ub,
         time_lb=time_lb,
         time_ub=time_upper,
-        cap_bulge_ratio=cap_bulge_ratio,
+        sound_clip=sound_clip,
         v_max=v_max,
         time_weight=float(time_weight),
         free_arrival_time=bool(free_arrival_time),
@@ -505,7 +507,12 @@ def optimize_spacetime_from_control_points(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
-    cap_bulge_ratio: float = 2.0,
+    # PAPER_1 statement (8): clamp the clip radius from below by
+    # E + Delta*sqrt(d+1) so statement (7) holds unconditionally and the
+    # construction is sound by construction, at the cost of conservatism where
+    # the row binds. Off by default -- PAPER_1 calls the choice between the two
+    # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
+    sound_clip: bool = False,
     v_max: float | None = None,
     time_weight: float = 0.0,
     free_arrival_time: bool = False,
@@ -530,7 +537,7 @@ def optimize_spacetime_from_control_points(
         coord_ub=coord_ub,
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
-        cap_bulge_ratio=cap_bulge_ratio,
+        sound_clip=sound_clip,
         v_max=v_max,
         time_weight=time_weight,
         free_arrival_time=free_arrival_time,
@@ -556,7 +563,12 @@ def optimize_spacetime(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
-    cap_bulge_ratio: float = 2.0,
+    # PAPER_1 statement (8): clamp the clip radius from below by
+    # E + Delta*sqrt(d+1) so statement (7) holds unconditionally and the
+    # construction is sound by construction, at the cost of conservatism where
+    # the row binds. Off by default -- PAPER_1 calls the choice between the two
+    # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
+    sound_clip: bool = False,
     v_max: float | None = None,
     time_weight: float = 0.0,
     free_arrival_time: bool = False,
@@ -586,7 +598,7 @@ def optimize_spacetime(
         coord_ub=coord_ub,
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
-        cap_bulge_ratio=cap_bulge_ratio,
+        sound_clip=sound_clip,
         v_max=v_max,
         time_weight=time_weight,
         free_arrival_time=free_arrival_time,
@@ -607,6 +619,7 @@ def optimize_scenario(
     v_max: float | None = None,
     time_weight: float = 0.0,
     free_arrival_time: bool = False,
+    sound_clip: bool = False,
     verbose: bool = True,
 ) -> dict:
     """Run optimization for all requested degree/segment-count pairs.
@@ -659,6 +672,7 @@ def optimize_scenario(
                 v_max=v_max,
                 time_weight=time_weight,
                 free_arrival_time=free_arrival_time,
+                sound_clip=sound_clip,
                 stations=stations,
                 verbose=verbose,
                 init_curve=init_curve,

@@ -13,30 +13,50 @@ from orbital_docking.bezier import BezierCurve
 
 @dataclass(frozen=True)
 class MovingObstacle:
-    """A circular obstacle moving at constant velocity in 2D, optionally active only during [t_start, t_end]."""
+    """An obstacle whose motion is a polynomial in time, as lifted control points.
 
-    pos0: np.ndarray
-    velocity: np.ndarray
+    ``control_points`` is ``(n_ctrl, spatial_dim + 1)``; the last coordinate is
+    time, and it is AFFINE in the curve parameter (PAPER_1 statement 3 says the
+    motion is a polynomial *in time*, and lifting such a motion gives affine time
+    by definition). The active window is the first and last control point's time
+    coordinate, so it is derived rather than carried alongside.
+
+    Constant velocity is the degree-1 case and nothing more. It is still the
+    convenient way to *write* an obstacle -- see ``normalize_obstacle`` -- but it
+    is no longer what the solver assumes.
+    """
+
+    control_points: np.ndarray
     radius: float
     color: str | None = None
     name: str | None = None
-    t_start: float = -np.inf
-    t_end: float = np.inf
 
     @classmethod
     def from_dict(cls, obstacle: dict) -> "MovingObstacle":
+        norm = normalize_obstacle(obstacle)
         return cls(
-            pos0=np.asarray(obstacle["pos0"], dtype=float),
-            velocity=np.asarray(obstacle["vel"], dtype=float),
-            radius=float(obstacle["r"]),
-            color=obstacle.get("color"),
-            name=obstacle.get("name"),
-            t_start=float(obstacle.get("t_start", -np.inf)),
-            t_end=float(obstacle.get("t_end", np.inf)),
+            control_points=np.asarray(norm["control_points"], dtype=float),
+            radius=float(norm["radius"]),
+            color=norm.get("color"),
+            name=norm.get("name"),
         )
 
+    @property
+    def t_start(self) -> float:
+        return float(self.control_points[0, -1])
+
+    @property
+    def t_end(self) -> float:
+        return float(self.control_points[-1, -1])
+
+    @property
+    def degree(self) -> int:
+        return int(self.control_points.shape[0] - 1)
+
     def position(self, t_value: float) -> np.ndarray:
-        return self.pos0 + self.velocity * float(t_value)
+        """Spatial position at an instant. Extrapolates outside the window;
+        callers gate on ``is_active`` exactly as they always did."""
+        return obstacle_positions_at(self.control_points, np.array([float(t_value)]))[0]
 
     def is_active(self, t_value: float) -> bool:
         t_value = float(t_value)
@@ -44,18 +64,13 @@ class MovingObstacle:
 
     def to_dict(self) -> dict:
         data = {
-            "pos0": self.pos0.tolist(),
-            "vel": self.velocity.tolist(),
-            "r": float(self.radius),
+            "control_points": self.control_points.tolist(),
+            "radius": float(self.radius),
         }
         if self.color is not None:
             data["color"] = self.color
         if self.name is not None:
             data["name"] = self.name
-        if np.isfinite(self.t_start):
-            data["t_start"] = float(self.t_start)
-        if np.isfinite(self.t_end):
-            data["t_end"] = float(self.t_end)
         return data
 
     def tube_mesh(self, t_range, n_circ: int = 24, n_t: int = 30) -> list[np.ndarray]:
@@ -64,7 +79,7 @@ class MovingObstacle:
         theta = np.linspace(0.0, 2.0 * np.pi, n_circ)
         verts = []
         for t_value in ts:
-            cx, cy = self.position(t_value)
+            cx, cy = self.position(t_value)[:2]
             ring = np.column_stack(
                 [
                     cx + self.radius * np.cos(theta),
@@ -74,6 +89,114 @@ class MovingObstacle:
             )
             verts.append(ring)
         return verts
+
+
+
+# ===========================================================================
+# The obstacle, canonically: lifted Bezier control points
+# ===========================================================================
+#
+# One representation reaches the solver -- ``control_points`` in (x, ..., t) with
+# time affine in the parameter -- and everything else converts into it at the
+# edge. ``{pos0, vel, r}`` survives as a way to WRITE a straight obstacle, not as
+# a thing the solver knows about.
+
+
+def normalize_obstacle(obstacle: dict, T: float | None = None) -> dict:
+    """Return the canonical ``{control_points, radius, ...}`` form.
+
+    Accepts either the canonical form or the legacy ``{pos0, vel, r,
+    [t_start], [t_end]}`` writing shorthand. ``T`` supplies the scenario duration
+    when a legacy obstacle has no explicit window; it is unused otherwise.
+    """
+    if "control_points" in obstacle:
+        cps = np.asarray(obstacle["control_points"], dtype=float)
+        if cps.ndim != 2 or cps.shape[0] < 2:
+            raise ValueError(f"control_points must be (n_ctrl>=2, dim), got {cps.shape}")
+        if cps[-1, -1] < cps[0, -1]:
+            raise ValueError("obstacle control point times run backwards")
+        out = {"control_points": cps, "radius": float(obstacle.get("radius", obstacle.get("r")))}
+        for key in ("name", "color"):
+            if obstacle.get(key) is not None:
+                out[key] = obstacle[key]
+        return out
+
+    pos0 = np.asarray(obstacle["pos0"], dtype=float)
+    vel = np.asarray(obstacle["vel"], dtype=float)
+    t_start = float(obstacle.get("t_start", 0.0))
+    t_end = float(obstacle.get("t_end", T if T is not None else np.inf))
+    if not np.isfinite(t_start):
+        t_start = 0.0
+    if not np.isfinite(t_end):
+        if T is None:
+            raise ValueError(
+                "a legacy obstacle with an unbounded window needs the scenario duration T; "
+                "the active window is now intrinsic to the control points"
+            )
+        t_end = float(T)
+    if T is not None:
+        t_start = max(0.0, min(t_start, float(T)))
+        t_end = max(t_start, min(t_end, float(T)))
+    cps = np.array(
+        [
+            np.concatenate([pos0 + vel * t_start, [t_start]]),
+            np.concatenate([pos0 + vel * t_end, [t_end]]),
+        ],
+        dtype=float,
+    )
+    out = {"control_points": cps, "radius": float(obstacle["r"])}
+    for key in ("name", "color"):
+        if obstacle.get(key) is not None:
+            out[key] = obstacle[key]
+    return out
+
+
+def normalize_obstacles(obstacles: list[dict], T: float | None = None) -> list[dict]:
+    return [normalize_obstacle(o, T) for o in obstacles or []]
+
+
+def elevate_to_degree(control_points: np.ndarray, degree: int) -> np.ndarray:
+    """Degree-elevate a Bezier to ``degree``. Exact -- the curve is unchanged.
+
+    This is what lets obstacles of mixed degree share one rectangular array
+    without any of them being resampled or approximated.
+    """
+    from orbital_docking.bezier import get_E_matrix
+
+    cps = np.asarray(control_points, dtype=float)
+    while cps.shape[0] - 1 < degree:
+        cps = get_E_matrix(cps.shape[0] - 1) @ cps
+    return cps
+
+
+def obstacle_positions_at(control_points: np.ndarray, t_values: np.ndarray) -> np.ndarray:
+    """Spatial positions ``pi_m(tau)`` at the given instants, shaped (len, spatial_dim).
+
+    Time is affine in the parameter, so the inversion is division, not a root
+    solve. This is the only obstacle quantity the certificate touches.
+    """
+    cps = np.asarray(control_points, dtype=float)
+    t_values = np.asarray(t_values, dtype=float)
+    t0, t1 = float(cps[0, -1]), float(cps[-1, -1])
+    span = t1 - t0
+    s = (t_values - t0) / span if span > 1e-15 else np.zeros_like(t_values)
+    return _eval_at(cps, np.clip(s, 0.0, 1.0))[:, :-1]
+
+
+def obstacle_speed_bound(control_points: np.ndarray) -> float:
+    """Upper bound on ``||pi_m'(tau)||`` from the control polygon.
+
+    ``N * max_l ||dG_l(spatial)|| / (t1 - t0)`` -- the standard Bezier derivative
+    bound, divided by the affine time scale.
+    """
+    cps = np.asarray(control_points, dtype=float)
+    span = float(cps[-1, -1] - cps[0, -1])
+    if span <= 1e-15:
+        return 0.0
+    legs = np.diff(cps[:, :-1], axis=0)
+    if legs.shape[0] == 0:
+        return 0.0
+    return float(cps.shape[0] - 1) * float(np.max(np.linalg.norm(legs, axis=1))) / span
 
 
 def bezier_curve(control_points: np.ndarray, num_pts: int = 200) -> np.ndarray:
@@ -199,14 +322,17 @@ def _sample_taus(P: np.ndarray, obstacles: list[dict], n_eval: int) -> np.ndarra
     vehicle_speed = _max_leg_speed(P)
 
     extra = [base]
-    for obs in obstacles:
-        a = max(float(obs.get("t_start", -np.inf)), t_lo)
-        b = min(float(obs.get("t_end", np.inf)), t_hi)
+    for obs in normalize_obstacles(obstacles):
+        cps = obs["control_points"]
+        a = max(float(cps[0, -1]), t_lo)
+        b = min(float(cps[-1, -1]), t_hi)
         if not (b >= a):
             continue
-        radius = float(obs["r"])
-        # Bound on how fast the gap between vehicle and obstacle can close.
-        closing = float(np.linalg.norm(np.asarray(obs["vel"], dtype=float))) + vehicle_speed
+        radius = float(obs["radius"])
+        # Bound on how fast the gap between vehicle and obstacle can close. For a
+        # curved obstacle this is the control-polygon derivative bound, which is
+        # the constant-velocity speed exactly when the degree is 1.
+        closing = obstacle_speed_bound(cps) + vehicle_speed
         step = radius / (2.0 * max(closing, 1e-12))
         if step <= 0.0:
             continue
@@ -249,19 +375,17 @@ def compute_min_clearance(P, obstacles: list[dict], dim: int, n_eval: int = 1500
     spatial_dim = dim - 1
     worst = np.inf
 
-    for obs in obstacles:
-        pos0 = np.asarray(obs["pos0"], dtype=float)
-        vel = np.asarray(obs["vel"], dtype=float)
-        radius = float(obs["r"])
-        t0 = float(obs.get("t_start", -np.inf))
-        t1 = float(obs.get("t_end", np.inf))
+    for obs in normalize_obstacles(obstacles):
+        cps = obs["control_points"]
+        radius = float(obs["radius"])
+        t0, t1 = float(cps[0, -1]), float(cps[-1, -1])
 
         t_vals = pts[:, -1]
         active = (t_vals >= t0) & (t_vals <= t1)
         if not active.any():
             continue
 
-        o_positions = pos0[None, :] + vel[None, :] * t_vals[active, None]
+        o_positions = obstacle_positions_at(cps, t_vals[active])
         dists = np.linalg.norm(pts[active, :spatial_dim] - o_positions, axis=1) - radius
         worst = min(worst, float(dists.min()))
 
@@ -320,17 +444,15 @@ def compute_los_margin(P, station, obstacles: list[dict], dim: int, n_eval: int 
     seg_sq = np.einsum("ij,ij->i", seg, seg)
     safe_sq = np.where(seg_sq > 1e-24, seg_sq, 1.0)
 
-    for obs in obstacles:
-        pos0 = np.asarray(obs["pos0"], dtype=float)
-        vel = np.asarray(obs["vel"], dtype=float)
-        radius = float(obs["r"])
-        t0 = float(obs.get("t_start", -np.inf))
-        t1 = float(obs.get("t_end", np.inf))
+    for obs in normalize_obstacles(obstacles):
+        cps = obs["control_points"]
+        radius = float(obs["radius"])
+        t0, t1 = float(cps[0, -1]), float(cps[-1, -1])
         active = (t_values >= t0) & (t_values <= t1)
         if not active.any():
             continue
 
-        centers = pos0[None, :] + vel[None, :] * t_values[:, None]
+        centers = obstacle_positions_at(cps, t_values)
         # Foot of the perpendicular from the obstacle centre onto the sight
         # SEGMENT -- clamped, because the body only blocks what lies between the
         # station and the vehicle, not what lies behind either of them.
@@ -344,89 +466,55 @@ def compute_los_margin(P, station, obstacles: list[dict], dim: int, n_eval: int 
 
 
 def bezier_obstacle_from_moving(obstacle: dict, T: float) -> dict:
-    """Convert a legacy ``{pos0, vel, r, [t_start], [t_end]}`` obstacle into the
-    wire-format BezierObstacle shape used by the sandbox: two control points in
-    (x, y, t) plus ``radius``. Active time window becomes the t-coordinates of
-    the two control points (clamped to [0, T]).
-    """
-    pos0 = np.asarray(obstacle["pos0"], dtype=float)
-    vel = np.asarray(obstacle["vel"], dtype=float)
-    t_start = float(obstacle.get("t_start", 0.0))
-    t_end = float(obstacle.get("t_end", T))
-    # A missing/infinite window means "full scenario duration".
-    if not np.isfinite(t_start):
-        t_start = 0.0
-    if not np.isfinite(t_end):
-        t_end = float(T)
-    t_start = max(0.0, min(t_start, float(T)))
-    t_end = max(t_start, min(t_end, float(T)))
+    """Legacy alias for :func:`normalize_obstacle`, kept for the wire format.
 
-    p0 = (pos0 + vel * t_start).tolist() + [t_start]
-    p1 = (pos0 + vel * t_end).tolist() + [t_end]
-    out = {
-        "control_points": [p0, p1],
-        "radius": float(obstacle["r"]),
-    }
-    if obstacle.get("name") is not None:
-        out["name"] = obstacle["name"]
-    if obstacle.get("color") is not None:
-        out["color"] = obstacle["color"]
+    Returns the canonical form with ``control_points`` as a plain list, which is
+    what the JSON boundary wants.
+    """
+    out = dict(normalize_obstacle(obstacle, T))
+    out["control_points"] = np.asarray(out["control_points"], dtype=float).tolist()
     return out
 
 
 def moving_obstacle_from_bezier(bezier_obstacle: dict) -> dict:
-    """Convert a BezierObstacle (wire format) back to the legacy straight-capsule
-    dict consumed by ``optimize_spacetime`` / Rust. Only degree-1 obstacles
-    (two control points) are supported here — the N=2+ path extends the Rust
-    KOZ builder and will be handled separately.
+    """Identity, up to normalising the shape.
+
+    This used to raise ``NotImplementedError`` above degree 1, because the Rust
+    KOZ builder only understood a straight capsule. It understands the general
+    curve now, so there is nothing to convert down to and nothing to refuse.
     """
-    cps = np.asarray(bezier_obstacle["control_points"], dtype=float)
-    if cps.ndim != 2 or cps.shape[0] < 2:
-        raise ValueError(f"BezierObstacle must have >=2 control points, got shape {cps.shape}")
-    if cps.shape[0] > 2:
-        raise NotImplementedError(
-            f"BezierObstacle degree {cps.shape[0] - 1} not yet supported in the Rust KOZ builder"
-        )
-
-    p0, p1 = cps[0], cps[1]
-    t0, t1 = float(p0[-1]), float(p1[-1])
-    xy0, xy1 = p0[:-1], p1[:-1]
-    if t1 > t0:
-        vel = (xy1 - xy0) / (t1 - t0)
-    else:
-        vel = np.zeros_like(xy0)
-    # ``pos0`` is the extrapolated position at t=0; only ``position(t)`` inside
-    # [t_start, t_end] is meaningful since the KOZ is gated on that window.
-    pos0 = xy0 - vel * t0
-
-    out = {
-        "pos0": pos0.tolist(),
-        "vel": vel.tolist(),
-        "r": float(bezier_obstacle["radius"]),
-        "t_start": t0,
-        "t_end": t1,
-    }
-    if bezier_obstacle.get("name") is not None:
-        out["name"] = bezier_obstacle["name"]
-    if bezier_obstacle.get("color") is not None:
-        out["color"] = bezier_obstacle["color"]
+    out = dict(normalize_obstacle(bezier_obstacle))
+    out["control_points"] = np.asarray(out["control_points"], dtype=float).tolist()
     return out
 
 
-def obstacle_array_bundle(obstacles: list[dict], spatial_dim: int) -> tuple[np.ndarray, ...]:
-    """Convert dict obstacles into dense arrays for vectorized math and Rust calls."""
-    if not obstacles:
-        empty_pos = np.zeros((0, spatial_dim), dtype=float)
-        empty_scalars = np.zeros(0, dtype=float)
-        return empty_pos, empty_pos.copy(), empty_scalars, empty_scalars.copy(), empty_scalars.copy()
+def obstacle_array_bundle(obstacles: list[dict], spatial_dim: int) -> tuple[np.ndarray, np.ndarray]:
+    """Dense arrays for the Rust call: ``(ctrl, radii)``.
 
-    pos0 = np.array([obs["pos0"] for obs in obstacles], dtype=float)
-    vel = np.array([obs["vel"] for obs in obstacles], dtype=float)
-    radius = np.array([obs["r"] for obs in obstacles], dtype=float)
-    t_start = np.array([obs.get("t_start", -np.inf) for obs in obstacles], dtype=float)
-    t_end = np.array([obs.get("t_end", np.inf) for obs in obstacles], dtype=float)
-    if pos0.shape[1] != spatial_dim or vel.shape[1] != spatial_dim:
-        raise ValueError(
-            f"Obstacle arrays must have spatial_dim={spatial_dim}; got pos0={pos0.shape}, vel={vel.shape}"
-        )
-    return pos0, vel, radius, t_start, t_end
+    ``ctrl`` is ``(n_obs, n_ctrl, spatial_dim + 1)``. Obstacles of differing
+    degree are degree-elevated to the highest present, which is exact, so the
+    array is rectangular without anything being resampled.
+
+    There is no ``t_start`` / ``t_end`` pair any more: the active window is the
+    first and last control point's time coordinate. One source of truth, so the
+    two cannot disagree.
+    """
+    dim = spatial_dim + 1
+    if not obstacles:
+        return np.zeros((0, 2, dim), dtype=float), np.zeros(0, dtype=float)
+
+    norm = normalize_obstacles(obstacles)
+    degree = max(o["control_points"].shape[0] - 1 for o in norm)
+    ctrl = np.empty((len(norm), degree + 1, dim), dtype=float)
+    radii = np.empty(len(norm), dtype=float)
+    for i, obs in enumerate(norm):
+        cps = np.asarray(obs["control_points"], dtype=float)
+        if cps.shape[1] != dim:
+            raise ValueError(
+                f"obstacle {i}: control points must have {dim} coordinates "
+                f"(spatial_dim + 1), got {cps.shape[1]}"
+            )
+        ctrl[i] = elevate_to_degree(cps, degree)
+        radii[i] = float(obs["radius"])
+    return ctrl, radii
+

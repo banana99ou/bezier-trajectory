@@ -75,20 +75,20 @@ from spacetime_bezier.geometry import bezier_curve, obstacle_array_bundle
 def _capture_replay():
     dim = len(sc["start"])
     spatial_dim = dim - 1
-    pos0, vel, radii, t0a, t1a = obstacle_array_bundle(sc["obstacles"], spatial_dim)
+    obstacle_ctrl, obstacle_radii = obstacle_array_bundle(sc["obstacles"], spatial_dim)
     from spacetime_bezier.objective import build_initial_guess
     P0 = build_initial_guess(sc["start"], sc["end"], req["N"] + 1,
                              init_curve=sc.get("init_curve"))
     st = sc.get("stations")
     ctx = bezier_opt.SpacetimeScpContext(
-        p_init=np.asarray(P0, float), obstacle_pos0=pos0, obstacle_vel=vel,
-        obstacle_r=radii, obstacle_t_start=t0a, obstacle_t_end=t1a,
+        p_init=np.asarray(P0, float), obstacle_ctrl=obstacle_ctrl,
+        obstacle_r=obstacle_radii,
         # These MUST match optimize_spacetime's defaults exactly, or the replay
         # is a different run -- the drift check below is what catches a mismatch.
         n_seg=req["seg"], min_dt=req["min_dt"], coord_lb=-20.0, coord_ub=20.0,
         time_lb=0.0, time_ub=float(P0[-1, -1]) * 1.5,
         scp_prox_weight=0.5, scp_trust_radius=req["trust_radius"],
-        elastic_weight=weight, tol=req["tol"], cap_bulge_ratio=2.0,
+        elastic_weight=weight, tol=req["tol"], sound_clip=False,
         stations=(np.asarray(st, float) if st else None),
     )
     frames, prev = [], np.asarray(P0, float)
@@ -126,11 +126,11 @@ def _shadow_balls():
         return None
     dim = len(sc["start"])
     spatial_dim = dim - 1
-    pos0, vel, radii, t0a, t1a = obstacle_array_bundle(sc["obstacles"], spatial_dim)
+    obstacle_ctrl, obstacle_radii = obstacle_array_bundle(sc["obstacles"], spatial_dim)
     out = bezier_opt.spacetime_occlusion_rows_exact(
-        p=np.asarray(P_opt, float), obstacle_pos0=pos0, obstacle_vel=vel,
-        obstacle_r=radii, stations=np.asarray(st, float),
-        obstacle_t_start=t0a, obstacle_t_end=t1a, n_seg=req["seg"])
+        p=np.asarray(P_opt, float), obstacle_ctrl=obstacle_ctrl,
+        obstacle_r=obstacle_radii, stations=np.asarray(st, float),
+        n_seg=req["seg"], trust_radius=req["trust_radius"])
     _n, _lb, _seg, _cp, _obs, _st, centers, rr, t_lo, t_hi, _m = out
     balls, seen = [], set()
     for c, r_, a, b in zip(np.asarray(centers, float).reshape(-1, spatial_dim),
@@ -225,14 +225,11 @@ def recompute(payload: dict, n_seg: int) -> dict:
     P = np.asarray(payload["P"], float)
     obstacles = payload["obstacles"]
     dim = P.shape[1]
-    pos0 = np.array([o["pos0"] for o in obstacles], float)
-    vel = np.array([o["vel"] for o in obstacles], float)
-    r = np.array([o["r"] for o in obstacles], float)
-    t0 = np.array([o.get("t_start", -1e18) for o in obstacles], float)
-    t1 = np.array([o.get("t_end", 1e18) for o in obstacles], float)
-    normals, lbs, seg, cp, obs = bezier_opt.spacetime_koz_rows_exact(
-        p=P, obstacle_pos0=pos0, obstacle_vel=vel, obstacle_r=r,
-        obstacle_t_start=t0, obstacle_t_end=t1, n_seg=n_seg,
+    ctrl, r = obstacle_array_bundle(obstacles, P.shape[1] - 1)
+    normals, lbs, seg, cp, obs, _rho, _sound, _dropped, _unsound = (
+        bezier_opt.spacetime_koz_rows_exact(
+            p=P, obstacle_ctrl=ctrl, obstacle_r=r, n_seg=n_seg,
+        )
     )
     a_list = [np.asarray(a, float) for a in
               segment_matrices_equal_params(P.shape[0] - 1, n_seg)]
