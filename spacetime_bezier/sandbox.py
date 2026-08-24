@@ -288,7 +288,7 @@ def solve_from_payload(payload: dict) -> dict:
     max_iter = int(payload.get("max_iter", 30))
     tol = float(payload.get("tol", 1e-6))
     min_dt = float(payload.get("min_dt", 0.1))
-    cap_bulge_ratio = float(payload.get("cap_bulge_ratio", 2.0))
+    sound_clip = bool(payload.get("sound_clip", False))
     # Exact-penalty weight on the KOZ slack. Below the problem's threshold a
     # penetrating curve is genuinely cheaper than a clear one, so this decides
     # feasibility, not just conditioning. Defaults per scenario.
@@ -309,7 +309,7 @@ def solve_from_payload(payload: dict) -> dict:
         scp_trust_radius=scp_trust_radius,
         min_dt=min_dt,
         time_ub_scale=time_ub_scale,
-        cap_bulge_ratio=cap_bulge_ratio,
+        sound_clip=sound_clip,
         elastic_weight=elastic_weight,
     )
     P_opt, info = stepper.run_to_completion()
@@ -340,7 +340,7 @@ def solve_from_payload(payload: dict) -> dict:
         "max_iter": max_iter,
         "tol": tol,
         "min_dt": min_dt,
-        "cap_bulge_ratio": cap_bulge_ratio,
+        "sound_clip": sound_clip,
         "elastic_weight": elastic_weight,
         "control_points": np.asarray(P_opt, dtype=float).tolist(),
         "init_control_points": np.asarray(P_init, dtype=float).tolist(),

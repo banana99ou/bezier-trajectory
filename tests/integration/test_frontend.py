@@ -50,6 +50,61 @@ CLEARANCE_TOL = 1e-6
 # ---------------------------------------------------------------------------
 
 
+
+def assert_koz_planes_are_one_per_pair(planes, P, obstacles, n_seg, trust_radius):
+    """At most one plane per (segment, obstacle), and every MISSING one justified.
+
+    The G2 fix made this one plane per (segment, obstacle) rather than one per
+    control point, and the count used to be asserted as exactly n_seg * n_obs.
+    Since the 2026-08-24 construction change that is no longer right: a clip ball
+    of radius `min(R, R_max)` with `R_max = r + E + Delta*sqrt(d+1)` emits NO row
+    for an obstacle nothing in the trust region can reach, which is PAPER_1
+    statement (7)'s first regime.
+
+    Relaxing the count to "<= 12" would turn this into a check that cannot fail --
+    zero planes would pass. So the omissions are verified instead: for every pair
+    with no plane, the distance from that segment's centroid to the obstacle's
+    lifted centreline must genuinely exceed `R_max`. A plane dropped for any other
+    reason fails here.
+    """
+    import numpy as np
+    from spacetime_bezier.geometry import normalize_obstacles
+    from orbital_docking.de_casteljau import segment_matrices_equal_params
+
+    P = np.asarray(P, dtype=float)
+    dim = P.shape[1]
+    norm = normalize_obstacles(obstacles)
+    n_obs = len(norm)
+
+    pairs = [(int(pl["seg"]), int(pl["obs"])) for pl in planes]
+    assert len(pairs) == len(set(pairs)), "a (segment, obstacle) pair got two planes"
+    assert len(pairs) <= n_seg * n_obs
+
+    a_list = [np.asarray(a, dtype=float) for a in segment_matrices_equal_params(P.shape[0] - 1, n_seg)]
+    missing = []
+    for s_i in range(n_seg):
+        Q = a_list[s_i] @ P
+        c = Q.mean(axis=0)
+        E = float(np.max(np.linalg.norm(Q - c, axis=1)))
+        for o_i in range(n_obs):
+            if (s_i, o_i) in pairs:
+                continue
+            cps = np.asarray(norm[o_i]["control_points"], dtype=float)
+            r_m = float(norm[o_i]["radius"])
+            # Distance from the centroid to the lifted centreline, sampled finely.
+            ss = np.linspace(0.0, 1.0, 2001)
+            from spacetime_bezier.geometry import _eval_at
+
+            R = float(np.min(np.linalg.norm(_eval_at(cps, ss) - c, axis=1)))
+            r_max = r_m + E + trust_radius * np.sqrt(dim)
+            missing.append((s_i, o_i, R, r_max))
+            assert R > r_max, (
+                f"segment {s_i} obstacle {o_i} got no plane but is within reach: "
+                f"R={R:.4f} <= R_max={r_max:.4f}"
+            )
+    return missing
+
+
 @pytest.fixture(scope="module")
 def server():
     """A real HTTP server on an ephemeral port, driven one request at a time."""
@@ -298,11 +353,24 @@ def test_solve_returns_every_layer_block(original):
     assert segments["n_seg"] == 4 and len(segments["hulls"]) == 4
     assert np.asarray(segments["hulls"][0]).shape == (9, 3)
 
-    # One plane per (segment, obstacle): 4 segments x 3 obstacles. That IS the
-    # G2 fix -- a count of 108 here would mean one plane per control point again.
-    assert len(original["planes"]["koz"]) == 12
+    # At most one plane per (segment, obstacle). That IS the G2 fix -- a count of
+    # 108 here would mean one plane per control point again -- and every pair that
+    # got NO plane is checked to be genuinely out of reach, so the weaker count
+    # cannot hide a dropped constraint.
+    assert len(original["planes"]["koz"]) <= 12
+    assert_koz_planes_are_one_per_pair(
+        original["planes"]["koz"],
+        original["solution"]["control_points"],
+        original["scenario"]["obstacles"],
+        n_seg=4,
+        trust_radius=float(original["request"]["trust_radius"]),
+    )
     assert original["planes"]["occlusion"] == []
-    assert original["ledger"]["total"] == 108
+    # Every plane is asserted at every control point, so the ledger is exactly
+    # (planes x control points). Derived rather than hardcoded at 108: the plane
+    # count now depends on how many obstacles are in reach, and a magic number
+    # would fail for a reason that has nothing to do with the ledger.
+    assert original["ledger"]["total"] == len(original["planes"]["koz"]) * 9
     assert original["ledger"]["violated"] == 0
     assert original["sight"] is None and original["los"] is None
     assert original["shadow_balls"] == []
@@ -634,7 +702,7 @@ def test_replay_frames_carry_their_own_half_spaces(server, original):
     frames = data["frames"]
     assert frames and all("planes" in frame for frame in frames)
     mid = frames[len(frames) // 2]
-    assert len(mid["planes"]["koz"]) == 12, "one plane per (segment, obstacle)"
+    assert len(mid["planes"]["koz"]) <= 12, "one plane per (segment, obstacle)"
     assert mid["planes"]["occlusion"] == []
     for plane in mid["planes"]["koz"]:
         n = np.asarray(plane["normal"], dtype=float)

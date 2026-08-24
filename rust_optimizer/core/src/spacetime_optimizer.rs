@@ -78,15 +78,16 @@ fn compute_min_clearance(
         let t_val = pt[dim - 1];
 
         for obs_idx in 0..obstacles.n_obs {
-            if t_val < obstacles.t_start[obs_idx] || t_val > obstacles.t_end[obs_idx] {
+            // `position_at_time` returns None outside the obstacle's own window,
+            // which is the window skip this loop always had — now derived from
+            // the obstacle's own control points instead of carried beside them.
+            let Some(obs_pos) = obstacles.position_at_time(obs_idx, t_val) else {
                 continue;
-            }
+            };
 
             let mut dist_sq = 0.0;
             for d in 0..spatial_dim {
-                let base = obs_idx * spatial_dim + d;
-                let obs_pos = obstacles.pos0[base] + obstacles.vel[base] * t_val;
-                let diff = pt[d] - obs_pos;
+                let diff = pt[d] - obs_pos[d];
                 dist_sq += diff * diff;
             }
             let clearance = dist_sq.sqrt() - obstacles.radii[obs_idx];
@@ -211,11 +212,17 @@ fn hard_row_violation(
 /// smoothness regularizer is EXACTLY quadratic (no linearization anywhere), the gap
 /// between predicted and actual reduction is attributable to this term and
 /// nothing else.
+/// `trust_radius` is not decoration. The clip radius depends on it through
+/// `R_max` — and, when `sound_clip` is on, through the lower clamp as well — so
+/// the rows rebuilt here are only the rows the solver was working with if the
+/// same radius is used. Callers pass the trust radius in force at the iterate
+/// being graded, which makes the certificate self-consistent: it says "the rows
+/// this iteration stood on, rebuilt exactly at this point, hold".
 fn koz_violation_rebuilt_at(
     x: &[f64],
     pre: &ScpPrecomputed,
     obstacles: &SpacetimeObstacleData<'_>,
-    cap_bulge_ratio: f64,
+    trust_radius: f64,
 ) -> f64 {
     let nvars = pre.np1 * pre.dim;
     match spacetime_constraints::build_spacetime_koz_constraints(
@@ -224,16 +231,26 @@ fn koz_violation_rebuilt_at(
         pre.np1,
         pre.dim,
         obstacles,
-        cap_bulge_ratio,
+        trust_radius,
+        pre.sound_clip,
     ) {
-        Some(bundle) => row_violation(
-            x,
-            &bundle.constraint.a,
-            &bundle.constraint.lb,
-            0,
-            bundle.constraint.n_rows,
-            nvars,
-        ),
+        Some(bundle) => {
+            // A pair that NEEDS a row and admits none is not a satisfied
+            // constraint — it is a missing piece of the guarantee. Summing the
+            // rows that do exist would report 0.0 for it, which is a check that
+            // cannot fail. Infinity so the feasibility gate's `<= tol` refuses.
+            if bundle.dropped_planes > 0 {
+                return f64::INFINITY;
+            }
+            row_violation(
+                x,
+                &bundle.constraint.a,
+                &bundle.constraint.lb,
+                0,
+                bundle.constraint.n_rows,
+                nvars,
+            )
+        }
         None => 0.0,
     }
 }
@@ -259,6 +276,7 @@ fn occlusion_violation_rebuilt_at(
     pre: &ScpPrecomputed,
     obstacles: &SpacetimeObstacleData<'_>,
     stations: &StationData<'_>,
+    trust_radius: f64,
 ) -> (f64, usize) {
     let nvars = pre.np1 * pre.dim;
     let built = spacetime_constraints::build_spacetime_occlusion_constraints(
@@ -268,6 +286,8 @@ fn occlusion_violation_rebuilt_at(
         pre.dim,
         obstacles,
         stations,
+        trust_radius,
+        pre.sound_clip,
     );
     let viol = match built.bundle {
         Some(bundle) => row_violation(
@@ -295,8 +315,10 @@ fn occlusion_certificate_at(
     pre: &ScpPrecomputed,
     obstacles: &SpacetimeObstacleData<'_>,
     stations: &StationData<'_>,
+    trust_radius: f64,
 ) -> (f64, usize) {
-    let (viol, dropped) = occlusion_violation_rebuilt_at(x, pre, obstacles, stations);
+    let (viol, dropped) =
+        occlusion_violation_rebuilt_at(x, pre, obstacles, stations, trust_radius);
     if dropped > 0 {
         (f64::INFINITY, dropped)
     } else {
@@ -320,10 +342,10 @@ fn relaxable_violation_rebuilt_at(
     pre: &ScpPrecomputed,
     obstacles: &SpacetimeObstacleData<'_>,
     stations: &StationData<'_>,
-    cap_bulge_ratio: f64,
+    trust_radius: f64,
 ) -> f64 {
-    koz_violation_rebuilt_at(x, pre, obstacles, cap_bulge_ratio)
-        + occlusion_violation_rebuilt_at(x, pre, obstacles, stations).0
+    koz_violation_rebuilt_at(x, pre, obstacles, trust_radius)
+        + occlusion_violation_rebuilt_at(x, pre, obstacles, stations, trust_radius).0
 }
 
 fn append_constraint(
@@ -360,6 +382,13 @@ pub struct ScpPrecomputed {
     pub speed_cap: Vec<SocBlock>,
     pub np1: usize,
     pub dim: usize,
+    /// PAPER_1 statement (8): clamp the clip radius from below by
+    /// `E + Delta*sqrt(d+1)` so statement (7) holds unconditionally and the
+    /// construction is sound by construction, at the cost of conservatism exactly
+    /// where the row binds. Off by default — PAPER_1 calls the choice between the
+    /// two an OPEN EXPERIMENTAL QUESTION, so both are reachable and both are
+    /// measurable, and neither is described as the better one here.
+    pub sound_clip: bool,
 }
 
 /// Result of a single SCP iteration.
@@ -428,6 +457,7 @@ pub fn precompute_scp(
     v_max: f64,
     time_weight: f64,
     free_arrival_time: bool,
+    sound_clip: bool,
 ) -> ScpPrecomputed {
     let n = np1 - 1;
     let nvars = np1 * dim;
@@ -453,6 +483,7 @@ pub fn precompute_scp(
         speed_cap: spacetime_constraints::build_speed_cap_socs(np1, dim, v_max),
         np1,
         dim,
+        sound_clip,
     }
 }
 
@@ -508,7 +539,6 @@ pub fn scp_step(
     scp_trust_radius: f64,
     elastic_weight: f64,
     tol: f64,
-    cap_bulge_ratio: f64,
     iteration: u32,
 ) -> ScpStepResult {
     let np1 = pre.np1;
@@ -532,9 +562,14 @@ pub fn scp_step(
     // The certificate is never evaluated with these; `koz_violation_rebuilt_at`
     // uses the exact rows. That separation is what keeps the reported guarantee
     // sound while letting the subproblem model the pivot.
-    let _ = cap_bulge_ratio;
     let mut koz_bundle = spacetime_constraints::build_spacetime_koz_constraints_linearized(
-        &pre.a_list, p_current, np1, dim, obstacles,
+        &pre.a_list,
+        p_current,
+        np1,
+        dim,
+        obstacles,
+        trust_radius,
+        pre.sound_clip,
     );
     if let Some(ref mut bundle) = koz_bundle {
         for row in &mut bundle.rows {
@@ -550,7 +585,14 @@ pub fn scp_step(
     // is no valid convex constraint to hand it — but the drop is carried out on
     // the step so it cannot vanish. See `occlusion_certificate_at`.
     let occlusion_built = spacetime_constraints::build_spacetime_occlusion_constraints_linearized(
-        &pre.a_list, p_current, np1, dim, obstacles, stations,
+        &pre.a_list,
+        p_current,
+        np1,
+        dim,
+        obstacles,
+        stations,
+        trust_radius,
+        pre.sound_clip,
     );
     let occlusion_bundle = occlusion_built.bundle;
     let occlusion_planes_dropped = occlusion_built.dropped_planes;
@@ -988,7 +1030,6 @@ pub fn scp_iterate(
     stations: &StationData<'_>,
     elastic_weight: f64,
     tol: f64,
-    cap_bulge_ratio: f64,
 ) -> ScpIteration {
     let nvars = pre.np1 * pre.dim;
     state.iteration += 1;
@@ -1003,7 +1044,6 @@ pub fn scp_iterate(
         state.trust,
         elastic_weight,
         tol,
-        cap_bulge_ratio,
         state.iteration,
     );
 
@@ -1045,7 +1085,8 @@ pub fn scp_iterate(
     let (quad_p, scale_p) = quadratic_cost_scaled(&pre.h_energy, &pre.f_linear, &state.p, nvars);
     let (quad_c, scale_c) = quadratic_cost_scaled(&pre.h_energy, &pre.f_linear, &cand, nvars);
     let vtrue_p = step.vlin_p; // rows were built at p; exact there
-    let vtrue_c = relaxable_violation_rebuilt_at(&cand, pre, obstacles, stations, cap_bulge_ratio);
+    let vtrue_c =
+        relaxable_violation_rebuilt_at(&cand, pre, obstacles, stations, trust_before);
     let t_p = quad_p + w_s * vtrue_p;
     let t_c = quad_c + w_s * vtrue_c;
     let pred = step.l_p - step.l_c;
@@ -1223,7 +1264,7 @@ pub fn optimize_spacetime(
     obstacles: &SpacetimeObstacleData<'_>,
     stations: &StationData<'_>,
     elastic_weight: f64,
-    cap_bulge_ratio: f64,
+    sound_clip: bool,
     v_max: f64,
     time_weight: f64,
     free_arrival_time: bool,
@@ -1232,7 +1273,7 @@ pub fn optimize_spacetime(
     let nvars = np1 * dim;
     let pre = precompute_scp(
         p_init, np1, dim, n_seg, min_dt, coord_lb, coord_ub, time_lb, time_ub, v_max,
-        time_weight, free_arrival_time,
+        time_weight, free_arrival_time, sound_clip,
     );
     let mut state = ScpState::new(p_init, scp_trust_radius);
     // `best` deliberately does NOT start at the initial guess. Seeding it there
@@ -1254,7 +1295,7 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
 
     while state.running() && (state.iteration as usize) < max_iter {
         let r = scp_iterate(
-            &mut state, &pre, obstacles, stations, elastic_weight, tol, cap_bulge_ratio,
+            &mut state, &pre, obstacles, stations, elastic_weight, tol,
         );
         if trace {
             let cols = [
@@ -1445,7 +1486,7 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     // curve is.
     info.insert(
         "koz_violation_reference".to_string(),
-        koz_violation_rebuilt_at(&p, &pre, obstacles, cap_bulge_ratio),
+        koz_violation_rebuilt_at(&p, &pre, obstacles, state.trust),
     );
     // The occlusion certificate, kept as its own key rather than folded into the
     // keep-out one: they are different guarantees and a run that fails one has
@@ -1456,7 +1497,8 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     // iterate. `occlusion_planes_dropped` carries the count so the reason is
     // visible and not merely the verdict. Both are evaluated at `p`, the point
     // that is actually returned.
-    let (occ_cert, occ_dropped) = occlusion_certificate_at(&p, &pre, obstacles, stations);
+    let (occ_cert, occ_dropped) =
+        occlusion_certificate_at(&p, &pre, obstacles, stations, state.trust);
     info.insert("occlusion_violation_reference".to_string(), occ_cert);
     info.insert(
         "occlusion_planes_dropped".to_string(),

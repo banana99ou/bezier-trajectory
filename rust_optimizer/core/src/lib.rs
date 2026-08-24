@@ -2,6 +2,8 @@ pub mod bezier;
 pub mod constraints;
 pub mod de_casteljau;
 pub mod gravity;
+pub mod minnorm;
 pub mod optimizer;
 pub mod spacetime_constraints;
+pub mod spacetime_obstacle;
 pub mod spacetime_optimizer;

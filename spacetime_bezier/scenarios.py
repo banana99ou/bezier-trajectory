@@ -1,10 +1,48 @@
 """
 Scenario registry for the space-time Bezier demos.
+
+**Scenarios are WRITTEN one way and LEAVE another way.** A straight obstacle is
+readable as ``{pos0, vel, r}`` and there is no reason to stop writing it that
+way. What leaves this module is always the canonical form -- lifted Bezier
+control points in (x, ..., t), with the active window intrinsic to the first and
+last control point's time coordinate -- because that is the only obstacle the
+solver knows about since the 2026-08-21 formulation change. ``@_canonical`` does
+the conversion, and constant velocity is simply the degree-1 case.
+
+A curved obstacle is written directly as ``{control_points, radius}``.
 """
 
 from __future__ import annotations
 
+import functools
+
 import numpy as np
+
+from .geometry import normalize_obstacle
+
+
+def _canonical(fn):
+    """Convert a scenario's authored obstacles to lifted control points."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        sc = fn(*args, **kwargs)
+        duration = float(sc["T"])
+        lifted = []
+        for obs in sc.get("obstacles", []):
+            norm = normalize_obstacle(obs, duration)
+            out = {
+                "control_points": np.asarray(norm["control_points"], dtype=float).tolist(),
+                "radius": float(norm["radius"]),
+            }
+            for key in ("name", "color"):
+                if norm.get(key) is not None:
+                    out[key] = norm[key]
+            lifted.append(out)
+        sc["obstacles"] = lifted
+        return sc
+
+    return wrapper
 
 
 def make_wall(
@@ -42,6 +80,7 @@ def make_wall(
     return obstacles
 
 
+@_canonical
 def scenario_original() -> dict:
     return {
         "name": "original",
@@ -63,6 +102,7 @@ def scenario_original() -> dict:
     }
 
 
+@_canonical
 def scenario_diverse() -> dict:
     return {
         "name": "diverse",
@@ -83,6 +123,7 @@ def scenario_diverse() -> dict:
     }
 
 
+@_canonical
 def scenario_wall() -> dict:
     """Wall that disappears early enough for the curve to wait and pass through.
 
@@ -116,6 +157,7 @@ def scenario_wall() -> dict:
     }
 
 
+@_canonical
 def scenario_fence3d() -> dict:
     """Item B11 -- three spatial coordinates plus time.
 
@@ -170,6 +212,7 @@ def scenario_fence3d() -> dict:
     }
 
 
+@_canonical
 def scenario_door3d() -> dict:
     """A doorway in time: a static wall in 3D that stands until t=6.5, then opens.
 
@@ -218,6 +261,7 @@ def scenario_door3d() -> dict:
     }
 
 
+@_canonical
 def scenario_station_fence() -> dict:
     """Item B12 -- keep line of sight to a fixed station past a moving fence.
 
@@ -338,6 +382,8 @@ SCENARIO_ELASTIC_WEIGHT = {
 }
 
 
+# NOT a scenario factory despite the name — it maps a scenario key to a weight,
+# so it must not be decorated.
 def scenario_elastic_weight(name: str) -> float:
     """Elastic weight for a named scenario, or the shared default."""
     from .optimize import DEFAULT_ELASTIC_WEIGHT
@@ -345,8 +391,52 @@ def scenario_elastic_weight(name: str) -> float:
     return float(SCENARIO_ELASTIC_WEIGHT.get(name, DEFAULT_ELASTIC_WEIGHT))
 
 
+@_canonical
+def scenario_curve() -> dict:
+    """One obstacle on a CURVED path — the case the whole construction is for.
+
+    A straight obstacle sweeps a convex capsule in the lifted space, so a plane
+    touching it anywhere already supports the whole tube; the pre-2026-08-21
+    builder was sound on every scenario above for that reason alone. This
+    obstacle's lifted centreline is a genuine Bezier arc, so its tube is NOT
+    convex, it has no supporting half-space, and the clip-and-hull construction
+    is doing real work rather than reproducing an easier answer.
+
+    The arc sweeps across the corridor and back, so the segment centroid spends
+    part of the run INSIDE the turn — the configuration where the tangent plane
+    leaves 12.35% of the clipped piece on the safe side.
+    """
+    return {
+        "name": "curve",
+        "title": "Curved Obstacle Path",
+        "init_curve": {"mode": "straight"},
+        "obstacles": [
+            {
+                # Degree 3 in (x, y, t): out across the corridor and back.
+                "control_points": [
+                    [8.5, 1.0, 0.0],
+                    [1.0, 3.5, 3.3],
+                    [1.0, 6.5, 6.7],
+                    [8.5, 9.0, 10.0],
+                ],
+                "radius": 0.9,
+                "color": "#e74c3c",
+                "name": "arc",
+            },
+            {"pos0": [3.0, 8.5], "vel": [0.35, -0.45], "r": 0.5, "color": "#2980b9", "name": "B"},
+        ],
+        "start": [0.5, 1.0, 0.0],
+        "end": [9.5, 9.0, 10.0],
+        "T": 10.0,
+    }
+
+
 SCENARIO_MAP = {
     "original": (scenario_original, [(4, 4), (4, 8), (6, 8), (8, 4), (8, 8)]),
+    # The only scenario whose obstacle tube is non-convex, which makes it the
+    # only one that distinguishes the hull-projection plane from the tangent
+    # plane. Everything else would pass with either.
+    "curve":    (scenario_curve,    [(8, 4), (8, 8), (8, 16), (10, 8)]),
     "diverse":  (scenario_diverse,  [(8, 4), (8, 8), (8, 16), (10, 4), (10, 16)]),
     "wall":     (scenario_wall,     [(8, 2), (8, 3), (8, 4), (8, 16), (10, 16), (10, 24)]),
     # Four coordinates, not three. Everything downstream reads the dimension off

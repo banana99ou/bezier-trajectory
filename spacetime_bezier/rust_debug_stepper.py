@@ -61,7 +61,12 @@ class RustOptimizerStepper:
         coord_ub: float = 20.0,
         time_lb: float = 0.0,
         time_ub_scale: float = 1.5,
-        cap_bulge_ratio: float = 2.0,
+        # PAPER_1 statement (8): clamp the clip radius from below by
+    # E + Delta*sqrt(d+1) so statement (7) holds unconditionally and the
+    # construction is sound by construction, at the cost of conservatism where
+    # the row binds. Off by default -- PAPER_1 calls the choice between the two
+    # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
+    sound_clip: bool = False,
         elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,
     ) -> None:
         if _bezier_opt_rs is None or not hasattr(_bezier_opt_rs, "SpacetimeScpContext"):
@@ -82,7 +87,7 @@ class RustOptimizerStepper:
         self.coord_ub = float(coord_ub)
         self.time_lb = float(time_lb)
         self.time_ub_scale = float(time_ub_scale)
-        self.cap_bulge_ratio = float(cap_bulge_ratio)
+        self.sound_clip = bool(sound_clip)
         self.elastic_weight = float(elastic_weight)
 
         self.A_list = segment_matrices_equal_params(self.N, self.n_seg)
@@ -303,16 +308,13 @@ class RustOptimizerStepper:
 
         # Build Rust context
         spatial_dim = self.dim - 1
-        pos0, vel, radii, t_start, t_end = obstacle_array_bundle(self.obstacles, spatial_dim)
+        obstacle_ctrl, obstacle_radii = obstacle_array_bundle(self.obstacles, spatial_dim)
         time_upper = float(self.P_init[-1, -1]) * self.time_ub_scale
 
         ctx = _bezier_opt_rs.SpacetimeScpContext(
             p_init=self.P_init,
-            obstacle_pos0=pos0,
-            obstacle_vel=vel,
-            obstacle_r=radii,
-            obstacle_t_start=t_start,
-            obstacle_t_end=t_end,
+            obstacle_ctrl=obstacle_ctrl,
+            obstacle_r=obstacle_radii,
             n_seg=self.n_seg,
             min_dt=self.min_dt,
             coord_lb=self.coord_lb,
@@ -323,7 +325,7 @@ class RustOptimizerStepper:
             scp_trust_radius=self.scp_trust_radius,
             elastic_weight=self.elastic_weight,
             tol=self.tol,
-            cap_bulge_ratio=self.cap_bulge_ratio,
+            sound_clip=self.sound_clip,
         )
 
         # The iterate, the best-feasible iterate and the stopping decision all live
@@ -554,7 +556,12 @@ def create_spacetime_debug_stepper_from_control_points(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
-    cap_bulge_ratio: float = 2.0,
+    # PAPER_1 statement (8): clamp the clip radius from below by
+    # E + Delta*sqrt(d+1) so statement (7) holds unconditionally and the
+    # construction is sound by construction, at the cost of conservatism where
+    # the row binds. Off by default -- PAPER_1 calls the choice between the two
+    # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
+    sound_clip: bool = False,
     elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,
 ) -> RustOptimizerStepper:
     """Create a Rust-backed debug stepper from an existing control polygon."""
@@ -572,7 +579,7 @@ def create_spacetime_debug_stepper_from_control_points(
         coord_ub=coord_ub,
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
-        cap_bulge_ratio=cap_bulge_ratio,
+        sound_clip=sound_clip,
         elastic_weight=elastic_weight,
     )
 
@@ -594,7 +601,12 @@ def create_spacetime_debug_stepper(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
-    cap_bulge_ratio: float = 2.0,
+    # PAPER_1 statement (8): clamp the clip radius from below by
+    # E + Delta*sqrt(d+1) so statement (7) holds unconditionally and the
+    # construction is sound by construction, at the cost of conservatism where
+    # the row binds. Off by default -- PAPER_1 calls the choice between the two
+    # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
+    sound_clip: bool = False,
     elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,
     init_curve: dict | None = None,
 ) -> RustOptimizerStepper:
@@ -617,6 +629,6 @@ def create_spacetime_debug_stepper(
         coord_ub=coord_ub,
         time_lb=time_lb,
         time_ub_scale=time_ub_scale,
-        cap_bulge_ratio=cap_bulge_ratio,
+        sound_clip=sound_clip,
         elastic_weight=elastic_weight,
     )
