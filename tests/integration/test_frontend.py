@@ -175,7 +175,10 @@ def test_catalog_offers_every_scenario_including_the_four_column_ones(server):
     assert status == 200
     catalog = json.loads(body)["scenarios"]
     assert set(catalog) == set(SCENARIO_MAP)
-    assert [v["id"] for v in catalog["original"]["views"]] == ["xyt"]
+    # Two views for 2-spatial-D scenarios: the lift (default) and the flat
+    # top-down instant view the time cursor drives.
+    assert [v["id"] for v in catalog["original"]["views"]] == ["xyt", "xy"]
+    assert catalog["original"]["default_view"] == "xyt"
     assert [v["id"] for v in catalog["wall3d"]["views"]] == ["xyz", "xyt", "xzt", "yzt"]
     assert catalog["station_fence"]["default_view"] == "xyt"
     assert catalog["station_fence"]["stations"] == [[5.0, -2.0, 0.3]]
@@ -198,6 +201,12 @@ def test_axis_banners_say_what_the_vertical_axis_is(server):
         assert views[vid]["cols"][-1] == 3, "time must be the vertical axis"
     assert frontend.axis_views(5) == [], "5 columns has no honest projection"
     assert frontend.axis_views(2) == []
+    # The flat view never claims to be the lift: two columns, kind "flat", and a
+    # banner that says the cursor is what carries time.
+    lift3, flat3 = frontend.axis_views(3)
+    assert lift3["kind"] == "lift" and flat3["kind"] == "flat"
+    assert flat3["cols"] == [0, 1]
+    assert "cursor" in flat3["banner"]
 
 
 # ---------------------------------------------------------------------------
@@ -605,6 +614,35 @@ def test_replay_refuses_a_run_it_cannot_reproduce(server, extra, fragment):
     assert fragment in data["error"]
 
 
+def test_replay_frames_carry_their_own_half_spaces(server, original):
+    """Every frame carries planes rebuilt at ITS reference by the exact builder.
+
+    FAILS IF: a frame has no planes block (the plane toggles would silently draw
+    nothing during replay -- the exact complaint this feature answers), the count
+    is not one plane per (segment, obstacle), a patch corner leaves its own
+    plane, or the first and last frames carry identical planes -- the signature
+    of the returned iterate's planes being stamped onto every earlier iterate.
+    """
+    status, data = post(
+        server,
+        "/api/replay",
+        {"scenario": "original", "N": 8, "n_seg": 4,
+         "elastic_weight": original["resolved"]["elastic_weight"]},
+    )
+    assert status == 200, data
+    frames = data["frames"]
+    assert frames and all("planes" in frame for frame in frames)
+    mid = frames[len(frames) // 2]
+    assert len(mid["planes"]["koz"]) == 12, "one plane per (segment, obstacle)"
+    assert mid["planes"]["occlusion"] == []
+    for plane in mid["planes"]["koz"]:
+        n = np.asarray(plane["normal"], dtype=float)
+        for corner in plane["corners"]:
+            assert abs(float(n @ np.asarray(corner, dtype=float)) - plane["lb"]) < 1e-9
+    if len(frames) > 1:
+        assert frames[0]["planes"]["koz"] != frames[-1]["planes"]["koz"]
+
+
 # ---------------------------------------------------------------------------
 # (f) the port guard
 # ---------------------------------------------------------------------------
@@ -680,6 +718,65 @@ def test_the_cli_has_no_port_flag(server):
     assert frontend.DEFAULT_PORT == 8767
     with pytest.raises(SystemExit):
         frontend.main(["--port", "9999", "--no-open"])
+
+
+# ---------------------------------------------------------------------------
+# (g) the result cache
+# ---------------------------------------------------------------------------
+
+
+def test_solve_cache_answers_with_the_stored_run_and_says_so(server, original):
+    """An identical request is answered from the cache, marked as such.
+
+    FAILS IF: the second answer re-solves (`cached` stays False), returns
+    different control points than the stored run, or rewrites the stored
+    provenance -- the cached copy must be the run's own response with only the
+    `cached` flag flipped, because its solved_at and solve_ms describe THAT run.
+    """
+    status, again = post(server, "/api/solve", {"scenario": "original", "N": 8, "n_seg": 4})
+    assert status == 200, again
+    assert original["provenance"]["cached"] is False
+    assert again["provenance"]["cached"] is True
+    assert again["solution"]["control_points"] == original["solution"]["control_points"]
+    assert again["verdict"] == original["verdict"]
+    first = {k: v for k, v in original["provenance"].items() if k != "cached"}
+    second = {k: v for k, v in again["provenance"].items() if k != "cached"}
+    assert first == second
+
+
+def test_solve_cache_key_distinguishes_parameters(server, original):
+    """A changed parameter misses the cache and runs fresh.
+
+    FAILS IF: a request differing only in `tol` is answered from the cache --
+    a stored run presented as a run with parameters it did not have.
+    """
+    status, data = post(
+        server, "/api/solve", {"scenario": "original", "N": 8, "n_seg": 4, "tol": 2e-6}
+    )
+    assert status == 200, data
+    assert data["provenance"]["cached"] is False
+
+
+def test_replay_cache_returns_the_same_frames(server, original):
+    """The second identical replay request does not re-solve.
+
+    FAILS IF: the repeat answer is not marked cached, or its frames differ from
+    the first answer's -- either would mean the cache is returning some other
+    run's trace.
+    """
+    payload = {
+        "scenario": "original",
+        "N": 8,
+        "n_seg": 4,
+        "elastic_weight": original["resolved"]["elastic_weight"],
+    }
+    status, first = post(server, "/api/replay", payload)
+    assert status == 200, first
+    status, second = post(server, "/api/replay", payload)
+    assert status == 200, second
+    assert second["cached"] is True
+    assert second["frames"] == first["frames"]
+    assert second["drift"] == first["drift"]
 
 
 def test_module_entrypoint_serves_this_frontend():

@@ -48,6 +48,7 @@ import time
 import traceback
 import urllib.request
 import webbrowser
+from collections import OrderedDict
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -116,6 +117,37 @@ LEDGER_ROWS = 400
 
 _STARTED_AT = datetime.now().isoformat(timespec="seconds")
 _SOLVE_LOCK = threading.Lock()
+
+# In-process result cache, keyed on the RESOLVED request parameters (never the
+# raw body, whose key order and blank-vs-absent fields vary). A hit returns the
+# stored response byte-for-byte with `provenance.cached` flipped to True -- the
+# run's own solved_at and solve_ms stay, because they describe the run.
+#
+# Why in-process caching cannot serve stale geometry: the Rust extension loads
+# once per process, so changing the solver requires a server restart, and the
+# restart empties the cache with it. There is no key for the build because the
+# process IS the build.
+_CACHE_LOCK = threading.Lock()
+_SOLVE_CACHE: OrderedDict[str, dict] = OrderedDict()
+_REPLAY_CACHE: OrderedDict[str, dict] = OrderedDict()
+_SOLVE_CACHE_MAX = 24
+_REPLAY_CACHE_MAX = 8
+
+
+def _cache_get(cache: OrderedDict, key: str) -> dict | None:
+    with _CACHE_LOCK:
+        entry = cache.get(key)
+        if entry is None:
+            return None
+        cache.move_to_end(key)
+        return entry
+
+
+def _cache_put(cache: OrderedDict, key: str, value: dict, limit: int) -> None:
+    with _CACHE_LOCK:
+        cache[key] = value
+        while len(cache) > limit:
+            cache.popitem(last=False)
 
 
 # ---------------------------------------------------------------------------
@@ -370,6 +402,19 @@ def axis_views(dim: int) -> list[dict]:
             "kind": "lift",
             "dropped": None,
             "banner": LIFT_BANNER,
+            "dropped_note": None,
+        }, {
+            # Top-down instant view: both spatial coordinates, no third axis.
+            # `kind: "flat"` tells the client to draw a 2D-style scene driven by
+            # the time cursor -- the one place a time scrubber is the honest
+            # representation, because nothing here claims to be the lift.
+            "id": "xy",
+            "cols": [0, 1],
+            "labels": ["x", "y"],
+            "space_idx": [0, 1],
+            "kind": "flat",
+            "dropped": None,
+            "banner": "top-down (x, y); TIME is the color and the cursor",
             "dropped_note": None,
         }]
     if dim == 4:
@@ -825,12 +870,15 @@ def _occlusion_planes(
             continue
         planes.append({**entry, **patch, "kind": "occlusion"})
 
-    # The bodies the sight line must clear, deduplicated by (window, radius) the
-    # way tools/trace_viewer.py does -- every segment sharing a piece window
-    # re-emits the same ball.
+    # The bodies the sight line must clear, deduplicated by (window, radius,
+    # CENTER). The center is part of the key deliberately: two balls sharing a
+    # window and radius but sitting at different centers are different bodies,
+    # and a key without the center silently dropped one of their cones
+    # (user-reported 2026-08-24: "not all shadow cone drawn").
     balls, seen = [], set()
     for c, r, a, b in zip(centers, radii_b, win_lo, win_hi):
-        key = (round(float(a), 6), round(float(b), 6), round(float(r), 6))
+        key = (round(float(a), 6), round(float(b), 6), round(float(r), 6),
+               tuple(round(float(v), 6) for v in c))
         if key in seen:
             continue
         seen.add(key)
@@ -922,6 +970,15 @@ def solve_from_payload(payload: dict) -> dict:
         raise RequestError(f"tol must be > 0, got {params['tol']}")
     if params["min_dt"] <= 0.0:
         raise RequestError(f"min_dt must be > 0, got {params['min_dt']}")
+
+    cache_key = json.dumps(
+        {"scenario": name, "N": N, "n_seg": n_seg, **params}, sort_keys=True
+    )
+    cached = _cache_get(_SOLVE_CACHE, cache_key)
+    if cached is not None:
+        hit = dict(cached)
+        hit["provenance"] = {**cached["provenance"], "cached": True}
+        return hit
 
     stations = scenario.get("stations")
     P_init = build_initial_guess(
@@ -1094,9 +1151,12 @@ def solve_from_payload(payload: dict) -> dict:
             **provenance_payload(),
             "solved_at": datetime.now().isoformat(timespec="seconds"),
             "solve_ms": round(solve_ms, 1),
+            "cached": False,
         },
     }
-    return _json_safe(response)
+    response = _json_safe(response)
+    _cache_put(_SOLVE_CACHE, cache_key, response, _SOLVE_CACHE_MAX)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -1195,6 +1255,11 @@ def replay_from_payload(payload: dict) -> dict:
         "trust_radius": _float(payload, "trust_radius", SOLVE_DEFAULTS["trust_radius"]),
         "min_dt": _float(payload, "min_dt", SOLVE_DEFAULTS["min_dt"]),
     }
+    cache_key = json.dumps(request, sort_keys=True)
+    cached = _cache_get(_REPLAY_CACHE, cache_key)
+    if cached is not None:
+        return {**cached, "cached": True}
+
     env = dict(os.environ, SPACETIME_SCVX_TRACE="1")
     proc = subprocess.run(
         [sys.executable, "-c", module.CHILD_SCRIPT, json.dumps(request)],
@@ -1256,10 +1321,32 @@ def replay_from_payload(payload: dict) -> dict:
     for frame in frames:
         frame["trust_after"] = trust_by_it.get(int(frame["it"]))
 
+    # Half-space walls per frame, rebuilt at each frame's reference by the SAME
+    # exact Rust builders the certificate uses -- the rows the next subproblem
+    # linearizes at that reference. Real geometry at a real iterate, never the
+    # returned iterate's planes redrawn onto an earlier one.
+    scenario = scenario_fn()
+    dim = len(scenario["start"])
+    stations = scenario.get("stations")
+    a_list = [np.asarray(a, dtype=float) for a in segment_matrices_equal_params(N, n_seg)]
+    for frame in frames:
+        P_f = np.asarray(frame["P"], dtype=float)
+        frame["planes"] = {
+            "koz": _koz_planes(P_f, scenario["obstacles"], n_seg, a_list, dim)["planes"],
+            "occlusion": (
+                _occlusion_planes(
+                    P_f, scenario["obstacles"], stations, n_seg, a_list, dim
+                )["planes"]
+                if stations
+                else []
+            ),
+        }
+
     drift = float(child.get("replay_drift", float("nan")))
     fell_back = bool(child.get("info", {}).get("returned_best_iterate", 0.0))
-    return _json_safe({
+    response = _json_safe({
         "request": request,
+        "cached": False,
         "frames": frames,
         "drift": drift,
         "returned_best_iterate": fell_back,
@@ -1280,6 +1367,8 @@ def replay_from_payload(payload: dict) -> dict:
         "warnings": warnings,
         "rejected": sum(1 for frame in frames if not frame.get("advanced")),
     })
+    _cache_put(_REPLAY_CACHE, cache_key, response, _REPLAY_CACHE_MAX)
+    return response
 
 
 # ---------------------------------------------------------------------------

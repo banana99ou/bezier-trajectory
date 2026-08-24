@@ -57,11 +57,11 @@
   #axisbar button { width:auto; margin:0; padding:4px 11px; background:#e7ebf1; color:var(--ink);
                     font-weight:600; font-size:12px; }
   #axisbar button.on { background:var(--accent); color:#fff; }
-  #banner { font-weight:800; font-size:14px; padding:7px 11px; border-radius:6px;
-            background:#fff4d6; border:1px solid #e5cf95; color:#6b4d00; margin-bottom:8px; }
-  #banner .drop { display:block; font-weight:700; color:var(--bad); font-size:12.5px; }
-  #banner .colorby { display:block; font-weight:600; color:#3d4b5c; font-size:12px; }
-  #view3d { height:60vh; min-height:420px; background:var(--panel); border:1px solid var(--line);
+  #banner { font-weight:600; font-size:11px; padding:2px 2px 4px; color:var(--muted);
+            margin-bottom:4px; }
+  #banner .drop { font-weight:700; color:var(--bad); margin-left:10px; }
+  #banner .colorby { font-weight:500; margin-left:10px; }
+  #view3d { height:74vh; min-height:540px; background:var(--panel); border:1px solid var(--line);
             border-radius:8px; }
   .toggles label { display:flex; gap:6px; align-items:center; margin:4px 0; font-size:12px; }
   .toggles .sub { margin:2px 0 8px 20px; display:none; }
@@ -84,6 +84,10 @@
   #replayRow { display:flex; gap:9px; align-items:center; margin:8px 0; }
   #replayRow input[type=range] { flex:1; }
   #replayLabel { font-family:ui-monospace,Menlo,monospace; font-size:11px; min-width:190px; }
+  #timeRow { display:flex; gap:9px; align-items:center; margin:0 0 6px; font-size:11px;
+             color:var(--muted); }
+  #timeRow input[type=range] { flex:1; }
+  #timeVal { font-family:ui-monospace,Menlo,monospace; min-width:72px; color:var(--ink); }
 </style>
 </head>
 <body>
@@ -158,6 +162,11 @@
 <section>
   <div id="axisbar"></div>
   <div id="banner">Solve to draw something.</div>
+  <div id="timeRow" style="display:none">
+    <span>time cursor</span>
+    <input type="range" id="timeSlider" min="0" max="400" step="1" value="0">
+    <span id="timeVal"></span>
+  </div>
   <div id="view3d"></div>
 
   <details class="drawer" id="drawer">
@@ -171,7 +180,9 @@
 
     <div id="replayRow" style="display:none">
       <span id="replayLabel"></span>
+      <button class="ghost" id="stepPrev" style="width:auto;padding:5px 10px;margin:0">&lsaquo;</button>
       <input type="range" id="replaySlider" min="0" max="0" value="0">
+      <button class="ghost" id="stepNext" style="width:auto;padding:5px 10px;margin:0">&rsaquo;</button>
       <button class="ghost" id="showResult" style="width:auto;padding:5px 12px;margin:0">Back to result</button>
     </div>
     <div id="driftNote" class="note"></div>
@@ -217,12 +228,48 @@ let replayIndex = -1; // -1 = show the result, otherwise the frame index
 // flat patch -- the shadow of a real supporting hyperplane, never a plane
 // synthesised in the view.
 // ---------------------------------------------------------------------------
-const px = p => p[VIEW.cols[0]], py = p => p[VIEW.cols[1]], pz = p => p[VIEW.cols[2]];
+// A "flat" view has two columns; its third plot coordinate is a constant 0 so
+// every 3D trace builder keeps working and the scene renders as a flat sheet.
+const px = p => p[VIEW.cols[0]], py = p => p[VIEW.cols[1]],
+      pz = p => (VIEW.cols.length > 2 ? p[VIEW.cols[2]] : 0);
 const C = (arr, f) => arr.map(f);
 
 function timeSpan() {
   const lo = RES.solution.t_lo, hi = RES.solution.t_hi;
   return [lo, (hi - lo) || 1];
+}
+
+// --- time cursor -----------------------------------------------------------
+// One slider shared by every view. Spatial views draw each obstacle ONCE, at the
+// cursor's instant; lift views draw a faint horizontal plane at that t. The
+// vehicle marker is the drawn curve's own sample nearest the cursor -- never an
+// interpolated point the solver did not produce.
+let timeFrac = 0;   // 0..1 within [t_lo, t_hi]; survives re-solves
+
+function cursorT() {
+  const [lo, span] = timeSpan();
+  return lo + span * timeFrac;
+}
+
+function curveAt(t) {
+  const cur = RES.solution.curve;
+  let best = 0, bd = Infinity;
+  for (let i = 0; i < cur.length; i++) {
+    const d = Math.abs(cur[i][cur[i].length - 1] - t);
+    if (d < bd) { bd = d; best = i; }
+  }
+  return cur[best];
+}
+
+function timeCursorTraces() {
+  // The cursor acts only in the instant views (spatial / flat). Lift views are
+  // the static space-time truth and get no cursor artifacts.
+  if (VIEW.kind === "lift") return [];
+  const t = cursorT(), p = curveAt(t);
+  return [{ type: "scatter3d", mode: "markers", name: "vehicle @ cursor t",
+    x: [px(p)], y: [py(p)], z: [pz(p)],
+    marker: { size: 7, color: "#ff6d00", line: { color: "#7a3400", width: 1 } },
+    text: [`vehicle @ t=${p[p.length - 1].toFixed(2)}`], hoverinfo: "text" }];
 }
 
 // --- colours ---------------------------------------------------------------
@@ -236,6 +283,13 @@ function marginColor(m, thresh) {
     : `rgb(${Math.round(220 - 400 * (r - 0.5))},170,50)`;
 }
 
+// Shared surface lighting: enough ambient that nothing goes black, a little
+// diffuse so curvature reads as shape instead of a flat silhouette.
+const LIGHT = {
+  lighting: { ambient: 0.7, diffuse: 0.6, specular: 0.15, roughness: 0.85, fresnel: 0.1 },
+  lightposition: { x: 120, y: 60, z: 180 },
+};
+
 // --- obstacle surfaces -----------------------------------------------------
 function obstacleCenter(o, t) {
   return o.pos0.map((c, i) => c + o.vel[i] * t);
@@ -244,7 +298,11 @@ function obstacleWindow(o) {
   const [lo, hi] = [RES.solution.t_lo, RES.solution.t_hi];
   const t0 = Math.max(o.t_start === undefined ? lo : o.t_start, lo);
   const t1 = Math.min(o.t_end === undefined ? hi : o.t_end, hi);
-  return [t0, t1, o.t_start !== undefined, o.t_end !== undefined];
+  // An end is "real" only when the declared bound lies inside the plotted time
+  // range; a tube clipped by the plotting horizon must not grow a cap there.
+  return [t0, t1,
+          o.t_start !== undefined && o.t_start >= lo,
+          o.t_end !== undefined && o.t_end <= hi];
 }
 
 function tubeTraces(o, oi, opacity) {
@@ -267,7 +325,7 @@ function tubeTraces(o, oi, opacity) {
     X.push(xr); Y.push(yr); Z.push(zr);
   }
   out.push({
-    type: "surface", x: X, y: Y, z: Z, opacity: opacity,
+    type: "surface", x: X, y: Y, z: Z, opacity: opacity, ...LIGHT,
     colorscale: [[0, "rgb(196,64,64)"], [1, "rgb(196,64,64)"]], showscale: false,
     hoverinfo: "text", text: `obstacle ${oi}${o.name ? " (" + o.name + ")" : ""} r=${o.r}`,
     name: oi === 0 ? "obstacle tubes" : undefined, showlegend: oi === 0, legendgroup: "obs",
@@ -281,58 +339,105 @@ function tubeTraces(o, oi, opacity) {
   out.push({ type: "scatter3d", mode: "lines", x: cx, y: cy, z: cz,
     line: { color: "#6b1a1a", width: 2 }, hoverinfo: "skip",
     name: "tube centreline", showlegend: oi === 0, legendgroup: "cl" });
-  // Filled caps, only where the WINDOW is genuinely finite -- a tube clipped by
-  // the plotting horizon must not grow an end it does not have.
+  // Rounded caps at genuinely finite ends. The solver's forbidden set is a
+  // CAPSULE around the slanted centreline (spacetime_constraints.rs: "clamping
+  // to the segment ends gives rounded caps"), so the set bulges up to r BEYOND
+  // the window in the lifted metric -- a flat disc here understated it. Drawn
+  // as the full cap ball (its inner half hides inside the tube), and the
+  // projection of a lifted-space ball is a ball, so this is right in every
+  // lift view. Ends clipped by the plotting horizon get no cap.
   const cap = (t, show) => {
     if (!show) return;
-    const c = obstacleCenter(o, t), nR = 6, xr = [], yr = [], zr = [];
-    for (let i = 0; i <= nR; i++) {
-      const rho = o.r * i / nR, xs = [], ys = [], zs = [];
-      for (let k = 0; k <= nTh; k++) {
-        const th = 2 * Math.PI * k / nTh;
-        xs.push(c[sa] + rho * Math.cos(th)); ys.push(c[sb] + rho * Math.sin(th)); zs.push(t);
+    const c = obstacleCenter(o, t), nU = 12, nV = 24, X = [], Y = [], Z = [];
+    for (let i = 0; i <= nU; i++) {
+      const u = Math.PI * i / nU, xs = [], ys = [], zs = [];
+      for (let k = 0; k <= nV; k++) {
+        const v = 2 * Math.PI * k / nV;
+        xs.push(c[sa] + o.r * Math.sin(u) * Math.cos(v));
+        ys.push(c[sb] + o.r * Math.sin(u) * Math.sin(v));
+        zs.push(t + o.r * Math.cos(u));
       }
-      xr.push(xs); yr.push(ys); zr.push(zs);
+      X.push(xs); Y.push(ys); Z.push(zs);
     }
-    out.push({ type: "surface", x: xr, y: yr, z: zr, opacity: opacity,
+    out.push({ type: "surface", x: X, y: Y, z: Z, opacity: opacity, ...LIGHT,
       colorscale: [[0, "rgb(168,48,48)"], [1, "rgb(168,48,48)"]], showscale: false,
-      hoverinfo: "text", text: `obstacle ${oi} cap t=${t.toFixed(2)}`, showlegend: false });
+      hoverinfo: "text",
+      text: `obstacle ${oi} capsule cap at t=${t.toFixed(2)} (forbidden up to r beyond the window)`,
+      showlegend: false });
   };
   cap(t0, finite0 && t0 <= t1); cap(t1, finite1 && t1 >= t0);
   return out;
 }
 
 function sphereTraces(o, oi, opacity) {
-  // Spatial view: snapshots of the body, coloured by the instant they belong to,
-  // on the SAME scale as the trajectory -- so "same colour and near each other"
-  // means "close at the same moment", and distant colours crossing the same place
-  // are not a conflict.
+  // Spatial view: ONE solid body, at the time cursor's instant -- drawn only
+  // while the cursor sits inside the obstacle's own window, because outside it
+  // the body is not there. A faint dotted line shows the path the centre sweeps
+  // over the window; both come straight from the scenario parameters.
   const [t0, t1] = obstacleWindow(o);
   if (t1 < t0) return [];
-  const [tLo, tSpan] = timeSpan(), nSnap = 6, nU = 14, nV = 20, out = [];
-  for (let s = 0; s < nSnap; s++) {
-    const t = t0 + (t1 - t0) * s / (nSnap - 1 || 1), c = obstacleCenter(o, t);
-    const [a, b, cc] = VIEW.space_idx, X = [], Y = [], Z = [];
-    for (let i = 0; i <= nU; i++) {
-      const u = Math.PI * i / nU, xr = [], yr = [], zr = [];
-      for (let k = 0; k <= nV; k++) {
-        const v = 2 * Math.PI * k / nV;
-        xr.push(c[a] + o.r * Math.sin(u) * Math.cos(v));
-        yr.push(c[b] + o.r * Math.sin(u) * Math.sin(v));
-        zr.push(c[cc] + o.r * Math.cos(u));
-      }
-      X.push(xr); Y.push(yr); Z.push(zr);
+  const [a, b, cc] = VIEW.space_idx, out = [];
+  const c0 = obstacleCenter(o, t0), c1 = obstacleCenter(o, t1);
+  out.push({ type: "scatter3d", mode: "lines",
+    x: [c0[a], c1[a]], y: [c0[b], c1[b]], z: [c0[cc], c1[cc]],
+    line: { color: "rgba(150,40,40,0.5)", width: 2, dash: "dot" },
+    name: "obstacle sweep path", showlegend: oi === 0, legendgroup: "sweep",
+    hoverinfo: "text",
+    text: `obstacle ${oi} centre path, window [${t0.toFixed(2)}, ${t1.toFixed(2)}]` });
+  const t = cursorT();
+  if (t < t0 - 1e-9 || t > t1 + 1e-9) return out;
+  const c = obstacleCenter(o, t), nU = 16, nV = 24, X = [], Y = [], Z = [];
+  for (let i = 0; i <= nU; i++) {
+    const u = Math.PI * i / nU, xr = [], yr = [], zr = [];
+    for (let k = 0; k <= nV; k++) {
+      const v = 2 * Math.PI * k / nV;
+      xr.push(c[a] + o.r * Math.sin(u) * Math.cos(v));
+      yr.push(c[b] + o.r * Math.sin(u) * Math.sin(v));
+      zr.push(c[cc] + o.r * Math.cos(u));
     }
-    const shade = (t - tLo) / tSpan;
-    out.push({
-      type: "surface", x: X, y: Y, z: Z, opacity: opacity,
-      surfacecolor: X.map(r => r.map(() => shade)),
-      colorscale: "Viridis", cmin: 0, cmax: 1, showscale: false,
-      hoverinfo: "text", text: `obstacle ${oi} @ t=${t.toFixed(2)}`,
-      name: "obstacle snapshots (colour = time)",
-      showlegend: oi === 0 && s === 0, legendgroup: "obs",
-    });
+    X.push(xr); Y.push(yr); Z.push(zr);
   }
+  out.push({
+    type: "surface", x: X, y: Y, z: Z, opacity: Math.min(1, opacity + 0.3), ...LIGHT,
+    colorscale: [[0, "rgb(196,64,64)"], [1, "rgb(196,64,64)"]], showscale: false,
+    hoverinfo: "text", text: `obstacle ${oi} @ t=${t.toFixed(2)}`,
+    name: "obstacle @ cursor t", showlegend: oi === 0, legendgroup: "obs",
+  });
+  return out;
+}
+
+function discTraces(o, oi, opacity) {
+  // Flat top-down view: the obstacle as the disc it is in (x, y), at the time
+  // cursor's instant, only while its window holds it there. Moving obstacles
+  // also show the dotted path their centre sweeps.
+  const [t0, t1] = obstacleWindow(o);
+  if (t1 < t0) return [];
+  const [a, b] = VIEW.space_idx, out = [];
+  const c0 = obstacleCenter(o, t0), c1 = obstacleCenter(o, t1);
+  const moves = Math.hypot(c1[a] - c0[a], c1[b] - c0[b]) > 1e-9;
+  if (moves) {
+    out.push({ type: "scatter3d", mode: "lines",
+      x: [c0[a], c1[a]], y: [c0[b], c1[b]], z: [0, 0],
+      line: { color: "rgba(150,40,40,0.5)", width: 2, dash: "dot" },
+      name: "obstacle sweep path", showlegend: oi === 0, legendgroup: "sweep",
+      hoverinfo: "text",
+      text: `obstacle ${oi} centre path, window [${t0.toFixed(2)}, ${t1.toFixed(2)}]` });
+  }
+  const t = cursorT();
+  if (t < t0 - 1e-9 || t > t1 + 1e-9) return out;
+  const c = obstacleCenter(o, t), nR = 5, nTh = 40, X = [], Y = [], Z = [];
+  for (let i = 0; i <= nR; i++) {
+    const rho = o.r * i / nR, xs = [], ys = [], zs = [];
+    for (let k = 0; k <= nTh; k++) {
+      const th = 2 * Math.PI * k / nTh;
+      xs.push(c[a] + rho * Math.cos(th)); ys.push(c[b] + rho * Math.sin(th)); zs.push(0);
+    }
+    X.push(xs); Y.push(ys); Z.push(zs);
+  }
+  out.push({ type: "surface", x: X, y: Y, z: Z, opacity: Math.min(1, opacity + 0.3),
+    colorscale: [[0, "rgb(196,64,64)"], [1, "rgb(196,64,64)"]], showscale: false,
+    hoverinfo: "text", text: `obstacle ${oi} @ t=${t.toFixed(2)}`,
+    name: "obstacle @ cursor t", showlegend: oi === 0, legendgroup: "obs" });
   return out;
 }
 
@@ -340,13 +445,37 @@ function obstacleTraces(only, opacity) {
   const out = [];
   RES.scenario.obstacles.forEach((o, i) => {
     if (only !== null && only !== i) return;
-    const t = VIEW.kind === "spatial" ? sphereTraces(o, i, opacity) : tubeTraces(o, i, opacity);
+    const t = VIEW.kind === "spatial" ? sphereTraces(o, i, opacity)
+          : VIEW.kind === "flat" ? discTraces(o, i, opacity)
+          : tubeTraces(o, i, opacity);
     out.push(...t);
   });
   return out;
 }
 
 // --- trajectory ------------------------------------------------------------
+// Segments are equal-parameter De Casteljau pieces, so sample i of the uniformly
+// sampled curve belongs to segment floor(i/(n-1) * n_seg). Used for the
+// alternating shade and the boundary dots -- a label on the curve's own samples,
+// not new geometry.
+function segIndexOf(i, nPts) {
+  return Math.min(RES.segments.n_seg - 1, Math.floor(i / (nPts - 1) * RES.segments.n_seg));
+}
+
+function segmentBoundaryTraces() {
+  const cur = RES.solution.curve, n = RES.segments.n_seg;
+  if (n < 2) return [];
+  const pts = [];
+  for (let k = 1; k < n; k++) pts.push(cur[Math.round(k * (cur.length - 1) / n)]);
+  return [{
+    type: "scatter3d", mode: "markers", name: "segment boundaries",
+    x: C(pts, px), y: C(pts, py), z: C(pts, pz),
+    marker: { size: 4.5, color: "#0b3a75" },
+    text: pts.map((p, i) => `segment ${i} | ${i + 1}, t=${p[p.length - 1].toFixed(2)}`),
+    hoverinfo: "text",
+  }];
+}
+
 function trajectoryTraces() {
   const cur = RES.solution.curve, [tLo, tSpan] = timeSpan();
   if ($("tSpeed").checked) {
@@ -360,7 +489,7 @@ function trajectoryTraces() {
       text: RES.solution.speed.map(s => "speed " + fmt(s, 4)), hoverinfo: "text",
     }];
   }
-  if (VIEW.kind === "spatial") {
+  if (VIEW.kind !== "lift") {
     return [{
       type: "scatter3d", mode: "markers", name: "trajectory (colour = time)",
       x: C(cur, px), y: C(cur, py), z: C(cur, pz),
@@ -373,10 +502,19 @@ function trajectoryTraces() {
       text: cur.map(p => "t = " + p[p.length - 1].toFixed(2)), hoverinfo: "text",
     }];
   }
+  // Alternating shades per Bezier segment, so the pieces the planes are built
+  // for are discernible on the curve itself.
+  const parity = cur.map((_, i) => segIndexOf(i, cur.length) % 2);
   return [{
-    type: "scatter3d", mode: "lines", name: "trajectory",
-    x: C(cur, px), y: C(cur, py), z: C(cur, pz), line: { color: "#1155cc", width: 6 },
-    text: cur.map(p => "t = " + p[p.length - 1].toFixed(2)), hoverinfo: "text",
+    type: "scatter3d", mode: "lines", name: "trajectory (shade alternates per segment)",
+    x: C(cur, px), y: C(cur, py), z: C(cur, pz),
+    line: {
+      color: parity, width: 7, cmin: 0, cmax: 1,
+      colorscale: [[0, "#0b57d0"], [0.5, "#0b57d0"], [0.5, "#5b9bff"], [1, "#5b9bff"]],
+    },
+    text: cur.map((p, i) =>
+      `t = ${p[p.length - 1].toFixed(2)} · segment ${segIndexOf(i, cur.length)}`),
+    hoverinfo: "text",
   }];
 }
 
@@ -403,10 +541,11 @@ function polygonTraces(P, color) {
 function stationTraces() {
   if (!RES.sight) return [];
   const st = RES.sight.station, out = [];
-  if (VIEW.kind === "spatial") {
-    const [a, b, c] = VIEW.space_idx;
+  if (VIEW.kind !== "lift") {
+    const idx = VIEW.space_idx;
     out.push({ type: "scatter3d", mode: "markers+text", name: "station",
-      x: [st[a]], y: [st[b]], z: [st[c]], text: ["station"], textposition: "top center",
+      x: [st[idx[0]]], y: [st[idx[1]]], z: [idx.length > 2 ? st[idx[2]] : 0],
+      text: ["station"], textposition: "top center",
       marker: { size: 8, symbol: "diamond", color: "#117733" } });
   } else {
     // The station exists at EVERY instant, so in a lifted view it is a line, not
@@ -430,6 +569,10 @@ function sightTraces() {
       const [a, b, c] = VIEW.space_idx;
       sx = st[a]; sy = st[b]; sz = st[c];
       vx = L.v[a]; vy = L.v[b]; vz = L.v[c];
+    } else if (VIEW.kind === "flat") {
+      const [a, b] = VIEW.space_idx;
+      sx = st[a]; sy = st[b]; sz = 0;
+      vx = L.v[a]; vy = L.v[b]; vz = 0;
     } else {
       const [a, b] = VIEW.space_idx;
       sx = st[a]; sy = st[b]; sz = L.t;
@@ -442,8 +585,8 @@ function sightTraces() {
       name: lost ? "sight line LOST" : "sight line held",
       showlegend: showLegend, legendgroup: lost ? "lost" : "kept",
       x: [sx, vx], y: [sy, vy], z: [sz, vz],
-      line: { color: lost ? "rgba(200,40,40,0.95)" : "rgba(20,120,60,0.4)",
-              width: lost ? 5 : 1.5 },
+      line: { color: lost ? "rgba(200,40,40,0.95)" : "rgba(20,120,60,0.3)",
+              width: lost ? 5 : 1.2 },
       hoverinfo: "text",
       text: `t=${L.t.toFixed(2)} margin=${fmt(L.m, 4)}`,
     });
@@ -452,21 +595,61 @@ function sightTraces() {
 }
 
 function shadowConeTraces() {
-  // DERIVED, and labelled so in the legend: the cone is tessellated here from the
-  // solver's own exported inflated ball (centre, radius, piece window) and the
-  // station. The balls are the solver's; the wedge between them is this file's.
-  if (!RES.shadow_balls || !RES.shadow_balls.length || !RES.sight) return [];
+  // Two different shadows, and the legend says which is which:
+  //  * lift views -- the SOLVER'S conservative shadow: two walls per exported
+  //    inflated ball, extruded over the piece's own time window (the walls are
+  //    parallel to the time axis because the occlusion rows carry a zero time
+  //    coefficient by design). Static, because the constraint is static.
+  //  * spatial / flat views -- the INSTANTANEOUS shadow at the time cursor,
+  //    derived here from the scenario's own obstacle position at that instant
+  //    and the true radius r (not the inflated R). It moves with the cursor.
+  if (!RES.sight) return [];
   const st = RES.sight.station, out = [];
   let first = true;
-  RES.shadow_balls.forEach(b => {
+
+  if (VIEW.kind === "lift") {
+    (RES.shadow_balls || []).forEach(b => {
+      const [ia, ib] = VIEW.space_idx;
+      const S = [st[ia], st[ib]], Cc = [b.c[ia], b.c[ib]];
+      const d = [Cc[0] - S[0], Cc[1] - S[1]], L = Math.hypot(d[0], d[1]);
+      if (!(L > b.R)) return;                       // station inside the body
+      const alpha = Math.asin(b.R / L), base = Math.atan2(d[1], d[0]);
+      const t0 = Math.max(b.t0, RES.solution.t_lo), t1 = Math.min(b.t1, RES.solution.t_hi);
+      if (t1 < t0) return;
+      [base - alpha, base + alpha].forEach(ang => {
+        const far = 2.2 * L;
+        const X = [], Y = [], Z = [];
+        for (const t of [t0, t1]) {
+          const xr = [], yr = [], zr = [];
+          for (let i = 0; i <= 8; i++) {
+            const s = L * Math.cos(alpha) + (far - L * Math.cos(alpha)) * i / 8;
+            xr.push(S[0] + s * Math.cos(ang)); yr.push(S[1] + s * Math.sin(ang)); zr.push(t);
+          }
+          X.push(xr); Y.push(yr); Z.push(zr);
+        }
+        out.push({ type: "surface", x: X, y: Y, z: Z, opacity: 0.12, ...LIGHT,
+          colorscale: [[0, "rgb(120,70,160)"], [1, "rgb(120,70,160)"]], showscale: false,
+          name: "solver shadow walls (conservative)", showlegend: first, legendgroup: "cone",
+          hoverinfo: "text",
+          text: `solver shadow walls, R=${b.R.toFixed(2)}, window [${b.t0.toFixed(2)}, ${b.t1.toFixed(2)}]` });
+        first = false;
+      });
+    });
+    return out;
+  }
+
+  const t = cursorT();
+  RES.scenario.obstacles.forEach((o, oi) => {
+    const [t0, t1] = obstacleWindow(o);
+    if (t1 < t0 || t < t0 - 1e-9 || t > t1 + 1e-9) return;
+    const c = obstacleCenter(o, t);
     if (VIEW.kind === "spatial") {
       const [ia, ib, ic] = VIEW.space_idx;
-      const S = [st[ia], st[ib], st[ic]], Cc = [b.c[ia], b.c[ib], b.c[ic]];
+      const S = [st[ia], st[ib], st[ic]], Cc = [c[ia], c[ib], c[ic]];
       const d = [Cc[0] - S[0], Cc[1] - S[1], Cc[2] - S[2]];
       const L = Math.hypot(d[0], d[1], d[2]);
-      if (!(L > b.R)) return;                       // station inside the body
-      const ax = d.map(v => v / L), alpha = Math.asin(b.R / L), tanA = Math.tan(alpha);
-      // orthonormal frame around the cone axis
+      if (!(L > o.r)) return;
+      const ax = d.map(v => v / L), alpha = Math.asin(o.r / L), tanA = Math.tan(alpha);
       const seed = Math.abs(ax[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
       let e1 = [seed[1] * ax[2] - seed[2] * ax[1], seed[2] * ax[0] - seed[0] * ax[2],
                 seed[0] * ax[1] - seed[1] * ax[0]];
@@ -486,41 +669,32 @@ function shadowConeTraces() {
         }
         X.push(xr); Y.push(yr); Z.push(zr);
       }
-      out.push({ type: "surface", x: X, y: Y, z: Z, opacity: 0.22,
+      out.push({ type: "surface", x: X, y: Y, z: Z, opacity: 0.15, ...LIGHT,
         colorscale: [[0, "rgb(120,70,160)"], [1, "rgb(120,70,160)"]], showscale: false,
-        name: "shadow cone (derived)", showlegend: first, legendgroup: "cone",
-        hoverinfo: "text", text: `shadow cone (derived) R=${b.R.toFixed(2)}` });
+        name: "shadow @ cursor t (derived)", showlegend: first, legendgroup: "cone",
+        hoverinfo: "text", text: `shadow of obstacle ${oi} @ t=${t.toFixed(2)} (derived)` });
       first = false;
     } else {
-      // Lift view: the shadow's two walls, extruded over the piece's own time
-      // window. The walls really are parallel to the time axis -- the occlusion
-      // rows carry a zero time coefficient by design -- so this is the geometry,
-      // not a convenience.
       const [ia, ib] = VIEW.space_idx;
-      const S = [st[ia], st[ib]], Cc = [b.c[ia], b.c[ib]];
+      const S = [st[ia], st[ib]], Cc = [c[ia], c[ib]];
       const d = [Cc[0] - S[0], Cc[1] - S[1]], L = Math.hypot(d[0], d[1]);
-      if (!(L > b.R)) return;
-      const alpha = Math.asin(b.R / L), base = Math.atan2(d[1], d[0]);
-      const t0 = Math.max(b.t0, RES.solution.t_lo), t1 = Math.min(b.t1, RES.solution.t_hi);
-      if (t1 < t0) return;
-      [base - alpha, base + alpha].forEach(ang => {
-        const far = 2.2 * L;
-        const X = [], Y = [], Z = [];
-        for (const t of [t0, t1]) {
-          const xr = [], yr = [], zr = [];
-          for (let i = 0; i <= 8; i++) {
-            const s = L * Math.cos(alpha) + (far - L * Math.cos(alpha)) * i / 8;
-            xr.push(S[0] + s * Math.cos(ang)); yr.push(S[1] + s * Math.sin(ang)); zr.push(t);
-          }
-          X.push(xr); Y.push(yr); Z.push(zr);
+      if (!(L > o.r)) return;
+      const alpha = Math.asin(o.r / L), base = Math.atan2(d[1], d[0]);
+      const s0 = Math.sqrt(Math.max(L * L - o.r * o.r, 0)), far = 2.2 * L;
+      const nS = 8, nA = 14, X = [], Y = [], Z = [];
+      for (let i = 0; i <= nS; i++) {
+        const s = s0 + (far - s0) * i / nS, xr = [], yr = [], zr = [];
+        for (let k = 0; k <= nA; k++) {
+          const ang = base - alpha + 2 * alpha * k / nA;
+          xr.push(S[0] + s * Math.cos(ang)); yr.push(S[1] + s * Math.sin(ang)); zr.push(0);
         }
-        out.push({ type: "surface", x: X, y: Y, z: Z, opacity: 0.22,
-          colorscale: [[0, "rgb(120,70,160)"], [1, "rgb(120,70,160)"]], showscale: false,
-          name: "shadow cone (derived)", showlegend: first, legendgroup: "cone",
-          hoverinfo: "text",
-          text: `shadow cone (derived), window [${b.t0.toFixed(2)}, ${b.t1.toFixed(2)}]` });
-        first = false;
-      });
+        X.push(xr); Y.push(yr); Z.push(zr);
+      }
+      out.push({ type: "surface", x: X, y: Y, z: Z, opacity: 0.16,
+        colorscale: [[0, "rgb(120,70,160)"], [1, "rgb(120,70,160)"]], showscale: false,
+        name: "shadow @ cursor t (derived)", showlegend: first, legendgroup: "cone",
+        hoverinfo: "text", text: `shadow of obstacle ${oi} @ t=${t.toFixed(2)} (derived)` });
+      first = false;
     }
   });
   return out;
@@ -593,7 +767,10 @@ function trustBoxTraces(P, radius) {
 // --- scene assembly --------------------------------------------------------
 function buildScene() {
   const traces = [];
-  const inspector = $("tCert").checked;
+  // Half-space patches, hulls and trust boxes live in the LIFTED space; collapsed
+  // to the flat view's z=0 they would draw as geometry they are not. The flat
+  // view therefore ignores those toggles.
+  const inspector = $("tCert").checked && VIEW.kind !== "flat";
 
   if (inspector) {
     const seg = Math.max(0, Math.min(RES.segments.n_seg - 1, +$("certSeg").value || 0));
@@ -603,6 +780,7 @@ function buildScene() {
     const picked = allPlanes().filter(p => p.seg === seg && p.obs === obs);
     traces.push(...planeTraces(picked, +$("nearThresh").value, "supporting half-space"));
     traces.push(...trajectoryTraces());
+    traces.push(...segmentBoundaryTraces());
     return traces;
   }
 
@@ -625,44 +803,94 @@ function buildScene() {
         marker: { size: 4, color: f.sup_margin, colorscale: "RdYlGn", cmin: -0.5, cmax: 0.5 },
         text: f.sup_margin.map(m => "margin " + fmt(m, 4)), hoverinfo: "text" });
     }
-    if ($("tTrust").checked) traces.push(...trustBoxTraces(f.P, f.trust_after));
+    // The frame's own half-spaces, rebuilt server-side at THIS iterate by the
+    // exact builders -- same toggles as the result scene.
+    if (VIEW.kind !== "flat" && f.planes) {
+      const fAll = (f.planes.koz || []).concat(f.planes.occlusion || []);
+      if ($("tNear").checked) {
+        const th = +$("nearThresh").value;
+        traces.push(...planeTraces(fAll.filter(p => p.margin < th), th,
+                                   "near-active planes @ this iterate"));
+      }
+      if ($("tSeg").checked) {
+        const seg = +$("segPick").value || 0;
+        traces.push(...planeTraces(fAll.filter(p => p.seg === seg),
+                                   +$("nearThresh").value,
+                                   `all planes, segment ${seg} @ this iterate`));
+      }
+    }
+    if ($("tTrust").checked && VIEW.kind !== "flat")
+      traces.push(...trustBoxTraces(f.P, f.trust_after));
     traces.push(...endpointTraces());
     return traces;
   }
 
   traces.push(...trajectoryTraces());
+  traces.push(...segmentBoundaryTraces());
+  traces.push(...timeCursorTraces());
   traces.push(...endpointTraces());
   traces.push(...stationTraces());
   traces.push(...sightTraces());
   traces.push(...shadowConeTraces());
   if ($("tPoly").checked) traces.push(...polygonTraces(RES.solution.control_points));
-  if ($("tNear").checked) {
-    const th = +$("nearThresh").value;
-    traces.push(...planeTraces(allPlanes().filter(p => p.margin < th), th, "near-active planes"));
-  }
-  if ($("tSeg").checked) {
-    const seg = +$("segPick").value || 0;
-    traces.push(...planeTraces(allPlanes().filter(p => p.seg === seg),
-                               +$("nearThresh").value, `all planes, segment ${seg}`));
+  if (VIEW.kind !== "flat") {
+    if ($("tNear").checked) {
+      const th = +$("nearThresh").value;
+      traces.push(...planeTraces(allPlanes().filter(p => p.margin < th), th, "near-active planes"));
+    }
+    if ($("tSeg").checked) {
+      const seg = +$("segPick").value || 0;
+      traces.push(...planeTraces(allPlanes().filter(p => p.seg === seg),
+                                 +$("nearThresh").value, `all planes, segment ${seg}`));
+    }
   }
   return traces;
 }
 
+// The last camera the user set, per (scenario, view). uirevision alone does not
+// survive the replay slider (the trace set changes every frame), so the camera is
+// captured on every user rotation and reapplied explicitly on every render.
+const CAMERA = {};
+let cameraBound = false;
+const camKey = () => RES.scenario.name + "/" + VIEW.id;
+
 function render() {
   if (!RES || !VIEW) return;
+  const axisStyle = {
+    backgroundcolor: "#f7f9fc", gridcolor: "#e3e8ef", zerolinecolor: "#c7cfda",
+    showbackground: true, showspikes: false,
+  };
   const layout = {
-    // Camera survives a re-solve because uirevision is unchanged; it resets when
-    // the axis triple changes, which is a different scene.
-    uirevision: RES.scenario.name + "/" + VIEW.id,
+    uirevision: camKey(),
     margin: { l: 0, r: 0, t: 0, b: 0 },
-    showlegend: true, legend: { x: 0, y: 1, bgcolor: "rgba(255,255,255,0.75)" },
+    showlegend: true,
+    legend: { x: 0, y: 1, bgcolor: "rgba(255,255,255,0.7)", font: { size: 11 } },
     scene: {
-      xaxis: { title: VIEW.labels[0] }, yaxis: { title: VIEW.labels[1] },
-      zaxis: { title: VIEW.labels[2] + (VIEW.kind === "lift" ? " (TIME)" : "") },
+      xaxis: { ...axisStyle, title: { text: VIEW.labels[0], font: { size: 13 } } },
+      yaxis: { ...axisStyle, title: { text: VIEW.labels[1], font: { size: 13 } } },
+      zaxis: VIEW.kind === "flat"
+        ? { visible: false }
+        : {
+            ...axisStyle,
+            title: VIEW.kind === "lift"
+              ? { text: VIEW.labels[2] + " (TIME)", font: { size: 14, color: "#b26a00" } }
+              : { text: VIEW.labels[2], font: { size: 13 } },
+          },
       aspectmode: "data",
     },
   };
+  const cam = CAMERA[camKey()];
+  if (cam) layout.scene.camera = cam;
+  else if (VIEW.kind === "flat")
+    layout.scene.camera = { eye: { x: 0, y: 0, z: 1.7 }, up: { x: 0, y: 1, z: 0 } };
+  $("timeRow").style.display = VIEW.kind !== "lift" ? "flex" : "none";
   Plotly.react("view3d", buildScene(), layout, { responsive: true });
+  if (!cameraBound) {
+    cameraBound = true;
+    $("view3d").on("plotly_relayout", ev => {
+      if (ev && ev["scene.camera"]) CAMERA[camKey()] = ev["scene.camera"];
+    });
+  }
   drawBanner();
 }
 
@@ -672,7 +900,7 @@ function drawBanner() {
   if (VIEW.dropped_note) html += `<span class="drop">${VIEW.dropped_note}</span>`;
   const coloring = $("tSpeed").checked
     ? "curve colour = physical speed |dx/dt|"
-    : (VIEW.kind === "spatial" ? "curve colour = time" : "curve drawn as a solid line");
+    : (VIEW.kind === "lift" ? "curve drawn as a solid line" : "curve colour = time");
   html += `<span class="colorby">${coloring}` +
           (replayIndex >= 0 ? " · showing SCP iteration, not the returned result" : "") +
           `</span>`;
@@ -855,10 +1083,13 @@ async function doSolve() {
     $("segPick").max = RES.segments.n_seg - 1;
     $("certSeg").max = RES.segments.n_seg - 1;
     $("certObs").max = RES.scenario.obstacles.length - 1;
+    updateTimeLabel();
     drawHeader(); drawAxisBar(); render(); drawDiagnostics();
     $("status").textContent =
       `${RES.verdict.iterations} iterations, ${RES.provenance.solve_ms} ms, ` +
-      `weight ${fmt(RES.resolved.elastic_weight, 6)}`;
+      `weight ${fmt(RES.resolved.elastic_weight, 6)}` +
+      (RES.provenance.cached
+        ? ` · from cache (same run, solved ${RES.provenance.solved_at})` : "");
   } catch (e) {
     $("status").className = "err";
     $("status").textContent = String(e.message || e);
@@ -883,13 +1114,18 @@ async function doReplay() {
     replayIndex = n ? 0 : -1;
     $("replayRow").style.display = n ? "flex" : "none";
     $("driftNote").textContent = REPLAY.drift_note;
-    $("replayStatus").textContent = `${n} frames, ${REPLAY.rejected} rejected`;
+    $("replayStatus").textContent = `${n} frames, ${REPLAY.rejected} rejected` +
+      (REPLAY.cached ? " · from cache (same replay)" : "");
     updateReplayLabel(); render(); drawDiagnostics();
   } catch (e) {
     $("replayStatus").textContent = String(e.message || e);
   } finally {
     $("loadReplay").disabled = false;
   }
+}
+
+function updateTimeLabel() {
+  if (RES) $("timeVal").textContent = "t = " + cursorT().toFixed(2);
 }
 
 function updateReplayLabel() {
@@ -955,6 +1191,25 @@ async function boot() {
   });
   $("replaySlider").addEventListener("input", e => {
     replayIndex = +e.target.value; updateReplayLabel(); render();
+  });
+  const stepReplay = delta => {
+    if (!REPLAY || !REPLAY.frames.length) return;
+    replayIndex = Math.max(0, Math.min(REPLAY.frames.length - 1,
+                  (replayIndex < 0 ? 0 : replayIndex + delta)));
+    $("replaySlider").value = replayIndex;
+    updateReplayLabel(); render();
+  };
+  $("stepPrev").addEventListener("click", () => stepReplay(-1));
+  $("stepNext").addEventListener("click", () => stepReplay(1));
+  document.addEventListener("keydown", e => {
+    if (!REPLAY || replayIndex < 0) return;
+    if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+    if (e.key === "ArrowRight") { e.preventDefault(); stepReplay(1); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); stepReplay(-1); }
+  });
+  $("timeSlider").addEventListener("input", e => {
+    timeFrac = +e.target.value / +e.target.max;
+    updateTimeLabel(); render();
   });
   bindToggle("tPoly"); bindToggle("tNear", "subNear"); bindToggle("tSeg", "subSeg");
   bindToggle("tCert", "subCert"); bindToggle("tSpeed"); bindToggle("tTrust");
