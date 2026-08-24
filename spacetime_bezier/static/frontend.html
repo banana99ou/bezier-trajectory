@@ -206,7 +206,8 @@
 //
 // Two things ARE tessellated here, and both are parametric surfaces over
 // server-supplied parameters rather than derivations:
-//   * obstacle tubes / spheres, from the scenario's own pos0, vel, r and window,
+//   * obstacle tubes / spheres, from the scenario's own lifted Bezier control
+//     points and radius (the active window is intrinsic to those points),
 //     because the axis picker decides which two spatial coordinates carry the
 //     circle;
 //   * the shadow cone, from the solver-exported inflated ball and the station.
@@ -282,7 +283,7 @@ function viewRanges() {
     const [t0, t1, f0, f1] = obstacleWindow(o);
     if (t1 < t0) return;
     for (const [t, fin] of [[t0, f0], [t1, f1]]) {
-      const c = obstacleCenter(o, t), r = o.r;
+      const c = obstacleCenter(o, t), r = o.radius;
       if (lift) {
         eat(c[sa] - r, c[sb] - r, fin ? t - r : t);
         eat(c[sa] + r, c[sb] + r, fin ? t + r : t);
@@ -329,7 +330,7 @@ function timeCursorTraces() {
       const c = obstacleCenter(o, t), xs = [], ys = [], zs = [];
       for (let k = 0; k <= 40; k++) {
         const th = 2 * Math.PI * k / 40;
-        xs.push(c[sa] + o.r * Math.cos(th)); ys.push(c[sb] + o.r * Math.sin(th)); zs.push(t);
+        xs.push(c[sa] + o.radius * Math.cos(th)); ys.push(c[sb] + o.radius * Math.sin(th)); zs.push(t);
       }
       out.push({ type: "scatter3d", mode: "lines", x: xs, y: ys, z: zs,
         line: { color: "#a01818", width: 4 },
@@ -339,9 +340,9 @@ function timeCursorTraces() {
       if (RES.sight) {
         const st = RES.sight.station, S = [st[sa], st[sb]];
         const d = [c[sa] - S[0], c[sb] - S[1]], L = Math.hypot(d[0], d[1]);
-        if (L > o.r) {
-          const alpha = Math.asin(o.r / L), base = Math.atan2(d[1], d[0]);
-          const s0 = Math.sqrt(Math.max(L * L - o.r * o.r, 0)), far = 2.2 * L;
+        if (L > o.radius) {
+          const alpha = Math.asin(o.radius / L), base = Math.atan2(d[1], d[0]);
+          const s0 = Math.sqrt(Math.max(L * L - o.radius * o.radius, 0)), far = 2.2 * L;
           [base - alpha, base + alpha].forEach(ang => {
             out.push({ type: "scatter3d", mode: "lines",
               x: [S[0] + s0 * Math.cos(ang), S[0] + far * Math.cos(ang)],
@@ -380,18 +381,43 @@ const LIGHT = {
 };
 
 // --- obstacle surfaces -----------------------------------------------------
-function obstacleCenter(o, t) {
-  return o.pos0.map((c, i) => c + o.vel[i] * t);
+// An obstacle is lifted Bezier control points in (x, ..., t) since 2026-08-24.
+// Constant velocity is the degree-1 case, not the assumption: `pos0`/`vel`/
+// `t_start`/`t_end` no longer exist, and the active window is intrinsic to the
+// first and last control point's time coordinate.
+function obstacleSpatialDim(o) { return o.control_points[0].length - 1; }
+function obstacleT0(o) { const sd = obstacleSpatialDim(o); return o.control_points[0][sd]; }
+function obstacleT1(o) {
+  const cps = o.control_points, sd = obstacleSpatialDim(o);
+  return cps[cps.length - 1][sd];
 }
+
+// Spatial position at an instant. Time is affine in the curve parameter, so the
+// inversion is a division; the evaluation itself is de Casteljau, which is what
+// the solver uses and is stable for any degree.
+function obstacleCenter(o, t) {
+  const cps = o.control_points, sd = obstacleSpatialDim(o);
+  const t0 = obstacleT0(o), t1 = obstacleT1(o), span = t1 - t0;
+  const s = span > 1e-15 ? Math.min(1, Math.max(0, (t - t0) / span)) : 0;
+  let pts = cps.map((p) => p.slice(0, sd));
+  while (pts.length > 1) {
+    const next = [];
+    for (let i = 0; i + 1 < pts.length; i++) {
+      next.push(pts[i].map((c, d) => c + s * (pts[i + 1][d] - c)));
+    }
+    pts = next;
+  }
+  return pts[0];
+}
+
 function obstacleWindow(o) {
   const [lo, hi] = [RES.solution.t_lo, RES.solution.t_hi];
-  const t0 = Math.max(o.t_start === undefined ? lo : o.t_start, lo);
-  const t1 = Math.min(o.t_end === undefined ? hi : o.t_end, hi);
-  // An end is "real" only when the declared bound lies inside the plotted time
-  // range; a tube clipped by the plotting horizon must not grow a cap there.
-  return [t0, t1,
-          o.t_start !== undefined && o.t_start >= lo,
-          o.t_end !== undefined && o.t_end <= hi];
+  const ot0 = obstacleT0(o), ot1 = obstacleT1(o);
+  const t0 = Math.max(ot0, lo);
+  const t1 = Math.min(ot1, hi);
+  // An end is "real" only when the obstacle's own bound lies inside the plotted
+  // time range; a tube clipped by the plotting horizon must not grow a cap there.
+  return [t0, t1, ot0 >= lo, ot1 <= hi];
 }
 
 function tubeTraces(o, oi, opacity) {
@@ -407,8 +433,8 @@ function tubeTraces(o, oi, opacity) {
     const xr = [], yr = [], zr = [];
     for (let k = 0; k <= nTh; k++) {
       const th = 2 * Math.PI * k / nTh;
-      xr.push(c[sa] + o.r * Math.cos(th));
-      yr.push(c[sb] + o.r * Math.sin(th));
+      xr.push(c[sa] + o.radius * Math.cos(th));
+      yr.push(c[sb] + o.radius * Math.sin(th));
       zr.push(t);
     }
     X.push(xr); Y.push(yr); Z.push(zr);
@@ -416,7 +442,7 @@ function tubeTraces(o, oi, opacity) {
   out.push({
     type: "surface", x: X, y: Y, z: Z, opacity: opacity, ...LIGHT,
     colorscale: [[0, "rgb(196,64,64)"], [1, "rgb(196,64,64)"]], showscale: false,
-    hoverinfo: "text", text: `obstacle ${oi}${o.name ? " (" + o.name + ")" : ""} r=${o.r}`,
+    hoverinfo: "text", text: `obstacle ${oi}${o.name ? " (" + o.name + ")" : ""} r=${o.radius}`,
     name: oi === 0 ? "obstacle tubes" : undefined, showlegend: oi === 0, legendgroup: "obs",
   });
   // The slanted axis itself: a still obstacle is vertical, a moving one leans.
@@ -442,9 +468,9 @@ function tubeTraces(o, oi, opacity) {
       const u = Math.PI * i / nU, xs = [], ys = [], zs = [];
       for (let k = 0; k <= nV; k++) {
         const v = 2 * Math.PI * k / nV;
-        xs.push(c[sa] + o.r * Math.sin(u) * Math.cos(v));
-        ys.push(c[sb] + o.r * Math.sin(u) * Math.sin(v));
-        zs.push(t + o.r * Math.cos(u));
+        xs.push(c[sa] + o.radius * Math.sin(u) * Math.cos(v));
+        ys.push(c[sb] + o.radius * Math.sin(u) * Math.sin(v));
+        zs.push(t + o.radius * Math.cos(u));
       }
       X.push(xs); Y.push(ys); Z.push(zs);
     }
@@ -480,9 +506,9 @@ function sphereTraces(o, oi, opacity) {
     const u = Math.PI * i / nU, xr = [], yr = [], zr = [];
     for (let k = 0; k <= nV; k++) {
       const v = 2 * Math.PI * k / nV;
-      xr.push(c[a] + o.r * Math.sin(u) * Math.cos(v));
-      yr.push(c[b] + o.r * Math.sin(u) * Math.sin(v));
-      zr.push(c[cc] + o.r * Math.cos(u));
+      xr.push(c[a] + o.radius * Math.sin(u) * Math.cos(v));
+      yr.push(c[b] + o.radius * Math.sin(u) * Math.sin(v));
+      zr.push(c[cc] + o.radius * Math.cos(u));
     }
     X.push(xr); Y.push(yr); Z.push(zr);
   }
@@ -510,9 +536,9 @@ function sphereAllTraces(o, oi, opacity) {
       const u = Math.PI * i / nU, xr = [], yr = [], zr = [];
       for (let k = 0; k <= nV; k++) {
         const v = 2 * Math.PI * k / nV;
-        xr.push(c[a] + o.r * Math.sin(u) * Math.cos(v));
-        yr.push(c[b] + o.r * Math.sin(u) * Math.sin(v));
-        zr.push(c[cc] + o.r * Math.cos(u));
+        xr.push(c[a] + o.radius * Math.sin(u) * Math.cos(v));
+        yr.push(c[b] + o.radius * Math.sin(u) * Math.sin(v));
+        zr.push(c[cc] + o.radius * Math.cos(u));
       }
       X.push(xr); Y.push(yr); Z.push(zr);
     }
@@ -773,7 +799,7 @@ function shadowConeTraces() {
     const [t0, t1] = obstacleWindow(o);
     if (t1 < t0 || t < t0 - 1e-9 || t > t1 + 1e-9) return;
     const c = obstacleCenter(o, t);
-    const tr = cone3d(S3, [c[ia], c[ib], c[ic]], o.r,
+    const tr = cone3d(S3, [c[ia], c[ib], c[ic]], o.radius,
       "shadow @ cursor t (derived)",
       `shadow of obstacle ${oi} @ t=${t.toFixed(2)} (derived)`, first, 0.15);
     if (tr) { out.push(tr); first = false; }
@@ -998,7 +1024,7 @@ function flatScene() {
     const c = obstacleCenter(o, t), xs = [], ys = [];
     for (let k = 0; k <= 60; k++) {
       const th = 2 * Math.PI * k / 60;
-      xs.push(c[a] + o.r * Math.cos(th)); ys.push(c[b] + o.r * Math.sin(th));
+      xs.push(c[a] + o.radius * Math.cos(th)); ys.push(c[b] + o.radius * Math.sin(th));
     }
     traces.push({ type: "scatter", mode: "lines", x: xs, y: ys, fill: "toself",
       fillcolor: "rgba(196,64,64,0.45)", line: { color: "#a03030", width: 1.5 },
@@ -1014,9 +1040,9 @@ function flatScene() {
       if (t1 < t0 || t < t0 - 1e-9 || t > t1 + 1e-9) return;
       const c = obstacleCenter(o, t), S = [st[a], st[b]];
       const d = [c[a] - S[0], c[b] - S[1]], L = Math.hypot(d[0], d[1]);
-      if (!(L > o.r)) return;
-      const alpha = Math.asin(o.r / L), base = Math.atan2(d[1], d[0]);
-      const s0 = Math.sqrt(Math.max(L * L - o.r * o.r, 0)), far = 2.2 * L;
+      if (!(L > o.radius)) return;
+      const alpha = Math.asin(o.radius / L), base = Math.atan2(d[1], d[0]);
+      const s0 = Math.sqrt(Math.max(L * L - o.radius * o.radius, 0)), far = 2.2 * L;
       const xs = [], ys = [];
       for (let k = 0; k <= 20; k++) { const ang = base - alpha + 2 * alpha * k / 20;
         xs.push(S[0] + s0 * Math.cos(ang)); ys.push(S[1] + s0 * Math.sin(ang)); }
