@@ -4,6 +4,11 @@ __pycache__
 *.code-workspace
 .git_corrupt_*
 doc/refs/papers/*
+# ...but the hand-written gist sidecars ARE tracked; only the copyrighted PDFs
+# are ignored. (None checked in currently; gists live in doc/refs/GIST.md.)
+# NOTE: gitignore has no trailing comments — a comment after a pattern becomes
+# part of the pattern and the rule silently never matches.
+!doc/refs/papers/*.md
 cache
 doc/20250902_보안성검토(KSAS정현용_Pcd)
 artifacts
@@ -15,3 +20,12 @@ figures/debug/
 
 # 연구노트 are a standalone project — each note directory is its own git repo.
 doc/notes/
+
+# paper renders (regenerate: tools/render_paper.py). The society's own template
+# PDF is provenance, not a render, so it is exempt.
+paper/**/*.pdf
+!paper/**/template/*.pdf
+paper/**/*.docx.tmp
+
+# scratch handoffs between sessions — not a record, use the repo for that
+tmp/

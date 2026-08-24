@@ -63,8 +63,16 @@ uncertain hazards, receding horizon. Do not mix their claims.
 │                              dimension-agnostic building blocks (bezier.py, de_casteljau.py)
 │                              that the spacetime code imports. Not the headline.
 │
+├── paper/                     manuscripts in the societies' own templates, one dir per venue
+│   ├── README.md                HANDBOOK — pipeline, venue rules, invariants, draft state
+│   └── ksas_2026_fall/          KSAS 2026 추계: manuscript.docx + .md sidecar, template/
+│
 ├── tools/                     spacetime_opt_debug.py (debug UI server),
 │                              compare_backends.py (scenario diff), plus legacy diagnostics
+│   ├── render_paper.py          manuscript .docx -> .md sidecar + .pdf
+│   ├── watch_paper.sh           re-render on every save (fswatch, hash-guarded)
+│   ├── make_manuscript_skeleton.py  build the empty manuscript from the template
+│   └── docx_edit.py             surgical paragraph edits, superscript citations
 │
 ├── tests/                     pytest: unit / integration / property / regression
 │                              tests/data/golden_run.json is the regression baseline

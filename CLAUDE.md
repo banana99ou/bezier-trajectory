@@ -18,8 +18,10 @@ Where the reasoning went:
 ## Goal (until 2026-09-04)
 
 **한국항공우주학회 2026년도 추계학술대회 발표논문. 온라인 제출 마감 2026년 9월 4일(금).** 학회
-템플릿이 2페이지 고정이므로, 이 파일이 줄곧 가정해 온 "2-page conference paper"가 곧 이
-제출물이다. 역산 마일스톤과 마감 재확인 절차는 [`PAPER_1.md`](PAPER_1.md) §제출 일정.
+템플릿 파일 자체가 2페이지이므로 이 파일이 줄곧 가정해 온 "2-page conference paper"를 그대로
+쓴다 — 다만 **학회가 정규 학술대회에 대해 분량 제한을 명시한 문서는 없다**(확인 2026-08-20,
+[`paper/README.md`](paper/README.md)). 2페이지는 선택이지 인용할 규정이 아니다. 역산 마일스톤과
+마감 재확인 절차는 [`PAPER_1.md`](PAPER_1.md) §제출 일정.
 
 The central claim is decomposition-free, not the space-time lift. Performance is housekeeping — the numbers need to be reasonable, not impressive.
 
@@ -63,7 +65,7 @@ A session can open with just an item id (`B1`, `A2`, `C1`).
 - ~~B4 fix G2~~ **DONE** — one plane per (segment, obstacle) aimed at the segment centroid
 - ~~B5 port the SCvx machinery from `main`~~ **DONE** — `848bf3b`, then reduced to one canonical iteration in `9b9c3d3`
 - B6 procedural seeds (left/right/wait/hurry) + multi-start. **Demoted 2026-08-19** — it was justified by `wall` being infeasible, which was false. May still buy better local optima; blocks nothing.
-- ~~B7 feasibility gate~~ **DONE 2026-08-20** — `b8728b0`: `figure_grade` requires converged AND certificate ≤ 1e-6 AND clearance > 0 AND slack ≤ 1e-8 (threshold measured, not chosen: certified runs sit at 2.4e-14…1.4e-9, penetrating ones at 1.31+; 1e-10 would reject the certified runs). Each condition tested to sink the gate alone. Nothing reads `figure_grade` yet — wiring the figure pipeline is open
+- ~~B7 feasibility gate~~ **DONE 2026-08-20** — `b8728b0`, slack tolerance corrected in `5982d4c`: `figure_grade` requires converged AND certificate ≤ 1e-6 AND clearance > 0 AND **slack ≤ 1e-6** (placed inside an eight-order gap between the populations — 117× above the worst good residue, six orders below the smallest bad one — not on its edge). Each condition tested to sink the gate alone. `tools/make_paper_figure.py` refuses to draw a run that fails it
 - ~~B8 rename the objective; derivative operators~~ **DONE 2026-08-20** — `efb0a70`: `build_smoothness_regularizer` (alias warns), Rust comments corrected, difference/derivative operators built from `get_D_matrix`. The regularizer provably scores a cruise and a wait-then-dash identically
 - ~~B9 slant-limit speed cap~~ **DONE 2026-08-20** — `c1866ea`, **second-order cone, not the fallback**. The cone carries no slack: the elastic penalty may relax keep-out rows, never the physics. Off by default (`v_max=None`)
 - ~~B10 time penalty + freed arrival~~ **DONE 2026-08-20** — `c1866ea`, same commit as B9. `free_arrival_time` is an explicit flag; `time_weight>0` with no speed cap raises `UncappedTimePenaltyError` — the trap was measured first (arrival collapses to exactly min_dt×gaps and ignores the weight). Golden config unchanged. **The B8–B10 freeze has landed: the one-pass re-measurement (B3) is now unblocked**
@@ -163,7 +165,11 @@ two things that are guardrails rather than instructions:
 ```bash
 python3 -m spacetime_bezier          # THE frontend — config panel, solve, one page on 8767
 python3 -m spacetime_bezier.viewer   # superseded sanity viewer, still on disk
+./tools/watch_paper.sh               # manuscript .docx -> .md sidecar + .pdf, on every save
 ```
+
+- **Writing the paper is its own workflow** — the tools, the venue's rules, and what not to assert
+  about them are in [`paper/README.md`](paper/README.md). Read it before touching a manuscript.
 
 - **Two ways in, never two servers.** Both bind 8767, and both exit 1 when it is held, naming the
   pid and warning when that process loaded the Rust extension before your last build. The shared
@@ -195,6 +201,7 @@ carry a warning or are easy to mistake:
 - `rust_optimizer/core/src/spacetime_constraints.rs` -- KOZ capsule geometry; both fixed defects lived here
 - `rust_optimizer/core/src/spacetime_optimizer.rs` -- SCP loop, ratio test, certificate at the returned iterate
 - `rust_optimizer/core/src/optimizer.rs` -- `solve_qp` + `solve_qp_with_socs`; second-order cones landed with B9 (the speed-cap cone carries no elastic slack, by design)
+- `paper/` -- one directory per venue, holding the manuscript in the society's own template. [`paper/README.md`](paper/README.md) is the handbook: the render/watch pipeline, the verified venue rules, the invariants that break silently (one template paragraph carries the section break that keeps the title block out of the two-column body), and the state of the draft. `tools/render_paper.py`, `watch_paper.sh`, `make_manuscript_skeleton.py`, `docx_edit.py` are its machinery
 - `spacetime_bezier/constraints.py`, `debug_stepper.py` -- **dead**, see Known Issues
 - `doc/notes/001_problem_formulation/` -- a separate repo, ignored by this one. **Contradicts itself**; do not seed the paper from it
 
