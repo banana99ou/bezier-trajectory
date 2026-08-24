@@ -84,12 +84,18 @@ def scenario_diverse() -> dict:
 
 
 def scenario_wall() -> dict:
-    """Wall that disappears early enough for the curve to wait and pass through."""
+    """Wall that disappears early enough for the curve to wait and pass through.
+
+    Spacing densified 0.8 -> 0.5 on 2026-08-24 (user request: the row of circles
+    must READ as a wall). A denser wall is a different problem -- more rows, a
+    slightly larger forbidden union between the old centres -- so the measured
+    numbers were re-taken the same day; see README sec. Measurements.
+    """
     wall_obs = make_wall(
         p1=[2.5, 0.0],
         p2=[2.5, 10.0],
         thickness=0.5,
-        spacing=0.8,
+        spacing=0.5,
         color="#e67e22",
         name_prefix="W",
         t_start=0.0,
@@ -110,10 +116,17 @@ def scenario_wall() -> dict:
     }
 
 
-def scenario_wall3d() -> dict:
+def scenario_fence3d() -> dict:
     """Item B11 -- three spatial coordinates plus time.
 
-    `make_wall` is already dimension-agnostic, so this is the `wall` idea lifted:
+    Renamed from `wall3d` 2026-08-24: in this repository "wall" means the
+    disappearing door, and this scenario is not that -- it is a MOVING fence,
+    and the motion is load-bearing: it is what makes waiting futile, so the
+    demonstrated behaviour is the climb. (`door3d` is the waiting one.)
+    Measurements recorded under the old name carry over unchanged -- the
+    problem definition is byte-identical, only the key moved.
+
+    `make_wall` is already dimension-agnostic, so this is the fence idea lifted:
     a wide, low fence advancing in +x, and the vehicle climbs over it. Every
     start/end point and every obstacle `pos0`/`vel` carries three spatial
     components; nothing in the solver changes.
@@ -147,12 +160,60 @@ def scenario_wall3d() -> dict:
          "color": "#27ae60", "name": "M2"},
     ]
     return {
-        "name": "wall3d",
+        "name": "fence3d",
         "title": "Moving Fence, 3 Spatial Dimensions",
         "init_curve": {"mode": "straight"},
         "obstacles": fence + movers,
         "start": [0.5, 5.0, 0.5, 0.0],
         "end": [9.5, 5.0, 0.5, 10.0],
+        "T": 10.0,
+    }
+
+
+def scenario_door3d() -> dict:
+    """A doorway in time: a static wall in 3D that stands until t=6.5, then opens.
+
+    The demonstrated behaviour is WAITING -- the complement of `fence3d`, whose
+    motion makes waiting futile so the solver climbs. Here the wall is static,
+    tall, and gone after t=6.5; the cheap answer is to hold short and pass
+    through the opening, visible in the lift as a steep stretch of curve along
+    the time axis at the wall plane. The straight seed crosses x=4 around
+    t=4.7, inside the window, so the seed genuinely conflicts.
+
+    The wall is ONE row of large overlapping spheres (r=1.6, centres at z=0.9,
+    y-spacing 0.8, spanning y in [-2, 12]), sealed up to z of about 2.45 with no
+    interior gap. Every parameter here was forced by a measured escape route
+    (all 2026-08-24), which is why the recorded CROSSING TIME is the assertion
+    that matters, never the figure-grade flag alone:
+
+    * two stacked rows of r=0.9 spheres left a diagonal pore (centre distance
+      1.84 against a radii sum of 1.8) -- threaded at +0.007 clearance, t=2.6;
+    * a sealed row spanning y in [0.5, 9.5] was simply flown around at its
+      y-end -- +0.084 clearance, t=4.8, never higher than the flight altitude;
+    * the window closes at t=5.0, not 6.5, because the capsule's rounded time
+      cap keeps forbidding the wall plane for about r after the window -- with
+      r=1.6 the door EFFECTIVELY opens near t=6.5. That conservatism is the
+      declared SPACETIME_AXIS_SCALE=1 modelling choice, demonstrated.
+
+    What this scenario may NOT be used to claim: nothing here makes the third
+    spatial dimension load-bearing -- a 2D cut would wait just the same (`wall`
+    is that scenario). The load-bearing-z evidence is `fence3d`'s, where motion
+    closes the waiting strategy.
+
+    Measured behaviour lives beside its assertion, not here -- see README
+    sec. Measurements for the recorded pass.
+    """
+    row = make_wall(p1=[4.0, -2.0, 0.9], p2=[4.0, 12.0, 0.9],
+                    thickness=1.6, spacing=0.8, color="#8e44ad",
+                    name_prefix="D", vel=[0.0, 0.0, 0.0],
+                    t_start=0.0, t_end=5.0)
+    return {
+        "name": "door3d",
+        "title": "Door in 3D — Wait for the Opening (t>5)",
+        "init_curve": {"mode": "straight"},
+        "obstacles": row,
+        "start": [0.5, 5.0, 0.5, 0.0],
+        "end": [8.0, 5.0, 0.5, 10.0],
         "T": 10.0,
     }
 
@@ -292,8 +353,11 @@ SCENARIO_MAP = {
     # the array shape -- except the viewer, which plots columns 0, 1, 2 as
     # (x, y, t) and would render this one's z as if it were time. `viewer.py`
     # therefore filters it out of the catalog rather than drawing a false
-    # picture; see the comment there.
-    "wall3d":   (scenario_wall3d,   [(8, 2), (8, 4), (8, 8), (10, 8)]),
+    # picture; see the comment there. Renamed from `wall3d` 2026-08-24.
+    "fence3d":  (scenario_fence3d,  [(8, 2), (8, 4), (8, 8), (10, 8)]),
+    # The waiting demo: static tall wall, opens at t=6.5. Configs measured
+    # 2026-08-24; see README sec. Measurements.
+    "door3d":   (scenario_door3d,   [(8, 4), (8, 8)]),
     # Also four coordinates, so the viewer filters it out for the same reason.
     # Short list on purpose: the occlusion rows re-aim every iteration, so the
     # run is an order of magnitude longer than a keep-out-only one, and only

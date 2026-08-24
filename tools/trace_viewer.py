@@ -17,7 +17,7 @@ extension -- and that is exactly what the header checks.
 
 Usage:
     python3 tools/trace_viewer.py original            # N8_seg4 default
-    python3 tools/trace_viewer.py wall3d --N 8 --seg 2
+    python3 tools/trace_viewer.py fence3d --N 8 --seg 2
     python3 tools/trace_viewer.py wall --N 10 --seg 16 --out /tmp/wall.html
 """
 

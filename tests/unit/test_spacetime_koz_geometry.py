@@ -487,7 +487,7 @@ def test_half_space_supports_the_tube_in_three_spatial_dimensions():
     )
 
 
-def test_wall3d_climbs_and_is_certified():
+def test_fence3d_climbs_and_is_certified():
     """Item B11 end to end: three spatial coordinates plus time, converged,
     clearing, certified, and cross-checked against the true obstacle motion.
 
@@ -510,9 +510,9 @@ def test_wall3d_climbs_and_is_certified():
     from spacetime_bezier.scenarios import SCENARIO_MAP
     from spacetime_bezier.geometry import bezier_curve
 
-    fn, _ = SCENARIO_MAP["wall3d"]
+    fn, _ = SCENARIO_MAP["fence3d"]
     sc = fn()
-    assert len(sc["start"]) == 4, "wall3d must have three spatial coordinates plus time"
+    assert len(sc["start"]) == 4, "fence3d must have three spatial coordinates plus time"
     n_seg = 2
 
     P_opt, info = optimize_spacetime(

@@ -77,7 +77,7 @@ def test_the_fallback_fires_and_does_not_report_convergence():
         ("diverse", 8, 8, 100.0, 12),
         ("original", 8, 4, 100.0, 5),
         ("wall", 8, 2, 100.0, 12),
-        ("wall3d", 8, 2, 100.0, 8),
+        ("fence3d", 8, 2, 100.0, 8),
     ],
 )
 def test_converged_is_never_reported_alongside_the_fallback(

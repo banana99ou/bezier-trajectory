@@ -30,7 +30,7 @@ from .scenarios import (
     scenario_original,
     scenario_station_fence,
     scenario_wall,
-    scenario_wall3d,
+    scenario_fence3d,
 )
 
 __all__ = [
@@ -54,5 +54,5 @@ __all__ = [
     "scenario_original",
     "scenario_station_fence",
     "scenario_wall",
-    "scenario_wall3d",
+    "scenario_fence3d",
 ]

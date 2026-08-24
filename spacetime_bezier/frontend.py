@@ -396,6 +396,7 @@ def axis_views(dim: int) -> list[dict]:
     if dim == 3:
         return [{
             "id": "xyt",
+            "button": "(x,y,t) lift",
             "cols": [0, 1, 2],
             "labels": ["x", "y", "t"],
             "space_idx": [0, 1],
@@ -409,6 +410,7 @@ def axis_views(dim: int) -> list[dict]:
             # the time cursor -- the one place a time scrubber is the honest
             # representation, because nothing here claims to be the lift.
             "id": "xy",
+            "button": "(x,y) top-down",
             "cols": [0, 1],
             "labels": ["x", "y"],
             "space_idx": [0, 1],
@@ -418,36 +420,38 @@ def axis_views(dim: int) -> list[dict]:
             "dropped_note": None,
         }]
     if dim == 4:
-        views = [{
+        # Two views, both on the three spatial axes (user decision 2026-08-24:
+        # "I just need xy(z)t" -- the dropped-coordinate lift projections
+        # (x,y,t), (x,z,t), (y,z,t) are gone). Time is carried by the slider in
+        # one and by color in the other. The one projection both make is of the
+        # half-space patches and hulls, which live in (x,y,z,t) -- named in the
+        # note so the picture never claims to be more than it is.
+        proj_note = "half-space patches and hulls are projections from (x,y,z,t)"
+        return [{
             "id": "xyz",
+            "button": "(x,y,z) @ t",
             "cols": [0, 1, 2],
             "labels": ["x", "y", "z"],
             "space_idx": [0, 1, 2],
             "kind": "spatial",
-            "dropped": None,
+            "dropped": "t",
+            "banner": "all three axes are space; the slider sets the instant",
+            "dropped_note": proj_note,
+        }, {
+            "id": "xyz_all",
+            "button": "(x,y,z) all t",
+            "cols": [0, 1, 2],
+            "labels": ["x", "y", "z"],
+            "space_idx": [0, 1, 2],
+            "kind": "spatial_all",
+            "dropped": "t",
             "banner": SPATIAL_BANNER,
-            "dropped_note": None,
+            "dropped_note": proj_note,
         }]
-        for vid, cols, space_idx, dropped in (
-            ("xyt", [0, 1, 3], [0, 1], "z"),
-            ("xzt", [0, 2, 3], [0, 2], "y"),
-            ("yzt", [1, 2, 3], [1, 2], "x"),
-        ):
-            views.append({
-                "id": vid,
-                "cols": cols,
-                "labels": [names[c] for c in cols],
-                "space_idx": space_idx,
-                "kind": "lift",
-                "dropped": dropped,
-                "banner": LIFT_BANNER,
-                "dropped_note": _dropped_note(dropped),
-            })
-        return views
     return []
 
 
-DEFAULT_VIEW = {3: "xyt", 4: "xyt"}
+DEFAULT_VIEW = {3: "xyt", 4: "xyz"}
 
 
 # ---------------------------------------------------------------------------
@@ -927,12 +931,11 @@ def _physical_speed(P: np.ndarray, num_pts: int) -> list[float]:
     return [float(s) for s in speed]
 
 
-def solve_from_payload(payload: dict) -> dict:
-    """Run one configuration and return everything the page draws.
+def _solve_params(payload: dict):
+    """Validate one solve request; raises ``RequestError`` on anything off.
 
-    Every verdict in the response was computed here, from the solver's own
-    numbers or from an independent recomputation against the true geometry. The
-    client selects columns and builds plotly traces; it decides nothing.
+    Shared by the in-process solve body and the subprocess wrapper, so a bad
+    request is refused in the parent, fast, before a child is ever spawned.
     """
     if not isinstance(payload, dict):
         raise RequestError("request body must be a JSON object")
@@ -942,15 +945,12 @@ def solve_from_payload(payload: dict) -> dict:
             f"unknown scenario {name!r}; known: {', '.join(sorted(SCENARIO_MAP))}"
         )
     scenario_fn, configs = SCENARIO_MAP[name]
-    scenario = scenario_fn()
-    dim = len(scenario["start"])
-    views = axis_views(dim)
-    if not views:
+    dim = len(scenario_fn()["start"])
+    if not axis_views(dim):
         raise RequestError(
             f"scenario {name!r} has {dim} coordinates; this page draws 3 or 4 and "
             "refuses to guess which column is time"
         )
-
     N = _positive_int(payload, "N", configs[0][0])
     n_seg = _positive_int(payload, "n_seg", configs[0][1])
     params = {
@@ -970,15 +970,25 @@ def solve_from_payload(payload: dict) -> dict:
         raise RequestError(f"tol must be > 0, got {params['tol']}")
     if params["min_dt"] <= 0.0:
         raise RequestError(f"min_dt must be > 0, got {params['min_dt']}")
+    return name, N, n_seg, params
 
-    cache_key = json.dumps(
-        {"scenario": name, "N": N, "n_seg": n_seg, **params}, sort_keys=True
-    )
-    cached = _cache_get(_SOLVE_CACHE, cache_key)
-    if cached is not None:
-        hit = dict(cached)
-        hit["provenance"] = {**cached["provenance"], "cached": True}
-        return hit
+
+def solve_from_payload(payload: dict) -> dict:
+    """Run one configuration and return everything the page draws.
+
+    Every verdict in the response was computed here, from the solver's own
+    numbers or from an independent recomputation against the true geometry. The
+    client selects columns and builds plotly traces; it decides nothing.
+
+    This is the synchronous, in-process solve -- the code path the parity test
+    pins against ``optimize_scenario``. The HTTP endpoint reaches it through
+    ``solve_via_subprocess`` so a running solve can be cancelled.
+    """
+    name, N, n_seg, params = _solve_params(payload)
+    scenario_fn, configs = SCENARIO_MAP[name]
+    scenario = scenario_fn()
+    dim = len(scenario["start"])
+    views = axis_views(dim)
 
     stations = scenario.get("stations")
     P_init = build_initial_guess(
@@ -1154,9 +1164,106 @@ def solve_from_payload(payload: dict) -> dict:
             "cached": False,
         },
     }
-    response = _json_safe(response)
-    _cache_put(_SOLVE_CACHE, cache_key, response, _SOLVE_CACHE_MAX)
-    return response
+    return _json_safe(response)
+
+
+# ---------------------------------------------------------------------------
+# Cancellable solve: the Rust loop holds the GIL and cannot be interrupted
+# in-process, so the HTTP endpoint runs the SAME `solve_from_payload` in a
+# child process, which /api/cancel can kill. The cache wraps the subprocess:
+# a hit never spawns one.
+# ---------------------------------------------------------------------------
+
+_ACTIVE_SOLVE: dict = {"proc": None}
+
+SOLVE_CHILD = (
+    "import json, sys\n"
+    "from spacetime_bezier.frontend import solve_from_payload, RequestError\n"
+    "try:\n"
+    "    sys.stdout.write(json.dumps(solve_from_payload(json.loads(sys.argv[1]))))\n"
+    "except (RequestError, ValueError) as exc:\n"
+    "    sys.stdout.write(json.dumps({'__request_error__': str(exc)}))\n"
+)
+
+
+def solve_via_subprocess(payload: dict) -> dict:
+    """Cache lookup, then ``solve_from_payload`` in a killable child process.
+
+    Validation runs here first so a bad request is a fast 400 with no child.
+    The child re-runs it, which is redundancy, not a second opinion. A child
+    killed by /api/cancel surfaces as a 400 saying so; a child that raised a
+    refusal (e.g. the uncapped-time-penalty trap) hands its message back to be
+    answered as the 400 it would have been in-process.
+    """
+    name, N, n_seg, params = _solve_params(payload)
+    cache_key = json.dumps(
+        {"scenario": name, "N": N, "n_seg": n_seg, **params}, sort_keys=True
+    )
+    cached = _cache_get(_SOLVE_CACHE, cache_key)
+    if cached is not None:
+        hit = dict(cached)
+        hit["provenance"] = {**cached["provenance"], "cached": True}
+        return hit
+
+    with _SOLVE_LOCK:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", SOLVE_CHILD, json.dumps(payload)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, cwd=REPO_ROOT,
+        )
+        _ACTIVE_SOLVE["proc"] = proc
+        try:
+            out, err = proc.communicate(timeout=1800)
+        finally:
+            _ACTIVE_SOLVE["proc"] = None
+    if proc.returncode < 0:
+        raise RequestError("solve cancelled")
+    if proc.returncode != 0:
+        raise RequestError(_explain_child_failure(err))
+    data = json.loads(out)
+    if isinstance(data, dict) and "__request_error__" in data:
+        raise RequestError(data["__request_error__"])
+    _cache_put(_SOLVE_CACHE, cache_key, data, _SOLVE_CACHE_MAX)
+    return data
+
+
+def _explain_child_failure(stderr: str) -> str:
+    """Turn a child traceback into a diagnosis when the cause is recognisable.
+
+    The recognisable case: the compiled extension and this worktree's Python
+    disagree on the binding signature. That happens when ANOTHER checkout runs
+    `maturin develop` into the shared venv -- the extension then answers for
+    different solver code than the code on disk here. A raw traceback in the UI
+    reads as "the solver broke"; this is a different and more actionable claim:
+    two sessions are building into one venv, and whoever builds last wins.
+    """
+    tail = stderr[-2000:]
+    if "unexpected keyword argument" in tail or "missing required argument" in tail:
+        built = extension_build_time()
+        when = (
+            datetime.fromtimestamp(built).isoformat(timespec="seconds")
+            if built
+            else "unknown"
+        )
+        return (
+            "the compiled Rust extension no longer matches this worktree's Python "
+            f"solver code (extension built {when}). Another session has likely run "
+            "`maturin develop` from a different checkout into the shared venv with "
+            "a changed binding signature. Solving from this worktree needs either "
+            "that solver change ported here, or the extension rebuilt from THIS "
+            "worktree's sources -- coordinate first: a rebuild clobbers the other "
+            f"session's build the same way.\n\nOriginal error:\n{tail[-600:]}"
+        )
+    return f"solve failed:\n{tail}"
+
+
+def cancel_active_solve() -> dict:
+    """Kill the child of the solve in flight, if there is one."""
+    proc = _ACTIVE_SOLVE.get("proc")
+    if proc is None or proc.poll() is not None:
+        return {"cancelled": False, "note": "no active solve"}
+    proc.kill()
+    return {"cancelled": True}
 
 
 # ---------------------------------------------------------------------------
@@ -1270,7 +1377,7 @@ def replay_from_payload(payload: dict) -> dict:
         timeout=900,
     )
     if proc.returncode != 0:
-        raise RequestError(f"replay solve failed:\n{proc.stderr[-2000:]}")
+        raise RequestError(_explain_child_failure(proc.stderr))
     child = json.loads(proc.stdout)
 
     columns = module.TRACE_HEADER.split(",")
@@ -1399,9 +1506,11 @@ class FrontendHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             if self.path == "/api/solve":
-                self._send_json(200, solve_from_payload(self._read_json()))
+                self._send_json(200, solve_via_subprocess(self._read_json()))
             elif self.path == "/api/replay":
                 self._send_json(200, replay_from_payload(self._read_json()))
+            elif self.path == "/api/cancel":
+                self._send_json(200, cancel_active_solve())
             else:
                 self._send_json(404, {"error": f"Unknown path: {self.path}"})
         except BrokenPipeError:

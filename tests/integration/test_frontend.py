@@ -22,6 +22,7 @@ import json
 import os
 import socket
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -163,49 +164,49 @@ def test_health_names_this_app_and_its_extension(server):
     assert "git_commit" in payload
 
 
-def test_catalog_offers_every_scenario_including_the_four_column_ones(server):
-    """The catalog is the whole registry, with an axis picker for 4-column runs.
+def test_catalog_offers_every_scenario_with_the_agreed_views(server):
+    """The catalog is the whole registry, with the 2026-08-24 view roster.
 
-    FAILS IF: a registered scenario is missing (`viewer.py` dropped `wall3d` and
-    `station_fence` rather than project them, which is what this page exists to
-    fix), or a 4-column scenario comes back with fewer than the four axis triples
-    the page needs to draw it honestly.
+    FAILS IF: a registered scenario is missing (`viewer.py` dropped the
+    4-column scenarios rather than project them, which is what this page exists
+    to fix), a 2D scenario loses the lift or the flat top-down view, or a
+    4-column scenario regrows the dropped-coordinate lift projections the user
+    removed.
     """
     status, body, _ = get(server, "/api/scenarios")
     assert status == 200
     catalog = json.loads(body)["scenarios"]
     assert set(catalog) == set(SCENARIO_MAP)
-    # Two views for 2-spatial-D scenarios: the lift (default) and the flat
-    # top-down instant view the time cursor drives.
     assert [v["id"] for v in catalog["original"]["views"]] == ["xyt", "xy"]
     assert catalog["original"]["default_view"] == "xyt"
-    assert [v["id"] for v in catalog["wall3d"]["views"]] == ["xyz", "xyt", "xzt", "yzt"]
-    assert catalog["station_fence"]["default_view"] == "xyt"
+    assert [v["id"] for v in catalog["fence3d"]["views"]] == ["xyz", "xyz_all"]
+    assert catalog["station_fence"]["default_view"] == "xyz"
     assert catalog["station_fence"]["stations"] == [[5.0, -2.0, 0.3]]
 
 
-def test_axis_banners_say_what_the_vertical_axis_is(server):
+def test_axis_banners_say_how_time_is_carried(server):
     """Each view carries the sentence that keeps its picture honest.
 
-    FAILS IF: a lift view stops announcing that the vertical axis is time, the
-    spatial view stops announcing that time is the colour, or a 4-column
-    projection stops naming the coordinate it drops -- the case where two curves
-    appear to touch and are metres apart in the axis nobody mentioned.
+    FAILS IF: a view stops saying how time is carried (slider, colour, or the
+    vertical axis), a 4-column view stops declaring that patches and hulls are
+    projections from (x,y,z,t), or an undrawable column count grows views.
     """
     views = {v["id"]: v for v in frontend.axis_views(4)}
-    assert views["xyz"]["banner"] == "all three axes are space; TIME is the color"
-    assert views["xyz"]["dropped_note"] is None
-    for vid, dropped in (("xyt", "z"), ("xzt", "y"), ("yzt", "x")):
-        assert views[vid]["banner"] == "the VERTICAL axis is TIME"
-        assert f"coordinate {dropped} is dropped" in views[vid]["dropped_note"]
-        assert views[vid]["cols"][-1] == 3, "time must be the vertical axis"
+    assert set(views) == {"xyz", "xyz_all"}
+    assert views["xyz"]["kind"] == "spatial" and "slider" in views["xyz"]["banner"]
+    assert views["xyz_all"]["kind"] == "spatial_all"
+    assert views["xyz_all"]["banner"] == "all three axes are space; TIME is the color"
+    for view in views.values():
+        assert "projections from (x,y,z,t)" in view["dropped_note"]
     assert frontend.axis_views(5) == [], "5 columns has no honest projection"
     assert frontend.axis_views(2) == []
-    # The flat view never claims to be the lift: two columns, kind "flat", and a
-    # banner that says the cursor is what carries time.
+    # 2D scenarios: the lift keeps time vertical; the flat view never claims to
+    # be the lift -- two columns, kind "flat", time carried by the cursor.
     lift3, flat3 = frontend.axis_views(3)
-    assert lift3["kind"] == "lift" and flat3["kind"] == "flat"
-    assert flat3["cols"] == [0, 1]
+    assert lift3["kind"] == "lift"
+    assert lift3["banner"] == "the VERTICAL axis is TIME"
+    assert lift3["cols"][-1] == 2, "time must be the vertical axis of the lift"
+    assert flat3["kind"] == "flat" and flat3["cols"] == [0, 1]
     assert "cursor" in flat3["banner"]
 
 
@@ -447,20 +448,20 @@ def test_station_fence_occlusion_normals_carry_no_time_component(station_fence):
     assert moving, "every obstacle here moves; a keep-out plane with no time term is G1"
 
 
-def test_station_fence_draws_in_four_axis_triples(station_fence):
-    """The 4-column scenario is reachable, with t vertical wherever it is shown.
+def test_station_fence_offers_the_two_spatial_views(station_fence):
+    """The 4-column scenario is reachable, with the agreed two-view roster.
 
     FAILS IF: the scenario comes back undrawable (the `viewer.py` behaviour this
-    page replaces), the default view is not the lift, or any lift triple puts
-    time somewhere other than the vertical axis.
+    page replaces), the roster regrows the dropped-coordinate lift projections
+    removed 2026-08-24, the default is not the cursor view, or a view stops
+    declaring its patches projections from the full lifted space.
     """
     views = station_fence["scenario"]["views"]
-    assert [v["id"] for v in views] == ["xyz", "xyt", "xzt", "yzt"]
-    assert station_fence["scenario"]["default_view"] == "xyt"
+    assert [v["id"] for v in views] == ["xyz", "xyz_all"]
+    assert station_fence["scenario"]["default_view"] == "xyz"
     for view in views:
-        if view["kind"] == "lift":
-            assert view["labels"][2] == "t"
-            assert view["cols"][2] == 3
+        assert view["cols"] == [0, 1, 2]
+        assert "projections" in view["dropped_note"]
 
 
 # ---------------------------------------------------------------------------
@@ -718,6 +719,39 @@ def test_the_cli_has_no_port_flag(server):
     assert frontend.DEFAULT_PORT == 8767
     with pytest.raises(SystemExit):
         frontend.main(["--port", "9999", "--no-open"])
+
+
+def test_cancel_kills_a_running_solve(server):
+    """/api/cancel terminates the solve in flight, and only a solve in flight.
+
+    FAILS IF: cancel claims to have cancelled when nothing runs, or a genuine
+    in-flight solve survives it -- the pending request must come back as a 400
+    naming the cancellation rather than run to completion.
+    """
+    status, data = post(server, "/api/cancel", {})
+    assert status == 200 and data["cancelled"] is False
+
+    result = {}
+
+    def run():
+        result["resp"] = post(
+            server, "/api/solve",
+            {"scenario": "wall", "N": 10, "n_seg": 24, "max_iter": 200},
+        )
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    for _ in range(100):                     # wait for the child to register
+        time.sleep(0.1)
+        if frontend._ACTIVE_SOLVE["proc"] is not None:
+            break
+    status, data = post(server, "/api/cancel", {})
+    assert status == 200 and data["cancelled"] is True
+    worker.join(timeout=60)
+    assert not worker.is_alive()
+    solve_status, body = result["resp"]
+    assert solve_status == 400
+    assert "cancelled" in body["error"]
 
 
 # ---------------------------------------------------------------------------

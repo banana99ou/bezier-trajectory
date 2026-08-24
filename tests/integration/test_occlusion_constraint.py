@@ -30,8 +30,8 @@ from spacetime_bezier.geometry import compute_min_clearance  # noqa: E402
 from spacetime_bezier.scenarios import SCENARIO_MAP  # noqa: E402
 
 
-def _wall3d_run(stations):
-    scenario = SCENARIO_MAP["wall3d"][0]()
+def _fence3d_run(stations):
+    scenario = SCENARIO_MAP["fence3d"][0]()
     P, info = optimize_spacetime(
         N=8,
         dim=4,
@@ -62,7 +62,7 @@ def test_zero_station_run_reproduces_the_pre_occlusion_golden():
     block without guarding on an empty station set changes the row count, which
     changes the elastic slack vector, which moves this number.
     """
-    P, info, clearance = _wall3d_run(None)
+    P, info, clearance = _fence3d_run(None)
     assert clearance == pytest.approx(0.162344, abs=5e-5)
     assert bool(info["converged"])
     assert float(info["koz_violation_reference"]) <= FIGURE_GRADE_CERTIFICATE_TOL
@@ -72,8 +72,8 @@ def test_zero_station_run_reproduces_the_pre_occlusion_golden():
 
 def test_absent_and_empty_station_sets_are_the_same_problem():
     """An empty station array must mean exactly what no array means."""
-    p_none, info_none, clear_none = _wall3d_run(None)
-    p_empty, info_empty, clear_empty = _wall3d_run(np.zeros((0, 3)))
+    p_none, info_none, clear_none = _fence3d_run(None)
+    p_empty, info_empty, clear_empty = _fence3d_run(np.zeros((0, 3)))
     assert np.array_equal(p_none, p_empty)
     assert clear_none == clear_empty
     assert info_none["iterations"] == info_empty["iterations"]
@@ -81,7 +81,7 @@ def test_absent_and_empty_station_sets_are_the_same_problem():
 
 def test_station_array_of_the_wrong_width_is_refused():
     """A silently reshaped station would certify a scenario nobody described."""
-    scenario = SCENARIO_MAP["wall3d"][0]()
+    scenario = SCENARIO_MAP["fence3d"][0]()
     with pytest.raises(ValueError):
         optimize_spacetime(
             N=8,

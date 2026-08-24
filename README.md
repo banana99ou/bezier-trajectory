@@ -147,7 +147,8 @@ obstacles, fixed endpoints, and the optimizer plans path *and* timing.
 | `original` | 3 moving obstacles — curve threads between constant-velocity tubes in (x, y, t) |
 | `wall` | a wall that vanishes at a known time; the curve should wait, then pass — time as a real optimization dimension |
 | `diverse` | varied sizes / speeds / directions; stress case |
-| `wall3d` | three spatial dimensions + time; the curve climbs a wide low fence instead of going around — the dimension is load-bearing |
+| `fence3d` | three spatial dimensions + time; the curve climbs a wide low **moving** fence instead of going around — the dimension is load-bearing, and the motion is what makes waiting futile. Renamed from `wall3d` 2026-08-24; the problem definition is unchanged |
+| `door3d` | the complement of `fence3d`: a **static** tall wall in three spatial dimensions that vanishes at t=5, so the cheap answer is to wait rather than climb. Nothing here makes the third dimension load-bearing — a 2D cut would wait identically |
 | `station_fence` | **the paper's demo** — keep line of sight to a fixed station past a moving, non-straight fence (chain of time-windowed pieces). Occlusion rows on: climbs and holds the link; off: loses it for 7.8 s of 10. The fence is both occluder and keep-out body, so the occlusion constraint subsumes collision |
 
 The paper's figure comes from `station_fence` via `tools/make_paper_figure.py`, which refuses to
@@ -166,8 +167,9 @@ the returned iterate AND clearance > 0 against the true obstacle trajectories AN
 |-----|-------------|-----------|-------|----------------|--------------|
 | `original` | N8_seg4 | **+0.620** | 9 | 100 | **yes — all 5 configs** |
 | `diverse` | N8_seg4 | **+0.1136** | 9 | 800 (3000–10000 at 8–16 seg; N10_seg16 certifies at 3000) | **yes — all 5 configs** |
-| `wall` | N10_seg16 | **+0.0751** | 19 | 100000 | **only this config** — five others fail, incl. N8_seg2 which *clears* (+0.102) but is uncertified: the exact case the gate exists to catch |
-| `wall3d` | N8_seg2 | **+0.1623** | 9 | 100 | **yes — all 4 configs**, first ladder rung |
+| `wall` | ~~N10_seg16~~ | ~~**+0.0751**~~ | — | — | **STALE — do not quote.** `wall` was densified 2026-08-24 (spacing 0.8 → 0.5, 13 → 21 circles), which is a different problem: the forbidden slab is nearly identical but there are 8 more per-segment planes, so the relaxation is more conservative. Provisional re-measurement: N8_seg16 +0.0947 @ w3000, N10_seg16 +0.0572 @ w3000, N10_seg24 +0.0507 @ w800 all certify; N8_seg2/3/4 now penetrate. Not written in as fact until the density is settled |
+| `fence3d` | N8_seg2 | **+0.1623** | 9 | 100 | **yes — all 4 configs**, first ladder rung. Measured under the name `wall3d`; the rename changed no parameter |
+| `door3d` | N8_seg4 | +0.966 | 9 | 100 | **yes — both configs**, first ladder rung. Clearance is not the point: the evidence is that the curve **waits**, crossing the wall plane at t=8.01 (N8_seg4) / t=7.70 (N8_seg8) with `max_z` never leaving the 0.50 flight altitude |
 | `station_fence` | N8_seg8 | +1.163 | 124 | 100000 | **yes — both configs.** Clearance is slack by construction (occlusion subsumes keep-out); the binding numbers are the independent min line-of-sight margin **+0.338** and the occlusion certificate **0.000** |
 
 The elastic weight is part of the result, not a tuning knob: above the exact-penalty threshold the

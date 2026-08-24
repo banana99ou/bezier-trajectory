@@ -69,7 +69,7 @@ A session can open with just an item id (`B1`, `A2`, `C1`).
 - ~~B8 rename the objective; derivative operators~~ **DONE 2026-08-20** — `efb0a70`: `build_smoothness_regularizer` (alias warns), Rust comments corrected, difference/derivative operators built from `get_D_matrix`. The regularizer provably scores a cruise and a wait-then-dash identically
 - ~~B9 slant-limit speed cap~~ **DONE 2026-08-20** — `c1866ea`, **second-order cone, not the fallback**. The cone carries no slack: the elastic penalty may relax keep-out rows, never the physics. Off by default (`v_max=None`)
 - ~~B10 time penalty + freed arrival~~ **DONE 2026-08-20** — `c1866ea`, same commit as B9. `free_arrival_time` is an explicit flag; `time_weight>0` with no speed cap raises `UncappedTimePenaltyError` — the trap was measured first (arrival collapses to exactly min_dt×gaps and ignores the weight). Golden config unchanged. **The B8–B10 freeze has landed: the one-pass re-measurement (B3) is now unblocked**
-- ~~B11 one run at three spatial dimensions plus time~~ **DONE 2026-08-19** — `wall3d`, committed `c25503c`: all four configs converge and certify on the first ladder rung, the curve climbs the fence rather than going around, and deleting the third spatial coordinate makes every config penetrate. Its timing profile is an objective artifact (control-point times on the min_dt floor) — geometry is evidence, timing is not, until B8–B10 land
+- ~~B11 one run at three spatial dimensions plus time~~ **DONE 2026-08-19** — `fence3d` (renamed from `wall3d` 2026-08-24, definition unchanged), committed `c25503c`: all four configs converge and certify on the first ladder rung, the curve climbs the fence rather than going around, and deleting the third spatial coordinate makes every config penetrate. Its timing profile is an objective artifact (control-point times on the min_dt floor) — geometry is evidence, timing is not, until B8–B10 land
 - ~~B12 occlusion constraint builder~~ **DONE 2026-08-20** — `ed8c50a`+`dd51d3e`+`99a6714`. Rust core beside the KOZ builder; per-piece conservative ball approximation (containment is tested, with an uninflated counterfactual); exact/linearized split mirrors the KOZ; rows are elastic-relaxable but `occlusion_violation_reference` at the returned iterate feeds `figure_grade`, and the convergence guard grades both blocks. Occlusion rows carry a zero time coefficient BY DESIGN (prism with time-parallel walls) — documented as not-G1. Independent check: `compute_los_margin` in geometry.py, pure Python. Demo scenario `station_fence` (3 spatial + time, non-straight fence as two overlapping time-windowed pieces): baseline loses the link for 7.79 s of 10, constrained run climbs to z=2.12 over a 0.90 fence with occlusion certificate 0.0 and keep-out rows slack — the note-003 scenario exists in code. 2D version measured genuinely infeasible: the third dimension is load-bearing as a fact, not a claim
 
 **C. References** — external ground truth for solver logic and math. When C and an agent's assertion disagree, C wins, and the disagreement is recorded.
@@ -193,7 +193,7 @@ The full tree is [`README.md`](README.md) § Repo map — not repeated here. Onl
 carry a warning or are easy to mistake:
 
 - `spacetime_bezier/__main__.py` -- serves `frontend.py` as of 2026-08-21, THE entrypoint. `io.py` and `sandbox.py` are not entrypoints (2026-08-18), and the sandbox is no longer what `-m spacetime_bezier` starts
-- `spacetime_bezier/frontend.py` + `static/frontend.html` -- the one frontend (`fe5c510`): config panel, solve endpoint, axis picker with server-supplied banners (t always vertical when shown), opt-in layers all default-off, diagnostics drawer. All verdicts server-side via `figure_grade_failures`; replay reuses the trace viewer's child script by import so parameters cannot drift. **Covered by `tests/integration/test_frontend.py` (33 tests)** -- request/response path, port mutual exclusion, plane patches proven against their own rows
+- `spacetime_bezier/frontend.py` + `static/frontend.html` -- the one frontend (`fe5c510`): config panel, solve endpoint, axis picker with server-supplied banners (t always vertical when shown), opt-in layers all default-off, diagnostics drawer. All verdicts server-side via `figure_grade_failures`; replay reuses the trace viewer's child script by import so parameters cannot drift. **Covered by `tests/integration/test_frontend.py` (38 tests)** -- request/response path, port mutual exclusion, plane patches proven against their own rows, result/replay cache, per-frame replay planes, cancel kills a running solve
 - `spacetime_bezier/viewer.py` -- superseded by `frontend.py` 2026-08-21, no longer an entrypoint. Nothing stored, the solve
   path is just the solve, and the client only draws -- verdict fields are computed server-side from the
   solver's own numbers. Serves `static/viewer.html`; shares port 8767 so it cannot run beside the sandbox
@@ -207,6 +207,17 @@ carry a warning or are easy to mistake:
 
 ## Known Issues
 
+- **ONE TEST IS RED, deliberately, and the decision is the user's.** `wall` was densified
+  2026-08-24 at the user's request (spacing 0.8 → 0.5, 13 → 21 circles). The forbidden slab barely
+  moves, but 8 more per-segment planes make the relaxation more conservative, and the consequence
+  is measured: `wall` N8_seg2 went from +0.102 (clears while standing on 1.35 of slack) to −0.129
+  (penetrates outright). That row was the ONLY real specimen of "clears by sampling yet fails the
+  certificate", so `tests/integration/test_figure_grade_gate.py::test_a_clearing_run_can_still_be_standing_on_slack`
+  now fails. 19 configurations across `wall`, `diverse` and `original` were probed; no replacement
+  specimen exists. **Do not "fix" this by weakening the test, re-anchoring it on a synthetic row,
+  or reverting the density** — the user has the evidence and is choosing between keeping the
+  density, restoring it, and dropping the test. Every `wall` row in README §Measurements is stale
+  for the same reason and is marked so.
 - **`spacetime_bezier/viewer.py` is UNVERIFIED.** Tracked 2026-08-20 because CLAUDE.md already
   documented it as live, not because it was checked. No test exercises it -- nothing in `tests/`
   imports it, and no test opens a browser, so the server, the static page, and the verdict fields
