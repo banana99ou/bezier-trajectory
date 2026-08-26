@@ -156,21 +156,43 @@ draw unless the constrained run is figure-grade AND the baseline measurably fail
 
 ## Measurements
 
-Last full pass **2026-08-20, after the B8–B10 formulation freeze** — one run of every registered
-configuration (22 total) at defaults: speed cap off, arrival time pinned, elastic-weight ladder on.
-A run that enables `v_max` / `time_weight` / `free_arrival_time` is a different problem and must be
-re-measured. **FIGURE-GRADE** is the B7 gate, checked per run: converged AND certificate ≤ 1e-6 at
-the returned iterate AND clearance > 0 against the true obstacle trajectories AND total slack
-≤ 1e-8 — plus the occlusion certificate where a station exists.
+Last full pass **2026-08-26, after the keep-out wall moved onto the clipped KOZ volume** — one
+run of every registered configuration at defaults: speed cap off, arrival time pinned,
+elastic-weight ladder on. **28 runs**, not the 22 this section used to claim — `original` 5,
+`curve` 4, `diverse` 5, `wall` 6, `fence3d` 4, `door3d` 2, `station_fence` 2. The old count
+predated three of those scenarios and was never corrected. A run that enables `v_max` /
+`time_weight` / `free_arrival_time` is a different problem and must be re-measured.
+**FIGURE-GRADE** is the B7 gate, checked per run: converged AND certificate ≤ 1e-6 at the returned
+iterate AND clearance > 0 against the true obstacle trajectories AND total slack ≤ 1e-6 — plus the
+occlusion certificate where a station exists.
 
 | Key | Best config | Clearance | Iters | Elastic weight | Figure-grade |
 |-----|-------------|-----------|-------|----------------|--------------|
-| `original` | N8_seg4 | **+0.620** | 9 | 100 | **yes — all 5 configs** |
+| `original` | N8_seg4 | **+0.6204** | 9 | 100 | **yes — all 5 configs** |
+| `curve` | N8_seg16 | **+0.1000** | 14 | 300 | **3 of 4.** N8_seg8 +0.0919 @800, N10_seg8 +0.1000 @1e5. **N8_seg4 does not converge** (certificate 0.44) — it did not converge before this change either (certificate 0.35 @1e4), so it is a standing failure, not a regression |
 | `diverse` | N8_seg4 | **+0.1136** | 9 | 800 (3000–10000 at 8–16 seg; N10_seg16 certifies at 3000) | **yes — all 5 configs** |
-| `wall` | ~~N10_seg16~~ | ~~**+0.0751**~~ | — | — | **STALE — do not quote.** `wall` was densified 2026-08-24 (spacing 0.8 → 0.5, 13 → 21 circles), which is a different problem: the forbidden slab is nearly identical but there are 8 more per-segment planes, so the relaxation is more conservative. Provisional re-measurement: N8_seg16 +0.0947 @ w3000, N10_seg16 +0.0572 @ w3000, N10_seg24 +0.0507 @ w800 all certify; N8_seg2/3/4 now penetrate. Not written in as fact until the density is settled |
+| `wall` | N10_seg16 | **+0.2058** | 9 | 3000 | **3 of 6.** N8_seg16 +0.2017 @3000, N10_seg24 +0.1484 @800. **N8_seg2/3/4 penetrate** — that is the 2026-08-24 densification (spacing 0.8 → 0.5, 13 → 21 circles), not this change; see Known Issues in CLAUDE.md |
 | `fence3d` | N8_seg2 | **+0.1623** | 9 | 100 | **yes — all 4 configs**, first ladder rung. Measured under the name `wall3d`; the rename changed no parameter |
-| `door3d` | N8_seg4 | +0.966 | 9 | 100 | **yes — both configs**, first ladder rung. Clearance is not the point: the evidence is that the curve **waits**, crossing the wall plane at t=8.01 (N8_seg4) / t=7.70 (N8_seg8) with `max_z` never leaving the 0.50 flight altitude |
-| `station_fence` | N8_seg8 | +1.163 | 124 | 100000 | **yes — both configs.** Clearance is slack by construction (occlusion subsumes keep-out); the binding numbers are the independent min line-of-sight margin **+0.338** and the occlusion certificate **0.000** |
+| `door3d` | N8_seg4 | +0.9827 | 9 | 100 | **yes — both configs**, first ladder rung. Clearance is not the point: the evidence is that the curve **waits** |
+| `station_fence` | N8_seg16 | +1.5454 | 56 | 100000 | **1 of 2.** Clearance is slack by construction (occlusion subsumes keep-out); the binding number is the occlusion certificate **0.000**. **N8_seg8 does not converge**, and did not before this change either |
+
+**What the clipped-volume construction changed, measured against the same configurations built
+with the retired hull-of-band plane.** Where the obstacle is straight its tube is convex and the
+two constructions agree on the plane, so `original`, `fence3d` and `door3d` move only in the last
+digits. Where it curves they differ, and the difference is iterations rather than answers: `curve`
+N8_seg8 went from 11 iterations to 39 and from +0.0894 to +0.0919 of clearance, and `curve`
+N10_seg8 now needs the ladder's top rung (1e5) where it used to certify at 800. That is the
+conservatism of a rigorous support ceiling being paid in step size, which is what sequential convex
+programming pays it in. Nothing that certified before stopped certifying.
+
+**The clip-radius floor fires on the real scenario, not only in the unit tests.** On `curve` at the
+straight seed, segment 1 against the arc has its centroid 0.598 from the centreline of a tube of
+radius 0.9 — inside the keep-out zone — so the clip radius is floored to 0.900 instead of shrinking
+to 0.598. Sweeping the clip radius over every segment and both obstacles at four trust radii, the
+clipped volume has **exactly one connected component everywhere** and nothing is dropped: time
+monotonicity keeps the lifted tube self-avoiding, so no ball can cut a piece out of its middle. The
+multi-wall path is real and tested (`test_panel_b1_the_ball_severs_the_bend_into_two_walls`) but no
+scenario in this repository exercises it.
 
 The elastic weight is part of the result, not a tuning knob: above the exact-penalty threshold the
 penalized and constrained problems share a solution, below it they do not, and the threshold
