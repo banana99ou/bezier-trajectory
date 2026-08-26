@@ -379,6 +379,9 @@ SCENARIO_ELASTIC_WEIGHT = {
     # trajectory standing on occlusion slack. Measured at N8_seg8 -- occlusion
     # certificate 0.61 at 100, 0.29 at 800, 0.50 at 3000, and 0.0 at 1e5.
     "station_fence": 100000.0,
+    # Measured 2026-08-26 at N8_seg8 with the corridor-layer geometry: the
+    # ladder certified at this rung and no lower one.
+    "loiter": 100000.0,
 }
 
 
@@ -431,12 +434,109 @@ def scenario_curve() -> dict:
     }
 
 
+@_canonical
+def scenario_loiter() -> dict:
+    """A body ORBITING the ground station — the tube keeps coming back.
+
+    The geometry is built so that TIMING is the only escape. Each piece closes
+    one of the ways the solver was measured to squirm out (2026-08-26):
+
+    * **Station at the origin, ON the soil.** The floor of the altitude band is
+      what makes the soil real — without it the solver dives, because z < 0 is
+      shadow-free (a sight line to a ground station never passes below the
+      ground; measured: it went to z = -1.86).
+    * **Orbit higher than it is wide** — radius 3 at altitude 5. The shadow ring
+      at altitude z then sits at horizontal radius 0.6·z. With the orbit as wide
+      as it is high (the first attempt) the ring sits at the vehicle's own
+      altitude at EVERY altitude — a 45-degree cone the transit never touched.
+    * **Corridor overhead, endpoints inside the band.** The transit runs along
+      y = 0 at z = 3, under a ceiling of 6. At every altitude in the band the
+      ring radius (at most 3.6) is inside the transit span (10), so the path
+      crosses the swept shadow shell twice at EVERY reachable altitude. No
+      altitude avoids the shadow; only timing does. The occluded fraction of a
+      lap per crossing is about r_m / (pi * orbit_r) = 6 percent.
+    * **One full lap over the horizon** (T = 8), so the shadow sweeps each
+      crossing point once and "wait for it to pass" is meaningful. A cubic
+      cannot close a circle, so the lap is a CHAIN of four quarter-arc pieces on
+      contiguous time windows — the station_fence pattern with curved pieces;
+      the quarter-circle constant k = 0.5522847498 overshoots the radius by
+      0.03 percent, far below the body radius 0.6.
+
+    Why a returning body at all: in the lifted space the tube comes near the
+    same spatial neighbourhood twice per lap, so a clipping ball centred between
+    the passes cuts it in TWO PLACES — two walls whose time components are
+    equal and opposite, and the free wedge between them is a time slot. The
+    planar ancestor measured exactly that through the production builder
+    (normals with time components +0.9141 / -0.9171, certificate 0.0).
+
+    The arrival time is meant to be FREE. That is a solve flag, not a scenario
+    key: tick ``free_arrival_time`` with a ``time_weight > 0`` and a ``v_max``,
+    or the solver refuses by design (a freed arrival that nothing prices is an
+    artifact generator — see ``optimize.py``).
+    """
+    orbit_r = 3.0
+    body_z = 5.0
+    body_r = 0.6
+    k = 0.5522847498  # cubic quarter-circle constant
+    # Starting phase of the lap. NOT free: measured 2026-08-26 by scanning the
+    # straight seed's line-of-sight margin over all phases -- at 60 degrees the
+    # seed LOSES the link by -0.570 (24 of 120 phases fail; this is the deepest,
+    # on a plateau, not a knife-edge). At the wrong phase the seed clears and
+    # the baseline figure proves nothing.
+    phase = np.deg2rad(60.0)
+    lap = [
+        # (x, y) control points of each quarter, counterclockwise from (orbit_r, 0).
+        [(orbit_r, 0.0), (orbit_r, orbit_r * k), (orbit_r * k, orbit_r), (0.0, orbit_r)],
+        [(0.0, orbit_r), (-orbit_r * k, orbit_r), (-orbit_r, orbit_r * k), (-orbit_r, 0.0)],
+        [(-orbit_r, 0.0), (-orbit_r, -orbit_r * k), (-orbit_r * k, -orbit_r), (0.0, -orbit_r)],
+        [(0.0, -orbit_r), (orbit_r * k, -orbit_r), (orbit_r, -orbit_r * k), (orbit_r, 0.0)],
+    ]
+    cs, sn = float(np.cos(phase)), float(np.sin(phase))
+    quarter = 2.0  # T / 4
+    obstacles = [
+        {
+            "control_points": [
+                [x * cs - y * sn, x * sn + y * cs, body_z, i * quarter + j * quarter / 3.0]
+                for j, (x, y) in enumerate(arc)
+            ],
+            "radius": body_r,
+            "color": "#e74c3c",
+            "name": f"orbit_q{i + 1}",
+        }
+        for i, arc in enumerate(lap)
+    ]
+    return {
+        "name": "loiter",
+        "title": "Body Orbiting the Ground Station",
+        "init_curve": {"mode": "straight"},
+        "obstacles": obstacles,
+        "start": [-10.0, 0.0, 5.5, 0.0],
+        "end":   [ 10.0, 0.0, 5.5, 8.0],
+        "stations": [[0.0, 0.0, 0.0]],
+        # The corridor LAYER, enforced as HARD box rows outside the elastic
+        # slack range -- the penalty cannot buy through them. The shadow of a
+        # body lies on the FAR side of the body from the station, so a transit
+        # below the orbit altitude is always visible (measured: at z=3 the seed
+        # cleared by exactly +1.400 = the 2.0 vertical gap minus the 0.6 radius,
+        # at every phase). The floor therefore sits AT the orbit altitude: below
+        # it the demo cannot bind, above the ceiling the shadow ring leaves the
+        # transit span. Endpoints are pinned and exempt, and a band that
+        # excludes an endpoint is refused loudly.
+        "coord_bounds": [[-12.0, 12.0], [-12.0, 12.0], [5.0, 6.5]],
+        "T": 8.0,
+    }
+
+
 SCENARIO_MAP = {
     "original": (scenario_original, [(4, 4), (4, 8), (6, 8), (8, 4), (8, 8)]),
     # The only scenario whose obstacle tube is non-convex, which makes it the
     # only one that distinguishes the hull-projection plane from the tangent
     # plane. Everything else would pass with either.
     "curve":    (scenario_curve,    [(8, 4), (8, 8), (8, 16), (10, 8)]),
+    # The only scenario whose obstacle RETURNS, so its tube can be cut twice by
+    # one clipping ball. Four coordinates plus a station, like station_fence.
+    # Unmeasured: added to be looked at, not to certify.
+    "loiter":   (scenario_loiter,   [(8, 8), (8, 16)]),
     "diverse":  (scenario_diverse,  [(8, 4), (8, 8), (8, 16), (10, 4), (10, 16)]),
     "wall":     (scenario_wall,     [(8, 2), (8, 3), (8, 4), (8, 16), (10, 16), (10, 24)]),
     # Four coordinates, not three. Everything downstream reads the dimension off
