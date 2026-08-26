@@ -148,12 +148,23 @@ Per (segment, obstacle), per SCP iteration:
 - capped at `r_clip_max = r + E + Δ√(d_spatial+1)` — the obstacle radius, plus the segment's own radius `E`
   about its centroid, plus the furthest one trust step of size `Δ` can carry a control point in a
   lifted space of `d_spatial+1` coordinates
-- **clip radius `r_clip = min(d, r_clip_max)`**
+- **floored at the obstacle radius `r`** — see below; the floor binds exactly when `c` is inside
+  the KOZ, and nowhere else
+- **clip radius `r_clip = clamp(d, r, r_clip_max)` = `max(min(d, r_clip_max), r)`**
 - **clipped KOZ volume = KOZ ∩ `B(c, r_clip)`**
 
 A lens at the contact point. Always non-empty, since the tube's nearest material sits at `d − r`
 from `c`. The radius scales itself with proximity — far segments get a large ball they do not need,
 close segments get a small one exactly where the constraint acts.
+
+**The floor at `r` binds only when the centroid is inside the KOZ.** `r_clip_max` is `r` plus a
+non-negative reach, so `min(d, r_clip_max)` can fall below `r` only when `d < r` — which is
+precisely the deep-penetration case. Everywhere else the floor is inert and the radius is `min(d,
+r_clip_max)` unchanged. What it buys there is measured: with the centroid `0.55` inside a tube of
+radius `0.9`, the unfloored ball has radius `0.35`, is **smaller than the obstacle**, and the wall
+retreats onto the ball instead of the tube — offset `0.60`, centroid margin exactly `0.00`, a
+`0.55`-deep penetration reported as *on the boundary*. Floored to `0.9`, the same case gives
+centroid margin `−0.879` and the row says what it should.
 
 **The cap exists to ignore obstacles that are too far away.** Beyond `r_clip_max` the segment
 provably cannot reach the tube within one trust step, so no row is needed and none is emitted. It
@@ -197,16 +208,27 @@ recorded here so it is not rediscovered:
   so it cannot represent a clipped volume with several connected components, and no method yet
   exists for deciding how many walls an iteration needs.
 
-**The floor `r_clip ≥ r_m` belongs to centreline-centring alone.** With the ball on the segment centroid
-there is nothing to floor: if the ball is too small to touch the tube, an empty clipped volume is
-the correct outcome and no row should be emitted.
+**The floor `r_clip ≥ r` applies to centroid-centring too — corrected 2026-08-26.** This file
+previously said the floor "belongs to centreline-centring alone" and that with the ball on the
+segment centroid "there is nothing to floor". That was wrong, and the reasoning behind it — *an
+empty clipped volume is the correct outcome* — applies to a ball that misses the tube, not to a
+ball that is **inside** it. When `d < r` the centroid is within the KOZ, the unfloored ball of
+radius `d` lies wholly inside the tube, and the clipped volume is the whole ball. Nothing is empty:
+the wall gets built against the ball rather than against the obstacle, and it understates the
+penetration by exactly `r − d`. The floor is what makes the clipped volume a piece of the
+**obstacle** in that case.
 
-## The over-approximation and the half-space
+## The outer approximation — what the code did before, and why this is not that
 
-Two facts are true and useful. Hulling and inflating **commute**: the convex hull of a tube equals
-the convex hull of its centreline, inflated by the same radius. And if the obstacle's motion is
-polynomial, its lifted centreline is itself a Bézier, so **De Casteljau subdivision** hands you
-exact control points for the stretch of centreline the ball selects — no sampling anywhere.
+**This section is history, not the construction.** It is kept because the code implemented it for
+months, the paper described it, and its failure mode is the reason the real construction is stated
+the way it is below. Nothing here is a step of the recipe.
+
+Two facts are true and useful, and they are what made the route tempting. Hulling and inflating
+**commute**: the convex hull of a tube equals the convex hull of its centreline, inflated by the
+same radius. And if the obstacle's motion is polynomial, its lifted centreline is itself a Bézier,
+so **De Casteljau subdivision** hands you exact control points for the stretch of centreline a
+parameter interval selects — no sampling anywhere.
 
 **What is *not* true is that this reproduces the clipped KOZ volume.** Intersection distributes
 over neither hulling nor inflation. The clipped KOZ volume is
@@ -214,15 +236,20 @@ over neither hulling nor inflation. The clipped KOZ volume is
 inflating by `r` gives a set that **strictly contains** it. It is an **outer approximation**, and
 the earlier claim in this file that it was *exact* was wrong.
 
-**Measured, on the current code** — scenario `curve`, SCP iteration 1, all six (segment, obstacle)
-pairs: the set the plane is actually built against reaches **1.13 to 2.23 further from the segment
-centroid than the clip radius**, i.e. as much as 4.7 times that radius. The ball never truncates
-anything. **It only picks a parameter range.**
+**Measured, on the pre-2026-08-26 code** — scenario `curve`, SCP iteration 1, all six (segment,
+obstacle) pairs: the set the plane was actually built against reaches **1.13 to 2.23 further from
+the segment centroid than the clip radius**, i.e. as much as 4.7 times that radius. The ball never
+truncated anything. **It only picked a parameter range.**
 
-**Do not sample the centreline.** A curve bulges outside the chords between its samples, so the
-hull of sampled points need not contain the tube — containment fails and the certificate with it.
-Recovering it costs a chord-error inflation. Subdividing the obstacle's own Bézier removes the
-error instead of bounding it.
+**And that is why it can never yield more than one wall.** Selecting a parameter interval and then
+hulling it fuses whatever the ball caught into a single convex lump — the two arms of a bend and
+everything between them. The gap the curve could pass through disappears into the hull. Clipping
+the **volume** keeps the gap, which is the whole reason the construction below replaces this one.
+
+**Do not sample the centreline** *(for the hull route)*. A curve bulges outside the chords between
+its samples, so the hull of sampled points need not contain the tube — containment fails and the
+certificate with it. Recovering it costs a chord-error inflation. Subdividing the obstacle's own
+Bézier removes the error instead of bounding it.
 
 ### The wall, built against the clipped KOZ volume itself
 
@@ -238,12 +265,21 @@ Per (segment, obstacle), and per connected component of the clipped volume:
   `n`, not on the point nearest the centroid
 - the wall is **`n·z ≥ b`**, imposed on **every control point of the segment**
 
-**Convexity of `L` is irrelevant, and that is precisely why this is well-posed.** The support
-function of a set and of its convex hull are identical in every direction — the furthest a set
-reaches along `n` is the furthest its convex hull reaches along `n`, because hulling adds no new
-extreme point. So the wall built against `L` and the wall built against the convex hull of `L` are
-**the same wall**. Convexifying `L` buys nothing and is never required; the construction does not
-need `L` to be convex.
+**Convexity of `L` is irrelevant to CONTAINMENT, and that is precisely why this is well-posed.**
+The support function of a set and of its convex hull are identical in every direction — the
+furthest a set reaches along `n` is the furthest its convex hull reaches along `n`, because hulling
+adds no new extreme point. So the wall built against `L` and the wall built against the convex hull
+of `L` are **the same wall**, and `L ⊆ {z : n·z ≤ b}` holds whether or not `L` is convex.
+Convexifying `L` buys nothing and is never required.
+
+**Convexity is not irrelevant to SEPARATION, and the two must not be conflated.** Containment says
+the component is on the forbidden side. It does not say the centroid is on the free side. When `L`
+wraps around `c` — either because `c` is in the convex hull of `L`, or merely because the direction
+taken from the nearest point of a non-convex `L` fails to separate — the support reaches past the
+centroid and `n·c < b`. **That is a legal wall with a negative margin, not a failure.** The row then
+reads "you are this far in, climb out along `n`", which is exactly what a sequential convex solver
+with elastic slack consumes. Measured: with the centroid `0.205` **outside** the keep-out zone but
+inside a wrapping lump, the centroid margin is `−1.093`. A negative margin is not a penetration.
 
 **The plane must not be taken tangent to the tube.** A plane tangent to the tube at its closest
 surface point is valid only if the tube is convex. Measured counterexample, in the formal section:
@@ -265,17 +301,34 @@ normal with the obstacle's velocity. That expression is the special case, not th
 
 ### When the segment centroid is inside the KOZ
 
-Deep penetration is a real case and the rule for it is **kept, not removed**. When `c` lies inside
-the KOZ, the projection onto the clipped volume degenerates — the nearest point of `L` to `c` is
-`c` itself, and there is no direction to build. The rule: project `c` onto the **un-inflated
-centreline hull** and push the offset out by the obstacle radius. **This is a deliberate fallback
-to the outer approximation, not an equivalent recipe** — it reproduces the plane of the hull-of-band
-set, which differs from the support plane of the clipped KOZ volume. It is kept because it stays
-defined when the centroid is inside, and because refusing a wall there was a measured defect.
+Deep penetration is a real case, and it needs **no separate recipe** — corrected 2026-08-26. This
+file previously ruled that `c` be projected onto the un-inflated centreline hull and the offset
+pushed out by the obstacle radius, a deliberate fallback to the outer approximation. That is
+retired along with the rest of the hull route.
 
-**Why it must be kept: refusing a wall there was a measured defect.** On `diverse` at 8 segments it
-left the single penetrating (segment, obstacle) pair with no row at all, and the constraint-residual
-certificate then reported 4.6e-13 — clean — for a trajectory penetrating by 0.219.
+**`n` never actually depends on `y*`.** Let `f` be the component's own nearest centreline point.
+The nearest point of the KOZ to `c` is `f + r·(c − f)/|c − f|`, which lies **on the ray from `f`
+to `c`**, at distance `d − r` from `c`; since the clip radius is floored at `r` we have
+`d − r ≤ r_clip`, so that point is inside the clip ball and is therefore `y*`. Hence
+
+$$n \;=\; \frac{c - y^\star}{\lVert c - y^\star\rVert} \;=\; \frac{c - f}{\lVert c - f\rVert}$$
+
+wherever the quotient is defined at all. When `c` is inside the KOZ, `y* = c` and the written
+quotient goes `0/0` — but the **ray does not vanish with it**. Taking the direction directly from
+`f` is continuation of the same formula, not a fallback to a different set. The only genuinely
+undefined case is `c` landing exactly on the centreline, where every direction is equally good.
+
+`b` is then the support of the component along that `n`, unchanged. Nothing about the wall
+degenerates when the centroid is inside; only one way of writing the direction down does.
+Measured: centroid `0.55` inside a tube of radius `0.9`, floored clip radius `0.9` — normal exactly
+`(1, 0)` by symmetry, offset `1.479`, centroid margin `−0.879`, signed clearance exactly
+`0.35 − 0.9 = −0.55`.
+
+**Refusing a wall here was a measured defect, and that has not changed.** On `diverse` at 8
+segments it left the single penetrating (segment, obstacle) pair with no row at all, and the
+constraint-residual certificate then reported 4.6e-13 — clean — for a trajectory penetrating by
+0.219. **A component in reach always yields a wall.** The only outcome that legitimately carries
+none is the clip ball missing the KOZ entirely.
 
 ### What conservatism costs, and what it does not
 
@@ -320,9 +373,12 @@ numbers, not paper numbers, and must be re-measured after the change.)*
 **So this construction is not sound by construction.** It is adopted because its failure is
 **detectable**, by the check below.
 
-**It is one line from being sound.** The one-line repair in the formal section: clamp the clip
-radius below by `E + Δ√(d_spatial+1)` instead of letting it shrink to the tangent value, and the
-certificate covers the full tube unconditionally. The price is conservatism exactly where the
+**It is one line from being sound.** The one-line repair in the formal section: raise the clip
+radius' lower clamp from `r` to `E + Δ√(d_spatial+1)` instead of letting it shrink to the tangent
+value, and the certificate covers the full tube unconditionally. *(That is a **different, larger**
+floor than the `r` floor in "The clip" above. The `r` floor stops the ball being smaller than the
+obstacle when the centroid is inside; this one stops the segment reaching tube material outside the
+ball. Applying the first does not give you the second.)* The price is conservatism exactly where the
 constraint is active — and by the argument above, conservatism is a step-size cost, not a
 correctness cost. **Which of the two to use is an open experimental question** — the tangent form
 goes in first, and the fallbacks stand: more segments, centre on the contact point, reach
@@ -413,16 +469,32 @@ With $c=c^{(k)}$ fixed at the reference iterate:
 $$\tau^\star\in\arg\min_{\tau\in[T^0_m,T^1_m]}\lVert c-\gamma_m(\tau)\rVert,\qquad
 f=\gamma_m(\tau^\star),\qquad d=\lVert c-f\rVert,$$
 
-$$\boxed{\ r_clip=\min\bigl(d,\;r_{\mathrm{clip,max}}\bigr),\qquad
+$$\boxed{\ r_clip=\operatorname{clip}\bigl(d,\;r_m,\;r_{\mathrm{clip,max}}\bigr)
+=\max\bigl(\min(d,\,r_{\mathrm{clip,max}}),\;r_m\bigr),\qquad
 r_{\mathrm{clip,max}}=r_m+E^{(k)}+\Delta\sqrt{d_{\mathrm{spatial}}+1}\ }$$
 
 $$\mathcal L^{(k)}_m=\mathcal K_m\cap \bar B(c,r_clip)\qquad\text{(the \textbf{clipped KOZ volume}).}$$
 
 In words: $d$ is the distance from the segment centroid to the nearest point of the obstacle's
-lifted centreline; $r_{\mathrm{clip}}$ is the clipping radius, that distance capped; the clipped KOZ volume is the
-part of the keep-out zone that lies inside the ball of radius $r_{\mathrm{clip}}$ about the centroid.
-$\bar B(c,d)$ is tangent to $\Gamma_m$ at $f$. $\tau^\star$ need not be unique; any minimiser
-serves, and non-uniqueness is exactly the bend case that makes $f$ discontinuous in $\mathbf p$.
+lifted centreline; $r_{\mathrm{clip}}$ is the clipping radius, that distance capped above and
+floored below; the clipped KOZ volume is the part of the keep-out zone that lies inside the ball of
+radius $r_{\mathrm{clip}}$ about the centroid. When the floor is inactive, $\bar B(c,d)$ is tangent
+to $\Gamma_m$ at $f$. $\tau^\star$ need not be unique; any minimiser serves, and non-uniqueness is
+exactly the bend case that makes $f$ discontinuous in $\mathbf p$.
+
+**The floor is active exactly when $d<r_m$.** Since
+$r_{\mathrm{clip,max}}=r_m+E^{(k)}+\Delta\sqrt{d_{\mathrm{spatial}}+1}\ge r_m$, we have
+$\min(d,r_{\mathrm{clip,max}})<r_m \iff d<r_m$, i.e. iff $c\in\mathcal K_m$. Elsewhere
+$r_{\mathrm{clip}}=\min(d,r_{\mathrm{clip,max}})$ unchanged. Its purpose is to keep
+$\mathcal L^{(k)}_m$ a piece of the **obstacle** rather than a ball strictly inside it: at $d<r_m$
+the unfloored $\bar B(c,d)\subset\mathcal K_m$, so $\mathcal L^{(k)}_m=\bar B(c,d)$ and the support
+plane sits on the ball, understating the penetration by $r_m-d$.
+
+**Two different floors appear in this document and they are not the same number.** $r_m$, boxed
+above, is part of the construction and always applied. The larger floor
+$E^{(k)}+\Delta\sqrt{d_{\mathrm{spatial}}+1}$ appears in the soundness section below; it is
+**optional**, it addresses a different failure (the next iterate leaving the clipped ball), and it
+is reachable in the code as a flag rather than as a default. Do not conflate them.
 
 **Connected components.** $\mathcal L^{(k)}_m$ **may consist of several connected components** —
 a centreline that leaves the ball and re-enters it puts two separate lumps of tube inside the same
@@ -511,23 +583,35 @@ the safe side of the tangent plane, worst point $0.77$ inside it and $0.99$ from
 projection onto $\mathcal G$, i.e. against the outer approximation, and is **stale** for the
 support plane. Re-measure before quoting.)*
 
-**Existence is not automatic when the ball is centred at $c$.** The construction above needs
-$c\notin\mathcal L$, and a wall that actually separates additionally needs $n^\top c>b$, which can
-fail when $\mathcal L$ wraps around the centroid. Two cases matter and both are handled:
+**The direction does not depend on $y^\star$.** Let $f_\ell=\gamma_m(\tau^\star_\ell)$ be the
+nearest centreline point *within component $\ell$*. If $c\notin\mathcal K_m$, the nearest point of
+$\mathcal K_m$ to $c$ is $f_\ell+r_m(c-f_\ell)/\lVert c-f_\ell\rVert$, at distance
+$\lVert c-f_\ell\rVert-r_m$ from $c$; the floor $r_{\mathrm{clip}}\ge r_m$ puts it inside
+$\bar B(c,r_{\mathrm{clip}})$, so it is $y^\star$, and it lies on the segment from $f_\ell$ to $c$.
+Hence
 
-- **Centroid inside the KOZ (deep penetration).** Then $y^\star=c$ and the direction is undefined.
-  Rule: project $c$ onto the **un-inflated** centreline hull $\mathcal G_\ell$ and set
-  $b=n^\top y^\star+r_m$, i.e. push the offset out by the obstacle radius. **This is the outer
-  approximation's plane, not the support plane of $\mathcal L$** — the two differ, and this branch
-  is a deliberate fallback rather than an equivalent recipe. It is kept because it stays defined
-  when the centroid is inside. **Keep it.
-  Refusing a wall in this case was a measured defect** — on `diverse` at $8$ segments the single
-  penetrating pair got no row, and the constraint-residual certificate reported $4.6\times10^{-13}$
-  for a trajectory penetrating by $0.219$.
-- **Wrapping.** Centring the ball on the centreline point $f$ instead, with radius
-  $\min(\lVert c-f\rVert,r_{\mathrm{clip,max}})$, makes $c$ an extreme point of the ball, so $c$ can
-  never lie in $\operatorname{conv}\mathcal L$ and a wall always exists. That variant is **pinned**,
-  with its measured properties, in the prose section "Where the ball is centred".
+$$\boxed{\ n=\frac{c-y^\star}{\lVert c-y^\star\rVert}=\frac{c-f_\ell}{\lVert c-f_\ell\rVert}\ }$$
+
+whenever the left-hand quotient exists at all. Two consequences:
+
+- **Centroid inside the KOZ (deep penetration).** Then $y^\star=c$ and the left-hand quotient is
+  $0/0$, but the right-hand one is not: the direction is still $c-f_\ell$ normalised. **No fallback
+  set, no hull projection, no separate recipe** — this replaces the earlier rule that projected $c$
+  onto the un-inflated centreline hull $\mathcal G_\ell$, which is retired with the rest of the
+  outer approximation. $b$ remains the support of $\mathcal L^{(k)}_{m,\ell}$ along $n$. The only
+  undefined case is $c=f_\ell$, i.e. the centroid exactly on the centreline, where every direction
+  is equally valid. **A component in reach always yields a wall. Refusing one was a measured
+  defect** — on `diverse` at $8$ segments the single penetrating pair got no row, and the
+  constraint-residual certificate reported $4.6\times10^{-13}$ for a trajectory penetrating by
+  $0.219$.
+- **Wrapping is not an existence problem.** $\mathcal L^{(k)}_{m,\ell}$ may reach past $c$ along
+  $n$, giving $n^\top c<b$. Containment still holds — that is the inclusion above, which uses no
+  convexity — so the wall is valid; the margin is simply negative, and a negative margin is the row
+  telling the solver how far it has to climb out. What fails in that case is *separation*, not
+  existence, and separation is not what the certificate rests on. Centring the ball on $f$ instead
+  would make $c$ an extreme point of the ball and force $n^\top c\ge b$, but it yields **at most one
+  wall**; that variant is **pinned**, with its measured properties, in the prose section "Where the
+  ball is centred".
 
 ## Rows and the segment certificate
 
@@ -577,6 +661,15 @@ furthest one trust step can carry a control point.* Under it, $\bar B(c,r_clip)$
 next-iterate segment, so the segment certificate certifies against the **full** $\mathcal K_m$.
 Note it does not involve $r_m$ or the obstacle at all.
 
+**This is not the floor in the boxed clip radius, and the two must not be merged.** The
+construction floors $r_{\mathrm{clip}}$ at $r_m$; that floor is unconditional, it binds only when
+$c\in\mathcal K_m$, and it exists so the clipped volume is a piece of the obstacle rather than a
+ball inside it. The condition here is a *larger*, *optional* floor at
+$E^{(k)}+\Delta\sqrt{d_{\mathrm{spatial}}+1}$, addressing a different failure: material of
+$\mathcal K_m$ that the next iterate can reach but that lies outside $\bar B(c,r_{\mathrm{clip}})$
+and is therefore constrained by nothing. Applying $r_m$ does not imply this one, and the gap
+between them is the regime table below.
+
 **With the wall built against the clipped KOZ volume, this condition is exactly coverage — there
 is nothing else.** Under the retired outer approximation the wall also happened to hold back
 material out to $\mathcal H$'s overshoot, so the flag could be pessimistic relative to the
@@ -585,26 +678,31 @@ $61.1\%$ and $99.8\%$ of the true tube material inside the reach ball over the s
 `curve` at iteration 1. Once the wall is the support of $\mathcal L$, no such accidental coverage
 exists and flag and geometry agree. *(Pre-fix diagnostic; re-measure after the change.)*
 
-Three regimes for $r_clip=\min(d,r_{\mathrm{clip,max}})$:
+Four regimes for the construction's radius
+$r_clip=\operatorname{clip}(d,\ r_m,\ r_{\mathrm{clip,max}})$:
 
 | regime | $r_{\mathrm{clip}}$ | sound? |
 |---|---|---|
 | $d>r_{\mathrm{clip,max}}$ — obstacle out of reach | $r_{\mathrm{clip,max}}=r_m+E+\Delta\sqrt{d_{\mathrm{spatial}}+1}$ | **yes**, and no row is needed: the segment cannot reach $\mathcal K_m$ in one step. (The clip is not yet *empty* here — that happens only past $d=r_{\mathrm{clip,max}}+r_m$ — so this is a reachability test, not an emptiness test.) |
 | $E+\Delta\sqrt{d_{\mathrm{spatial}}+1}\le d\le r_{\mathrm{clip,max}}$ | $d$ | **yes** |
 | $r_m<d<E+\Delta\sqrt{d_{\mathrm{spatial}}+1}$ — segment close | $d$ | **no — this is the hole** |
+| $d\le r_m$ — centroid inside the KOZ | $r_m$ (**floor active**) | **no** unless $r_m\ge E+\Delta\sqrt{d_{\mathrm{spatial}}+1}$; the floor fixes the *understated penetration*, not the coverage |
 
 So the cap is free: it only acts where the row cannot bind, and it preserves soundness. The hole is
-at *small* $d$, i.e. exactly when the constraint binds.
+at *small* $d$, i.e. exactly when the constraint binds — and the $r_m$ floor does not close it,
+because $r_m$ and the reach are unrelated quantities.
 
-**The one-line repair, and its price.** Replacing the clip radius by
+**The one-line repair, and its price.** Raising the floor from $r_m$ to the reach,
 
-$$r_clip=\operatorname{clip}\!\left(d,\ E^{(k)}+\Delta\sqrt{d_{\mathrm{spatial}}+1},\ r_{\mathrm{clip,max}}\right)$$
+$$r_clip=\operatorname{clip}\!\left(d,\ \max\bigl(r_m,\ E^{(k)}+\Delta\sqrt{d_{\mathrm{spatial}}+1}\bigr),\ r_{\mathrm{clip,max}}\right)$$
 
 makes the soundness condition hold unconditionally and the construction **sound by construction**.
 It costs conservatism precisely where the constraint is active, because the ball is then larger
-than the distance to the obstacle and more centreline is selected. By the step-size argument in the
-prose, that conservatism is paid in iterations, not in correctness. **Which of the two is used is
-an open experimental question, not a settled one** — the tangent form is being implemented first.
+than the distance to the obstacle and more of the tube is clipped in. By the step-size argument in
+the prose, that conservatism is paid in iterations, not in correctness. **Which of the two is used
+is an open experimental question, not a settled one** — it is reachable in the code as the
+`sound_clip` flag, and the count of pairs failing the condition is exported per iteration as
+`unsound_clips` so the hole is a number rather than a caveat.
 
 ## The subproblem
 
