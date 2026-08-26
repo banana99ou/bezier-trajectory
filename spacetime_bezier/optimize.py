@@ -386,9 +386,18 @@ def _optimize_spacetime_rust(
     time_weight: float = 0.0,
     free_arrival_time: bool = False,
     stations=None,
+    coord_bounds=None,
     verbose: bool = True,
 ) -> tuple[np.ndarray, dict]:
-    """Call the native Rust backend for the space-time optimizer."""
+    """Call the native Rust backend for the space-time optimizer.
+
+    ``coord_bounds`` -- optional per-spatial-coordinate box, a sequence of
+    ``(lo, hi)`` pairs, one per spatial coordinate. ``None`` keeps the uniform
+    ``[coord_lb, coord_ub]`` box every run has always had. The rows are HARD --
+    they sit outside the elastic slack range, so the penalty can never buy its
+    way through a workspace wall. An altitude band is
+    ``coord_bounds=[(-12, 12), (-12, 12), (0, 6)]``.
+    """
     if _bezier_opt_rs is None or not hasattr(_bezier_opt_rs, "optimize_spacetime_bezier"):
         raise RuntimeError("Rust space-time optimizer is not available in bezier_opt.")
 
@@ -402,6 +411,29 @@ def _optimize_spacetime_rust(
     P_init = np.asarray(P_init, dtype=float)
     n_cp, dim = P_init.shape
     spatial_dim = dim - 1
+    coord_lb_by_axis = coord_ub_by_axis = None
+    if coord_bounds is not None:
+        bounds = np.asarray(coord_bounds, dtype=float)
+        if bounds.shape != (spatial_dim, 2):
+            raise ValueError(
+                f"coord_bounds must be {spatial_dim} (lo, hi) pairs -- one per "
+                f"spatial coordinate -- got shape {bounds.shape}"
+            )
+        if not np.all(bounds[:, 0] < bounds[:, 1]):
+            raise ValueError(f"coord_bounds has an empty or reversed interval: {bounds.tolist()}")
+        # The box rows exempt the pinned endpoints, so bounds that exclude an
+        # endpoint would not make the QP infeasible -- they would make the curve
+        # leap from the pinned point into the band and back, which is almost
+        # certainly a scenario bug. Refuse it loudly instead.
+        for label, point in (("start", P_init[0, :spatial_dim]), ("end", P_init[-1, :spatial_dim])):
+            if np.any(point < bounds[:, 0]) or np.any(point > bounds[:, 1]):
+                raise ValueError(
+                    f"coord_bounds {bounds.tolist()} excludes the {label} point "
+                    f"{point.tolist()}; endpoints are pinned, so the bound cannot "
+                    "move them -- move the endpoint or widen the band"
+                )
+        coord_lb_by_axis = bounds[:, 0].tolist()
+        coord_ub_by_axis = bounds[:, 1].tolist()
     obstacle_ctrl, obstacle_radii = obstacle_array_bundle(obstacles, spatial_dim)
     time_upper = float(P_init[-1, -1]) * float(time_ub_scale)
     # No station means no occlusion rows at all (item B12), which is the default
@@ -426,6 +458,8 @@ def _optimize_spacetime_rust(
         min_dt=min_dt,
         coord_lb=coord_lb,
         coord_ub=coord_ub,
+        coord_lb_by_axis=coord_lb_by_axis,
+        coord_ub_by_axis=coord_ub_by_axis,
         time_lb=time_lb,
         time_ub=time_upper,
         sound_clip=sound_clip,
@@ -517,6 +551,7 @@ def optimize_spacetime_from_control_points(
     time_weight: float = 0.0,
     free_arrival_time: bool = False,
     stations=None,
+    coord_bounds=None,
     verbose: bool = True,
 ) -> tuple[np.ndarray, dict]:
     """Optimize a space-time Bezier curve from an initial control polygon.
@@ -542,6 +577,7 @@ def optimize_spacetime_from_control_points(
         time_weight=time_weight,
         free_arrival_time=free_arrival_time,
         stations=stations,
+        coord_bounds=coord_bounds,
         verbose=verbose,
     )
 
@@ -573,6 +609,7 @@ def optimize_spacetime(
     time_weight: float = 0.0,
     free_arrival_time: bool = False,
     stations=None,
+    coord_bounds=None,
     verbose: bool = True,
     init_curve: dict | None = None,
 ) -> tuple[np.ndarray, dict]:
@@ -603,6 +640,7 @@ def optimize_spacetime(
         time_weight=time_weight,
         free_arrival_time=free_arrival_time,
         stations=stations,
+        coord_bounds=coord_bounds,
         verbose=verbose,
     )
 
@@ -639,6 +677,9 @@ def optimize_scenario(
     # Absent key means no occlusion rows (item B12). Every scenario that predates
     # B12 therefore solves exactly the problem it always did.
     stations = scenario.get("stations")
+    # Absent key means the uniform default box, so every scenario without one
+    # solves exactly the problem it always did.
+    coord_bounds = scenario.get("coord_bounds")
 
     results = {}
     for N, n_seg in configs:
@@ -674,6 +715,7 @@ def optimize_scenario(
                 free_arrival_time=free_arrival_time,
                 sound_clip=sound_clip,
                 stations=stations,
+                coord_bounds=coord_bounds,
                 verbose=verbose,
                 init_curve=init_curve,
             )

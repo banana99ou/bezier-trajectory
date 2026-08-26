@@ -183,6 +183,52 @@ fn obstacle_arrays<'py>(
     ))
 }
 
+/// Resolve the (scalar, optional per-axis) coordinate-bound pair to one vector
+/// per side, length `spatial_dim`, refusing shape and ordering errors loudly.
+fn resolve_coord_bounds(
+    coord_lb: f64,
+    coord_ub: f64,
+    coord_lb_by_axis: Option<Vec<f64>>,
+    coord_ub_by_axis: Option<Vec<f64>>,
+    spatial_dim: usize,
+) -> PyResult<(Vec<f64>, Vec<f64>)> {
+    let lb = match coord_lb_by_axis {
+        Some(v) => {
+            if v.len() != spatial_dim {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "coord_lb_by_axis has {} entries for {} spatial coordinates",
+                    v.len(),
+                    spatial_dim
+                )));
+            }
+            v
+        }
+        None => vec![coord_lb; spatial_dim],
+    };
+    let ub = match coord_ub_by_axis {
+        Some(v) => {
+            if v.len() != spatial_dim {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "coord_ub_by_axis has {} entries for {} spatial coordinates",
+                    v.len(),
+                    spatial_dim
+                )));
+            }
+            v
+        }
+        None => vec![coord_ub; spatial_dim],
+    };
+    for d in 0..spatial_dim {
+        if !(lb[d] < ub[d]) {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "coordinate {} bounds are empty or reversed: [{}, {}]",
+                d, lb[d], ub[d]
+            )));
+        }
+    }
+    Ok((lb, ub))
+}
+
 #[pyfunction]
 #[pyo3(signature = (
     p_init,
@@ -196,6 +242,8 @@ fn obstacle_arrays<'py>(
     min_dt = 0.1,
     coord_lb = -20.0,
     coord_ub = 20.0,
+    coord_lb_by_axis = None,
+    coord_ub_by_axis = None,
     time_lb = 0.0,
     time_ub = 15.0,
     elastic_weight = 100.0,
@@ -218,6 +266,11 @@ fn optimize_spacetime_bezier<'py>(
     min_dt: f64,
     coord_lb: f64,
     coord_ub: f64,
+    // Per-spatial-coordinate bounds (length dim-1). When given they override the
+    // scalar pair above, which stays for callers that want one uniform box. An
+    // altitude band is `coord_lb_by_axis=[-12,-12,0], coord_ub_by_axis=[12,12,6]`.
+    coord_lb_by_axis: Option<Vec<f64>>,
+    coord_ub_by_axis: Option<Vec<f64>>,
     time_lb: f64,
     time_ub: f64,
     elastic_weight: f64,
@@ -264,6 +317,9 @@ fn optimize_spacetime_bezier<'py>(
         n_stations,
     };
 
+    let (coord_lb_vec, coord_ub_vec) =
+        resolve_coord_bounds(coord_lb, coord_ub, coord_lb_by_axis, coord_ub_by_axis, spatial_dim)?;
+
     let result = spacetime_optimizer::optimize_spacetime(
         &p_flat,
         np1,
@@ -274,8 +330,8 @@ fn optimize_spacetime_bezier<'py>(
         scp_prox_weight,
         scp_trust_radius,
         min_dt,
-        coord_lb,
-        coord_ub,
+        &coord_lb_vec,
+        &coord_ub_vec,
         time_lb,
         time_ub,
         &obstacles,
@@ -524,6 +580,8 @@ impl SpacetimeScpContext {
         min_dt = 0.1,
         coord_lb = -20.0,
         coord_ub = 20.0,
+        coord_lb_by_axis = None,
+        coord_ub_by_axis = None,
         time_lb = 0.0,
         time_ub = 15.0,
         scp_prox_weight = 0.5,
@@ -544,6 +602,8 @@ impl SpacetimeScpContext {
         min_dt: f64,
         coord_lb: f64,
         coord_ub: f64,
+        coord_lb_by_axis: Option<Vec<f64>>,
+        coord_ub_by_axis: Option<Vec<f64>>,
         time_lb: f64,
         time_ub: f64,
         scp_prox_weight: f64,
@@ -567,8 +627,11 @@ impl SpacetimeScpContext {
 
         let (ctrl, n_ctrl, radii, n_obs) = obstacle_arrays(obstacle_ctrl, obstacle_r, dim)?;
 
+        let (coord_lb_vec, coord_ub_vec) = resolve_coord_bounds(
+            coord_lb, coord_ub, coord_lb_by_axis, coord_ub_by_axis, spatial_dim,
+        )?;
         let pre = spacetime_optimizer::precompute_scp(
-            &p_flat, np1, dim, n_seg, min_dt, coord_lb, coord_ub, time_lb, time_ub,
+            &p_flat, np1, dim, n_seg, min_dt, &coord_lb_vec, &coord_ub_vec, time_lb, time_ub,
             v_max.unwrap_or(f64::NAN), time_weight, free_arrival_time, sound_clip,
         );
 

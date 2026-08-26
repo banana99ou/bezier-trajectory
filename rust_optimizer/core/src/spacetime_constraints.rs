@@ -1036,16 +1036,24 @@ pub fn build_time_monotonicity(np1: usize, dim: usize, min_dt: f64) -> LinearCon
 /// coordinate. Without this the box would re-pin what
 /// `build_boundary_constraints` just released, and freeing the arrival time
 /// would silently do nothing (item B10).
+/// `coord_lb` / `coord_ub` carry one bound per SPATIAL coordinate (length
+/// `dim - 1`), so an altitude band costs nothing but different numbers in one
+/// slot. These rows are physics-class: appended before the keep-out block,
+/// outside the elastic slack range, so the penalty can never buy its way
+/// through a workspace wall. Endpoints stay pinned to `p_init` and are exempt
+/// -- a bound that excludes an endpoint is refused Python-side, not here.
 pub fn build_box_constraints(
     p_init: &[f64],
     np1: usize,
     dim: usize,
-    coord_lb: f64,
-    coord_ub: f64,
+    coord_lb: &[f64],
+    coord_ub: &[f64],
     time_lb: f64,
     time_ub: f64,
     free_arrival_time: bool,
 ) -> LinearConstraint {
+    assert_eq!(coord_lb.len(), dim - 1, "one lower bound per spatial coordinate");
+    assert_eq!(coord_ub.len(), dim - 1, "one upper bound per spatial coordinate");
     let n_vars = np1 * dim;
     let n_rows = n_vars;
     let mut a = vec![0.0; n_rows * n_vars];
@@ -1067,8 +1075,8 @@ pub fn build_box_constraints(
                 lb[var_idx] = time_lb;
                 ub[var_idx] = time_ub;
             } else {
-                lb[var_idx] = coord_lb;
-                ub[var_idx] = coord_ub;
+                lb[var_idx] = coord_lb[d];
+                ub[var_idx] = coord_ub[d];
             }
         }
     }
