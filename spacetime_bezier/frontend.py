@@ -721,14 +721,21 @@ def _plane_patch(normal, lower_bound: float, hull: np.ndarray) -> dict | None:
 
 
 def _koz_planes(P: np.ndarray, obstacles: list[dict], n_seg: int, a_list, dim: int):
-    """One patch per (segment, obstacle), plus the full exact-row ledger.
+    """One patch per (segment, obstacle, component), plus the full exact-row ledger.
 
     Both come from ``spacetime_koz_rows_exact`` -- the builder the certificate
-    itself uses -- evaluated at the RETURNED control points. Grouping by
-    (segment, obstacle) is not a summarisation: since the G2 fix there IS one
-    plane per (segment, obstacle), shared by every control point of that segment,
-    so the group has one normal and one bound. Its margin is the tightest of its
-    control points, which is the number that decides whether the plane is active.
+    itself uses -- evaluated at the RETURNED control points. Grouping is not a
+    summarisation: there IS one plane per group, shared by every control point of
+    that segment, so the group has one normal and one bound. Its margin is the
+    tightest of its control points, which is the number that decides whether the
+    plane is active.
+
+    **The component index is part of the key.** One obstacle can present two
+    separated lumps of tube to one segment -- the clip ball cuts the centreline
+    twice -- and each lump gets its own wall. Grouping on (segment, obstacle)
+    alone would fold two genuinely different planes into one and draw whichever
+    happened to have the tighter margin, which is a picture of a constraint the
+    solver never had.
     """
     import bezier_opt
 
@@ -739,7 +746,7 @@ def _koz_planes(P: np.ndarray, obstacles: list[dict], n_seg: int, a_list, dim: i
     # are unpacked by name so a future widening of the tuple fails loudly here
     # rather than silently mis-assigning a column.
     (
-        normals, lbs, seg, cp, obs, _rho, _sound, _dropped, _unsound,
+        normals, lbs, seg, cp, obs, comp, _rho, _sound, _dropped, _unsound,
     ) = bezier_opt.spacetime_koz_rows_exact(
         p=P,
         obstacle_ctrl=obstacle_ctrl,
@@ -751,28 +758,31 @@ def _koz_planes(P: np.ndarray, obstacles: list[dict], n_seg: int, a_list, dim: i
     seg = np.asarray(seg, dtype=int)
     cp = np.asarray(cp, dtype=int)
     obs = np.asarray(obs, dtype=int)
+    comp = np.asarray(comp, dtype=int)
 
     hulls = [np.asarray(a, dtype=float) @ P for a in a_list]
     ledger = []
-    groups: dict[tuple[int, int], dict] = {}
+    groups: dict[tuple[int, int, int], dict] = {}
     for k in range(normals.shape[0]):
-        s_i, c_i, o_i = int(seg[k]), int(cp[k]), int(obs[k])
+        s_i, c_i, o_i, j_i = int(seg[k]), int(cp[k]), int(obs[k]), int(comp[k])
         q = hulls[s_i][c_i]
         slack = float(normals[k] @ q) - float(lbs[k])
         ledger.append({
             "seg": s_i,
             "cp": c_i,
             "obs": o_i,
+            "component": j_i,
             "n_spatial": normals[k, :-1].tolist(),
             "n_time": float(normals[k, -1]),
             "slack": slack,
         })
-        key = (s_i, o_i)
+        key = (s_i, o_i, j_i)
         entry = groups.get(key)
         if entry is None or slack < entry["margin"]:
             groups[key] = {
                 "seg": s_i,
                 "obs": o_i,
+                "component": j_i,
                 "normal": normals[k].tolist(),
                 "lb": float(lbs[k]),
                 "margin": slack,

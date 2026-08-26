@@ -23,10 +23,32 @@ import pytest
 
 import bezier_opt
 
-from spacetime_bezier.geometry import compute_min_clearance
+from spacetime_bezier.geometry import compute_min_clearance, obstacle_array_bundle
 from spacetime_bezier.optimize import optimize_spacetime
 
 DIM = 3  # x, y, t
+
+
+def _bundle(P, obstacles):
+    """Lifted obstacle control points for the Rust call.
+
+    A legacy ``pos0``/``vel`` obstacle with no window used to mean "always"; the
+    active window is now intrinsic to the control points, so "always" has to be
+    made explicit. The trajectory's own time span is the faithful translation:
+    outside it the obstacle could not constrain anything anyway.
+    """
+    P = np.asarray(P, dtype=float)
+    t_lo, t_hi = float(P[:, -1].min()), float(P[:, -1].max())
+    filled = []
+    for o in obstacles:
+        if "control_points" in o:
+            filled.append(o)
+            continue
+        o = dict(o)
+        o.setdefault("t_start", min(0.0, t_lo))
+        o.setdefault("t_end", t_hi)
+        filled.append(o)
+    return obstacle_array_bundle(filled, P.shape[1] - 1)
 
 
 def _exact_rows(P, obstacles, n_seg):
@@ -42,14 +64,13 @@ def _exact_rows(P, obstacles, n_seg):
     """
     P = np.asarray(P, dtype=float)
     dim = P.shape[1]
-    pos0 = np.array([o["pos0"] for o in obstacles], dtype=float)
-    vel = np.array([o["vel"] for o in obstacles], dtype=float)
-    r = np.array([o["r"] for o in obstacles], dtype=float)
-    t0 = np.array([o.get("t_start", -1e18) for o in obstacles], dtype=float)
-    t1 = np.array([o.get("t_end", 1e18) for o in obstacles], dtype=float)
-    normals, lbs, seg, cp, obs = bezier_opt.spacetime_koz_rows_exact(
-        p=P, obstacle_pos0=pos0, obstacle_vel=vel, obstacle_r=r,
-        obstacle_t_start=t0, obstacle_t_end=t1, n_seg=n_seg,
+    ctrl, radii = _bundle(P, obstacles)
+    # Unpacked by name so a future widening of the tuple fails loudly here rather
+    # than silently mis-assigning a column.
+    (
+        normals, lbs, seg, cp, obs, comp, _rho, _sound, _dropped, _unsound,
+    ) = bezier_opt.spacetime_koz_rows_exact(
+        p=P, obstacle_ctrl=ctrl, obstacle_r=radii, n_seg=n_seg,
     )
     return {
         "normals": np.asarray(normals, dtype=float).reshape(-1, dim),
@@ -57,6 +78,7 @@ def _exact_rows(P, obstacles, n_seg):
         "seg": np.asarray(seg),
         "cp": np.asarray(cp),
         "obs": np.asarray(obs),
+        "comp": np.asarray(comp),
     }
 
 
@@ -96,20 +118,12 @@ def _exact_certificate(P, obstacles, n_seg):
 def _koz_rows(P, obstacles, n_seg):
     """Rows as the SOLVER sees them, via the debug context."""
     P = np.asarray(P, dtype=float)
-    np1 = P.shape[0]
-    pos0 = np.array([o["pos0"] for o in obstacles], dtype=float)
-    vel = np.array([o["vel"] for o in obstacles], dtype=float)
-    r = np.array([o["r"] for o in obstacles], dtype=float)
-    t0 = np.array([o.get("t_start", -1e18) for o in obstacles], dtype=float)
-    t1 = np.array([o.get("t_end", 1e18) for o in obstacles], dtype=float)
+    ctrl, radii = _bundle(P, obstacles)
 
     ctx = bezier_opt.SpacetimeScpContext(
         p_init=P,
-        obstacle_pos0=pos0,
-        obstacle_vel=vel,
-        obstacle_r=r,
-        obstacle_t_start=t0,
-        obstacle_t_end=t1,
+        obstacle_ctrl=ctrl,
+        obstacle_r=radii,
         n_seg=n_seg,
         min_dt=0.05,
         coord_lb=-50.0,
@@ -121,11 +135,12 @@ def _koz_rows(P, obstacles, n_seg):
         tol=1e-6,
     )
     out = ctx.step()
-    (_p, _info, seg, cp, obs, _it, normals, supports, centers, lbs, margins, _slack) = out
+    (_p, info, seg, cp, obs, _it, normals, supports, centers, lbs, margins, _slack) = out
     return {
         "seg": np.asarray(seg),
         "cp": np.asarray(cp),
         "obs": np.asarray(obs),
+        "comp": np.asarray(info["koz_component"]),
         "normals": np.asarray(normals, dtype=float).reshape(-1, DIM),
         "lbs": np.asarray(lbs, dtype=float),
         "supports": np.asarray(supports, dtype=float).reshape(-1, DIM),
@@ -138,6 +153,12 @@ def _straight_guess(start, end, n_cp):
 
 MOVING = [{"pos0": [5.0, 0.0], "vel": [0.0, 1.2], "r": 1.0}]
 STATIONARY = [{"pos0": [5.0, 0.0], "vel": [0.0, 0.0], "r": 1.0}]
+# `MOVING` recedes fast enough that at 8 segments every segment centroid is
+# further from its centreline than `r_m + E + trust*sqrt(dim)` -- the obstacle is
+# genuinely OUT OF REACH and emitting no row is the correct answer, not a
+# vanished constraint. Measured: closest centroid 2.68 against a reach of 2.67.
+# A test about subdivision needs an obstacle that stays in reach at every count.
+NEARBY = [{"pos0": [5.0, 0.9], "vel": [0.0, 0.15], "r": 1.0}]
 
 
 def test_moving_obstacle_normal_has_nonzero_time_component():
@@ -194,22 +215,29 @@ def test_time_component_tracks_obstacle_velocity():
     )
 
 
-def test_one_half_space_per_segment_and_obstacle():
-    """All control points of a segment must share one plane per obstacle.
+def test_one_half_space_per_segment_obstacle_and_component():
+    """All control points of a segment must share one plane per clipped component.
 
     This is the convex-hull certificate: one half-space satisfied by every
     control point bounds the whole curve segment. Per-control-point planes prove
     nothing about the segment between them.
 
+    **The component index joins the key.** One obstacle can present two separated
+    lumps of tube to one segment, and each lump gets its own wall; grouping on
+    (segment, obstacle) alone would compare two genuinely different planes and
+    call the difference a defect. What must hold, and does, is that within one
+    component every control point sees the same normal and the same bound.
+
     FAILS IF: control points within a segment carry different normals or
-    different bounds for the same obstacle -- the previous builder's behaviour.
+    different bounds for the same obstacle and component -- the pre-G2 builder's
+    behaviour.
     """
     P = _straight_guess([0.0, 0.0, 0.0], [10.0, 0.0, 8.0], 9)
     rows = _exact_rows(P, MOVING, n_seg=4)
 
     groups = {}
     for i in range(len(rows["lbs"])):
-        key = (int(rows["seg"][i]), int(rows["obs"][i]))
+        key = (int(rows["seg"][i]), int(rows["obs"][i]), int(rows["comp"][i]))
         groups.setdefault(key, []).append(i)
 
     assert groups, "no rows to group"
@@ -220,10 +248,12 @@ def test_one_half_space_per_segment_and_obstacle():
         normals = rows["normals"][idxs]
         bounds = rows["lbs"][idxs]
         assert np.allclose(normals, normals[0], atol=1e-12), (
-            f"segment/obstacle {key} has differing normals across its control points"
+            f"segment/obstacle/component {key} has differing normals across its "
+            "control points"
         )
         assert np.allclose(bounds, bounds[0], atol=1e-12), (
-            f"segment/obstacle {key} has differing bounds across its control points"
+            f"segment/obstacle/component {key} has differing bounds across its "
+            "control points"
         )
 
 
@@ -295,7 +325,7 @@ def test_more_segments_cannot_shrink_the_feasible_set(n_seg):
     the constraint silently vanished.
     """
     P = _straight_guess([0.0, 0.0, 0.0], [10.0, 0.0, 8.0], 9)
-    rows = _koz_rows(P, MOVING, n_seg=n_seg)
+    rows = _koz_rows(P, NEARBY, n_seg=n_seg)
     assert len(rows["lbs"]) > 0
     assert np.all(np.isfinite(rows["lbs"]))
     assert np.all(np.isfinite(rows["normals"]))
@@ -542,16 +572,20 @@ def test_fence3d_climbs_and_is_certified():
     )
 
     # Where the curve crosses the advancing fence plane, and how it got past.
+    # Read off the lifted control points: the active window is intrinsic to them
+    # and a `pos0`/`vel` pair is no longer carried.
     fence = [o for o in sc["obstacles"] if o["name"].startswith("F")]
-    y_lo = min(o["pos0"][1] for o in fence)
-    y_hi = max(o["pos0"][1] for o in fence)
-    fence_r = max(o["r"] for o in fence)
-    fence_z = fence[0]["pos0"][2]
-    fence_x0 = fence[0]["pos0"][0]
-    fence_vx = fence[0]["vel"][0]
+    cps = [np.asarray(o["control_points"], dtype=float) for o in fence]
+    y_lo = min(float(c[0][1]) for c in cps)
+    y_hi = max(float(c[0][1]) for c in cps)
+    fence_r = max(float(o["radius"]) for o in fence)
+    fence_z = float(cps[0][0][2])
+    fence_t0 = float(cps[0][0][3])
+    fence_x0 = float(cps[0][0][0])
+    fence_vx = (float(cps[0][-1][0]) - fence_x0) / (float(cps[0][-1][3]) - fence_t0)
 
     pts = bezier_curve(P_opt, 20_001)
-    gap = pts[:, 0] - (fence_x0 + fence_vx * pts[:, 3])
+    gap = pts[:, 0] - (fence_x0 + fence_vx * (pts[:, 3] - fence_t0))
     assert gap[0] < 0.0 < gap[-1], (
         "the curve does not start behind the fence and end ahead of it, so "
         "there is no crossing to inspect"
@@ -566,4 +600,298 @@ def test_fence3d_climbs_and_is_certified():
     assert abs(crossing[2] - fence_z) > fence_r, (
         f"the curve crossed at z={crossing[2]:.3f}, inside the fence's z extent "
         f"{fence_z} +/- {fence_r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The clipped-KOZ-volume construction, on four cases whose answers are known by
+# hand. Planar geometry (one spatial coordinate plus time) so the picture can be
+# drawn and checked by eye; the builder is dimension-generic and the tests above
+# exercise three and four coordinates.
+#
+# The hairpin's time coordinate is affine in the parameter (2, 4, 6, 8), which is
+# what makes it a legal lifted obstacle rather than a decorative curve, and it is
+# symmetric about t = 5. That symmetry is what several assertions below stand on.
+# ---------------------------------------------------------------------------
+
+PANEL_STRAIGHT = np.array([[[0.0, 0.0], [8.0, 0.0]]])
+PANEL_HAIRPIN = np.array([[[7.0, 2.0], [-2.0, 4.0], [-2.0, 6.0], [7.0, 8.0]]])
+PANEL_AXIS = 5.0  # the hairpin's axis of symmetry, in the time coordinate
+
+
+def _panel_seg(cx, cy, half):
+    """Four control points on a short segment centred at ``(cx, cy)``."""
+    return np.array([
+        [cx - half, cy], [cx - half / 3, cy], [cx + half / 3, cy], [cx + half, cy]
+    ])
+
+
+def _panel_walls(Q, ctrl, r_m, trust):
+    """The exact walls for one segment against one obstacle, grouped by component.
+
+    The lower bound IS the offset ``b``: with one segment the De Casteljau matrix
+    is the identity, so the row's ``grad . p`` is ``n . Q_k`` and
+    ``lb = n . Q_k - g_k = b`` exactly.
+    """
+    Q = np.asarray(Q, dtype=float)
+    (
+        normals, lbs, _seg, _cp, _obs, comp, rho, sound, dropped, unsound,
+    ) = bezier_opt.spacetime_koz_rows_exact(
+        p=Q, obstacle_ctrl=ctrl, obstacle_r=np.array([r_m]), n_seg=1,
+        trust_radius=trust,
+    )
+    normals = np.asarray(normals, dtype=float).reshape(-1, 2)
+    lbs = np.asarray(lbs, dtype=float)
+    comp = np.asarray(comp, dtype=int)
+    rho = np.asarray(rho, dtype=float)
+    c = Q.mean(axis=0)
+    walls = []
+    for j in sorted(set(comp.tolist())):
+        m = comp == j
+        n = normals[m][0]
+        b = float(lbs[m][0])
+        walls.append({
+            "component": j,
+            "n": n,
+            "b": b,
+            "rho": float(rho[m][0]),
+            "sound": bool(np.asarray(sound)[m][0]),
+            "centroid_margin": float(n @ c - b),
+            "margins": normals[m] @ Q.T,
+        })
+    return walls, int(dropped), int(unsound), c
+
+
+def _bez(ctrl, t):
+    P = np.repeat(np.asarray(ctrl, dtype=float)[None], len(t), axis=0)
+    while P.shape[1] > 1:
+        s = t[:, None, None]
+        P = (1.0 - s) * P[:, :-1] + s * P[:, 1:]
+    return P[:, 0]
+
+
+def _clipped_volume_points(ctrl, r_m, c, rho, n_tau=1400, n_dir=360):
+    """Dense sample of ``KOZ ∩ Ball(c, rho)`` -- computed here, not by the solver."""
+    A = _bez(ctrl, np.linspace(0.0, 1.0, n_tau))
+    th = np.linspace(0.0, 2.0 * np.pi, n_dir, endpoint=False)
+    ring = np.stack([np.cos(th), np.sin(th)], axis=1)
+    pts = []
+    for rad in np.linspace(0.0, r_m, 11):
+        pts.append((A[:, None, :] + rad * ring[None, :, :]).reshape(-1, 2))
+    Z = np.concatenate(pts)
+    return Z[np.linalg.norm(Z - c, axis=1) <= rho]
+
+
+def _centreline_distance(ctrl, c, n_tau=200_001):
+    A = _bez(ctrl, np.linspace(0.0, 1.0, n_tau))
+    i = int(np.argmin(np.linalg.norm(A - c, axis=1)))
+    return float(np.linalg.norm(A[i] - c)), A[i]
+
+
+def test_panel_a_straight_obstacle_is_exact():
+    """A straight tube's wall is its own surface, to the last decimal.
+
+    The offset is a rigorous De Casteljau ceiling on the component's support, and
+    on a straight tube with the normal perpendicular to it the ceiling is not
+    merely tight but EXACT: every subdivided control point has the same `n . g`.
+    So this panel pins the construction against arithmetic, not against a
+    tolerance.
+
+    FAILS IF: the offset is not the tube's own radius, or the centroid margin is
+    not the true clearance -- which is what happens if the wall is built against
+    anything other than the clipped volume.
+    """
+    Q = np.array([[2.0, 2.0], [2.6, 2.0], [3.2, 2.0], [3.8, 2.0]])
+    walls, dropped, _unsound, c = _panel_walls(Q, PANEL_STRAIGHT, r_m=0.6, trust=0.5)
+
+    assert dropped == 0
+    assert len(walls) == 1, f"a straight tube cannot split; got {len(walls)} walls"
+    w = walls[0]
+    assert w["n"][1] == pytest.approx(1.0, abs=1e-12), f"normal {w['n']} is not (0, 1)"
+    assert w["n"][0] == pytest.approx(0.0, abs=1e-12), f"normal {w['n']} is not (0, 1)"
+    assert w["b"] == pytest.approx(0.6, abs=1e-9), (
+        f"offset {w['b']:.9f} is not the tube's own surface at y = r_m = 0.6"
+    )
+    assert w["centroid_margin"] == pytest.approx(1.4, abs=1e-9), (
+        f"centroid margin {w['centroid_margin']:.9f} is not d - r_m = 2.0 - 0.6"
+    )
+
+
+def test_panel_b1_the_ball_severs_the_bend_into_two_walls():
+    """Two lumps, two walls, and they must be exact mirrors.
+
+    The segment centroid sits on the hairpin's axis of symmetry, so the clip ball
+    catches the two arms as mirror-image components. Reflecting through the axis
+    maps one component onto the other, so it must map one wall onto the other:
+    same normal in the spatial coordinate, opposite in time, and
+    ``b_upper = b_lower - 2 * axis * n_time(lower)``. That identity cannot hold by
+    accident, which is what makes it worth asserting instead of the raw numbers.
+
+    FAILS IF: the parameter intervals are fused back into one -- the pre-2026-08-26
+    behaviour, where `clip_band` took the min and max over qualifying samples and
+    a bend could never produce more than one wall.
+    """
+    Q = _panel_seg(3.6, PANEL_AXIS, 0.6)
+    walls, dropped, _unsound, c = _panel_walls(Q, PANEL_HAIRPIN, r_m=0.9, trust=0.5)
+
+    assert dropped == 0
+    assert len(walls) == 2, (
+        f"the ball should sever the bend into two lumps; got {len(walls)} wall(s)"
+    )
+    # 1e-7, not machine epsilon. The geometry is exactly symmetric; the SOLVE for
+    # the nearest parameter is not. Newton stops on `next - s` and on the distance
+    # failing to improve, and on a quadratic minimum that last comparison is
+    # rounding-limited, so the two arms can stop one step apart -- about
+    # sqrt(eps) in the parameter, which is what shows up here. It is the
+    # parameter solve's floor, not the construction's.
+    lower, upper = sorted(walls, key=lambda w: w["n"][1])
+    assert lower["n"][0] == pytest.approx(upper["n"][0], abs=1e-7), (
+        "the two normals disagree in the spatial coordinate, so they are not mirrors"
+    )
+    assert lower["n"][1] == pytest.approx(-upper["n"][1], abs=1e-7), (
+        "the two normals do not have opposite time components"
+    )
+    assert upper["b"] == pytest.approx(
+        lower["b"] - 2.0 * PANEL_AXIS * lower["n"][1], abs=1e-5
+    ), "the two offsets are not reflections of each other through the axis"
+    assert lower["centroid_margin"] == pytest.approx(
+        upper["centroid_margin"], abs=1e-6
+    ), "the segment sits on the axis, so the two margins must be equal"
+    assert lower["centroid_margin"] > 0.0, (
+        "the segment sits in the corridor between the arms, so both margins are positive"
+    )
+
+
+def test_panel_b2_a_wrapping_lump_gives_a_negative_margin_not_a_missing_wall():
+    """The centroid is OUTSIDE the keep-out zone and the margin is still negative.
+
+    One component, curled around the centroid. Its support along the normal
+    reaches past the centroid, so ``n . c < b``. That is a valid wall containing
+    its whole component; the negative margin is the row telling the solver how far
+    to climb out, and the elastic penalty is what consumes it.
+
+    FAILS IF: a negative margin is treated as an impossible plane and the row is
+    suppressed. A suppressed row contributes zero to a certificate that sums row
+    violations, which is how a penetrating trajectory came back certified at
+    4.6e-13.
+    """
+    Q = _panel_seg(2.2, 5.35, 0.55)
+    walls, dropped, _unsound, c = _panel_walls(Q, PANEL_HAIRPIN, r_m=0.9, trust=0.5)
+
+    assert dropped == 0
+    assert len(walls) == 1
+    w = walls[0]
+    d, _f = _centreline_distance(PANEL_HAIRPIN[0], c)
+    assert d > 0.9, (
+        f"this panel needs the centroid OUTSIDE the keep-out zone; d = {d:.4f}"
+    )
+    assert w["centroid_margin"] < 0.0, (
+        f"the lump wraps the centroid, so the margin must be negative; got "
+        f"{w['centroid_margin']:+.6f}"
+    )
+
+
+def test_panel_b3_the_clip_radius_is_floored_at_the_obstacle_radius():
+    """Centroid inside the keep-out zone: the floor fires and the direction exists.
+
+    Three things at once, and each of them was a defect before 2026-08-26.
+
+    The clip radius is floored at the obstacle radius, so the ball is not smaller
+    than the obstacle it is clipping. Unfloored it would be ``d = 0.35`` against a
+    tube of radius ``0.9``: the ball lies wholly inside the tube, the wall lands
+    on the ball, and a 0.55-deep penetration reports as a margin of exactly zero.
+
+    The normal exists. ``y*`` collapses onto ``c`` here, so ``(c - y*)/|c - y*|``
+    is ``0/0`` -- but ``y*`` always sat on the ray from the nearest centreline
+    point out to the centroid, so the direction is that ray and it does not
+    vanish. By symmetry it must be exactly ``(1, 0)``.
+
+    The margin is negative and the wall is emitted anyway.
+
+    FAILS IF: the radius is ``min(d, r_clip_max)``; or the builder falls back to
+    projecting onto the un-inflated centreline hull; or it drops the component.
+    """
+    Q = _panel_seg(0.6, PANEL_AXIS, 0.20)
+    walls, dropped, _unsound, c = _panel_walls(Q, PANEL_HAIRPIN, r_m=0.9, trust=0.5)
+
+    assert dropped == 0, "the direction exists here; nothing should be dropped"
+    assert len(walls) == 1
+    w = walls[0]
+
+    d, f = _centreline_distance(PANEL_HAIRPIN[0], c)
+    assert d == pytest.approx(0.35, abs=1e-6), f"panel premise moved: d = {d:.6f}"
+    assert w["rho"] == pytest.approx(0.9, abs=1e-12), (
+        f"clip radius {w['rho']:.6f} is not floored at the obstacle radius 0.9; "
+        f"unfloored it would be d = {d:.4f}"
+    )
+    assert w["n"][0] == pytest.approx(1.0, abs=1e-9), (
+        f"normal {w['n']} is not (1, 0); the centroid and the hairpin's tip both "
+        "lie on the axis of symmetry"
+    )
+    assert w["centroid_margin"] < 0.0
+    # Bracket, not an equality: the offset is a rigorous ceiling on the support,
+    # so it sits between the tube surface along n and the clip ball's own support.
+    assert float(f[0]) + 0.9 <= w["b"] <= float(c[0]) + w["rho"] + 1e-9, (
+        f"offset {w['b']:.6f} is outside [{float(f[0]) + 0.9:.6f}, "
+        f"{float(c[0]) + w['rho']:.6f}]"
+    )
+
+
+@pytest.mark.parametrize(
+    "label,cx,cy,half,ctrl,r_m",
+    [
+        ("A", 2.9, 2.0, 0.9, PANEL_STRAIGHT, 0.6),
+        ("B1", 3.6, PANEL_AXIS, 0.6, PANEL_HAIRPIN, 0.9),
+        ("B2", 2.2, 5.35, 0.55, PANEL_HAIRPIN, 0.9),
+        ("B3", 0.6, PANEL_AXIS, 0.20, PANEL_HAIRPIN, 0.9),
+    ],
+)
+def test_every_point_of_the_clipped_volume_is_behind_some_wall(
+    label, cx, cy, half, ctrl, r_m
+):
+    """The invariant that cannot be true if an offset is under-estimated.
+
+    Each wall contains its own component, so their union -- the whole clipped
+    keep-out volume -- must have no point strictly on the free side of EVERY wall.
+    The volume is sampled here, from the obstacle's control points and the clip
+    radius the builder reported; the solver contributes only the normals and the
+    offsets.
+
+    This is the one place the construction could be silently unsound: the offset
+    is a maximum over the component, and a maximum that steps over a narrow peak
+    is too small, which puts a sliver of the keep-out zone on the ALLOWED side.
+    The builder therefore emits a rigorous De Casteljau ceiling rather than a
+    sampled maximum, and this is the check that the ceiling really is one.
+
+    FAILS IF: any offset is below its component's true support. Verified by
+    injecting `offset -= 0.05` into the Rust builder: panels A, B2 and B3 go red
+    with up to 2.96e-2 of volume on the free side, four orders above the sampling
+    resolution.
+
+    **B1 does NOT go red under that mutation, and the reason is worth stating.**
+    This is a union test -- a point only has to be behind SOME wall -- so where a
+    component is severed into two, each shrunken half-space is still covered by
+    the other one's. The check is therefore strong for a single wall and weaker
+    for several; panel B1's guarantee comes from its mirror identity instead,
+    which no offset error can preserve.
+    """
+    Q = (
+        np.array([[2.0, 2.0], [2.6, 2.0], [3.2, 2.0], [3.8, 2.0]])
+        if label == "A"
+        else _panel_seg(cx, cy, half)
+    )
+    walls, _dropped, _unsound, c = _panel_walls(Q, ctrl, r_m=r_m, trust=0.5)
+    assert walls, "no wall to check"
+
+    Z = _clipped_volume_points(ctrl[0], r_m, c, walls[0]["rho"])
+    assert len(Z) > 5_000, f"only {len(Z)} sample points; the check would be weak"
+
+    free_side = np.min(
+        np.stack([Z @ w["n"] - w["b"] for w in walls], axis=0), axis=0
+    )
+    worst = float(free_side.max())
+    assert worst <= 1e-6, (
+        f"{label}: {int((free_side > 1e-6).sum())} of {len(Z)} sampled points of "
+        f"the clipped keep-out volume are on the free side of every wall, worst by "
+        f"{worst:.3e} -- an offset is below its component's support"
     )

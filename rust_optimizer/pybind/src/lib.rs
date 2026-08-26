@@ -315,10 +315,16 @@ fn optimize_spacetime_bezier<'py>(
 /// rows the QP is given (those carry a rotation term and are explicitly not
 /// conservative).
 ///
-/// Returns (normals, lower_bounds, segment_idx, cp_idx, obstacle_idx, rho,
-/// sound, dropped_planes, unsound_clips). The last three are the holes: `sound`
-/// is per row (statement 7), `dropped_planes` counts pairs needing a row that
-/// admits none, `unsound_clips` counts pairs where statement (7) failed.
+/// Returns (normals, lower_bounds, segment_idx, cp_idx, obstacle_idx,
+/// component_idx, rho, sound, dropped_planes, unsound_clips). The last three are
+/// the holes: `sound` is per row (statement 7), `dropped_planes` counts
+/// components needing a row that admits none, `unsound_clips` counts pairs where
+/// statement (7) failed.
+///
+/// **The grouping key is (segment, obstacle, component_idx), not (segment,
+/// obstacle).** One obstacle can present two separated lumps of tube to one
+/// segment, and each lump gets its own plane; grouping without the component
+/// index mixes two different walls together.
 #[pyfunction]
 #[pyo3(signature = (
     p, obstacle_ctrl, obstacle_r, n_seg = 8, trust_radius = 0.5, sound_clip = false,
@@ -362,6 +368,7 @@ fn spacetime_koz_rows_exact<'py>(
     let seg: Vec<i32> = rows.iter().map(|r| r.segment_idx as i32).collect();
     let cp: Vec<i32> = rows.iter().map(|r| r.cp_idx as i32).collect();
     let obs: Vec<i32> = rows.iter().map(|r| r.obstacle_idx as i32).collect();
+    let comp: Vec<i32> = rows.iter().map(|r| r.component_idx as i32).collect();
     let rho: Vec<f64> = rows.iter().map(|r| r.rho).collect();
     let sound: Vec<bool> = rows.iter().map(|r| r.sound).collect();
 
@@ -378,6 +385,7 @@ fn spacetime_koz_rows_exact<'py>(
         PyArray1::from_vec(py, seg),
         PyArray1::from_vec(py, cp),
         PyArray1::from_vec(py, obs),
+        PyArray1::from_vec(py, comp),
         PyArray1::from_vec(py, rho),
         sound,
         dropped,
@@ -604,6 +612,13 @@ impl SpacetimeScpContext {
     /// Returns (p_iterate, info, koz_* arrays) where `p_iterate` is the ACCEPTED
     /// iterate after the decision -- unchanged when the step was rejected. The raw
     /// candidate is in `info["p_candidate"]`.
+    ///
+    /// The koz arrays are (seg, cp, obs, iter, normals, supports, centers, lbs,
+    /// margins, slack), plus `info["koz_component"]` — a per-row array that rides
+    /// in the dict only because pyo3 stops implementing IntoPyObject past a
+    /// 12-tuple. **`component` joins the key**: one obstacle can present two
+    /// separated lumps of tube to one segment and each gets its own plane, so
+    /// rows group by (segment, obstacle, component), never (segment, obstacle).
     fn step<'py>(&mut self, py: Python<'py>) -> PyResult<PyObject> {
         let obstacles = SpacetimeObstacleData {
             ctrl: &self.ctrl,
@@ -701,6 +716,8 @@ impl SpacetimeScpContext {
         let seg_idx: Vec<i32> = result.koz_rows.iter().map(|r| r.segment_idx as i32).collect();
         let cp_idx: Vec<i32> = result.koz_rows.iter().map(|r| r.cp_idx as i32).collect();
         let obs_idx: Vec<i32> = result.koz_rows.iter().map(|r| r.obstacle_idx as i32).collect();
+        let comp_idx: Vec<i32> =
+            result.koz_rows.iter().map(|r| r.component_idx as i32).collect();
         let iter_idx: Vec<i32> = result.koz_rows.iter().map(|r| r.iteration as i32).collect();
 
         let mut normals_flat = Vec::with_capacity(n_koz * dim);
@@ -721,6 +738,10 @@ impl SpacetimeScpContext {
         let koz_cp = PyArray1::from_vec(py, cp_idx);
         let koz_obs = PyArray1::from_vec(py, obs_idx);
         let koz_iter = PyArray1::from_vec(py, iter_idx);
+        // Rides in `info` rather than the tuple: pyo3 stops implementing
+        // IntoPyObject at 12 elements and the tuple is already there. It is a
+        // per-row array like the rest, and it is part of the grouping key.
+        info.set_item("koz_component", PyArray1::from_vec(py, comp_idx))?;
         let koz_normals = PyArray2::from_vec2(py, &{
             result.koz_rows.iter().map(|r| r.normal.clone()).collect::<Vec<_>>()
         }).map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;

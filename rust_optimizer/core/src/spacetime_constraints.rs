@@ -21,15 +21,23 @@ pub struct KozRowData {
     pub segment_idx: usize,
     pub cp_idx: usize,
     pub obstacle_idx: usize,
+    /// Which connected component of the clipped keep-out volume this row's wall
+    /// was built against. **The grouping key is (segment, obstacle, component),
+    /// not (segment, obstacle)** — one obstacle can present two separated lumps
+    /// to one segment, and each gets its own plane. All control points of a
+    /// segment still share one plane per component; that is the convex-hull
+    /// certificate and it is what makes the row say anything about the curve
+    /// between the control points.
+    pub component_idx: usize,
     pub iteration: u32,
     pub normal: Vec<f64>,
-    /// Closest point of the FORBIDDEN CONVEX SET to the segment centroid, i.e.
-    /// `y* + r_m n`. Same role it always had; the set it is measured against is
-    /// now the convexified clipped piece rather than a straight capsule.
+    /// The point of the component where `n . z` attains its maximum — the point
+    /// the plane rests on. Was `y* + r_m n`, which is the nearest point pushed
+    /// out; the two coincide only for a straight tube, and the difference is
+    /// exactly the conservatism a curved one costs.
     pub support_point: Vec<f64>,
-    /// The projection `y*` of the centroid onto the convexified centreline hull.
-    /// Was the foot of the perpendicular on a straight axis; the straight case is
-    /// the degree-1 special case of this.
+    /// The point of the component nearest the segment centroid. The centroid
+    /// itself when the centroid is inside the keep-out zone.
     pub closest_center: Vec<f64>,
     pub lower_bound: f64,
     pub lhs: f64,
@@ -220,7 +228,7 @@ fn build_koz_rows(
         let (q, w, centroid, seg_radius) = segment_points_and_weights(a_seg, p, np1, dim);
 
         for obs_idx in 0..obstacles.n_obs {
-            let geom: Box<ClipGeometry> = match clip_geometry(
+            let components = match clip_geometry(
                 &centroid,
                 seg_radius,
                 trust_radius,
@@ -231,70 +239,86 @@ fn build_koz_rows(
                 // Nothing in the trust region can touch this obstacle. No row is
                 // needed and silence is correct.
                 ClipOutcome::OutOfReach => continue,
-                // A row is needed and cannot be built. Count it: the guarantee
-                // has a hole here, it is not satisfied here.
-                ClipOutcome::NoPlane => {
-                    dropped_planes += 1;
-                    continue;
-                }
-                ClipOutcome::Plane(g) => g,
+                ClipOutcome::Components(c) => c,
             };
-            if !geom.sound {
-                unsound_clips += 1;
-            }
+            // A row is needed and cannot be built. Count it: the guarantee has a
+            // hole here, it is not satisfied here.
+            dropped_planes += components.dropped;
 
-            let n = &geom.normal;
-            let radius = obstacles.radii[obs_idx];
-            let support: Vec<f64> = (0..dim)
-                .map(|d| geom.y_star[d] + radius * n[d])
-                .collect();
-
-            for k in 0..np1 {
-                // Offset from the projection, not from a centreline foot: the
-                // exact clearance of this control point against `H` is
-                // `n . (Q_k - y*) - r_m`, which is `n . Q_k - b`.
-                let d_k: Vec<f64> = (0..dim).map(|d| q[k * dim + d] - geom.y_star[d]).collect();
-                let g_k = dot(n, &d_k) - radius;
-
-                let mut row = vec![0.0; n_vars];
-                if with_rotation {
-                    let corr = rotation_correction(&geom, &d_k);
-                    for j in 0..np1 {
-                        let a_kj = a_seg[k * np1 + j];
-                        for d in 0..dim {
-                            row[j * dim + d] += a_kj * n[d] + w[j] * corr[d];
-                        }
-                    }
-                } else {
-                    for j in 0..np1 {
-                        let a_kj = a_seg[k * np1 + j];
-                        for d in 0..dim {
-                            row[j * dim + d] += a_kj * n[d];
-                        }
-                    }
+            // ONE WALL PER CONNECTED COMPONENT of the clipped keep-out volume,
+            // not one per (segment, obstacle). A centreline that leaves the clip
+            // ball and re-enters puts two separate lumps of tube inside it, and
+            // the gap between them is a corridor the trajectory is entitled to
+            // use. The row count therefore varies with the geometry, which the
+            // rest of this builder already tolerates — rows are pushed, not
+            // indexed, and an out-of-reach pair has always emitted none.
+            for (comp_idx, geom) in components.planes.iter().enumerate() {
+                let geom: &ClipGeometry = geom;
+                if !geom.sound {
+                    unsound_clips += 1;
                 }
 
-                // Bound chosen so the constraint reproduces g_k(p) >= 0 exactly at
-                // x = p, for both row types.
-                let grad_dot_p = (0..n_vars).map(|idx| row[idx] * p[idx]).sum::<f64>();
-                let lb = grad_dot_p - g_k;
+                let n = &geom.normal;
+                // The point of the component where the support is attained. Not
+                // `y* + r_m n`: that is the nearest point pushed out, which coincides
+                // with the support point only for a straight tube.
+                let support: Vec<f64> = (0..dim)
+                    .map(|d| centroid[d] + (geom.offset - dot(n, &centroid)) * n[d])
+                    .collect();
 
-                row_meta.push(KozRowData {
-                    segment_idx: seg_idx,
-                    cp_idx: k,
-                    obstacle_idx: obs_idx,
-                    iteration: 0,
-                    normal: n.clone(),
-                    support_point: support.clone(),
-                    closest_center: geom.y_star.clone(),
-                    lower_bound: lb,
-                    lhs: grad_dot_p,
-                    margin: g_k,
-                    rho: geom.rho,
-                    sound: geom.sound,
-                });
-                constraint_rows.push(row);
-                lbs.push(lb);
+                for k in 0..np1 {
+                    // The row IS the wall: `n . Q_k >= b` with `b` the support of the
+                    // component. The retired construction wrote this as
+                    // `n . (Q_k - y*) - r_m` because its offset was `n . y* + r_m` by
+                    // definition; that identity does not survive clipping the volume.
+                    let g_k = dot(n, &q[k * dim..(k + 1) * dim]) - geom.offset;
+                    // Anchor for the rotation term. `db/dn` is the SUPPORT point, so
+                    // `d(n . Q_k - b)/dn` is `Q_k - support` — the nearest point `y*`
+                    // anchored the old row because the old offset was written through
+                    // it, and it is the wrong point for this one.
+                    let d_k: Vec<f64> = (0..dim).map(|d| q[k * dim + d] - support[d]).collect();
+
+                    let mut row = vec![0.0; n_vars];
+                    if with_rotation {
+                        let corr = rotation_correction(&geom, &d_k);
+                        for j in 0..np1 {
+                            let a_kj = a_seg[k * np1 + j];
+                            for d in 0..dim {
+                                row[j * dim + d] += a_kj * n[d] + w[j] * corr[d];
+                            }
+                        }
+                    } else {
+                        for j in 0..np1 {
+                            let a_kj = a_seg[k * np1 + j];
+                            for d in 0..dim {
+                                row[j * dim + d] += a_kj * n[d];
+                            }
+                        }
+                    }
+
+                    // Bound chosen so the constraint reproduces g_k(p) >= 0 exactly at
+                    // x = p, for both row types.
+                    let grad_dot_p = (0..n_vars).map(|idx| row[idx] * p[idx]).sum::<f64>();
+                    let lb = grad_dot_p - g_k;
+
+                    row_meta.push(KozRowData {
+                        segment_idx: seg_idx,
+                        cp_idx: k,
+                        obstacle_idx: obs_idx,
+                        component_idx: comp_idx,
+                        iteration: 0,
+                        normal: n.clone(),
+                        support_point: support.clone(),
+                        closest_center: geom.y_star.clone(),
+                        lower_bound: lb,
+                        lhs: grad_dot_p,
+                        margin: g_k,
+                        rho: geom.rho,
+                        sound: geom.sound,
+                    });
+                    constraint_rows.push(row);
+                    lbs.push(lb);
+                }
             }
         }
     }
