@@ -19,25 +19,27 @@ rather than a correction.
 
 # 제출 일정
 
-**두 학회에 같은 논문을 분량만 달리하여 낸다.** 항공우주 2페이지, 기계학회 6페이지. 어느 쪽으로
-갈지는 아직 열려 있다 — 판단 근거는 위 검토의견 사이드카에 있다.
+**한국항공우주학회 2026년도 추계학술대회로 확정 — 2026-08-25.** 대한기계학회 추계는 포기했다.
+두 학회가 11/11~13에 겹치고 다른 도(道)에서 동시에 열려 한 곳만 고를 수 있으며, 지도교수 역시
+둘 중 하나를 고르라는 입장이었다. **검토의견 §1의 "6페이지 기계학회에도 낸다" 제안은 이 결정으로
+닫혔다 — 다시 꺼내지 말 것.**
 
-| | 한국항공우주학회 추계 | 대한기계학회 추계 |
-|---|---|---|
-| 발표신청 마감 | — | **2026-08-26(수) 자정** |
-| 논문 제출 마감 | **2026-09-04(금)** | **2026-09-02(수) 자정** |
-| 분량 | 2페이지 + 별도 400자 초록 | 1~6페이지 |
-| 학술대회 | 11/10(화)~13(금) | 11/11(수)~14(토) |
-| 장소 | 하이원리조트 (강원 정선) | ICC 제주 |
+| | 한국항공우주학회 추계 |
+|---|---|
+| 논문 제출 마감 | **2026-09-04(금)** |
+| 분량 | 2페이지 + 별도 400자 초록 |
+| 학술대회 | 11/10(화)~13(금) |
+| 장소 | 하이원리조트 (강원 정선) |
 
-**두 일정은 11/11~13에 겹친다.** 다른 도(道)에서 동시에 열리므로 두 곳 모두 직접 발표하는 것은
-불가능하다. 현재 방향은 제주에 직접 가고 정선 발표는 공저자에게 맡기는 것.
+**400자 초록은 원고가 아니라 제출 웹페이지에 입력한다.** 별도 산출물이고 마감은 같다. 제출에는
+회비 납부와 사전등록 결제 완료가 전제이며, 결제 기한은 사전등록 마감이 아니라 논문 마감 전이다.
 
-**8/26이 진짜 마감이다.** 비회원은 사전등록 결제를 완료해야 발표신청이 접수된다. 연구비 계정과
-품의 절차를 이번 주에 확인해야 한다. 기계학회는 심사결과 9/22(화) 통보, 수정파일 9/30(수) 마감.
+**6페이지가 필요했던 논증은 저널로 간다.** 학회 발표 이후 내용을 보완해 저널에 제출하는 것이
+후속 계획이다. 지지 반공간 구성, 매 반복 재구성, 볼록성 논의는 거기서 전개하고, 2페이지 원고는
+그 논증을 다 담으려 하지 말고 현장 토론용으로 유지한다.
 
-항공우주 마감일 재확인 — `ksas.or.kr`는 HTTPS로 응답하지 않는다(타임아웃). HTTP로만 열리고
-인코딩은 EUC-KR이므로 웹 조회 도구는 실패한다. 결과가 비면 마감이 바뀐 것이다:
+마감일 재확인 — `ksas.or.kr`는 HTTPS로 응답하지 않는다(타임아웃). HTTP로만 열리고 인코딩은
+EUC-KR이므로 웹 조회 도구는 실패한다. 결과가 비면 마감이 바뀐 것이다:
 
 ```bash
 curl -s "http://ksas.or.kr/Conference/ConferenceView.asp?AC=0&CODE=CC20260701" \
@@ -72,9 +74,9 @@ two-dimensional toy.
 영역을 지날지 고르는 조합적 계층도 두지 않는다.
 
 기여는 세 가지이다. 첫째, 장애물의 운동이 임의로 주어져 관이 휘더라도 **관 전체가 볼록일 필요가
-없다** — 국소 조각의 볼록 껍질만 있으면 지지 반공간(supporting half-space)이 성립한다. 둘째, 그
-반공간을 분할구간과 장애물 쌍마다 하나씩 두고 해당 분할구간의 모든 제어점에 부과하면 연속
-시간에 대한 볼록 껍질 보장이 유지된다. 제어점마다 다른 평면을 부과하면 이 보장은 유한 개의 점
+없다** — 클리핑된 KOZ 볼륨에 대한 지지 반공간(supporting half-space)만 세우면 된다. 둘째, 그
+반공간을 분할구간·장애물·클리핑된 성분마다 하나씩 두고 해당 분할구간의 모든 제어점에 부과하면
+연속 시간에 대한 볼록 껍질 보장이 유지된다. 제어점마다 다른 평면을 부과하면 이 보장은 유한 개의 점
 조건으로 약해진다. 셋째, 동일한 구성이 휘어진 KOZ 관과 관측자에 대한 차폐 영역을 모두 처리한다.
 
 각 기여가 틀렸음을 보이는 조건도 함께 적어 둔다. 첫째 기여는 장애물 근사를 반복마다 국소적으로
@@ -132,76 +134,200 @@ It is a special case and must never be the setup.*
 
 ## The clip
 
+*Symbols, fixed 2026-08-25. The **clipping radius is `r_clip`**. `ρ` is reserved for the merit-function
+ratio of the successive-convexification loop and never denotes a clipping radius. `d` is the
+distance from the segment centroid to the nearest centreline point. `r_clip_max` is the cap on `r_clip`. In
+the formal section the spatial dimension is written `D`, not `d`, for exactly this reason.*
+
 Per (segment, obstacle), per SCP iteration:
 
 - `c` — the segment's centroid in the lifted space, a linear function of the control points
 - `f` — the nearest point of the obstacle's centreline to `c`, measured in the lifted space
-- `R = |c − f|` — so the ball `B(c, R)` is **tangent to the centreline** at `f`
-- capped at `R_max = r + E + Δ√(d+1)`, where `E` is the segment's radius about its centroid
-- **clipped piece = tube ∩ `B(c, min(R, R_max))`**
+- `d = |c − f|` — the distance from the centroid to the nearest centreline point, so the ball
+  `B(c, d)` is **tangent to the centreline** at `f`
+- capped at `r_clip_max = r + E + Δ√(d_spatial+1)` — the obstacle radius, plus the segment's own radius `E`
+  about its centroid, plus the furthest one trust step of size `Δ` can carry a control point in a
+  lifted space of `d_spatial+1` coordinates
+- **clip radius `r_clip = min(d, r_clip_max)`**
+- **clipped KOZ volume = KOZ ∩ `B(c, r_clip)`**
 
-A lens at the contact point. Always non-empty, since the tube's nearest material sits at `R − r`
+A lens at the contact point. Always non-empty, since the tube's nearest material sits at `d − r`
 from `c`. The radius scales itself with proximity — far segments get a large ball they do not need,
 close segments get a small one exactly where the constraint acts.
 
-**The cap is free.** Beyond `R_max` the segment provably cannot reach the tube within one trust
-step, so the ball stops touching it and no row is emitted. It bounds both the worst-case hull size
-and the subdivision work, and — see (7) — it never weakens soundness. It is also the one place a
-clip parameter may be tied to Δ without breaking attribution in the ratio test, because it acts
-only where the row cannot bind.
+**The cap exists to ignore obstacles that are too far away.** Beyond `r_clip_max` the segment
+provably cannot reach the tube within one trust step, so no row is needed and none is emitted. It
+also bounds the worst-case work, and it never weakens soundness. *(It is a reachability test, not
+an emptiness test — the ball still grazes the tube a little past the cap. That costs nothing,
+because a row there could not bind anyway.)* It bounds both the worst-case hull size
+and the subdivision work, and — see the soundness condition in the formal section — it never
+weakens soundness. It is also the one place a clip parameter may be tied to Δ without breaking
+attribution in the ratio test, because it acts only where the row cannot bind.
 
-**No free parameter, and no axis privileged.** A ball, not a slab, not an interval.
+A ball, not a slab, not an interval.
+
+## Where the ball is centred — open, and measured rather than asserted
+
+Three knobs, and **none of the three is settled**:
+
+1. **Where the ball is centred.** The segment centroid `c` (what the code does now); the nearest
+   centreline point `f`; the nearest point of the KOZ surface.
+2. **How big it is.** The tangent value `d`; the reach-sized value `E + Δ√(d_spatial+1)`; or `d` clamped
+   between the two.
+3. Whether the answers to 1 and 2 are independent — a centring choice can change which radius is
+   sound.
+
+These are experimental questions. They are to be measured on real runs, not decided by argument in
+this file.
+
+**The centreline-centred variant is PINNED, not rejected**, and its measured properties are
+recorded here so it is not rediscovered:
+
+- Centre the ball at `f`, radius `min(|c − f|, r_clip_max)`. The segment centroid then sits exactly on
+  the ball's boundary, so it is an extreme point of the ball. It can therefore never lie inside the
+  convex hull of the clipped volume, and **a wall always exists** — the existence gap of
+  centroid-centring does not arise.
+- At ball radius equal to the obstacle radius the construction is **exact**: the ball is inscribed
+  in the tube's cross-section, so the clipped volume is the ball and the wall sits on the true tube
+  surface.
+- **Below that radius it is OPTIMISTIC.** The ball lies wholly inside the tube, the wall sits on
+  the ball rather than on the tube, and the clearance it claims overstates the truth by exactly
+  (obstacle radius − ball radius). Measured: 0.453 claimed against 0.252 true.
+- It is pinned for one reason only: a ball centred on the centreline yields **at most one wall**,
+  so it cannot represent a clipped volume with several connected components, and no method yet
+  exists for deciding how many walls an iteration needs.
+
+**The floor `r_clip ≥ r_m` belongs to centreline-centring alone.** With the ball on the segment centroid
+there is nothing to floor: if the ball is too small to touch the tube, an empty clipped volume is
+the correct outcome and no row should be emitted.
 
 ## The over-approximation and the half-space
 
-Take the convex hull of the clipped piece. Two facts make this cheap and exact: hulling and
-inflating commute, so it is enough to convexify the **centreline** and inflate the result by `r`;
-and if the obstacle's motion is polynomial, its lifted centreline is itself a Bézier, so **De
-Casteljau subdivision** hands you exact control points for the stretch inside the ball.
+Two facts are true and useful. Hulling and inflating **commute**: the convex hull of a tube equals
+the convex hull of its centreline, inflated by the same radius. And if the obstacle's motion is
+polynomial, its lifted centreline is itself a Bézier, so **De Casteljau subdivision** hands you
+exact control points for the stretch of centreline the ball selects — no sampling anywhere.
+
+**What is *not* true is that this reproduces the clipped KOZ volume.** Intersection distributes
+over neither hulling nor inflation. The clipped KOZ volume is
+(centreline ⊕ ball of radius `r`) ∩ `B(c, r_clip)`; convexifying the selected centreline stretch and
+inflating by `r` gives a set that **strictly contains** it. It is an **outer approximation**, and
+the earlier claim in this file that it was *exact* was wrong.
+
+**Measured, on the current code** — scenario `curve`, SCP iteration 1, all six (segment, obstacle)
+pairs: the set the plane is actually built against reaches **1.13 to 2.23 further from the segment
+centroid than the clip radius**, i.e. as much as 4.7 times that radius. The ball never truncates
+anything. **It only picks a parameter range.**
 
 **Do not sample the centreline.** A curve bulges outside the chords between its samples, so the
 hull of sampled points need not contain the tube — containment fails and the certificate with it.
 Recovering it costs a chord-error inflation. Subdividing the obstacle's own Bézier removes the
 error instead of bounding it.
 
-Then emit **exactly one supporting half-space** — the plane through the projection of the centroid
-onto that hull — and apply it to **every control point of the segment.**
+### The wall, built against the clipped KOZ volume itself
 
-**The plane must come from the hull, not from the tube.** A plane tangent to the tube at its
-closest surface point is valid only if the tube is convex. Measured counterexample in the formal
-section: with the obstacle turning and the segment inside the turn, 12.35% of the clipped piece
-sits on the *allowed* side of the tangent plane. The correct plane differs by 1.19° in normal and
-0.76 in offset.
+Per (segment, obstacle), and per connected component of the clipped volume:
 
-One plane per segment-and-obstacle pair, never one per control point. Per-control-point planes
-prove only that each point individually is outside its own plane — exactly as strong as sampling
-the curve — and opposing normals let the hull wrap around the tube.
+- `L` — the **clipped KOZ volume**: KOZ ∩ `B(c, r_clip)`, the ball centred at the segment centroid with
+  the clip radius above
+- `y*` — the point of `L` closest to `c`
+- `n = (c − y*) / |c − y*|` — the unit direction pointing from that closest point back to the
+  centroid
+- `b` — the **largest value of `n·z` over all points `z` of `L`**: the support of the clipped KOZ
+  volume in direction `n`. The plane therefore sits on the volume's most protruding point along
+  `n`, not on the point nearest the centroid
+- the wall is **`n·z ≥ b`**, imposed on **every control point of the segment**
+
+**Convexity of `L` is irrelevant, and that is precisely why this is well-posed.** The support
+function of a set and of its convex hull are identical in every direction — the furthest a set
+reaches along `n` is the furthest its convex hull reaches along `n`, because hulling adds no new
+extreme point. So the wall built against `L` and the wall built against the convex hull of `L` are
+**the same wall**. Convexifying `L` buys nothing and is never required; the construction does not
+need `L` to be convex.
+
+**The plane must not be taken tangent to the tube.** A plane tangent to the tube at its closest
+surface point is valid only if the tube is convex. Measured counterexample, in the formal section:
+with the obstacle turning and the segment inside the turn, 12.35% of the clipped KOZ volume sits on
+the *allowed* side of the tangent plane. *(That measurement compared the tangent plane against the
+hull-of-band plane, which is the outer approximation this section just retired. The 12.35% figure
+stands as evidence that the tangent plane is invalid; the accompanying "1.19° in normal, 0.76 in
+offset" describes the distance to the **old** plane and is **stale** — re-measure it against the
+support plane before quoting it.)*
+
+One plane per (segment, obstacle, connected component), never one per control point.
+Per-control-point planes prove only that each point individually is outside its own plane — exactly
+as strong as sampling the curve — and opposing normals let the hull wrap around the tube.
 
 The plane's normal has a nonzero **time component** because the centreline is slanted in the lifted
 space. It is not optional; without it the plane does not support the tube at all. *For the
 constant-velocity special case that component reduces to minus the dot product of the spatial
 normal with the obstacle's velocity. That expression is the special case, not the definition.*
 
+### When the segment centroid is inside the KOZ
+
+Deep penetration is a real case and the rule for it is **kept, not removed**. When `c` lies inside
+the KOZ, the projection onto the clipped volume degenerates — the nearest point of `L` to `c` is
+`c` itself, and there is no direction to build. The rule: project `c` onto the **un-inflated
+centreline hull** and push the offset out by the obstacle radius. **This is a deliberate fallback
+to the outer approximation, not an equivalent recipe** — it reproduces the plane of the hull-of-band
+set, which differs from the support plane of the clipped KOZ volume. It is kept because it stays
+defined when the centroid is inside, and because refusing a wall there was a measured defect.
+
+**Why it must be kept: refusing a wall there was a measured defect.** On `diverse` at 8 segments it
+left the single penetrating (segment, obstacle) pair with no row at all, and the constraint-residual
+certificate then reported 4.6e-13 — clean — for a trajectory penetrating by 0.219.
+
+### What conservatism costs, and what it does not
+
+**A conservative wall is a step-size cost, not a correctness cost.** This is sequential convex
+programming: the wall is rebuilt at every iteration around the new iterate. If the curve wants to
+come closer than one iteration's wall allows, it moves as far as that wall permits, the wall is
+rebuilt closer, and the conservatism shrinks. Over-conservatism buys extra iterations. It does not
+buy a wrong answer.
+
+**So the two things that matter about a wall are that it EXISTS and that it is SOUND.** A wall that
+is missing leaves a pair unconstrained and the certificate then certifies nothing about it; a wall
+that is optimistic claims clearance the trajectory does not have. Both are correctness failures.
+Tightness is not. **This reorders which failure modes this paper should worry about**, and it is
+the reason the existence gap of centroid-centring, and the optimism of a sub-radius centreline
+ball, are recorded above as the properties that decide the question.
+
 ## The hole, stated as a hole
 
-The plane protects against tube material on the obstacle side of it. **Tube material lying outside
-the ball *and* on the safe side of the plane is not protected** — and at a bend, the far arm is
-exactly that.
+The wall protects against tube material inside the clipping ball. **Tube material lying outside the
+ball *and* on the safe side of the wall is not protected** — and at a bend, the far arm is exactly
+that.
 
-Soundness would require the ball's radius to exceed the segment's own extent plus the trust radius.
-With `R` set to the distance from the centroid to the centreline, that fails precisely when the
-segment gets close to the obstacle — which is when the constraint matters.
+With the volume **genuinely clipped**, coverage is exactly one condition and nothing else:
+
+> **clip radius `r_clip` ≥ `E + Δ√(d_spatial+1)`** — at least the segment's own radius about its centroid, plus
+> the furthest one trust step can carry a control point.
+
+Set `r_clip` to the tangent value `d` and that fails precisely when the segment gets close to the
+obstacle, which is when the constraint matters. **There is no accidental extra coverage to lean
+on**: the moment the wall is built against the clipped volume rather than against the overshooting
+band, the band's 1.13–2.23 of reach beyond the clip radius stops contributing anything.
+
+**Measured, on the current code, whose set is the band and not the clipped volume** — `curve`,
+iteration 1, the same six (segment, obstacle) pairs: the band covers 100%, 86.9%, 100%, 100%,
+61.1% and 99.8% of the true tube material lying inside the reach ball. So **today the soundness
+flag is more pessimistic than today's geometry** — it reports "not covered" on pairs the band
+happens to cover in full, and it cannot report the two pairs where coverage is genuinely partial as
+anything more specific. After the fix the flag and the geometry agree: what the flag reports is
+what the wall actually protects. *(These percentages describe the pre-fix code. They are diagnostic
+numbers, not paper numbers, and must be re-measured after the change.)*
 
 **So this construction is not sound by construction.** It is adopted because its failure is
 **detectable**, by the check below.
 
-**It is one line from being sound.** Statement (8) in the formal section: clamp the clip radius
-below by `E + Δ√(d+1)` instead of letting it shrink to the tangent value, and the certificate
-covers the full tube unconditionally. The price is conservatism exactly where the constraint is
-active. **Which of the two to use is an open experimental question** — the tangent form goes in
-first, and the fallbacks stand: more segments, centre on the contact point, reach filtering,
-adaptive growth. If a reviewer asks for a guarantee, there is not one — there is
-a check. Say so in the limitations section rather than letting it be found.
+**It is one line from being sound.** The one-line repair in the formal section: clamp the clip
+radius below by `E + Δ√(d_spatial+1)` instead of letting it shrink to the tangent value, and the
+certificate covers the full tube unconditionally. The price is conservatism exactly where the
+constraint is active — and by the argument above, conservatism is a step-size cost, not a
+correctness cost. **Which of the two to use is an open experimental question** — the tangent form
+goes in first, and the fallbacks stand: more segments, centre on the contact point, reach
+filtering, adaptive growth. If a reviewer asks for a guarantee, there is not one — there is a
+check. Say so in the limitations section rather than letting it be found.
 
 ## Verification — the only thing that certifies
 
@@ -236,18 +362,22 @@ nothing keeps the iterate inside the region where its own constraints are valid.
 # Formulation — rigorous statement
 
 The prose above is the reading guide; this section is the object. Every claim the paper makes
-about correctness must be traceable to a numbered statement here.
+about correctness must be traceable to a statement here. **The statements carry no numbers** —
+refer to each by what it says ("the result that a Bézier segment lies in the hull of its control
+points"), not by a label, so that inserting or removing one cannot silently invalidate a
+cross-reference elsewhere.
 
 ## Notation
 
-Spatial dimension $d$; the lifted space is $\mathbb{R}^{d+1}$ with a point written
-$z=(x,\tau)$, $x\in\mathbb{R}^{d}$, $\tau\in\mathbb{R}$. **The axis scale is $1$**, so the
-Euclidean norm $\lVert\cdot\rVert$ on $\mathbb{R}^{d+1}$ mixes space and time on equal terms.
+**Spatial dimension $d_{\mathrm{spatial}}$**, spelled out because the bare $d$ is the
+centroid-to-centreline distance. The lifted space is $\mathbb{R}^{d_{\mathrm{spatial}}+1}$ with a point written
+$z=(x,\tau)$, $x\in\mathbb{R}^{d_{\mathrm{spatial}}}$, $\tau\in\mathbb{R}$. **The axis scale is $1$**, so the
+Euclidean norm $\lVert\cdot\rVert$ on $\mathbb{R}^{d_{\mathrm{spatial}}+1}$ mixes space and time on equal terms.
 Every ball, distance and projection below is taken in that norm. This is the formal content of
 "no axis is privileged" — remove it and none of what follows is defined.
 
-Decision variable: control points $P_0,\dots,P_N\in\mathbb{R}^{d+1}$, $P_j=(x_j,t_j)$, stacked
-into $\mathbf p\in\mathbb{R}^{(N+1)(d+1)}$.
+Decision variable: control points $P_0,\dots,P_N\in\mathbb{R}^{d_{\mathrm{spatial}}+1}$, $P_j=(x_j,t_j)$, stacked
+into $\mathbf p\in\mathbb{R}^{(N+1)(d_{\mathrm{spatial}}+1)}$.
 
 Curve, with $u\in[0,1]$ the curve parameter — **not** time:
 
@@ -260,7 +390,7 @@ De Casteljau subdivision into $M$ segments gives row-stochastic matrices $A^{(k)
 $$Q^{(k)}_i=\sum_j A^{(k)}_{ij}P_j,\qquad
 c^{(k)}=\tfrac1{N+1}\sum_i Q^{(k)}_i=\sum_j w^{(k)}_j P_j,\quad w^{(k)}_j\ge0,\ \textstyle\sum_j w^{(k)}_j=1 .$$
 
-**(H) Hull property.** For $u$ in segment $k$'s parameter interval, $Z(u)\in\operatorname{conv}\{Q^{(k)}_i\}_{i=0}^{N}$.
+**Hull property.** For $u$ in segment $k$'s parameter interval, $Z(u)\in\operatorname{conv}\{Q^{(k)}_i\}_{i=0}^{N}$ — *a Bézier segment lies in the convex hull of its own control points.*
 
 Segment radius: $E^{(k)}=\max_i\lVert Q^{(k)}_i-c^{(k)}\rVert$.
 
@@ -273,72 +403,131 @@ $$\gamma_m(\tau)=\bigl(\pi_m(\tau),\tau\bigr),\qquad
 \mathcal K_m=\Gamma_m\oplus \bar B(0,r_m).$$
 
 $\Gamma_m$ is a curve, so $\mathcal K_m$ is **not convex** unless $\pi_m$ is affine. It therefore
-admits no supporting half-space, and (H) alone certifies nothing against it.
+admits no supporting half-space covering the whole of it, and the hull property alone certifies
+nothing against it.
 
 ## The clip
 
 With $c=c^{(k)}$ fixed at the reference iterate:
 
 $$\tau^\star\in\arg\min_{\tau\in[T^0_m,T^1_m]}\lVert c-\gamma_m(\tau)\rVert,\qquad
-f=\gamma_m(\tau^\star),\qquad R=\lVert c-f\rVert,$$
+f=\gamma_m(\tau^\star),\qquad d=\lVert c-f\rVert,$$
 
-$$\boxed{\ \rho=\min\bigl(R,\;R_{\max}\bigr),\qquad
-R_{\max}=r_m+E^{(k)}+\Delta\sqrt{d+1}\ }$$
+$$\boxed{\ r_clip=\min\bigl(d,\;r_{\mathrm{clip,max}}\bigr),\qquad
+r_{\mathrm{clip,max}}=r_m+E^{(k)}+\Delta\sqrt{d_{\mathrm{spatial}}+1}\ }$$
 
-$$\mathcal K_m^{(k)}=\mathcal K_m\cap \bar B(c,\rho)\qquad\text{(the clipped piece).}$$
+$$\mathcal L^{(k)}_m=\mathcal K_m\cap \bar B(c,r_clip)\qquad\text{(the \textbf{clipped KOZ volume}).}$$
 
-$\bar B(c,R)$ is tangent to $\Gamma_m$ at $f$. $\tau^\star$ need not be unique; any minimiser
+In words: $d$ is the distance from the segment centroid to the nearest point of the obstacle's
+lifted centreline; $r_{\mathrm{clip}}$ is the clipping radius, that distance capped; the clipped KOZ volume is the
+part of the keep-out zone that lies inside the ball of radius $r_{\mathrm{clip}}$ about the centroid.
+$\bar B(c,d)$ is tangent to $\Gamma_m$ at $f$. $\tau^\star$ need not be unique; any minimiser
 serves, and non-uniqueness is exactly the bend case that makes $f$ discontinuous in $\mathbf p$.
 
-## Over-approximation
+**Connected components.** $\mathcal L^{(k)}_m$ **may consist of several connected components** —
+a centreline that leaves the ball and re-enters it puts two separate lumps of tube inside the same
+ball. **Each component gets its own wall.** One wall per $(k,m,\ell)$ with $\ell$ indexing the
+components, never one wall per $(k,m)$. Fusing the components into a single lump is not a
+conservative simplification here; it is the opposite of what is wanted, because the fused lump
+spans the gap the trajectory is entitled to pass through.
 
-**(1) Containment of the clip in a centreline band.** Let
-$I=\{\tau:\lVert\gamma_m(\tau)-c\rVert\le\rho+r_m\}$. Then
+## The outer approximation, and why it is not the clipped volume
 
-$$\mathcal K_m\cap\bar B(c,\rho)\ \subseteq\ \gamma_m(I)\oplus\bar B(0,r_m).$$
+**Containment of the clip in a centreline band.** Let
+$I=\{\tau:\lVert\gamma_m(\tau)-c\rVert\le r_clip+r_m\}$. Then
+
+$$\mathcal K_m\cap\bar B(c,r_clip)\ \subseteq\ \gamma_m(I)\oplus\bar B(0,r_m).$$
 
 *Proof.* Let $z$ be in the left side. Some $\tau$ has $\lVert z-\gamma_m(\tau)\rVert\le r_m$, and
-$\lVert z-c\rVert\le\rho$, so $\lVert\gamma_m(\tau)-c\rVert\le r_m+\rho$, i.e. $\tau\in I$. $\square$
+$\lVert z-c\rVert\le r_clip$, so $\lVert\gamma_m(\tau)-c\rVert\le r_m+r_clip$, i.e. $\tau\in I$. $\square$
 
-**(2) Hulling and inflating commute.** $\operatorname{conv}(S\oplus\bar B(0,r))=\operatorname{conv}(S)\oplus\bar B(0,r)$.
+**Hulling and inflating commute.** $\operatorname{conv}(S\oplus\bar B(0,r))=\operatorname{conv}(S)\oplus\bar B(0,r)$ — so
+convexifying the **centreline** and inflating is the same as convexifying the tube.
 
-So it suffices to convexify the **centreline**, never the tube.
+**Exact convexification of the band when the motion is polynomial.** If $\pi_m$ has degree $N_m$
+then $\gamma_m$ is a Bézier curve in $\mathbb{R}^{d_{\mathrm{spatial}}+1}$ with control points $G_0,\dots,G_{N_m}$.
+Decompose $I$ into its connected components $I_1,\dots,I_C$; for each component take
+$[\alpha_\ell,\beta_\ell]=[\min I_\ell,\max I_\ell]$ and let $\tilde G^{(\ell)}_0,\dots,\tilde
+G^{(\ell)}_{N_m}$ be its De Casteljau subdivision control points. By the hull property applied to
+the obstacle, $\gamma_m([\alpha_\ell,\beta_\ell])\subseteq\mathcal
+G_\ell:=\operatorname{conv}\{\tilde G^{(\ell)}_l\}$, and
 
-**(3) Exact convexification when the motion is polynomial.** If $\pi_m$ has degree $N_m$ then
-$\gamma_m$ is a Bézier curve in $\mathbb{R}^{d+1}$ with control points $G_0,\dots,G_{N_m}$. Take
-any interval $[\alpha,\beta]\supseteq I$ — e.g. $[\min I,\max I]$, valid even when $I$ is
-disconnected — and let $\tilde G_0,\dots,\tilde G_{N_m}$ be its De Casteljau subdivision control
-points. By (H) applied to the obstacle,
-$\gamma_m([\alpha,\beta])\subseteq\mathcal G:=\operatorname{conv}\{\tilde G_l\}$. Define
+$$\mathcal H_\ell=\mathcal G_\ell\oplus\bar B(0,r_m)$$
 
-$$\boxed{\ \mathcal H=\mathcal G\oplus\bar B(0,r_m)\ }$$
+is convex. **Never take $[\min I,\max I]$ across all of $I$**: that bridges the gaps between
+components and fuses walls that must stay separate.
 
-Then $\mathcal H$ is convex and $\mathcal K_m^{(k)}\subseteq\mathcal H$ by (1)–(3).
+**$\mathcal H_\ell$ is an OUTER APPROXIMATION of the clipped KOZ volume, not equal to it.** The
+inclusion $\mathcal L^{(k)}_m\subseteq\bigcup_\ell\mathcal H_\ell$ holds, and it is **strict in
+general**: intersection distributes over neither the hull nor the Minkowski sum, so
+$(\Gamma_m\oplus\bar B(0,r_m))\cap\bar B(c,r_clip)$ is strictly smaller than
+$\operatorname{conv}(\text{selected centreline})\oplus\bar B(0,r_m)$. **The ball selects a
+parameter range; it does not cut the set.** Measured on the current code, scenario `curve`,
+iteration 1, all six $(k,m)$ pairs: $\mathcal H$ extends $1.13$ to $2.23$ beyond the clip radius
+$r_{\mathrm{clip}}$ — up to $4.7r_clip$. *(Pre-fix diagnostic; re-measure after the change.)*
 
 **No sampling anywhere.** Hulling sampled centreline points would give a set that a curve bulges
 *outside of*, breaking containment; recovering it needs a chord-error inflation. Subdividing the
 obstacle's own Bézier removes the error rather than bounding it.
 
-## The supporting half-space
+## The wall — a support of the clipped KOZ volume
 
-Let $y^\star=\arg\min_{y\in\mathcal G}\lVert c-y\rVert$ (projection onto a polytope; a small QP).
-Assume $\lVert c-y^\star\rVert>r_m$, i.e. $c\notin\mathcal H$. Set
+Work per connected component; write $\mathcal L$ for one component of $\mathcal L^{(k)}_m$ and
+assume $c\notin\mathcal L$. Set
 
-$$\boxed{\ n=\frac{c-y^\star}{\lVert c-y^\star\rVert},\qquad b=n^\top y^\star+r_m\ }$$
+$$\boxed{\ y^\star\in\arg\min_{y\in\mathcal L}\lVert c-y\rVert,\qquad
+n=\frac{c-y^\star}{\lVert c-y^\star\rVert},\qquad
+b=\max_{z\in\mathcal L} n^\top z\ =\ h_{\mathcal L}(n)\ }$$
 
-**(4) $\mathcal H\subseteq\{z:n^\top z\le b\}$.**
+In words: $y^\star$ is the point of the clipped KOZ volume nearest the segment centroid; $n$ points
+from it back to the centroid; and $b$ is the **support** of the clipped KOZ volume in direction
+$n$ — the largest value the linear functional $n^\top z$ takes on it. The plane $n^\top z=b$
+therefore rests on the volume's most protruding point along $n$, which is in general **not**
+$y^\star$.
 
-*Proof.* $\mathcal G$ is convex and $y^\star$ is the projection of $c$ onto it, so the variational
-inequality $(c-y^\star)^\top(y-y^\star)\le0$ holds for all $y\in\mathcal G$, i.e.
-$n^\top y\le n^\top y^\star$. Any $z\in\mathcal H$ is $y+v$ with $y\in\mathcal G$,
-$\lVert v\rVert\le r_m$, so $n^\top z\le n^\top y^\star+r_m=b$. $\square$
+**Support functions do not see convexity.** For any compact set $S$ and any direction $n$,
+
+$$h_S(n)=\max_{z\in S}n^\top z=\max_{z\in\operatorname{conv}S}n^\top z=h_{\operatorname{conv}S}(n),$$
+
+because the maximum of a linear functional over the hull of a compact set is attained at an extreme
+point of that hull, and every extreme point of $\operatorname{conv}S$ belongs to $S$ itself. *In
+words: hulling never lets a set reach further in any direction, so a set and its convex hull have
+identical supports.* **Consequence: the wall built against
+$\mathcal L$ and the wall built against $\operatorname{conv}\mathcal L$ are the same wall.**
+Convexifying $\mathcal L$ costs nothing and gains nothing, and **the convexity of $\mathcal L$ is
+irrelevant to the construction** — this is why no convex over-approximation of the clipped volume
+is needed to define the plane.
+
+**Half-space containment.** $\mathcal L\subseteq\{z:n^\top z\le b\}$, immediately from the
+definition of $b$; and by the identity above, $\operatorname{conv}\mathcal L$ satisfies the same
+inclusion. No convexity assumption on $\mathcal K_m$ is used anywhere in this step.
 
 **This is the step the tangent plane fails.** Taking $n$ from $c-f$ and $b$ from the tube surface
-at $f$ satisfies (4) only when $\mathcal K_m$ is convex. Measured counterexample: obstacle on a
-circle of radius $10$ at $0.5$ rad/s, $r_m=1$, $c$ inside the turn — $12.35\%$ of the clipped
-piece lands strictly on the safe side of the tangent plane, worst point $0.77$ inside it and
-$0.99$ from the centreline. The projection onto $\mathcal G$ moves the normal by $1.19^\circ$ and
-the offset by $0.76$, and removes every violation.
+at $f$ is valid only when $\mathcal K_m$ is convex, because then and only then is the tube's
+tangent plane a support of it. Measured counterexample: obstacle on a circle of radius $10$ at
+$0.5$ rad/s, $r_m=1$, $c$ inside the turn — $12.35\%$ of the clipped KOZ volume lands strictly on
+the safe side of the tangent plane, worst point $0.77$ inside it and $0.99$ from the centreline.
+*(The accompanying "normal moves $1.19^\circ$, offset moves $0.76$" was measured against the
+projection onto $\mathcal G$, i.e. against the outer approximation, and is **stale** for the
+support plane. Re-measure before quoting.)*
+
+**Existence is not automatic when the ball is centred at $c$.** The construction above needs
+$c\notin\mathcal L$, and a wall that actually separates additionally needs $n^\top c>b$, which can
+fail when $\mathcal L$ wraps around the centroid. Two cases matter and both are handled:
+
+- **Centroid inside the KOZ (deep penetration).** Then $y^\star=c$ and the direction is undefined.
+  Rule: project $c$ onto the **un-inflated** centreline hull $\mathcal G_\ell$ and set
+  $b=n^\top y^\star+r_m$, i.e. push the offset out by the obstacle radius. **This is the outer
+  approximation's plane, not the support plane of $\mathcal L$** — the two differ, and this branch
+  is a deliberate fallback rather than an equivalent recipe. It is kept because it stays defined
+  when the centroid is inside. **Keep it.
+  Refusing a wall in this case was a measured defect** — on `diverse` at $8$ segments the single
+  penetrating pair got no row, and the constraint-residual certificate reported $4.6\times10^{-13}$
+  for a trajectory penetrating by $0.219$.
+- **Wrapping.** Centring the ball on the centreline point $f$ instead, with radius
+  $\min(\lVert c-f\rVert,r_{\mathrm{clip,max}})$, makes $c$ an extreme point of the ball, so $c$ can
+  never lie in $\operatorname{conv}\mathcal L$ and a wall always exists. That variant is **pinned**,
+  with its measured properties, in the prose section "Where the ball is centred".
 
 ## Rows and the segment certificate
 
@@ -348,55 +537,74 @@ $$n^\top Q^{(k)}_i\ \ge\ b,\qquad i=0,\dots,N
 \qquad\Longleftrightarrow\qquad
 n^\top\!\!\sum_j A^{(k)}_{ij}P_j\ \ge\ b .$$
 
-**(5) Segment certificate.** If those $N+1$ rows hold, then $Z(u)\notin\operatorname{int}\mathcal H$
-for every $u$ in segment $k$, hence $Z(u)\notin\operatorname{int}\bigl(\mathcal K_m\cap\bar B(c,\rho)\bigr)$.
+**Segment certificate.** If those $N+1$ rows hold, then $n^\top Z(u)\ge b$ for every $u$ in
+segment $k$, hence $Z(u)\notin\operatorname{int}\mathcal L$ — *the curve does not enter the
+interior of the clipped KOZ volume.*
 
-*Proof.* By (H), $Z(u)=\sum_i\lambda_iQ^{(k)}_i$ with $\lambda\ge0$, $\sum\lambda_i=1$. Linearity
-gives $n^\top Z(u)\ge b$; apply (4). $\square$
+*Proof.* By the hull property, $Z(u)=\sum_i\lambda_iQ^{(k)}_i$ with $\lambda\ge0$,
+$\sum\lambda_i=1$; linearity gives $n^\top Z(u)\ge b$. If $z\in\operatorname{int}\mathcal L$ then
+some ball about $z$ lies in $\mathcal L$, so $n^\top z+\varepsilon\le b$ for some $\varepsilon>0$,
+i.e. $n^\top z<b$. A point with $n^\top Z(u)\ge b$ is therefore not an interior point of
+$\mathcal L$. $\square$
 
-One plane per $(k,m)$. Per-control-point planes destroy (5): the step from $Q_i$ to $Z(u)$ uses
-the *same* $n$ for all $i$, and with differing normals the hull can wrap the tube.
+*Note what this proof does not use: nowhere does it assume $\mathcal L$ is convex. Only the hull
+property, linearity, and the definition of the support $b$ are used.*
+
+One plane per $(k,m,\ell)$ — segment, obstacle, connected component. Per-control-point planes
+destroy the certificate: the step from $Q_i$ to $Z(u)$ uses the *same* $n$ for all $i$, and with
+differing normals the hull can wrap the tube.
 
 ## Reachability, and exactly when the certificate covers $\mathcal K_m$
 
-(5) certifies against $\mathcal K_m\cap\bar B(c,\rho)$, **not** against $\mathcal K_m$. The
-difference is closed by the trust region and nothing else.
+The segment certificate certifies against $\mathcal K_m\cap\bar B(c,r_clip)$, **not** against
+$\mathcal K_m$. The difference is closed by the trust region and nothing else.
 
-**(6) Reachability.** If $\lVert\mathbf p^{+}-\mathbf p\rVert_\infty\le\Delta$ then for every $u$
-in segment $k$, $Z^{+}(u)\in\bar B\!\left(c,\;E^{(k)}+\Delta\sqrt{d+1}\right)$.
+**Reachability.** If $\lVert\mathbf p^{+}-\mathbf p\rVert_\infty\le\Delta$ then for every $u$
+in segment $k$, $Z^{+}(u)\in\bar B\!\left(c,\;E^{(k)}+\Delta\sqrt{d_{\mathrm{spatial}}+1}\right)$.
 
 *Proof.* $Q^{+}_i-Q_i=\sum_jA^{(k)}_{ij}(P^{+}_j-P_j)$ is a convex combination of vectors of
 $\infty$-norm at most $\Delta$, so $\lVert Q^{+}_i-Q_i\rVert_\infty\le\Delta$ and
-$\lVert Q^{+}_i-Q_i\rVert\le\Delta\sqrt{d+1}$. Hence
-$\lVert Q^{+}_i-c\rVert\le E^{(k)}+\Delta\sqrt{d+1}$, and the ball is convex, so it contains
+$\lVert Q^{+}_i-Q_i\rVert\le\Delta\sqrt{d_{\mathrm{spatial}}+1}$. Hence
+$\lVert Q^{+}_i-c\rVert\le E^{(k)}+\Delta\sqrt{d_{\mathrm{spatial}}+1}$, and the ball is convex, so it contains
 $\operatorname{conv}\{Q^{+}_i\}\ni Z^{+}(u)$. $\square$
 
-**(7) Soundness condition.**
+**Soundness condition.**
 
-$$\boxed{\ \rho\ \ge\ E^{(k)}+\Delta\sqrt{d+1}\ }$$
+$$\boxed{\ r_clip\ \ge\ E^{(k)}+\Delta\sqrt{d_{\mathrm{spatial}}+1}\ }$$
 
-Under (7), $\bar B(c,\rho)$ contains the whole next-iterate segment, so (5) certifies it against
-the **full** $\mathcal K_m$. Note (7) does not involve $r_m$ or the obstacle at all.
+*In words: the clipping radius is at least the segment's own radius about its centroid plus the
+furthest one trust step can carry a control point.* Under it, $\bar B(c,r_clip)$ contains the whole
+next-iterate segment, so the segment certificate certifies against the **full** $\mathcal K_m$.
+Note it does not involve $r_m$ or the obstacle at all.
 
-Three regimes for $\rho=\min(R,R_{\max})$:
+**With the wall built against the clipped KOZ volume, this condition is exactly coverage — there
+is nothing else.** Under the retired outer approximation the wall also happened to hold back
+material out to $\mathcal H$'s overshoot, so the flag could be pessimistic relative to the
+geometry; measured on the current code, the band covers $100\%$, $86.9\%$, $100\%$, $100\%$,
+$61.1\%$ and $99.8\%$ of the true tube material inside the reach ball over the six pairs of
+`curve` at iteration 1. Once the wall is the support of $\mathcal L$, no such accidental coverage
+exists and flag and geometry agree. *(Pre-fix diagnostic; re-measure after the change.)*
 
-| regime | $\rho$ | (7) holds? |
+Three regimes for $r_clip=\min(d,r_{\mathrm{clip,max}})$:
+
+| regime | $r_{\mathrm{clip}}$ | sound? |
 |---|---|---|
-| $R>R_{\max}$ — obstacle out of reach | $R_{\max}=r_m+E+\Delta\sqrt{d+1}$ | **yes**, and the clip is empty so no row is emitted |
-| $E+\Delta\sqrt{d+1}\le R\le R_{\max}$ | $R$ | **yes** |
-| $r_m<R<E+\Delta\sqrt{d+1}$ — segment close | $R$ | **no — this is the hole** |
+| $d>r_{\mathrm{clip,max}}$ — obstacle out of reach | $r_{\mathrm{clip,max}}=r_m+E+\Delta\sqrt{d_{\mathrm{spatial}}+1}$ | **yes**, and no row is needed: the segment cannot reach $\mathcal K_m$ in one step. (The clip is not yet *empty* here — that happens only past $d=r_{\mathrm{clip,max}}+r_m$ — so this is a reachability test, not an emptiness test.) |
+| $E+\Delta\sqrt{d_{\mathrm{spatial}}+1}\le d\le r_{\mathrm{clip,max}}$ | $d$ | **yes** |
+| $r_m<d<E+\Delta\sqrt{d_{\mathrm{spatial}}+1}$ — segment close | $d$ | **no — this is the hole** |
 
-So the cap is free: it only acts where the row cannot bind, and it preserves (7). The hole is at
-*small* $R$, i.e. exactly when the constraint binds.
+So the cap is free: it only acts where the row cannot bind, and it preserves soundness. The hole is
+at *small* $d$, i.e. exactly when the constraint binds.
 
-**(8) The one-line repair, and its price.** Replacing the clip radius by
+**The one-line repair, and its price.** Replacing the clip radius by
 
-$$\rho=\operatorname{clip}\!\left(R,\ E^{(k)}+\Delta\sqrt{d+1},\ R_{\max}\right)$$
+$$r_clip=\operatorname{clip}\!\left(d,\ E^{(k)}+\Delta\sqrt{d_{\mathrm{spatial}}+1},\ r_{\mathrm{clip,max}}\right)$$
 
-makes (7) hold unconditionally and the construction **sound by construction**. It costs
-conservatism precisely where the constraint is active, because the ball is then larger than the
-distance to the obstacle and $\mathcal G$ covers more centreline. **Which of the two is used is an
-open experimental question, not a settled one** — the tangent form is being implemented first.
+makes the soundness condition hold unconditionally and the construction **sound by construction**.
+It costs conservatism precisely where the constraint is active, because the ball is then larger
+than the distance to the obstacle and more centreline is selected. By the step-size argument in the
+prose, that conservatism is paid in iterations, not in correctness. **Which of the two is used is
+an open experimental question, not a settled one** — the tangent form is being implemented first.
 
 ## The subproblem
 
@@ -410,15 +618,15 @@ subject to, with $\mathbf p^{\mathrm{ref}}$ the reference iterate:
 | boundary | $P_0=z^{\text{start}}$; $x_N=x^{\text{goal}}$; $t_N$ free iff free-arrival |
 | monotonicity | $t_{j+1}-t_j\ \ge\ \delta>0$ |
 | slant limit | $\lVert x_{j+1}-x_j\rVert\ \le\ v_{\max}\,(t_{j+1}-t_j)$ — second-order cone, **no slack** |
-| keep-out | $n_{km}^\top Q^{(k)}_i+\sigma_{kmi}\ \ge\ b_{km}$ |
-| occlusion | same form, per $(k,m,\text{station})$ |
+| keep-out | $n_{km\ell}^\top Q^{(k)}_i+\sigma_{km\ell i}\ \ge\ b_{km\ell}$ — one row block per segment, obstacle **and connected component** $\ell$ |
+| occlusion | same form, per $(k,m,\ell,\text{station})$ |
 | trust region | $\lVert\mathbf p-\mathbf p^{\mathrm{ref}}\rVert_\infty\ \le\ \Delta$ |
 
 **$H$ is blind to timing.** It is assembled only from second differences of the spatial
 coordinates, so $He_{t_j}=0$ for every time-coordinate basis vector: two control-point sets with
 equal spatial coordinates and any time coordinates score identically. *Checked by test.*
 
-**(9) The slant limit is sufficient.** $x'(u)=N\sum_{j}B^{N-1}_j(u)(x_{j+1}-x_j)$ and
+**The slant limit is sufficient.** $x'(u)=N\sum_{j}B^{N-1}_j(u)(x_{j+1}-x_j)$ and
 $\tau'(u)=N\sum_jB^{N-1}_j(u)(t_{j+1}-t_j)$. Since $B^{N-1}_j\ge0$, the triangle inequality gives
 
 $$\lVert x'(u)\rVert\le N\!\sum_j B^{N-1}_j(u)\lVert x_{j+1}-x_j\rVert
@@ -434,11 +642,11 @@ $$\boxed{\ \mu(\mathbf p)=\min_{u\in[0,1]}\ \ \min_{m:\ \tau(u)\in[T^0_m,T^1_m]}
 \bigl\lVert x(u)-\pi_m(\tau(u))\bigr\rVert-r_m\ }$$
 
 Spatial distance at each sample's **own** time, minus the radius, obstacles skipped outside their
-own existence window. It touches neither $n$, $b$, $\mathcal G$, $\rho$, nor the axis scale, so it
+own existence window. It touches neither $n$, $b$, $\mathcal L$, $r_{\mathrm{clip}}$, nor the axis scale, so it
 is independent of everything it checks. The run is feasible iff $\mu>0$.
 
-$\mu$ is the only statement made about $\mathcal K_m$ itself. Everywhere (7) fails, it is the only
-statement there is.
+$\mu$ is the only statement made about $\mathcal K_m$ itself. Everywhere the soundness condition
+fails, it is the only statement there is.
 
 # Frozen decisions that survived the change
 
@@ -527,8 +735,19 @@ Consequence — hiding is cheaper than avoiding:
 ## The shadow in the lifted space
 
 At each instant the shadow is convex, but the cone swings as the obstacle moves, so the shadow
-volume in the lifted space is **not** convex. It gets the identical treatment as the tube: clip to
-the same local ball, take the convex hull of the clipped piece, one supporting half-space.
+volume in the lifted space is **not** convex. It gets the identical treatment as the tube, and that
+treatment is now the corrected one: clip the shadow volume to the same local ball about the segment
+centroid to get the **clipped shadow volume**; take the point of that volume nearest the centroid;
+take the unit direction from it back to the centroid; and set the offset to the **support of the
+clipped shadow volume in that direction** — its most protruding point along the normal. One wall
+per connected component, imposed on every control point of the segment.
+
+**Do not take the convex hull of the clipped shadow volume and build the plane against that.** As with the
+KOZ, that hull is a strict **outer approximation** of the clipped shadow volume, because
+intersection distributes over neither hulling nor inflation. It is also unnecessary: a set and its
+convex hull have the same support in every direction, so the wall against the clipped shadow volume
+*is* the wall against its hull. **Convexity of the clipped shadow volume is not required by the
+construction** — which is what makes the non-convexity measured below survivable rather than fatal.
 
 **Measured 2026-08-19 — the check ran and it can fail.** The space-time shadow of a moving occluder
 is not convex, and the mechanism is not the one originally predicted: the half-angle change from
@@ -626,27 +845,6 @@ One pass, after the new construction lands. Nothing before it may be quoted.
 - the shadow convexity sweep, re-measured for ball-defined pieces;
 - solve time against Osburn's half-second single-obstacle and roughly four-second cluttered cases,
   on the same solver and comparable hardware.
-
-# Weakest links
-
-Ranked by damage if wrong. **Re-ranked 2026-08-21 — the previous top item is no longer the top
-item.**
-
-1. **The clip is not sound by construction.** Its hole is at bends, which is exactly the case this
-   paper is about, and the mitigation is detection rather than prevention. A reviewer asking for a
-   guarantee gets a check instead. This is new, it is the largest risk, and it must be stated in
-   the paper rather than found.
-2. **MADER's fixed-knot time allocation** is the pivot of the comparison table, and it reached us
-   through a fetch summariser rather than the source. The solver workstream read MADER in full and
-   its quoted equation is consistent, but that specific sentence is unconfirmed. Confirm it before
-   the formulation section relies on it.
-3. **The shadow lemma is ours** and nobody else has reviewed it.
-4. **"No paper does this" is weaker than a proof.** No decomposition-free space-time formulation
-   was found, but absence of evidence is not proof of absence.
-5. **Erdmann and Lozano-Pérez, 1987, is unverified** — the archived copy is a scan with no text
-   layer. Lineage citation only; nothing load-bearing rests on it.
-
----
 
 # Open
 
