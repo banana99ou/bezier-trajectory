@@ -338,9 +338,109 @@ def scenario_station_fence() -> dict:
         "obstacles": piece_a + piece_b,
         "start": [0.5, 5.0, 0.5, 0.0],
         "end": [9.5, 5.0, 0.5, 10.0],
-        # The only scenario carrying this key. Its absence everywhere else is
-        # what keeps every other scenario's problem bit-identical to pre-B12.
+        # One of the two scenarios carrying this key (`station_gate` is the
+        # other). Its absence everywhere else is what keeps every other
+        # scenario's problem bit-identical to pre-B12.
         "stations": [[5.0, -2.0, 0.3]],
+        "T": 10.0,
+    }
+
+
+def scenario_station_gate() -> dict:
+    """A holding stack sweeps past the corridor, and the link is lost unless the vehicle climbs.
+
+    The paper's demo scenario, and the replacement for `station_fence`, whose
+    occluder is a chain of straight pieces on adjacent time windows -- the
+    pre-2026-08-21 construction, which needed every piece convex. Here the
+    occluder is ONE degree-4 Bezier per body, so its tube is genuinely
+    non-convex and has no global supporting half-space. That is the case the
+    clipped-volume construction exists for.
+
+    The vehicle transits an air-mobility corridor past a vertiport. Traffic
+    holding at that vertiport flies a pattern whose leg swings toward the
+    corridor at t=3, away from it at t=5, and back at t=7, passing between the
+    vehicle and the ground station on the way.
+
+    Geometry, and why each piece of it is where it is.
+
+    * The **body** is six overlapping spheres of radius 0.8, spaced 0.8 apart
+      across x in [3, 7]: sequenced traffic on one holding track, not a single
+      aircraft. It is written wide because the sight line has to be blocked
+      head-on -- a single sphere is walked around in x for nothing. Reading a
+      row of spheres as a queue of aircraft is a MODELLING CHOICE and is stated
+      as one; so is the fact that a real corridor's lateral bounds, which this
+      scenario format cannot express, are part of why going around is not the
+      obvious answer.
+    * The centreline's **y control points are [3.5, 3.5, -4.5, 3.5, 3.5]**,
+      putting the curve at y=3.50 at t=3 and t=7 and at y=0.50 at t=5. The
+      control polygon dips to -4.5 while the curve only reaches 0.50; that is
+      ordinary Bezier behaviour, and the obstacle IS the curve, so nothing is
+      approximated.
+    * The body therefore **never comes within a body radius of the corridor**:
+      the gap in y is at least 1.5 against a radius of 0.8. The keep-out rows
+      are present and are not expected to bind, exactly as in `station_fence`
+      and for the same reason -- staying visible already implies staying out of
+      the body, and the keep-out machinery is demonstrated elsewhere.
+    * The **time control points are evenly spaced and z is constant**. Neither
+      is stylistic: `geometry.obstacle_positions_at` inverts time by division
+      and assumes the time column is affine in the curve parameter.
+    * The body is **active only on [3, 7]** of a horizon of 10, and that window
+      is intrinsic to the first and last control point's time coordinate, so the
+      pinned endpoints sit outside it and the problem is feasible.
+    * The **station** sits at (5.0, -6.0, 0.5), abeam the mid-path on the far
+      side in y, so the sight line crosses the body head-on while the body is
+      swung out and the only way through is over the top.
+
+    What this scenario DOES exercise, and what it does not.
+
+    The clipped keep-out volume of this occluder **splits into two connected
+    components** -- the leg approaching and the leg departing, separated in TIME
+    rather than in space -- and the two walls that come out of it carry time
+    components of opposite sign: one says *after it passes*, the other says
+    *before it returns*. On the straight seed at N=8, 8 segments, trust 0.5,
+    four of the forty-eight (segment, obstacle) pairs have two components. It is
+    the only scenario in this repository that does.
+
+    It is **not** the case that the returned trajectory threads that gap. The
+    occlusion rows drive the vehicle up and away from the body, and a segment
+    that far away has a clip ball that reaches only one leg, so on the converged
+    iterate the count is back to one everywhere. The two demonstrations pull in
+    opposite directions and this scenario resolves it in favour of occlusion: an
+    altitude ceiling would be needed to make the time slot the cheaper answer,
+    and the scenario format has no way to write one. Do not claim the temporal
+    gate as the demonstrated behaviour on the strength of this scenario.
+
+    The baseline that must be able to fail: with the occlusion rows removed the
+    vehicle never leaves cruise altitude and the sight line is blocked for the
+    whole of the body's active window. All of it is re-measured by
+    `tests/integration/test_station_gate_scenario.py` -- a number in a docstring
+    cannot fail.
+    """
+    radius = 0.8
+    body_z = 0.45
+    # Nearest the corridor at the window's ends, swung out at its middle. y=-4.5
+    # is a control point, not a place the obstacle is ever at: the curve runs
+    # from y=3.50 at t=3 to y=0.50 at t=5 and back.
+    y_ctrl = [3.5, 3.5, -4.5, 3.5, 3.5]
+    t_ctrl = [3.0, 4.0, 5.0, 6.0, 7.0]
+    xs = [3.0, 3.8, 4.6, 5.4, 6.2, 7.0]
+    obstacles = [
+        {
+            "control_points": [[x, y, body_z, t] for y, t in zip(y_ctrl, t_ctrl)],
+            "radius": radius,
+            "color": "#e67e22",
+            "name": f"H{idx}",
+        }
+        for idx, x in enumerate(xs)
+    ]
+    return {
+        "name": "station_gate",
+        "title": "Holding Stack Sweeps the Corridor",
+        "init_curve": {"mode": "straight"},
+        "obstacles": obstacles,
+        "start": [0.5, 5.0, 0.5, 0.0],
+        "end": [9.5, 5.0, 0.5, 10.0],
+        "stations": [[5.0, -6.0, 0.5]],
         "T": 10.0,
     }
 
@@ -379,6 +479,10 @@ SCENARIO_ELASTIC_WEIGHT = {
     # trajectory standing on occlusion slack. Measured at N8_seg8 -- occlusion
     # certificate 0.61 at 100, 0.29 at 800, 0.50 at 3000, and 0.0 at 1e5.
     "station_fence": 100000.0,
+    # PROVISIONAL -- copied from `station_fence` because it is the other
+    # occlusion scenario, NOT measured on this one. Run the ladder before any
+    # number from this scenario is quoted.
+    "station_gate": 100000.0,
 }
 
 
@@ -432,6 +536,16 @@ def scenario_curve() -> dict:
 
 
 SCENARIO_MAP = {
+    # FIRST ON PURPOSE. The frontend has no explicit default scenario: the page
+    # fills its <select> from the catalog's key order and the browser shows the
+    # first option, so whatever is registered first here is what
+    # `python3 -m spacetime_bezier` opens on. Moving this entry silently changes
+    # that, which is why `tests/integration/test_frontend.py` asserts the order.
+    #
+    # Two configs, matching `station_fence` for the reason recorded there: the
+    # occlusion rows re-aim every iteration, so these runs are an order of
+    # magnitude longer than a keep-out-only one.
+    "station_gate": (scenario_station_gate, [(8, 8), (8, 16)]),
     "original": (scenario_original, [(4, 4), (4, 8), (6, 8), (8, 4), (8, 8)]),
     # The only scenario whose obstacle tube is non-convex, which makes it the
     # only one that distinguishes the hull-projection plane from the tangent

@@ -239,6 +239,30 @@ def test_catalog_offers_every_scenario_with_the_agreed_views(server):
     assert catalog["station_fence"]["stations"] == [[5.0, -2.0, 0.3]]
 
 
+def test_the_page_opens_on_station_gate(server):
+    """The catalog's key ORDER is what the page opens on, so it is load-bearing.
+
+    `frontend.html` fills its <select> from `Object.keys(CAT.scenarios)` and the
+    browser shows the first option; there is no explicit default anywhere. So
+    reordering `SCENARIO_MAP` silently changes which scenario
+    `python3 -m spacetime_bezier` lands on, and nothing else would go red.
+
+    FAILS IF: `station_gate` stops being registered first, or the catalog stops
+    preserving registry order.
+    """
+    status, body, _ = get(server, "/api/scenarios")
+    assert status == 200
+    catalog = json.loads(body)["scenarios"]
+    assert list(catalog)[0] == "station_gate", (
+        "the page opens on the first catalog key -- station_gate must stay first "
+        "in SCENARIO_MAP"
+    )
+    assert list(catalog) == list(SCENARIO_MAP), "the catalog must preserve registry order"
+    assert catalog["station_gate"]["dim"] == 4
+    assert catalog["station_gate"]["default_view"] == "xyz"
+    assert catalog["station_gate"]["stations"] == [[5.0, -6.0, 0.5]]
+
+
 def test_axis_banners_say_how_time_is_carried(server):
     """Each view carries the sentence that keeps its picture honest.
 
