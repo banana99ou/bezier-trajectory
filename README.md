@@ -175,6 +175,7 @@ occlusion certificate where a station exists.
 | `fence3d` | N8_seg2 | **+0.1623** | 9 | 100 | **yes — all 4 configs**, first ladder rung. Measured under the name `wall3d`; the rename changed no parameter |
 | `door3d` | N8_seg4 | +0.9827 | 9 | 100 | **yes — both configs**, first ladder rung. Clearance is not the point: the evidence is that the curve **waits** |
 | `station_fence` | N8_seg16 | +1.5454 | 56 | 100000 | **1 of 2.** Clearance is slack by construction (occlusion subsumes keep-out); the binding number is the occlusion certificate **0.000**. **N8_seg8 does not converge**, and did not before this change either |
+| `station_gate` | N8_seg8 | **+2.1673** | 56 | 100000 | **1 of 2 — and this one IS a regression.** N8_seg8 is figure-grade with the occlusion certificate at 0.000. **N8_seg16 certified on the old construction (+1.1398 @1e4, 23 iterations) and does not now** — 200 iterations, 32.2 of elastic slack, never converged. Measured both ways rather than assumed; see below |
 
 **What the clipped-volume construction changed, measured against the same configurations built
 with the retired hull-of-band plane.** Where the obstacle is straight its tube is convex and the
@@ -183,7 +184,16 @@ digits. Where it curves they differ, and the difference is iterations rather tha
 N8_seg8 went from 11 iterations to 39 and from +0.0894 to +0.0919 of clearance, and `curve`
 N10_seg8 now needs the ladder's top rung (1e5) where it used to certify at 800. That is the
 conservatism of a rigorous support ceiling being paid in step size, which is what sequential convex
-programming pays it in. Nothing that certified before stopped certifying.
+programming pays it in.
+
+**One configuration stopped certifying: `station_gate` N8_seg16.** Old construction: converged in
+23 iterations at weight 1e4, clearance +1.1398, figure-grade. New: 200 iterations, never converged,
+32.2 of elastic slack. Its sibling N8_seg8 went the other way — clearance +1.5482 → +2.1673 — but
+needs weight 1e5 where it used to certify at 3000, and 56 iterations where it used to take 25. This
+is the scenario the construction exists for, a genuinely non-convex occluder tube, so it is also
+where the conservatism bites hardest, and at 16 segments it bites past the ladder's reach. **Not
+diagnosed. It is the first thing to look at**, and B6's procedural seeds and multi-start are the
+obvious lever if the cause is a bad local minimum rather than the rows themselves.
 
 **The clip-radius floor fires on the real scenario, not only in the unit tests.** On `curve` at the
 straight seed, segment 1 against the arc has its centroid 0.598 from the centreline of a tube of
@@ -191,8 +201,13 @@ radius 0.9 — inside the keep-out zone — so the clip radius is floored to 0.9
 to 0.598. Sweeping the clip radius over every segment and both obstacles at four trust radii, the
 clipped volume has **exactly one connected component everywhere** and nothing is dropped: time
 monotonicity keeps the lifted tube self-avoiding, so no ball can cut a piece out of its middle. The
-multi-wall path is real and tested (`test_panel_b1_the_ball_severs_the_bend_into_two_walls`) but no
-scenario in this repository exercises it.
+multi-wall path is real and tested (`test_panel_b1_the_ball_severs_the_bend_into_two_walls`), and
+**`station_gate` exercises it in a real run.** Its holding stack sweeps toward the corridor at t=3,
+away at t=5 and back at t=7, so a clip ball near the corridor catches two separated passes of the
+same tube: **32 of 144 (segment, obstacle, trust) probes give two components**, concentrated on
+segments 3 and 4 where the second pass falls. Time monotonicity keeps the lifted tube from touching
+itself; it does not stop a ball catching the same tube twice, and that distinction is what makes
+`curve` single-lump and `station_gate` not.
 
 The elastic weight is part of the result, not a tuning knob: above the exact-penalty threshold the
 penalized and constrained problems share a solution, below it they do not, and the threshold
