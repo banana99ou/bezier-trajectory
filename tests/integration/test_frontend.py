@@ -220,13 +220,18 @@ def test_health_names_this_app_and_its_extension(server):
 
 
 def test_catalog_offers_every_scenario_with_the_agreed_views(server):
-    """The catalog is the whole registry, with the 2026-08-24 view roster.
+    """The catalog is the whole registry, with the agreed view roster.
+
+    The roster is a pair of user decisions: 2026-08-24 removed the
+    dropped-coordinate lift projections ("I just need xy(z)t"), and 2026-08-26
+    brought exactly ONE of them back -- (x,y,t), asked for while designing
+    `loiter`, whose temporal-slot behaviour a spatial view cannot show.
+    (x,z,t) and (y,z,t) stay gone.
 
     FAILS IF: a registered scenario is missing (`viewer.py` dropped the
     4-column scenarios rather than project them, which is what this page exists
-    to fix), a 2D scenario loses the lift or the flat top-down view, or a
-    4-column scenario regrows the dropped-coordinate lift projections the user
-    removed.
+    to fix), a 2D scenario loses the lift or the flat top-down view, or the
+    4-column roster drifts from those two decisions in either direction.
     """
     status, body, _ = get(server, "/api/scenarios")
     assert status == 200
@@ -234,7 +239,7 @@ def test_catalog_offers_every_scenario_with_the_agreed_views(server):
     assert set(catalog) == set(SCENARIO_MAP)
     assert [v["id"] for v in catalog["original"]["views"]] == ["xyt", "xy"]
     assert catalog["original"]["default_view"] == "xyt"
-    assert [v["id"] for v in catalog["fence3d"]["views"]] == ["xyz", "xyz_all"]
+    assert [v["id"] for v in catalog["fence3d"]["views"]] == ["xyz", "xyz_all", "xyt"]
     assert catalog["station_fence"]["default_view"] == "xyz"
     assert catalog["station_fence"]["stations"] == [[5.0, -2.0, 0.3]]
 
@@ -247,10 +252,16 @@ def test_axis_banners_say_how_time_is_carried(server):
     projections from (x,y,z,t), or an undrawable column count grows views.
     """
     views = {v["id"]: v for v in frontend.axis_views(4)}
-    assert set(views) == {"xyz", "xyz_all"}
+    assert set(views) == {"xyz", "xyz_all", "xyt"}
     assert views["xyz"]["kind"] == "spatial" and "slider" in views["xyz"]["banner"]
     assert views["xyz_all"]["kind"] == "spatial_all"
     assert views["xyz_all"]["banner"] == "all three axes are space; TIME is the color"
+    # The 2026-08-26 readmission: the (x,y,t) lift keeps time vertical, and it
+    # must say BOTH that z is gone and that patches are projections.
+    assert views["xyt"]["kind"] == "lift"
+    assert views["xyt"]["cols"] == [0, 1, 3], "time must be the vertical axis"
+    assert views["xyt"]["banner"] == "the VERTICAL axis is TIME"
+    assert "z is dropped" in views["xyt"]["dropped_note"]
     for view in views.values():
         assert "projections from (x,y,z,t)" in view["dropped_note"]
     assert frontend.axis_views(5) == [], "5 columns has no honest projection"
@@ -516,19 +527,22 @@ def test_station_fence_occlusion_normals_carry_no_time_component(station_fence):
     assert moving, "every obstacle here moves; a keep-out plane with no time term is G1"
 
 
-def test_station_fence_offers_the_two_spatial_views(station_fence):
-    """The 4-column scenario is reachable, with the agreed two-view roster.
+def test_station_fence_offers_the_agreed_views(station_fence):
+    """The 4-column scenario is reachable, with the agreed view roster.
+
+    The roster: the two spatial views (2026-08-24 decision) plus the (x,y,t)
+    lift the same user brought back 2026-08-26 for `loiter`'s temporal slot.
 
     FAILS IF: the scenario comes back undrawable (the `viewer.py` behaviour this
-    page replaces), the roster regrows the dropped-coordinate lift projections
-    removed 2026-08-24, the default is not the cursor view, or a view stops
-    declaring its patches projections from the full lifted space.
+    page replaces), the roster drifts from those two decisions in either
+    direction, the default is not the cursor view, or a view stops declaring
+    its patches projections from the full lifted space.
     """
     views = station_fence["scenario"]["views"]
-    assert [v["id"] for v in views] == ["xyz", "xyz_all"]
+    assert [v["id"] for v in views] == ["xyz", "xyz_all", "xyt"]
     assert station_fence["scenario"]["default_view"] == "xyz"
     for view in views:
-        assert view["cols"] == [0, 1, 2]
+        assert view["cols"] == ([0, 1, 3] if view["id"] == "xyt" else [0, 1, 2])
         assert "projections" in view["dropped_note"]
 
 

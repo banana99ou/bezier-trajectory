@@ -127,6 +127,9 @@
     <label class="f">tol</label><input id="tol" type="text">
     <button id="solve">Solve</button>
     <button class="ghost" id="cancelSolve" style="display:none">Cancel solve</button>
+    <button class="ghost" id="reloadScenarios"
+      title="re-read scenarios.py from disk and drop cached results — no server restart. A rebuilt Rust extension still needs one.">
+      Reload scenarios + clear cache</button>
     <div id="status"></div>
     <div id="echo"></div>
   </div>
@@ -760,7 +763,12 @@ function shadowConeTraces() {
     const n1 = Math.hypot(e1[0], e1[1], e1[2]); e1 = e1.map(v => v / n1);
     const e2 = [ax[1] * e1[2] - ax[2] * e1[1], ax[2] * e1[0] - ax[0] * e1[2],
                 ax[0] * e1[1] - ax[1] * e1[0]];
-    const sLo = L * Math.cos(alpha) * Math.cos(alpha), sHi = 2.2 * L;
+    // The cone must reach past everything it could occlude, or the picture
+    // cannot show whether the trajectory is inside it: at 2.2 L it ended
+    // mid-air whenever the body was close to the station and the trajectory
+    // far (user-reported 2026-08-26, `loiter`: body at ~4, vehicle at ~24).
+    const sLo = L * Math.cos(alpha) * Math.cos(alpha),
+          sHi = Math.max(2.2 * L, 1.15 * sceneReach);
     const nS = 10, nTh = 26, X = [], Y = [], Z = [];
     for (let i = 0; i <= nS; i++) {
       const s = sLo + (sHi - sLo) * i / nS, rad = s * tanA;
@@ -780,6 +788,13 @@ function shadowConeTraces() {
   };
   const [ia, ib, ic] = VIEW.space_idx;
   const S3 = [st[ia], st[ib], st[ic]];
+  // Farthest displayed trajectory point from the station: the floor every
+  // drawn cone's length must clear (see sHi in cone3d).
+  let sceneReach = 0;
+  ((RES.solution && RES.solution.curve) || []).forEach(p => {
+    sceneReach = Math.max(sceneReach,
+      Math.hypot(p[ia] - S3[0], p[ib] - S3[1], p[ic] - S3[2]));
+  });
 
   if (VIEW.kind === "spatial_all") {
     // The SOLVER'S conservative bodies, static -- the all-t view shows the
@@ -1400,6 +1415,32 @@ function updateReplayLabel() {
   el.style.color = viol.length ? "var(--bad)" : "";
 }
 
+function fillScenarioSelect(keep) {
+  const sel = $("scenario");
+  sel.innerHTML = "";
+  Object.keys(CAT.scenarios).forEach(k => {
+    const o = document.createElement("option");
+    o.value = k; o.textContent = `${k} — ${CAT.scenarios[k].title}`;
+    sel.appendChild(o);
+  });
+  if (keep && CAT.scenarios[keep]) sel.value = keep;
+}
+
+async function doReload() {
+  // Re-reads scenarios.py and empties the result caches server-side, so the
+  // edit-solve loop is edit -> this button -> Solve, not a server restart.
+  const keep = $("scenario").value;
+  const r = await fetch("/api/reload", { method: "POST" });
+  if (!r.ok) {
+    $("status").textContent = "reload failed: " + ((await r.json()).error || r.status);
+    return;
+  }
+  CAT = await r.json();
+  fillScenarioSelect(keep);
+  applyScenario();
+  $("status").textContent = "scenarios re-read from disk; result caches cleared";
+}
+
 function applyScenario() {
   const sc = CAT.scenarios[$("scenario").value];
   const p = $("preset");
@@ -1434,11 +1475,7 @@ function bindToggle(box, sub) {
 async function boot() {
   CAT = await (await fetch("/api/scenarios")).json();
   const sel = $("scenario");
-  Object.keys(CAT.scenarios).forEach(k => {
-    const o = document.createElement("option");
-    o.value = k; o.textContent = `${k} — ${CAT.scenarios[k].title}`;
-    sel.appendChild(o);
-  });
+  fillScenarioSelect(null);
   const d = CAT.solve_defaults;
   $("trust_radius").value = d.trust_radius;
   $("max_iter").value = d.max_iter;
@@ -1449,6 +1486,21 @@ async function boot() {
   sel.addEventListener("change", applyScenario);
   $("preset").addEventListener("change", applyPreset);
   $("solve").addEventListener("click", doSolve);
+  $("reloadScenarios").addEventListener("click", doReload);
+  $("free_arrival_time").addEventListener("change", () => {
+    // A freed arrival that nothing prices is refused server-side by design
+    // (DegenerateFreeArrivalError). Ticking the box therefore fills the two
+    // fields the refusal names, as editable suggestions: unit time weight, and
+    // a speed cap at twice the straight-line pace so the cap starts slack.
+    if (!$("free_arrival_time").checked) return;
+    if (!(+$("time_weight").value > 0)) $("time_weight").value = "1";
+    if ($("v_max").value.trim() === "") {
+      const sc = CAT.scenarios[$("scenario").value];
+      const dxyz = sc.end.slice(0, sc.dim - 1).map((v, i) => v - sc.start[i]);
+      const dist = Math.hypot(...dxyz);
+      $("v_max").value = String(Math.ceil(20 * dist / sc.T) / 10);
+    }
+  });
   $("cancelSolve").addEventListener("click", () => {
     fetch("/api/cancel", { method: "POST" });   // the pending solve answers 400 "cancelled"
   });

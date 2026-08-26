@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import importlib
 import json
 import math
 import os
@@ -420,12 +421,14 @@ def axis_views(dim: int) -> list[dict]:
             "dropped_note": None,
         }]
     if dim == 4:
-        # Two views, both on the three spatial axes (user decision 2026-08-24:
-        # "I just need xy(z)t" -- the dropped-coordinate lift projections
-        # (x,y,t), (x,z,t), (y,z,t) are gone). Time is carried by the slider in
-        # one and by color in the other. The one projection both make is of the
-        # half-space patches and hulls, which live in (x,y,z,t) -- named in the
-        # note so the picture never claims to be more than it is.
+        # Two spatial views (user decision 2026-08-24: "I just need xy(z)t"),
+        # plus the (x,y,t) lift brought back 2026-08-26 at the same user's
+        # request while designing `loiter` -- the temporal-slot behaviour that
+        # scenario exists for is invisible in a spatial view, because the slot
+        # IS the time axis. (x,z,t) and (y,z,t) stay gone. Time is carried by
+        # the slider in one spatial view and by color in the other. Every view
+        # projects the half-space patches and hulls, which live in (x,y,z,t) --
+        # named in the note so the picture never claims to be more than it is.
         proj_note = "half-space patches and hulls are projections from (x,y,z,t)"
         return [{
             "id": "xyz",
@@ -447,6 +450,16 @@ def axis_views(dim: int) -> list[dict]:
             "dropped": "t",
             "banner": SPATIAL_BANNER,
             "dropped_note": proj_note,
+        }, {
+            "id": "xyt",
+            "button": "(x,y,t) lift",
+            "cols": [0, 1, 3],
+            "labels": ["x", "y", "t"],
+            "space_idx": [0, 1],
+            "kind": "lift",
+            "dropped": "z",
+            "banner": LIFT_BANNER,
+            "dropped_note": _dropped_note("z") + "; " + proj_note,
         }]
     return []
 
@@ -479,6 +492,7 @@ def scenario_catalog() -> dict:
             "end": list(scenario["end"]),
             "T": float(scenario["T"]),
             "stations": scenario.get("stations"),
+            "coord_bounds": scenario.get("coord_bounds"),
             "configs": [[int(N), int(n_seg)] for N, n_seg in configs],
             "registered_elastic_weight": scenario_elastic_weight(name),
             "views": axis_views(dim),
@@ -490,6 +504,29 @@ def scenario_catalog() -> dict:
         "solve_defaults": dict(SOLVE_DEFAULTS),
         "elastic_weight_ladder": [float(w) for w in ELASTIC_WEIGHT_LADDER],
     }
+
+
+def reload_scenarios() -> dict:
+    """Re-read ``scenarios.py`` from disk and drop every cached result.
+
+    Exists for the scenario-tuning loop: the solve child re-imports the module
+    fresh on every run anyway, but the parent's catalog and the result cache do
+    not -- so an edited scenario used to require a full server restart, and
+    worse, the cache key carries only the scenario NAME, so a re-solve after an
+    edit could silently answer with the pre-edit result. One button instead of
+    restart-retab-reselect. The compiled Rust extension is NOT reloaded --
+    rebuilding that still requires a restart, and the staleness banner says so.
+    """
+    from . import scenarios as _scenarios_module
+
+    importlib.reload(_scenarios_module)
+    global SCENARIO_MAP, scenario_elastic_weight
+    SCENARIO_MAP = _scenarios_module.SCENARIO_MAP
+    scenario_elastic_weight = _scenarios_module.scenario_elastic_weight
+    with _CACHE_LOCK:
+        _SOLVE_CACHE.clear()
+        _REPLAY_CACHE.clear()
+    return scenario_catalog()
 
 
 # ---------------------------------------------------------------------------
@@ -544,6 +581,7 @@ def _run_ladder(scenario: dict, N: int, n_seg: int, params: dict):
             time_weight=params["time_weight"],
             free_arrival_time=params["free_arrival_time"],
             stations=stations,
+            coord_bounds=scenario.get("coord_bounds"),
             verbose=False,
             init_curve=scenario.get("init_curve"),
         )
@@ -1521,6 +1559,8 @@ class FrontendHandler(BaseHTTPRequestHandler):
                 self._send_json(200, replay_from_payload(self._read_json()))
             elif self.path == "/api/cancel":
                 self._send_json(200, cancel_active_solve())
+            elif self.path == "/api/reload":
+                self._send_json(200, _json_safe(reload_scenarios()))
             else:
                 self._send_json(404, {"error": f"Unknown path: {self.path}"})
         except BrokenPipeError:
