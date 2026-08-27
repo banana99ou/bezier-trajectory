@@ -478,12 +478,17 @@ def scenario_loiter() -> dict:
     body_z = 5.0
     body_r = 0.6
     k = 0.5522847498  # cubic quarter-circle constant
-    # Starting phase of the lap. NOT free: measured 2026-08-26 by scanning the
-    # straight seed's line-of-sight margin over all phases -- at 60 degrees the
-    # seed LOSES the link by -0.570 (24 of 120 phases fail; this is the deepest,
-    # on a plateau, not a knife-edge). At the wrong phase the seed clears and
-    # the baseline figure proves nothing.
-    phase = np.deg2rad(60.0)
+    # Starting phase of the lap. NOT free, and scanned against the right
+    # object: the figure's own PRICED baseline (occlusion rows off, free
+    # arrival with time_weight=1 and v_max=5), not the straight seed -- an
+    # unpriced baseline's timing is an interior-point tie-break on a flat face
+    # (the regularizer scores every timing equally), so a seed-based scan
+    # answers a question no run in the figure asks. Measured 2026-08-26 at the
+    # 6.2 corridor: 8 of 60 phases make the priced baseline lose the link.
+    # 126 is the deepest (-0.507) but no ladder rung certifies the CONSTRAINED
+    # run there; at 120 the baseline still loses by -0.428 and the constrained
+    # run certifies at the registered weight -- both figure gates pass.
+    phase = np.deg2rad(120.0)
     lap = [
         # (x, y) control points of each quarter, counterclockwise from (orbit_r, 0).
         [(orbit_r, 0.0), (orbit_r, orbit_r * k), (orbit_r * k, orbit_r), (0.0, orbit_r)],
@@ -510,19 +515,25 @@ def scenario_loiter() -> dict:
         "title": "Body Orbiting the Ground Station",
         "init_curve": {"mode": "straight"},
         "obstacles": obstacles,
-        "start": [-10.0, 0.0, 5.5, 0.0],
-        "end":   [ 10.0, 0.0, 5.5, 8.0],
+        "start": [-10.0, 0.0, 6.2, 0.0],
+        "end":   [ 10.0, 0.0, 6.2, 8.0],
         "stations": [[0.0, 0.0, 0.0]],
         # The corridor LAYER, enforced as HARD box rows outside the elastic
-        # slack range -- the penalty cannot buy through them. The shadow of a
-        # body lies on the FAR side of the body from the station, so a transit
-        # below the orbit altitude is always visible (measured: at z=3 the seed
-        # cleared by exactly +1.400 = the 2.0 vertical gap minus the 0.6 radius,
-        # at every phase). The floor therefore sits AT the orbit altitude: below
-        # it the demo cannot bind, above the ceiling the shadow ring leaves the
-        # transit span. Endpoints are pinned and exempt, and a band that
+        # slack range -- the penalty cannot buy through them. Two measured
+        # mistakes fixed its altitude. Below the orbit the transit is always
+        # visible -- the shadow lies on the far side of the body from the
+        # station (at z=3 the seed cleared by exactly +1.400 = the 2.0 vertical
+        # gap minus the 0.6 radius, at every phase). AT the orbit altitude
+        # (z=5.5) the body itself blocks the crossing whenever the shadow does,
+        # so the keep-out rows alone force the same retiming and the occlusion
+        # rows are decoration -- the figure tool's gate 2 refused to draw it.
+        # The layer therefore sits ABOVE the body's reach (floor 6.0 > body top
+        # 5.6, keep-out present but never binding) and INSIDE the shadow's
+        # (ring radius 0.6z stays within the transit span up to the ceiling):
+        # in this layer the line-of-sight rows, and nothing else, are what
+        # forces the timing. Endpoints are pinned and exempt, and a band that
         # excludes an endpoint is refused loudly.
-        "coord_bounds": [[-12.0, 12.0], [-12.0, 12.0], [5.0, 6.5]],
+        "coord_bounds": [[-12.0, 12.0], [-12.0, 12.0], [6.0, 6.5]],
         "T": 8.0,
     }
 
