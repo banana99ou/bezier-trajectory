@@ -222,11 +222,14 @@ def test_one_half_space_per_segment_obstacle_and_component():
     control point bounds the whole curve segment. Per-control-point planes prove
     nothing about the segment between them.
 
-    **The component index joins the key.** One obstacle can present two separated
-    lumps of tube to one segment, and each lump gets its own wall; grouping on
-    (segment, obstacle) alone would compare two genuinely different planes and
-    call the difference a defect. What must hold, and does, is that within one
-    component every control point sees the same normal and the same bound.
+    **The component index joins the key.** One obstacle can approach one segment
+    more than once -- the band is cut at every interior local maximum of the
+    centreline's distance to the segment centroid, one wall per approach -- and
+    grouping on (segment, obstacle) alone would compare two genuinely different
+    planes and call the difference a defect. What must hold, and does, is that
+    within one approach every control point sees the same normal and the same
+    bound. (The index kept the name `component` from the connected-component
+    grouping it replaced on 2026-08-26.)
 
     FAILS IF: control points within a segment carry different normals or
     different bounds for the same obstacle and component -- the pre-G2 builder's
@@ -762,34 +765,54 @@ def test_panel_b1_the_ball_severs_the_bend_into_two_walls():
     )
 
 
-def test_panel_b2_a_wrapping_lump_gives_a_negative_margin_not_a_missing_wall():
-    """The centroid is OUTSIDE the keep-out zone and the margin is still negative.
+def test_panel_b2_a_wrapping_bend_gets_one_wall_per_approach():
+    """The bend wraps the centroid; cutting at the crest gives two walls that fit.
 
-    One component, curled around the centroid. Its support along the normal
-    reaches past the centroid, so ``n . c < b``. That is a valid wall containing
-    its whole component; the negative margin is the row telling the solver how far
-    to climb out, and the elastic penalty is what consumes it.
+    The clipped volume here is ONE connected lump curled around the centroid, and
+    the centroid sits inside its convex hull -- so a single wall against the lump
+    is non-separating BY THEOREM, whatever its normal. Until 2026-08-26 that is
+    what this segment got: one wall, centroid margin -1.1543, on a segment whose
+    centroid is OUTSIDE the keep-out zone. A clear segment reported as 1.15 deep,
+    a row unsatisfiable inside the default trust radius (it needed ~1.04 against
+    0.5), and elastic slack absorbing a violation that did not exist.
 
-    FAILS IF: a negative margin is treated as an impossible plane and the row is
-    suppressed. A suppressed row contributes zero to a certificate that sums row
-    violations, which is how a penetrating trajectory came back certified at
-    4.6e-13.
+    The band is now cut at the interior local maximum of |gamma(s) - c| -- the
+    crest between the obstacle's two approaches -- and each approach gets its own
+    wall. Same clip radius, same clipped volume, same offsets rule; only the
+    grouping changed.
+
+    FAILS IF: the builder returns to one wall for the whole lump (walls != 2), or
+    either wall stops clearing by more than the ceiling's conservatism -- the
+    fused wall's margin was -1.15, an order of magnitude below the bound asserted
+    here, so a regression cannot hide inside the tolerance.
     """
     Q = _panel_seg(2.2, 5.35, 0.55)
     walls, dropped, _unsound, c = _panel_walls(Q, PANEL_HAIRPIN, r_m=0.9, trust=0.5)
 
     assert dropped == 0
-    assert len(walls) == 1
-    w = walls[0]
     d, _f = _centreline_distance(PANEL_HAIRPIN[0], c)
     assert d > 0.9, (
         f"this panel needs the centroid OUTSIDE the keep-out zone; d = {d:.4f}"
     )
-    assert w["centroid_margin"] < 0.0, (
-        f"the lump wraps the centroid, so the margin must be negative; got "
-        f"{w['centroid_margin']:+.6f}"
+    assert len(walls) == 2, (
+        f"one wall per approach: the hairpin approaches this segment twice, got "
+        f"{len(walls)} wall(s)"
     )
-
+    # The two walls face opposite sides of the mouth: one normal tilts toward
+    # +t, the other toward -t.
+    assert walls[0]["n"][1] * walls[1]["n"][1] < 0.0
+    # Both margins sit far above the fused wall's -1.1543. The lower one may dip
+    # slightly negative: the offset is a rigorous De Casteljau CEILING on the
+    # support, and its conservatism (~0.16 here) lands in the margin. That is a
+    # step-size cost, not a correctness cost.
+    for w in walls:
+        assert w["centroid_margin"] > -0.3, (
+            f"wall {w['component']} margin {w['centroid_margin']:+.4f} is back in "
+            "fused-wall territory (-1.15); the cut has regressed"
+        )
+    assert max(w["centroid_margin"] for w in walls) > 0.0, (
+        "at least one approach's wall should clear the centroid outright"
+    )
 
 def test_panel_b3_the_clip_radius_is_floored_at_the_obstacle_radius():
     """Centroid inside the keep-out zone: the floor fires and the direction exists.

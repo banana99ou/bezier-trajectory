@@ -205,8 +205,9 @@ recorded here so it is not rediscovered:
   the ball rather than on the tube, and the clearance it claims overstates the truth by exactly
   (obstacle radius − ball radius). Measured: 0.453 claimed against 0.252 true.
 - It is pinned for one reason only: a ball centred on the centreline yields **at most one wall**,
-  so it cannot represent a clipped volume with several connected components, and no method yet
-  exists for deciding how many walls an iteration needs.
+  so it cannot represent several approaches. For the centroid-centred ball that count is now
+  decided by the approach cut (2026-08-26: one wall per interior local maximum of the distance
+  profile); no analogue has been worked out for centreline-centring.
 
 **The floor `r_clip ≥ r` applies to centroid-centring too — corrected 2026-08-26.** This file
 previously said the floor "belongs to centreline-centring alone" and that with the ball on the
@@ -253,7 +254,9 @@ Bézier removes the error instead of bounding it.
 
 ### The wall, built against the clipped KOZ volume itself
 
-Per (segment, obstacle), and per connected component of the clipped volume:
+Per (segment, obstacle), and per **local approach** of the obstacle to the segment — the
+parameter band cut at every interior local maximum of `|γ(τ) − c|`, one piece per dip of the
+distance profile:
 
 - `L` — the **clipped KOZ volume**: KOZ ∩ `B(c, r_clip)`, the ball centred at the segment centroid with
   the clip radius above
@@ -273,13 +276,22 @@ of `L` are **the same wall**, and `L ⊆ {z : n·z ≤ b}` holds whether or not 
 Convexifying `L` buys nothing and is never required.
 
 **Convexity is not irrelevant to SEPARATION, and the two must not be conflated.** Containment says
-the component is on the forbidden side. It does not say the centroid is on the free side. When `L`
-wraps around `c` — either because `c` is in the convex hull of `L`, or merely because the direction
-taken from the nearest point of a non-convex `L` fails to separate — the support reaches past the
-centroid and `n·c < b`. **That is a legal wall with a negative margin, not a failure.** The row then
-reads "you are this far in, climb out along `n`", which is exactly what a sequential convex solver
-with elastic slack consumes. Measured: with the centroid `0.205` **outside** the keep-out zone but
-inside a wrapping lump, the centroid margin is `−1.093`. A negative margin is not a penetration.
+the piece is on the forbidden side. It does not say the centroid is on the free side. When a piece
+wraps around `c` the support reaches past the centroid and `n·c < b`. **That is a legal wall with a
+negative margin, not a failure.** The row then reads "you are this far in, climb out along `n`",
+which is exactly what a sequential convex solver with elastic slack consumes — the deep-penetration
+case (centroid inside the KOZ) measures `−0.889` and is exactly this.
+
+**Wrapping is also why the grouping is per approach and not per connected component.** A bend can
+curl around the centroid while staying ONE connected lump; the centroid then sits inside the lump's
+convex hull, so a single wall against it is non-separating **by theorem**, whatever its normal.
+Measured through the builder: the fused wall reported a centroid margin of `−1.154` on a segment
+whose centroid is `0.205` **outside** the keep-out zone — a clear segment read as 1.15 deep, and a
+row unsatisfiable inside the default trust radius (it needed `≈1.04` against `0.5`), leaving the
+elastic slack to absorb a violation that did not exist. Cutting the band at the crest between the
+two approaches — same clip radius, same clipped volume, same offset rule — gives two walls with
+margins `+0.529` and `−0.162`; the residual `−0.162` is the support ceiling's conservatism, a
+step-size cost, not a correctness cost.
 
 **The plane must not be taken tangent to the tube.** A plane tangent to the tube at its closest
 surface point is valid only if the tube is convex. Measured counterexample, in the formal section:
@@ -290,7 +302,7 @@ stands as evidence that the tangent plane is invalid; the accompanying "1.19° i
 offset" describes the distance to the **old** plane and is **stale** — re-measure it against the
 support plane before quoting it.)*
 
-One plane per (segment, obstacle, connected component), never one per control point.
+One plane per (segment, obstacle, approach), never one per control point.
 Per-control-point planes prove only that each point individually is outside its own plane — exactly
 as strong as sampling the curve — and opposing normals let the hull wrap around the tube.
 
@@ -496,12 +508,22 @@ $E^{(k)}+\Delta\sqrt{d_{\mathrm{spatial}}+1}$ appears in the soundness section b
 **optional**, it addresses a different failure (the next iterate leaving the clipped ball), and it
 is reachable in the code as a flag rather than as a default. Do not conflate them.
 
-**Connected components.** $\mathcal L^{(k)}_m$ **may consist of several connected components** —
-a centreline that leaves the ball and re-enters it puts two separate lumps of tube inside the same
-ball. **Each component gets its own wall.** One wall per $(k,m,\ell)$ with $\ell$ indexing the
-components, never one wall per $(k,m)$. Fusing the components into a single lump is not a
-conservative simplification here; it is the opposite of what is wanted, because the fused lump
-spans the gap the trajectory is entitled to pass through.
+**One wall per local approach.** Cut the band $I$ at every interior local maximum of
+$\tau\mapsto\lVert\gamma_m(\tau)-c\rVert$; each resulting sub-interval $I_\ell$ is one
+**approach** of the obstacle to the segment, and defines the piece
+
+$$\mathcal L^{(k)}_{m,\ell}=\bigl(\gamma_m(I_\ell)\oplus\bar B(0,r_m)\bigr)\cap\bar B(c,r_{\mathrm{clip}}),
+\qquad \mathcal L^{(k)}_m=\textstyle\bigcup_\ell\mathcal L^{(k)}_{m,\ell}.$$
+
+**Each approach gets its own wall.** One wall per $(k,m,\ell)$, never one wall per $(k,m)$. This
+covers both failure modes with one rule: two separated lumps in the ball are two approaches (the
+distance profile leaves and re-enters the band), and a single connected lump that wraps the
+centroid is ALSO two approaches (the profile dips twice with a crest between). Fusing approaches is
+not a conservative simplification; it is the opposite of what is wanted, because the fused wall
+spans the corridor — or the mouth of the bend — the trajectory is entitled to pass through, and on
+a wrapping lump it is non-separating by theorem. The cut position is a quality knob, never a
+correctness one: the pieces cover $\mathcal L^{(k)}_m$ for ANY partition of the band, so both
+over-splitting and under-splitting keep every wall sound.
 
 ## The outer approximation, and why it is not the clipped volume
 
@@ -518,7 +540,7 @@ convexifying the **centreline** and inflating is the same as convexifying the tu
 
 **Exact convexification of the band when the motion is polynomial.** If $\pi_m$ has degree $N_m$
 then $\gamma_m$ is a Bézier curve in $\mathbb{R}^{d_{\mathrm{spatial}}+1}$ with control points $G_0,\dots,G_{N_m}$.
-Decompose $I$ into its connected components $I_1,\dots,I_C$; for each component take
+Decompose $I$ into its maximal intervals $I_1,\dots,I_C$; for each interval take
 $[\alpha_\ell,\beta_\ell]=[\min I_\ell,\max I_\ell]$ and let $\tilde G^{(\ell)}_0,\dots,\tilde
 G^{(\ell)}_{N_m}$ be its De Casteljau subdivision control points. By the hull property applied to
 the obstacle, $\gamma_m([\alpha_\ell,\beta_\ell])\subseteq\mathcal
@@ -527,7 +549,7 @@ G_\ell:=\operatorname{conv}\{\tilde G^{(\ell)}_l\}$, and
 $$\mathcal H_\ell=\mathcal G_\ell\oplus\bar B(0,r_m)$$
 
 is convex. **Never take $[\min I,\max I]$ across all of $I$**: that bridges the gaps between
-components and fuses walls that must stay separate.
+approaches and fuses walls that must stay separate.
 
 **$\mathcal H_\ell$ is an OUTER APPROXIMATION of the clipped KOZ volume, not equal to it.** The
 inclusion $\mathcal L^{(k)}_m\subseteq\bigcup_\ell\mathcal H_\ell$ holds, and it is **strict in
@@ -544,8 +566,8 @@ obstacle's own Bézier removes the error rather than bounding it.
 
 ## The wall — a support of the clipped KOZ volume
 
-Work per connected component; write $\mathcal L$ for one component of $\mathcal L^{(k)}_m$ and
-assume $c\notin\mathcal L$. Set
+Work per approach; write $\mathcal L$ for one piece $\mathcal L^{(k)}_{m,\ell}$ — the tube over
+one sub-interval of the band, clipped — and assume $c\notin\mathcal L$. Set
 
 $$\boxed{\ y^\star\in\arg\min_{y\in\mathcal L}\lVert c-y\rVert,\qquad
 n=\frac{c-y^\star}{\lVert c-y^\star\rVert},\qquad
@@ -584,7 +606,7 @@ projection onto $\mathcal G$, i.e. against the outer approximation, and is **sta
 support plane. Re-measure before quoting.)*
 
 **The direction does not depend on $y^\star$.** Let $f_\ell=\gamma_m(\tau^\star_\ell)$ be the
-nearest centreline point *within component $\ell$*. If $c\notin\mathcal K_m$, the nearest point of
+nearest centreline point *within sub-interval $\ell$*. If $c\notin\mathcal K_m$, the nearest point of
 $\mathcal K_m$ to $c$ is $f_\ell+r_m(c-f_\ell)/\lVert c-f_\ell\rVert$, at distance
 $\lVert c-f_\ell\rVert-r_m$ from $c$; the floor $r_{\mathrm{clip}}\ge r_m$ puts it inside
 $\bar B(c,r_{\mathrm{clip}})$, so it is $y^\star$, and it lies on the segment from $f_\ell$ to $c$.
@@ -600,11 +622,12 @@ whenever the left-hand quotient exists at all. Two consequences:
   onto the un-inflated centreline hull $\mathcal G_\ell$, which is retired with the rest of the
   outer approximation. $b$ remains the support of $\mathcal L^{(k)}_{m,\ell}$ along $n$. The only
   undefined case is $c=f_\ell$, i.e. the centroid exactly on the centreline, where every direction
-  is equally valid. **A component in reach always yields a wall. Refusing one was a measured
+  is equally valid. **An approach in reach always yields a wall. Refusing one was a measured
   defect** — on `diverse` at $8$ segments the single penetrating pair got no row, and the
   constraint-residual certificate reported $4.6\times10^{-13}$ for a trajectory penetrating by
   $0.219$.
-- **Wrapping is not an existence problem.** $\mathcal L^{(k)}_{m,\ell}$ may reach past $c$ along
+- **Wrapping is not an existence problem — and it is a grouping problem the cut solves.**
+  $\mathcal L^{(k)}_{m,\ell}$ may reach past $c$ along
   $n$, giving $n^\top c<b$. Containment still holds — that is the inclusion above, which uses no
   convexity — so the wall is valid; the margin is simply negative, and a negative margin is the row
   telling the solver how far it has to climb out. What fails in that case is *separation*, not
@@ -634,7 +657,7 @@ $\mathcal L$. $\square$
 *Note what this proof does not use: nowhere does it assume $\mathcal L$ is convex. Only the hull
 property, linearity, and the definition of the support $b$ are used.*
 
-One plane per $(k,m,\ell)$ — segment, obstacle, connected component. Per-control-point planes
+One plane per $(k,m,\ell)$ — segment, obstacle, approach. Per-control-point planes
 destroy the certificate: the step from $Q_i$ to $Z(u)$ uses the *same* $n$ for all $i$, and with
 differing normals the hull can wrap the tube.
 
@@ -716,7 +739,7 @@ subject to, with $\mathbf p^{\mathrm{ref}}$ the reference iterate:
 | boundary | $P_0=z^{\text{start}}$; $x_N=x^{\text{goal}}$; $t_N$ free iff free-arrival |
 | monotonicity | $t_{j+1}-t_j\ \ge\ \delta>0$ |
 | slant limit | $\lVert x_{j+1}-x_j\rVert\ \le\ v_{\max}\,(t_{j+1}-t_j)$ — second-order cone, **no slack** |
-| keep-out | $n_{km\ell}^\top Q^{(k)}_i+\sigma_{km\ell i}\ \ge\ b_{km\ell}$ — one row block per segment, obstacle **and connected component** $\ell$ |
+| keep-out | $n_{km\ell}^\top Q^{(k)}_i+\sigma_{km\ell i}\ \ge\ b_{km\ell}$ — one row block per segment, obstacle **and approach** $\ell$ |
 | occlusion | same form, per $(k,m,\ell,\text{station})$ |
 | trust region | $\lVert\mathbf p-\mathbf p^{\mathrm{ref}}\rVert_\infty\ \le\ \Delta$ |
 
@@ -838,7 +861,9 @@ treatment is now the corrected one: clip the shadow volume to the same local bal
 centroid to get the **clipped shadow volume**; take the point of that volume nearest the centroid;
 take the unit direction from it back to the centroid; and set the offset to the **support of the
 clipped shadow volume in that direction** — its most protruding point along the normal. One wall
-per connected component, imposed on every control point of the segment.
+per time-windowed piece of the shadow, imposed on every control point of the segment. *(The KOZ
+side's approach cut — one wall per interior local maximum of the distance profile, 2026-08-26 —
+has no occlusion analogue yet: a shadow piece is one time window, not one approach.)*
 
 **Do not take the convex hull of the clipped shadow volume and build the plane against that.** As with the
 KOZ, that hull is a strict **outer approximation** of the clipped shadow volume, because

@@ -498,224 +498,128 @@ pub fn lens_support_point(a: &[f64], r: f64, c: &[f64], big_r: f64, n: &[f64]) -
     Some((0..dim).map(|k| m[k] + rad * w[k]).collect())
 }
 
-/// Intersections of two circles given in plane coordinates. Empty when they miss,
-/// are nested, or are concentric.
-fn circle_circle_2d(p1: [f64; 2], r1: f64, p2: [f64; 2], r2: f64, tol: f64) -> Vec<[f64; 2]> {
-    let d = [p2[0] - p1[0], p2[1] - p1[1]];
-    let dd = (d[0] * d[0] + d[1] * d[1]).sqrt();
-    if dd < tol || dd > r1 + r2 + tol || dd < (r1 - r2).abs() - tol {
-        return Vec::new();
-    }
-    let aa = (dd * dd + r1 * r1 - r2 * r2) / (2.0 * dd);
-    let hh = (r1 * r1 - aa * aa).max(0.0).sqrt();
-    let base = [p1[0] + aa * d[0] / dd, p1[1] + aa * d[1] / dd];
-    let perp = [-d[1] / dd, d[0] / dd];
-    vec![
-        [base[0] + hh * perp[0], base[1] + hh * perp[1]],
-        [base[0] - hh * perp[0], base[1] - hh * perp[1]],
-    ]
-}
+/// How finely each band interval is scanned for interior maxima of the distance
+/// to the segment centroid. Over-splitting and under-splitting are both SOUND --
+/// each sub-interval's wall is a rigorous ceiling on the support of its own
+/// material, so any partition covers the clipped volume -- which makes this a
+/// quality knob and never a correctness one: too coarse and two approaches share
+/// one wall, too fine and sampling noise buys extra walls.
+const SPLIT_SAMPLES: usize = 32;
 
-/// EXACT test: do three balls in `R^dim` share at least one point?
+/// Fraction of the shorter adjacent piece by which each cut is pushed INTO both
+/// neighbours. Overlap is free for soundness -- material near a crest is covered
+/// twice -- and it is what keeps `nearest_param_in`'s `interior` flag true: that
+/// test rejects a nearest point within `width/32` of an endpoint, and a cut
+/// landing on a crest can put a piece's minimum exactly there. Padding by
+/// `width/16` moves the endpoint past the crest without moving the minimum (the
+/// distance keeps rising on the far side of a crest), leaving the minimum at
+/// least `width/16` from the end against a threshold near `width/30` -- interior
+/// with room to spare, unconditionally.
+const CUT_OVERLAP: f64 = 1.0 / 16.0;
+
+/// Split each band interval at every INTERIOR local maximum of
+/// `s -> |gamma(s) - c|` -- one sub-interval per local APPROACH of the obstacle
+/// to the segment. Nothing is ever merged.
 ///
-/// Any candidate may be replaced by its orthogonal projection onto the affine
-/// hull of the three centres without increasing any of the three distances, so
-/// the question is at most 2-dimensional. Inside a plane containing all three
-/// centres, an intersection of discs is either a whole disc — then that disc's
-/// centre works — or is bounded by arcs whose corners are circle-circle
-/// intersection points. Centres plus pairwise intersections is therefore a
-/// complete candidate set. No optimiser, no sampling.
-pub fn balls_have_common_point(centres: [&[f64]; 3], radii: [f64; 3], tol: f64) -> bool {
-    let dim = centres[0].len();
-    if radii.iter().any(|r| *r < -tol) {
-        return false;
-    }
-    // Two orthonormal directions spanning a plane through the three centres. The
-    // identity columns are appended so a collinear or coincident triple still
-    // yields a genuine 2-plane rather than a degenerate coordinate system.
-    let mut basis: Vec<Vec<f64>> = Vec::new();
-    let mut seeds: Vec<Vec<f64>> = Vec::new();
-    for i in 1..3 {
-        seeds.push((0..dim).map(|k| centres[i][k] - centres[0][k]).collect());
-    }
-    for k in 0..dim {
-        let mut e = vec![0.0; dim];
-        e[k] = 1.0;
-        seeds.push(e);
-    }
-    for seed in seeds {
-        if basis.len() == 2 {
-            break;
-        }
-        let mut w = seed;
-        for b in basis.iter() {
-            let c: f64 = (0..dim).map(|k| w[k] * b[k]).sum();
-            for k in 0..dim {
-                w[k] -= c * b[k];
-            }
-        }
-        let nw = w.iter().map(|v| v * v).sum::<f64>().sqrt();
-        if nw > 1e-10 {
-            for v in w.iter_mut() {
-                *v /= nw;
-            }
-            basis.push(w);
-        }
-    }
-    while basis.len() < 2 {
-        basis.push(vec![0.0; dim]); // dim == 1; the second coordinate is inert
-    }
-
-    let project = |p: &[f64]| -> [f64; 2] {
-        let mut out = [0.0f64; 2];
-        for (j, b) in basis.iter().enumerate() {
-            out[j] = (0..dim).map(|k| (p[k] - centres[0][k]) * b[k]).sum();
-        }
-        out
-    };
-    let pc: Vec<[f64; 2]> = centres.iter().map(|c| project(c)).collect();
-
-    let mut cands: Vec<[f64; 2]> = pc.clone();
-    for i in 0..3 {
-        for j in (i + 1)..3 {
-            cands.extend(circle_circle_2d(pc[i], radii[i], pc[j], radii[j], tol));
-        }
-    }
-    cands.iter().any(|z| {
-        (0..3).all(|k| {
-            let dx = z[0] - pc[k][0];
-            let dy = z[1] - pc[k][1];
-            (dx * dx + dy * dy).sqrt() <= radii[k] + tol
-        })
-    })
-}
-
-/// How finely a pair of parameter intervals is scanned when deciding whether
-/// their lumps touch. A missed merge over-splits, which is the safe direction.
-const MERGE_GRID: usize = 17;
-
-/// Do the lumps carried by two parameter intervals share a point?
+/// This replaced grouping by connected components of the clipped volume, and the
+/// reason is panel B2: a bend can wrap the centroid while staying one connected
+/// lump, and the single wall against that lump is non-separating -- the centroid
+/// sits inside the lump's convex hull, so NO separating half-space exists there.
+/// Cutting at the crest between the two approaches yields two walls that both
+/// clear, at the same clip radius. Where one approach ends and the next begins
+/// is a property of the distance profile alone, which is why the signature
+/// carries no radius.
 ///
-/// `z` is shared iff `Ball(gamma(t), r_m) ∩ Ball(gamma(u), r_m) ∩ Ball(c, rho)`
-/// is nonempty for some `(t, u)`. Each pair is decided EXACTLY by
-/// [`balls_have_common_point`]; the search over pairs is a grid plus a refined
-/// closest approach, so the only approximation is which pairs get tested.
-///
-/// **Missing a merge over-splits a component, which is safe** — each wall still
-/// contains its own lump and imposing both keeps the segment out of the union.
-/// Merging wrongly is not safe: it fuses two genuine components into one lump
-/// that spans the corridor between them.
-fn lumps_touch(
+/// Soundness does not depend on where a cut lands: every point of the clipped
+/// volume has its nearest centreline parameter inside the band, hence inside
+/// some sub-interval, and that sub-interval's offset (`component_support`) is a
+/// rigorous ceiling on the support of exactly that material. The cut position
+/// only tunes conservatism, so the maxima are located by sampling plus a
+/// parabolic-vertex refinement and nothing sharper: `polish_nearest`'s Newton
+/// guard accepts only distance-DECREASING steps, so it cannot be reused for a
+/// maximum, and a mirrored Newton would buy sub-cell precision that nothing
+/// measures.
+pub(crate) fn split_at_distance_maxima(
     obs_data: &SpacetimeObstacleData<'_>,
     obs: usize,
-    r_m: f64,
-    centroid: &[f64],
-    rho: f64,
-    iv_i: (f64, f64),
-    iv_j: (f64, f64),
-) -> bool {
-    let at = |s: f64| obs_data.lifted_at(obs, s);
-    let gap = |t: f64, u: f64| -> f64 {
-        let (a, b) = (at(t), at(u));
-        a.iter().zip(b.iter()).map(|(x, y)| (x - y) * (x - y)).sum::<f64>().sqrt()
+    c: &[f64],
+    intervals: &[(f64, f64)],
+) -> Vec<(f64, f64)> {
+    let dist_sq = |s: f64| -> f64 {
+        let p = obs_data.lifted_at(obs, s);
+        p.iter().zip(c.iter()).map(|(a, b)| (a - b) * (a - b)).sum::<f64>()
     };
-    let grid = |iv: (f64, f64), i: usize| -> f64 {
-        if MERGE_GRID <= 1 {
-            iv.0
-        } else {
-            iv.0 + (iv.1 - iv.0) * (i as f64) / ((MERGE_GRID - 1) as f64)
+    let mut out: Vec<(f64, f64)> = Vec::with_capacity(intervals.len());
+    for iv in intervals {
+        let w = iv.1 - iv.0;
+        if !(w > 0.0) {
+            out.push(*iv); // degenerate interval (or NaN); nothing to split
+            continue;
         }
-    };
+        let cell = w / SPLIT_SAMPLES as f64;
+        let at = |i: usize| iv.0 + w * (i as f64) / (SPLIT_SAMPLES as f64);
+        let d: Vec<f64> = (0..=SPLIT_SAMPLES).map(|i| dist_sq(at(i))).collect();
 
-    let mut best = (f64::INFINITY, iv_i.0, iv_j.0);
-    for i in 0..MERGE_GRID {
-        for j in 0..MERGE_GRID {
-            let (t, u) = (grid(iv_i, i), grid(iv_j, j));
-            let g = gap(t, u);
-            if g < best.0 {
-                best = (g, t, u);
-            }
-            if g <= 2.0 * r_m + 1e-9
-                && balls_have_common_point([&at(t), &at(u), centroid], [r_m, r_m, rho], 1e-9)
-            {
-                return true;
-            }
-        }
-    }
-    // Refine the closest approach and retest there: the grid can straddle a
-    // narrow contact.
-    let (mut t0, mut u0) = (best.1, best.2);
-    let mut span_t = (iv_i.1 - iv_i.0) / (MERGE_GRID.max(2) - 1) as f64;
-    let mut span_u = (iv_j.1 - iv_j.0) / (MERGE_GRID.max(2) - 1) as f64;
-    for _ in 0..40 {
-        let mut local = (gap(t0, u0), t0, u0);
-        for dt in [-span_t, 0.0, span_t] {
-            for du in [-span_u, 0.0, span_u] {
-                let t = (t0 + dt).clamp(iv_i.0, iv_i.1);
-                let u = (u0 + du).clamp(iv_j.0, iv_j.1);
-                let g = gap(t, u);
-                if g < local.0 {
-                    local = (g, t, u);
+        // A crest is a STRICT rise followed, possibly across a plateau, by a
+        // STRICT fall. Endpoints can never qualify: a profile still rising at
+        // the last sample leaves `rise` set and unemitted, and one falling from
+        // the first sample never sets it -- so no cut can touch an interval end
+        // and no zero-width sub-interval is possible.
+        let mut cuts: Vec<f64> = Vec::new();
+        let mut rise: Option<usize> = None;
+        for i in 1..=SPLIT_SAMPLES {
+            if d[i] > d[i - 1] {
+                rise = Some(i);
+            } else if d[i] < d[i - 1] {
+                if let Some(j) = rise.take() {
+                    cuts.push(if j == i - 1 {
+                        // Vertex of the parabola through the three samples
+                        // around the crest, clamped to its own cell. The vertex
+                        // of the SQUARED distance sits a hair off the true
+                        // crest; sub-cell precision is explicitly not worth
+                        // paying for here.
+                        let (dm, d0, dp) = (d[j - 1], d[j], d[j + 1]);
+                        let den = dm - 2.0 * d0 + dp;
+                        if den.abs() < 1e-300 {
+                            at(j)
+                        } else {
+                            at(j) + cell * (0.5 * (dm - dp) / den).clamp(-1.0, 1.0)
+                        }
+                    } else {
+                        // Plateau crest: cut at its middle.
+                        0.5 * (at(j) + at(i - 1))
+                    });
                 }
             }
         }
-        t0 = local.1;
-        u0 = local.2;
-        span_t *= 0.5;
-        span_u *= 0.5;
-    }
-    gap(t0, u0) <= 2.0 * r_m + 1e-9
-        && balls_have_common_point([&at(t0), &at(u0), centroid], [r_m, r_m, rho], 1e-9)
-}
-
-/// Group parameter intervals into the connected components of the clipped volume.
-///
-/// Over one interval the lump is connected: every slice
-/// `Ball(gamma(tau), r_m) ∩ Ball(c, rho)` is nonempty and convex and varies
-/// continuously, so the projection of `c` onto the slices traces a curve meeting
-/// all of them. Hence every component is a union of WHOLE intervals, and the
-/// search reduces to union-find over pairs.
-fn group_components(
-    obs_data: &SpacetimeObstacleData<'_>,
-    obs: usize,
-    r_m: f64,
-    centroid: &[f64],
-    rho: f64,
-    intervals: &[(f64, f64)],
-) -> Vec<Vec<(f64, f64)>> {
-    let n = intervals.len();
-    if n == 1 {
-        return vec![vec![intervals[0]]];
-    }
-    let mut parent: Vec<usize> = (0..n).collect();
-    fn find(parent: &mut Vec<usize>, mut x: usize) -> usize {
-        while parent[x] != x {
-            parent[x] = parent[parent[x]];
-            x = parent[x];
+        // A clamped vertex can still land within half a cell of an interval end
+        // when the crest sits in the first or last cell; a cut there would mint
+        // a spurious sliver of a wall.
+        cuts.retain(|s| *s > iv.0 + 0.5 * cell && *s < iv.1 - 0.5 * cell);
+        if cuts.is_empty() {
+            out.push(*iv);
+            continue;
         }
-        x
-    }
-    for i in 0..n {
-        for j in (i + 1)..n {
-            let (ri, rj) = (find(&mut parent, i), find(&mut parent, j));
-            if ri == rj {
-                continue;
-            }
-            if lumps_touch(obs_data, obs, r_m, centroid, rho, intervals[i], intervals[j]) {
-                parent[ri] = rj;
-            }
+        let mut bounds = Vec::with_capacity(cuts.len() + 2);
+        bounds.push(iv.0);
+        bounds.extend(cuts.iter().copied());
+        bounds.push(iv.1);
+        for k in 0..bounds.len() - 1 {
+            let (a, b) = (bounds[k], bounds[k + 1]);
+            let pad_l = if k == 0 {
+                0.0
+            } else {
+                CUT_OVERLAP * (b - a).min(a - bounds[k - 1])
+            };
+            let pad_r = if k + 2 == bounds.len() {
+                0.0
+            } else {
+                CUT_OVERLAP * (b - a).min(bounds[k + 2] - b)
+            };
+            out.push(((a - pad_l).max(iv.0), (b + pad_r).min(iv.1)));
         }
     }
-    let mut groups: Vec<(usize, Vec<(f64, f64)>)> = Vec::new();
-    for i in 0..n {
-        let root = find(&mut parent, i);
-        match groups.iter_mut().find(|(r, _)| *r == root) {
-            Some((_, ivs)) => ivs.push(intervals[i]),
-            None => groups.push((root, vec![intervals[i]])),
-        }
-    }
-    groups.sort_by(|a, b| a.1[0].0.partial_cmp(&b.1[0].0).unwrap());
-    groups.into_iter().map(|(_, ivs)| ivs).collect()
+    out
 }
 
 /// Nearest centreline point to `c` RESTRICTED to a component's intervals.
@@ -992,7 +896,7 @@ pub fn band_over_times(
 /// The two non-`Components` readings look the same to a row count and are
 /// opposites in meaning. `OutOfReach` means no row is NEEDED: nothing within the
 /// trust region can touch this obstacle, so silence is correct. A `dropped`
-/// component means no row is POSSIBLE: the centroid sits exactly ON the
+/// approach means no row is POSSIBLE: the centroid sits exactly ON the
 /// centreline, so no direction exists. Reporting the second as a satisfied
 /// constraint is how a violation becomes a certificate of 0.0.
 pub enum ClipOutcome {
@@ -1000,21 +904,27 @@ pub enum ClipOutcome {
     Components(ClipComponents),
 }
 
-/// One wall per connected component of the clipped keep-out volume.
+/// One wall per local approach of the obstacle to the segment: the band is cut
+/// at every interior local maximum of `|gamma(s) - c|` and each sub-interval
+/// yields one wall. (Until 2026-08-26 this was one wall per connected component
+/// of the clipped volume, which handed a wrapping bend a single non-separating
+/// wall -- panel B2.)
 pub struct ClipComponents {
-    /// One entry per component that admitted a direction, ordered by parameter.
+    /// One entry per approach that admitted a direction, ordered by parameter.
     pub planes: Vec<ClipGeometry>,
-    /// Components in reach that admitted none. A hole, counted, never silent.
+    /// Approaches in reach that admitted none. A hole, counted, never silent.
     pub dropped: usize,
 }
 
 /// Keep-out reading of the clip: **the wall is built against the clipped KOZ
-/// volume itself**, one per connected component.
+/// volume itself**, one per local approach.
 ///
 /// ```text
 ///   L      = K_m ∩ Ball(c, rho)          the clipped KOZ volume
-///   L_j    = its connected components
-///   f_j    = the centreline point of component j nearest c
+///   L_j    = the material of L whose nearest centreline parameter falls in
+///            sub-interval j -- the band cut at each interior local maximum
+///            of |gamma(s) - c|  (split_at_distance_maxima)
+///   f_j    = the centreline point of piece j nearest c
 ///   n_j    = (c - f_j) / |c - f_j|
 ///   b_j    = max over L_j of n_j . z     the SUPPORT of the component
 ///   wall:    n_j . z >= b_j              on every control point of the segment
@@ -1064,11 +974,14 @@ pub fn clip_geometry(
     };
 
     let scale = centroid.iter().fold(1.0f64, |acc, v| acc.max(v.abs()));
-    let comps = group_components(obs_data, obs, r_m, centroid, band.rho, &band.intervals);
+    let subs = split_at_distance_maxima(obs_data, obs, centroid, &band.intervals);
 
-    let mut planes: Vec<ClipGeometry> = Vec::with_capacity(comps.len());
+    let mut planes: Vec<ClipGeometry> = Vec::with_capacity(subs.len());
     let mut dropped = 0usize;
-    for ivs in comps.iter() {
+    for iv in subs.iter() {
+        // A one-interval slice, so `nearest_param_in` / `component_support`
+        // keep their signatures and the loop body stays untouched.
+        let ivs = std::slice::from_ref(iv);
         let (s_star, r_near, interior) = nearest_param_in(obs_data, obs, centroid, ivs);
         let f = obs_data.lifted_at(obs, s_star);
         let diff: Vec<f64> = (0..dim).map(|k| centroid[k] - f[k]).collect();
@@ -1146,4 +1059,124 @@ pub fn rotation_correction(geom: &ClipGeometry, d_k: &[f64]) -> Vec<f64> {
         *value /= geom.dist;
     }
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Degree-2 lifted obstacle whose spatial path is the parabola `y = x^2`,
+    /// exactly: control points (-1,1), (0,-1), (1,1) give `x = 2s - 1` and
+    /// `y = (2s-1)^2`. All times zero. Against the centroid `(0, 1, 0)` the
+    /// squared distance `x^2 + (x^2 - 1)^2` has ONE interior maximum at
+    /// `s = 0.5` (d = 1) between two minima at `x = +-sqrt(0.5)` (d = sqrt(3)/2),
+    /// and with `r_m = 0.2`, `seg_radius = 0`, `trust = 1` the band threshold
+    /// `rho + r_m + pad = 1.101` exceeds the curve's farthest point (d = 1), so
+    /// `clip_band` returns the single interval [0, 1]. The component grouping
+    /// this replaced produced ONE wall here; the split must produce two.
+    const PARABOLA: [f64; 9] = [-1.0, 1.0, 0.0, 0.0, -1.0, 0.0, 1.0, 1.0, 0.0];
+    const RADII: [f64; 1] = [0.2];
+    const CENTROID: [f64; 3] = [0.0, 1.0, 0.0];
+
+    fn data() -> SpacetimeObstacleData<'static> {
+        SpacetimeObstacleData {
+            ctrl: &PARABOLA,
+            n_ctrl: 3,
+            radii: &RADII,
+            n_obs: 1,
+            spatial_dim: 2,
+        }
+    }
+
+    #[test]
+    fn one_wall_per_approach_where_components_gave_one() {
+        let d = data();
+        let ClipOutcome::Components(c) = clip_geometry(&CENTROID, 0.0, 1.0, &d, 0, false)
+        else {
+            panic!("the obstacle is in reach; OutOfReach is wrong");
+        };
+        assert_eq!(c.dropped, 0);
+        // FAILS IF the split silently stops splitting: the band is one interval,
+        // so anything grouping by parameter runs or by connectivity yields 1.
+        assert_eq!(c.planes.len(), 2, "one wall per local approach");
+        // The two approaches sit on opposite sides of the crest in x, so the
+        // normals must too.
+        assert!(
+            c.planes[0].normal[0] * c.planes[1].normal[0] < 0.0,
+            "normals should straddle the crest: n0_x = {}, n1_x = {}",
+            c.planes[0].normal[0],
+            c.planes[1].normal[0]
+        );
+        // FAILS IF CUT_OVERLAP stops doing its job: each piece's nearest point
+        // must stay interior so the rotation face survives the cut.
+        assert_eq!(c.planes[0].face.len(), 1, "piece 0 lost its rotation face");
+        assert_eq!(c.planes[1].face.len(), 1, "piece 1 lost its rotation face");
+    }
+
+    #[test]
+    fn each_wall_contains_its_own_piece_of_the_clipped_volume() {
+        let d = data();
+        let band = clip_band(&CENTROID, 0.0, 1.0, &d, 0, false, true, RADII[0]).unwrap();
+        let subs = split_at_distance_maxima(&d, 0, &CENTROID, &band.intervals);
+        let ClipOutcome::Components(c) = clip_geometry(&CENTROID, 0.0, 1.0, &d, 0, false)
+        else {
+            panic!("in reach");
+        };
+        assert_eq!(subs.len(), c.planes.len(), "walls must map 1:1 onto sub-intervals");
+        // Sample the keep-out material carried by sub-interval j -- centreline
+        // pushed out by r_m along coordinate directions AND along the wall's own
+        // normal, so the samples reach the piece's true support -- keep what lies
+        // inside the clip ball, and demand wall j contains every bit of it.
+        // FAILS IF the offset drops below the piece's true support along n.
+        // Detection floor: the offset is a rigorous CEILING, conservative by the
+        // De Casteljau slack (measured 0.15 on this fixture at 32 pieces), so an
+        // offset error smaller than that slack is not unsound and is not caught.
+        for (iv, pl) in subs.iter().zip(c.planes.iter()) {
+            let np = [pl.normal[0], pl.normal[1], pl.normal[2]];
+            let dirs: [[f64; 3]; 9] = [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [-1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, -1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, -1.0],
+                np,
+                [-np[0], -np[1], -np[2]],
+            ];
+            for k in 0..=200 {
+                let s = iv.0 + (iv.1 - iv.0) * (k as f64) / 200.0;
+                let g = d.lifted_at(0, s);
+                for dir in dirs.iter() {
+                    let z: Vec<f64> = (0..3).map(|q| g[q] + RADII[0] * dir[q]).collect();
+                    let r: f64 = (0..3)
+                        .map(|q| (z[q] - CENTROID[q]) * (z[q] - CENTROID[q]))
+                        .sum::<f64>()
+                        .sqrt();
+                    if r > band.rho + 1e-12 {
+                        continue; // outside the clip ball: not claimed
+                    }
+                    let v: f64 = (0..3).map(|q| pl.normal[q] * z[q]).sum();
+                    assert!(
+                        v <= pl.offset + 1e-9,
+                        "sub-lump escaped its own wall at s = {s}: n.z = {v} > b = {}",
+                        pl.offset
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_monotone_profile_is_never_cut() {
+        // Centroid off to one side: the distance is strictly decreasing over the
+        // whole parameter range, so there is no interior maximum and the split
+        // must hand the interval back verbatim. FAILS IF sampling noise mints
+        // cuts, which would quietly inflate row counts on every run.
+        let d = data();
+        let c = [3.0, 0.0, 0.0];
+        let ivs = [(0.0, 1.0)];
+        let subs = split_at_distance_maxima(&d, 0, &c, &ivs);
+        assert_eq!(subs, ivs.to_vec());
+    }
 }

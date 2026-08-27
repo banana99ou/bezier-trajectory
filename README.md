@@ -190,9 +190,18 @@ straight seed, segment 1 against the arc has its centroid 0.598 from the centrel
 radius 0.9 — inside the keep-out zone — so the clip radius is floored to 0.900 instead of shrinking
 to 0.598. Sweeping the clip radius over every segment and both obstacles at four trust radii, the
 clipped volume has **exactly one connected component everywhere** and nothing is dropped: time
-monotonicity keeps the lifted tube self-avoiding, so no ball can cut a piece out of its middle. The
-multi-wall path is real and tested (`test_panel_b1_the_ball_severs_the_bend_into_two_walls`) but no
-scenario in this repository exercises it.
+monotonicity keeps the lifted tube self-avoiding, so no ball can cut a piece out of its middle.
+
+**Walls group by local approach, not by connected component — changed 2026-08-26.** The band is cut
+at every interior local maximum of the centreline's distance to the segment centroid, one wall per
+dip of the profile. The reason is the wrapping bend of panel B2: one connected lump curling around
+the centroid got one non-separating wall (margin −1.154 on a segment whose centroid is 0.205
+OUTSIDE the keep-out zone, a row needing trust ≈1.04 against the default 0.5); the cut gives the
+same geometry two walls at +0.529/−0.162 with nothing else changed. At the straight seed the cut
+emits **exactly the same row count as the component grouping on all seven registered scenarios** —
+every obstacle here approaches each segment once — so the table above did not move. The multi-wall
+path is exercised by the panel tests (`test_panel_b1_...`, `test_panel_b2_...`) and by the Rust
+in-crate tests in `spacetime_obstacle.rs`, but by no scenario in this repository.
 
 The elastic weight is part of the result, not a tuning knob: above the exact-penalty threshold the
 penalized and constrained problems share a solution, below it they do not, and the threshold

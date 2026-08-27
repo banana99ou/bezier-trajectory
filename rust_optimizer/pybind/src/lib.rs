@@ -374,13 +374,15 @@ fn optimize_spacetime_bezier<'py>(
 /// Returns (normals, lower_bounds, segment_idx, cp_idx, obstacle_idx,
 /// component_idx, rho, sound, dropped_planes, unsound_clips). The last three are
 /// the holes: `sound` is per row (statement 7), `dropped_planes` counts
-/// components needing a row that admits none, `unsound_clips` counts pairs where
+/// approaches needing a row that admit none, `unsound_clips` counts walls where
 /// statement (7) failed.
 ///
 /// **The grouping key is (segment, obstacle, component_idx), not (segment,
-/// obstacle).** One obstacle can present two separated lumps of tube to one
-/// segment, and each lump gets its own plane; grouping without the component
-/// index mixes two different walls together.
+/// obstacle).** One obstacle can approach one segment more than once — the band
+/// is cut at every interior local maximum of the centreline's distance to the
+/// segment centroid — and each approach gets its own plane; grouping without
+/// the index mixes two different walls together. (`component_idx` kept its name
+/// when the grouping moved from connected components to approaches, 2026-08-26.)
 #[pyfunction]
 #[pyo3(signature = (
     p, obstacle_ctrl, obstacle_r, n_seg = 8, trust_radius = 0.5, sound_clip = false,
@@ -679,9 +681,9 @@ impl SpacetimeScpContext {
     /// The koz arrays are (seg, cp, obs, iter, normals, supports, centers, lbs,
     /// margins, slack), plus `info["koz_component"]` — a per-row array that rides
     /// in the dict only because pyo3 stops implementing IntoPyObject past a
-    /// 12-tuple. **`component` joins the key**: one obstacle can present two
-    /// separated lumps of tube to one segment and each gets its own plane, so
-    /// rows group by (segment, obstacle, component), never (segment, obstacle).
+    /// 12-tuple. **`component` joins the key**: one obstacle can approach one
+    /// segment more than once and each approach gets its own plane, so rows
+    /// group by (segment, obstacle, component), never (segment, obstacle).
     fn step<'py>(&mut self, py: Python<'py>) -> PyResult<PyObject> {
         let obstacles = SpacetimeObstacleData {
             ctrl: &self.ctrl,

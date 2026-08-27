@@ -21,13 +21,17 @@ pub struct KozRowData {
     pub segment_idx: usize,
     pub cp_idx: usize,
     pub obstacle_idx: usize,
-    /// Which connected component of the clipped keep-out volume this row's wall
-    /// was built against. **The grouping key is (segment, obstacle, component),
-    /// not (segment, obstacle)** — one obstacle can present two separated lumps
-    /// to one segment, and each gets its own plane. All control points of a
-    /// segment still share one plane per component; that is the convex-hull
-    /// certificate and it is what makes the row say anything about the curve
-    /// between the control points.
+    /// Which local APPROACH of the obstacle this row's wall was built against:
+    /// the band is cut at every interior local maximum of `|gamma(s) - c|` and
+    /// this indexes the sub-intervals in parameter order. **The grouping key is
+    /// (segment, obstacle, component), not (segment, obstacle)** — one obstacle
+    /// can approach one segment twice, and each approach gets its own plane;
+    /// grouping without this index folds two different walls together. All
+    /// control points of a segment still share one plane per approach; that is
+    /// the convex-hull certificate and it is what makes the row say anything
+    /// about the curve between the control points. (The name predates the
+    /// 2026-08-26 change from connected components to approaches; the wire
+    /// format keeps it.)
     pub component_idx: usize,
     pub iteration: u32,
     pub normal: Vec<f64>,
@@ -245,11 +249,12 @@ fn build_koz_rows(
             // hole here, it is not satisfied here.
             dropped_planes += components.dropped;
 
-            // ONE WALL PER CONNECTED COMPONENT of the clipped keep-out volume,
-            // not one per (segment, obstacle). A centreline that leaves the clip
-            // ball and re-enters puts two separate lumps of tube inside it, and
-            // the gap between them is a corridor the trajectory is entitled to
-            // use. The row count therefore varies with the geometry, which the
+            // ONE WALL PER LOCAL APPROACH of the obstacle to the segment,
+            // not one per (segment, obstacle). Each dip of |gamma(s) - c| is a
+            // separate approach and gets its own plane; the gap between two
+            // approaches — a corridor, or the mouth of a bend that wraps the
+            // centroid — stays usable instead of being swallowed by one fused
+            // wall. The row count therefore varies with the geometry, which the
             // rest of this builder already tolerates — rows are pushed, not
             // indexed, and an out-of-reach pair has always emitted none.
             for (comp_idx, geom) in components.planes.iter().enumerate() {
