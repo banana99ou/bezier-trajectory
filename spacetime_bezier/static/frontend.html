@@ -1453,6 +1453,10 @@ function applyScenario() {
   p.selectedIndex = 0;
   applyPreset();
   $("ewHint").textContent = `(registered: ${sc.registered_elastic_weight})`;
+  // A trust radius is a length, so the scene owns it: `loiter` is 200 m across
+  // and will not certify at the 0.5 default. Selecting a scenario therefore
+  // overwrites the box, the same way it overwrites the config preset.
+  $("trust_radius").value = sc.trust_radius ?? CAT.solve_defaults.trust_radius;
   if (!sc.drawable) {
     $("banner").textContent =
       `Scenario ${sc.name} has ${sc.dim} coordinates; this page draws 3 or 4 and refuses ` +

@@ -57,7 +57,11 @@ def solve_pair(scenario: str, N: int, n_seg: int,
     common = dict(
         N=N, dim=len(sc["start"]), p_start=sc["start"], p_end=sc["end"],
         obstacles=sc["obstacles"], n_seg=n_seg, max_iter=200, tol=1e-6,
-        scp_trust_radius=0.5, min_dt=0.1, elastic_weight=weight,
+        # The trust radius is a length, so it comes from the scene when the
+        # scene declares one -- `loiter` is 200 m across and the 0.5 default
+        # leaves its constrained run uncertifiable.
+        scp_trust_radius=float(sc.get("trust_radius", 0.5)), min_dt=0.1,
+        elastic_weight=weight,
         # The scenario's own workspace band; optimize_spacetime takes explicit
         # arguments, so the key must be forwarded by hand here.
         coord_bounds=sc.get("coord_bounds"),

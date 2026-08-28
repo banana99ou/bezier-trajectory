@@ -651,7 +651,7 @@ def optimize_scenario(
     max_iter: int = 200,
     tol: float = 1e-6,
     scp_prox_weight: float = 0.3,
-    scp_trust_radius: float = DEFAULT_TRUST_RADIUS,
+    scp_trust_radius: float | None = None,
     elastic_weight: float | None = None,
     min_dt: float = 0.1,
     v_max: float | None = None,
@@ -680,6 +680,15 @@ def optimize_scenario(
     # Absent key means the uniform default box, so every scenario without one
     # solves exactly the problem it always did.
     coord_bounds = scenario.get("coord_bounds")
+    # A trust radius is a LENGTH, so it belongs to the scene as much as the box
+    # does: 0.5 against a 200 m scene is degenerate (see `scenario_loiter`). An
+    # explicit argument still wins; absent both, the module default, so every
+    # scenario without the key solves exactly the problem it always did.
+    trust_radius = (
+        float(scp_trust_radius)
+        if scp_trust_radius is not None
+        else float(scenario.get("trust_radius", DEFAULT_TRUST_RADIUS))
+    )
 
     results = {}
     for N, n_seg in configs:
@@ -707,7 +716,7 @@ def optimize_scenario(
                 max_iter=max_iter,
                 tol=tol,
                 scp_prox_weight=scp_prox_weight,
-                scp_trust_radius=scp_trust_radius,
+                scp_trust_radius=trust_radius,
                 elastic_weight=candidate_weight,
                 min_dt=min_dt,
                 v_max=v_max,
@@ -788,7 +797,10 @@ def optimize_scenario(
             "accept_count": int(opt_info.get("accept_count", 0)),
             "reject_count": int(opt_info.get("reject_count", 0)),
             "returned_best_iterate": bool(opt_info.get("returned_best_iterate", 0.0)),
-            "trust_radius": float(scp_trust_radius),
+            # The RESOLVED radius, not the argument: the scene may have
+            # supplied it, and this row is what the verdicts and every
+            # recorded measurement downstream read.
+            "trust_radius": float(trust_radius),
             "elastic_weight": float(used_weight),
             "speed_cap_violation": float(opt_info.get("speed_cap_violation", 0.0)),
             "arrival_time": float(opt_info.get("arrival_time", float("nan"))),
@@ -848,7 +860,7 @@ def optimize_scenarios(
     max_iter: int = 200,
     tol: float = 1e-6,
     scp_prox_weight: float = 0.3,
-    scp_trust_radius: float = DEFAULT_TRUST_RADIUS,
+    scp_trust_radius: float | None = None,
     elastic_weight: float | None = None,
     min_dt: float = 0.1,
     verbose: bool = True,
