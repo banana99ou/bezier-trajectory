@@ -135,12 +135,60 @@ def prototype_for(body: ET.Element, style_id: str) -> ET.Element | None:
     return None
 
 
+def squeeze_blanks(body: ET.Element, styles: dict[str, str], keep_before_heading: bool = True) -> int:
+    """Drop blank body paragraphs that only pad the layout.
+
+    The 소제목 style carries no space-before, so ONE blank paragraph ahead of a
+    section heading is doing real typographic work and stays. Every other blank
+    is slack: a second blank in a run, a gap left between subsections, the
+    trailing one at the end of the references.
+
+    Never touched: a paragraph carrying the section break (`sectPr`) — that one
+    keeps the title block out of the two-column body — or one holding a
+    drawing, which is blank only in the sense of having no text.
+    """
+    heading = styles.get("소제목") if keep_before_heading else None
+    kept_before_heading: set[int] = set()
+    ps = [(i, el) for i, el in enumerate(body) if el.tag == f"{{{W}}}p"]
+    for pos, (i, el) in enumerate(ps):
+        if style_id_of(el) != heading:
+            continue
+        # walk back over the blank run and keep its LAST member
+        j = pos - 1
+        if j >= 0 and not text_of(ps[j][1]):
+            kept_before_heading.add(ps[j][0])
+
+    drop = []
+    for i, el in ps:
+        if text_of(el) or i in kept_before_heading:
+            continue
+        if el.find(f".//{{{W}}}sectPr") is not None:
+            continue
+        if el.find(f".//{{{W}}}drawing") is not None or el.find(f".//{{{W}}}pict") is not None:
+            continue
+        drop.append(el)
+    for el in drop:
+        body.remove(el)
+    return len(drop)
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("docx", type=Path)
     ap.add_argument("--set", nargs=2, action="append", metavar=("ANCHOR", "TEXT"), default=[])
     ap.add_argument(
         "--after", nargs=3, action="append", metavar=("ANCHOR", "STYLE", "TEXT"), default=[]
+    )
+    ap.add_argument("--delete", action="append", metavar="ANCHOR", default=[])
+    ap.add_argument(
+        "--tight",
+        action="store_true",
+        help="with --squeeze, drop the blank before section headings too",
+    )
+    ap.add_argument(
+        "--squeeze",
+        action="store_true",
+        help="drop padding blank paragraphs, keeping one before each 소제목",
     )
     args = ap.parse_args(argv[1:])
 
@@ -182,6 +230,23 @@ def main(argv: list[str]) -> int:
         set_text(new, text)
         body.insert(idx + 1, new)
         applied += 1
+
+    for anchor in args.delete:
+        _, target = find_one(body, anchor)
+        if target.find(f".//{{{W}}}sectPr") is not None:
+            raise SystemExit(
+                f"refusing to delete {anchor!r}: it carries the section break that keeps "
+                "the title block out of the two-column body"
+            )
+        if target.find(f".//{{{W}}}drawing") is not None:
+            raise SystemExit(f"refusing to delete {anchor!r}: it holds a figure")
+        body.remove(target)
+        applied += 1
+
+    if args.squeeze:
+        n = squeeze_blanks(body, styles, keep_before_heading=not args.tight)
+        print(f"squeezed {n} blank paragraph(s)")
+        applied += n
 
     new_doc = ET.tostring(root, encoding="UTF-8", xml_declaration=True)
     tmp = docx.with_suffix(".docx.tmp")
