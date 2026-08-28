@@ -140,7 +140,174 @@ def page_count(pdf: Path) -> int | None:
     return by_type or by_count
 
 
-def build_sidecar(docx: Path) -> str:
+# --- author critique markers ------------------------------------------------
+#
+# The sidecar is regenerated on every save, and the author annotates it in
+# place: `(원문 조각){비평}`, or a bare `{비평}` hung off the end of a phrase.
+# A plain rewrite throws those away — it did, on 2026-08-27, and the critiques
+# were only recoverable by hand.
+#
+# So the renderer reads the annotations out of the previous sidecar and puts
+# them back on the freshly rendered text. Two rules, and they are the whole
+# design:
+#
+#   1. Nothing here ever deletes a critique. A resolved one is removed by hand.
+#   2. An annotation whose span no longer appears is NOT dropped. The source
+#      sentence changed, which is exactly what the author needs to see, so it
+#      is carried into a block at the end of the file instead.
+BARE_ANCHOR_LEN = 40
+CARRY_HEADING = "## 자리를 찾지 못한 비평 — 본문이 바뀌었습니다"
+
+
+def _match_open(s: str) -> int | None:
+    """Index of the '(' matching the ')' that ends `s`, or None."""
+    depth = 0
+    for k in range(len(s) - 1, -1, -1):
+        if s[k] == ")":
+            depth += 1
+        elif s[k] == "(":
+            depth -= 1
+            if depth == 0:
+                return k
+    return None
+
+
+def split_annotations(body: str) -> tuple[str, list[tuple[str, str, str]]]:
+    """Strip the markers. Returns the plain body and (kind, anchor, comment)."""
+    plain = ""
+    annots: list[tuple[str, str, str]] = []
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch != "{":
+            plain += ch
+            i += 1
+            continue
+        j = body.find("}", i + 1)
+        if j == -1:  # an unpaired brace is ordinary text
+            plain += ch
+            i += 1
+            continue
+        comment = body[i + 1 : j]
+        if plain.endswith(")"):
+            k = _match_open(plain)
+            if k is not None:
+                span = plain[k + 1 : -1]
+                plain = plain[:k] + span
+                annots.append(("span", span, comment))
+                i = j + 1
+                continue
+        annots.append(("tail", plain[-BARE_ANCHOR_LEN:], comment))
+        i = j + 1
+    return plain, annots
+
+
+def _hangul(ch: str) -> bool:
+    return "\uac00" <= ch <= "\ud7a3"
+
+
+def _mid_word(body: str, hit: int, anchor: str) -> bool:
+    """True when the match starts inside a longer Korean word.
+
+    Short anchors are the danger: `집합` re-placed itself inside `교집합`,
+    splitting the word. Korean has no space before a particle, so only the
+    LEADING edge can be tested — a trailing 이지만 after `연결 성분` is a
+    legitimate match and must not be rejected."""
+    return hit > 0 and _hangul(anchor[0]) and _hangul(body[hit - 1])
+
+
+def reapply_annotations(
+    body: str, annots: list[tuple[str, str, str]]
+) -> tuple[str, list[tuple[str, str, str]]]:
+    """Put the markers back. Returns the annotated body and what did not fit."""
+    edits: list[tuple[int, str, int, str]] = []
+    used: list[tuple[int, int]] = []
+    missing: list[tuple[int, tuple[str, str, str]]] = []
+    # Longest anchor first, so a critique on a whole paragraph claims it before
+    # a one-word critique can land inside that paragraph. Without the ordering
+    # the two compete and the winner changes from render to render.
+    order = sorted(range(len(annots)), key=lambda i: -len(annots[i][1]))
+    for idx in order:
+        kind, anchor, comment = annots[idx]
+        pos, start = -1, 0
+        while anchor:
+            hit = body.find(anchor, start)
+            if hit == -1:
+                break
+            free = not any(a < hit + len(anchor) and hit < b for a, b in used)
+            if free and not _mid_word(body, hit, anchor):
+                pos = hit
+                break
+            start = hit + 1
+        if pos == -1:
+            missing.append((idx, (kind, anchor, comment)))
+            continue
+        end = pos + len(anchor)
+        used.append((pos, end))
+        opener = "(" if kind == "span" else ""
+        closer = ("){" if kind == "span" else "{") + comment + "}"
+        edits.append((pos, opener, end, closer))
+    for pos, opener, end, closer in sorted(edits, key=lambda e: -e[0]):
+        body = body[:pos] + opener + body[pos:end] + closer + body[end:]
+    return body, [a for _, a in sorted(missing)]
+
+
+def carry_block(missing: list[tuple[str, str, str]], strays: list[str]) -> list[str]:
+    if not missing and not strays:
+        return []
+    out = ["", "---", "", CARRY_HEADING, ""]
+    for kind, anchor, comment in missing:
+        # Written back in the marker's own syntax, so the next render recovers
+        # it with `split_annotations` and re-places it verbatim the moment the
+        # author restores the sentence it belonged to.
+        marker = f"({anchor})" if kind == "span" else anchor
+        out.append(f"- `{marker}{{{comment}}}`")
+    out.extend(strays)
+    return out
+
+
+def previous_body(md: Path) -> str:
+    """The body of an existing sidecar — everything past the header rule."""
+    if not md.is_file():
+        return ""
+    lines = md.read_text(encoding="utf8").splitlines()
+    for idx, line in enumerate(lines):
+        if line.strip() == "---":
+            return "\n".join(lines[idx + 1 :])
+    return ""
+
+
+def previous_annotations(previous: str) -> tuple[list[tuple[str, str, str]], list[str]]:
+    """Every critique the last sidecar carried, from the body AND from the
+    carry block, plus any carry line too malformed to parse.
+
+    The carry block is read back on purpose: a critique that could not be
+    placed last time gets another chance this time — the author may have put
+    the sentence back. It is parsed strictly, one marker per `- ` + backticks
+    line, so a carried entry cannot decay into a longer and longer anchor by
+    being re-read as ordinary text. Anything that fails that parse is handed
+    back verbatim rather than dropped."""
+    cut = previous.find(CARRY_HEADING)
+    body = previous if cut == -1 else previous[:cut]
+    _, annots = split_annotations(body)
+    strays: list[str] = []
+    if cut != -1:
+        for line in previous[cut:].splitlines()[1:]:
+            if not line.strip():
+                continue
+            match = re.match(r"^- `(.*)`\s*$", line)
+            if match is None:
+                strays.append(line)
+                continue
+            _, carried = split_annotations(match.group(1))
+            if carried:
+                annots.extend(carried)
+            else:
+                strays.append(line)
+    return annots, strays
+
+
+def build_sidecar(docx: Path, previous: str = "") -> str:
     raw = docx.read_bytes()
     with zipfile.ZipFile(docx) as zf:
         lines = render_body(zf)
@@ -156,7 +323,9 @@ def build_sidecar(docx: Path) -> str:
     head = [
         f"# {docx.name} — rendered view",
         "",
-        "Generated by `tools/render_paper.py`. **Do not edit this file** — edit the .docx.",
+        "Generated by `tools/render_paper.py`. Edit the .docx, not the prose here —",
+        "but `(원문){비평}` markers written into this file survive every re-render",
+        "and are only ever removed by hand.",
         "Each line is one paragraph, prefixed with its template style name.",
         "",
         f"- source: `{docx.name}`",
@@ -168,7 +337,9 @@ def build_sidecar(docx: Path) -> str:
         "---",
         "",
     ]
-    return "\n".join(head + lines) + "\n"
+    annots, strays = previous_annotations(previous)
+    body, missing = reapply_annotations("\n".join(lines), annots)
+    return "\n".join(head + body.split("\n") + carry_block(missing, strays)) + "\n"
 
 
 def main(argv: list[str]) -> int:
@@ -182,7 +353,7 @@ def main(argv: list[str]) -> int:
         return 1
 
     md = docx.with_suffix(".md")
-    md.write_text(build_sidecar(docx), encoding="utf8")
+    md.write_text(build_sidecar(docx, previous_body(md)), encoding="utf8")
 
     pages = next(
         (ln.split(": ", 1)[1] for ln in md.read_text(encoding="utf8").splitlines()
