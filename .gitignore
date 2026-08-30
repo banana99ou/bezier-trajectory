@@ -29,3 +29,4 @@ paper/**/*.docx.tmp
 
 # scratch handoffs between sessions — not a record, use the repo for that
 tmp/
+tmp.md
