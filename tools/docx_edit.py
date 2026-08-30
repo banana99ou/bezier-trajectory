@@ -33,6 +33,29 @@ XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 ET.register_namespace("w", W)
 
 
+def register_document_namespaces(doc_xml: bytes) -> bytes:
+    """Return the original <w:document ...> start tag, registering every prefix it declares.
+
+    ElementTree forgets prefixes on parse and invents ns1, ns2, ... on write. Word then
+    reads mc:Ignorable="w14 w15 ..." naming prefixes that no longer exist and reports
+    "unreadable content" (measured 2026-08-31 on every file this tool had written).
+    Registering the prefixes keeps the body's markup as Word wrote it, and the caller
+    splices the original start tag back in so every declaration survives.
+    """
+    tag = re.search(rb"<w:document\b[^>]*>", doc_xml).group(0)
+    for prefix, uri in re.findall(rb'xmlns:([A-Za-z0-9]+)="([^"]+)"', tag):
+        try:
+            ET.register_namespace(prefix.decode(), uri.decode())
+        except ValueError:
+            pass  # ns0-style prefixes are reserved by ElementTree; the tag splice covers them
+    return tag
+
+
+def serialize_document(root: ET.Element, original_tag: bytes) -> bytes:
+    out = ET.tostring(root, encoding="UTF-8", xml_declaration=True)
+    return re.sub(rb"<w:document\b[^>]*>", lambda _m: original_tag, out, count=1)
+
+
 def text_of(p: ET.Element) -> str:
     return "".join(t.text or "" for t in p.iter(f"{{{W}}}t")).strip()
 
@@ -204,6 +227,7 @@ def main(argv: list[str]) -> int:
             (i.filename, data) for i, data in items
         )["word/document.xml"]
 
+    original_tag = register_document_namespaces(doc_xml)
     root = ET.fromstring(doc_xml)
     body = root.find(f"{{{W}}}body")
     if body is None:
@@ -248,7 +272,7 @@ def main(argv: list[str]) -> int:
         print(f"squeezed {n} blank paragraph(s)")
         applied += n
 
-    new_doc = ET.tostring(root, encoding="UTF-8", xml_declaration=True)
+    new_doc = serialize_document(root, original_tag)
     tmp = docx.with_suffix(".docx.tmp")
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
         for info, data in items:
