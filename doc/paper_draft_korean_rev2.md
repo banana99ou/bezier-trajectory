@@ -7,19 +7,19 @@
 
 본 논문에서는 구형 Keep-Out Zone(KOZ)을 연속적으로 회피하는 Bézier 기반 궤적 (초기화)[[purge all mention of 초기화. bc this method is not limited to initialization]] 기법을 제안한다. 곡선 분할을 통해 구형 KOZ에 대한 비볼록 부등식 제약 조건을 선형화하고, 이를 제어점 공간에서의 선형 연산으로 표현함으로써 궤적 (초기화)[[purge all mention of 초기화. bc this method is not limited to initialization]] 문제를 일련의 볼록 최적화 문제로 정식화한다. 생성된 궤적은 그 자체로 제약을 만족하며, 후속 고충실도 최적화에 초기값으로도 활용할 수 있다.
 
-제안 기법을 단순화된 궤도전이 문제에 적용하여, 곡선의 분할 수와 차수가 해의 보수성 및 계산 비용에 미치는 영향을 분석한다. 이어서 두 단계로 이루어진 direct collocation 파이프라인에서 2단계를 동일하게 유지한 채 1단계 (초기화)[[purge all mention of 초기화. bc this method is not limited to initialization]]만 서로 다르게 구성한 두 파이프라인을 비교하여, 제안 기법이 기존 (초기화)[[purge all mention of 초기화. bc this method is not limited to initialization]] 단계를 대체할 수 있는 가능성을 검토한다.
+제안 기법을 단순화된 궤도전이 문제에 적용하여, 곡선의 분할 수와 차수가 해의 보수성 및 계산 비용에 미치는 영향을 분석한다.
 
 ---
 
 ## 1. 서론
 
-제약이 있는 궤적 최적화 문제는 항공우주, 로봇공학, 자율 시스템 등 여러 분야에서 반복적으로 등장한다. 이때 중요한 요구 조건 가운데 하나는 궤적이 특정 금지 영역을 경로 전체에 걸쳐 지속적으로 회피해야 한다는 것이다. 그러나 일반적인 direct transcription 또는 direct collocation 방식 [3, 4]에서는 제약식이 주로 이산화된 노드에서만 부과되므로, 그 노드들에서 제약을 만족하더라도 노드 사이 구간에서 제약이 위반되는 노드 간 제약 위반(inter-sample constraint violation) [11]이 발생할 수 있다. 본 논문에서는 이산화된 노드만이 아니라 궤적 전 구간에서 제약이 성립하는 성질을 연속시간 제약 만족(continuous-time constraint satisfaction) [12]이라 부르며, 금지 영역 회피를 이러한 의미에서 보장하는 표현과 제약 방식이 필요하다.
+제약이 있는 궤적 최적화 문제는 항공우주, 로봇공학, 자율 시스템 등 여러 분야에서 반복적으로 등장한다. 이때 중요한 요구 조건 가운데 하나는 궤적이 특정 금지 영역을 경로 전체에 걸쳐 지속적으로 회피해야 한다는 것이다. 그러나 일반적인 direct transcription 또는 direct collocation 방식 [3, 4]에서는 제약식이 주로 이산화된 노드에서만 부과되므로, 그 노드들에서 제약을 만족하더라도 노드 사이 구간에서 제약이 위반되는 노드 간 제약 위반(inter-sample constraint violation) [8]이 발생할 수 있다. 본 논문에서는 이산화된 노드만이 아니라 궤적 전 구간에서 제약이 성립하는 성질을 연속시간 제약 만족(continuous-time constraint satisfaction) [9]이라 부르며, 금지 영역 회피를 이러한 의미에서 보장하는 표현과 제약 방식이 필요하다.
 
 또 다른 실용적 문제는 초기값의 품질이다. 많은 후속 solver는 초기값에 민감하며, 초기값이 좋지 않으면 제약을 만족하지 않는 해로 수렴하거나 반복 횟수가 크게 증가하거나 품질이 낮은 국소해에 머무를 수 있다. 이런 점에서 후속 고충실도 최적화에 앞서 매끄럽고 제약을 만족하는 초기 궤적을 생성하는 절차는 그 자체로 의미가 있다 [1, 2].
 
 본 논문은 이러한 문제를 해결하기 위해 Bézier 곡선을 이용한 궤적 (초기화)[[purge all mention of 초기화. bc this method is not limited to initialization]] 기법을 제안한다. 제안 기법의 핵심은 모든 계산을 제어점 공간에서 수행한다는 점이다. 곡선의 미분, 분할, 경계조건, KOZ 제약이 모두 제어점에 대한 선형 연산으로 정리되므로, 계산 구조가 비교적 단순하고 해석도 명확하다. 특히 구형 KOZ에 대해서는 각 분할구간에 supporting half-space(지지 반공간)을 부여하고, 그 반공간 안에 제어점이 놓이도록 함으로써 KOZ 제약의 연속시간 만족을 보수적으로 보장한다.
 
-본 논문의 기여는 다음과 같이 정리할 수 있다. 첫째, Bézier 매개변수화를 기반으로 제어점 공간에서 직접 작동하는 궤적 초기화 정식화를 제시하여 제약 구성과 계산 구조를 단순화한다. 둘째, De Casteljau 분할과 지지 반공간을 이용하여 구형 KOZ 제약을 연속시간에서 만족하도록 하는 보수적 제약 구성 방식을 제안하고, 이를 표준적인 SCvx 틀 [6, 7]에 결합하여 각 반복에서 볼록 QP 하나를 푸는 알고리즘으로 정리한다. 셋째, 단순화된 궤도전이 문제에서 분할 수와 Bézier 차수에 대한 비교 실험을 수행하여 계산 비용과 성능의 관계를 분석한다. 넷째, 두 단계 direct collocation 파이프라인의 1단계 초기화를 제안 기법으로 대체하는 비교 실험을 수행하여, 정의된 작동 영역 안에서 기존 초기화 단계의 교체 가능성을 확인한다.
+본 논문의 기여는 다음과 같이 정리할 수 있다. 첫째, Bézier 매개변수화를 기반으로 제어점 공간에서 직접 작동하는 궤적 초기화 정식화를 제시하여 제약 구성과 계산 구조를 단순화한다. 둘째, De Casteljau 분할과 지지 반공간을 이용하여 구형 KOZ 제약을 연속시간에서 만족하도록 하는 보수적 제약 구성 방식을 제안하고, 이를 표준적인 SCvx 틀 [6, 7]에 결합하여 각 반복에서 볼록 QP 하나를 푸는 알고리즘으로 정리한다. 셋째, 단순화된 궤도전이 문제에서 분할 수와 Bézier 차수에 대한 비교 실험을 수행하여 계산 비용과 성능의 관계를 분석한다.
 
 관련 연구는 크게 세 갈래로 나눌 수 있다. 첫째는 direct transcription 및 direct collocation 계열의 궤적 최적화 방법, 둘째는 장애물 회피를 위한 볼록화 및 보수적 근사 기법, 셋째는 후속 최적화를 위한 초기화와 warm start 생성 방법이다.
 
@@ -356,7 +356,7 @@ $$
 
 최적화에는 Rust로 구현한 QP solver를 사용하였다. SCvx 반복은 직선 보간으로 만든 초기 제어점에서 시작하며, 신뢰 구간의 초기 크기는 2000 km로 두고 $\rho_k$에 따라 2배로 늘리거나 절반으로 줄인다. 기준값은 $\eta = 0.1$, merit function의 상대 변화와 예측 감소량에 공통으로 적용하는 수렴 허용오차는 $10^{-8}$, 연속 만족 횟수는 $n_{\mathrm{conv}} = 3$, 신뢰 구간 크기의 하한은 $10^{-2}$ km, 반복 한도는 1000회로 두었다.
 
-페널티 계수는 $\mu = 10^{-2}$로 두었다. L1 페널티 항이 정확한 페널티(exact penalty)로 작동하여 수렴한 해에서 여유 변수가 0이 되려면, 계수가 해당 제약의 쌍대변수 크기를 넘어야 한다 [13, 14]. 본 문제에서 KOZ 제약 쌍대변수의 크기는 약 $1.5\times10^{-7}$ 수준으로 측정되었으므로, $\mu = 10^{-2}$는 이 조건을 약 $10^5$배의 여유를 두고 만족한다. 동시에 이 값은 목적함수의 규모를 압도하지 않으므로 $\rho_k$가 목적 개선에 둔감해지지 않는다.
+페널티 계수는 $\mu = 10^{-2}$로 두었다. L1 페널티 항이 정확한 페널티(exact penalty)로 작동하여 수렴한 해에서 여유 변수가 0이 되려면, 계수가 해당 제약의 쌍대변수 크기를 넘어야 한다 [10, 11]. 본 문제에서 KOZ 제약 쌍대변수의 크기는 약 $1.5\times10^{-7}$ 수준으로 측정되었으므로, $\mu = 10^{-2}$는 이 조건을 약 $10^5$배의 여유를 두고 만족한다. 동시에 이 값은 목적함수의 규모를 압도하지 않으므로 $\rho_k$가 목적 개선에 둔감해지지 않는다.
 
 본 논문에서 사용하는 평가 지표는 다음과 같다. 성공 여부(solve success)는 최종 해가 모든 제약 조건을 만족하는지를, 안전 여유(safety margin)는 최종 궤적의 최소 반경에서 KOZ 반경을 뺀 값을 나타낸다. 제어 비용은 최종 궤적을 따라 요구되는 제어 가속도 $\|\mathbf{u}\|_2$의 평균 크기(m/s²)로 측정한다. 계산 시간(runtime)은 SCvx 반복 전체에 소요된 시간이며, 반복 횟수(iterations)는 종료 시점까지 수행된 횟수이다.
 
@@ -366,22 +366,11 @@ $$
 
 두 번째 비교 실험은 차수 $N \in \{6,7,8\}$에 대한 비교이다. 대표 비교 표는 $n_{\mathrm{seg}} = 16$에서 구성하였고, 전체 분할 수에 대해서도 차수에 따른 제어 비용과 계산 시간의 추세를 함께 확인하였다. 차수 비교에는 표현 자유도 변화와 변수 수 변화가 동시에 반영되므로, 결과는 표현 자유도와 변수 수가 함께 변한 효과로 해석한다.)[[표현이 너무 모호하고 명학성이 떨어짐. 전체적으로 재작성할것.]]
 
-### 4.3 후속 direct collocation 파이프라인의 1단계 대체 비교 실험 설정
-
-세 번째 비교 실험은 제안 기법이 후속 고충실도 최적화의 초기화 단계를 대신할 수 있는지를 측정하기 위한 것이다. 이를 위해, 두 단계로 이루어진 direct collocation 파이프라인에서 첫 단계만 서로 다르게 구성한 두 파이프라인을 동일한 조건에서 비교한다. 비교 대상은 다음 두 파이프라인이다. [[nees more explanation. what is this collocation thing? wha is it doing? is it using same scenario? where is this database mentioned below comming from?]]
-
-- **Baseline (두 단계 direct collocation method, DCM)**: Pass 1로 Hermite-Simpson collocation을 사용하여 thrust profile과 phase 구조를 구하고, peak detection 절차로 phase 경계를 결정한 뒤, Pass 2로 multi-phase Legendre-Gauss-Lobatto collocation [8, 10]을 수행한다.
-- **Proposed (Bézier-replaces-Pass-1)**: Pass 1을 본 논문의 Bézier SCP optimizer (차수 6, $n_{\mathrm{seg}}=16$)로 대체한다. Peak detection, phase 구조 결정, Pass 2 transcription, 동역학 모형, IPOPT [9] solver 허용오차, 경계조건 처리 방식은 baseline과 동일하게 유지한다.
-
-두 파이프라인의 유일한 차이는 warm-start trajectory와 phase 구조 결정의 출처(Pass 1 Hermite-Simpson vs. Bézier SCP)이다. 따라서 본 실험은 후속 단계를 동일하게 고정한 채 1단계 구성만 바꾼 비교이며, 결과 해석은 1단계 초기화의 대체 가능성에 한정된다.
-
-문제 사례는 (데이터베이스)[which database?]에 저장된 수렴한 궤적 가운데 선택하였다. 두 가지 실험을 수행한다. 첫째는 전이 시간이 비교적 짧고($T_{\mathrm{normed}} \le 0.5$) 시작·도착 궤도의 이심률이 모두 작은($\max(e_0, e_f) \le 0.1$) 10개 사례를 대상으로, 이심률이 제안 기법의 적용 가능 범위에 미치는 영향을 확인하는 실험이다. 둘째는 이심률이 거의 0인($\max(e_0, e_f) \le 0.01$) 수렴 사례 전체(112개)를 대상으로, 전이 시간이 길어질 때 두 파이프라인의 수렴 여부가 어떻게 달라지는지를 확인하는 실험이다. 각 사례에 대해 두 파이프라인의 수렴 여부, 단계별 계산 시간, 최종 비용 차이 $|\Delta \mathrm{cost}|$, 검출된 phase 경계(peak) 수, 그리고 전체 계산 시간 비(기준 파이프라인 총 시간 / 제안 파이프라인 총 시간)를 측정하고, 어느 한 파이프라인이라도 실패한 사례도 함께 기록한다.
-
 ---
 
 ## 5. 수치 결과
 
-본 절에서는 다음 네 가지를 차례로 확인한다. 첫째, 제안 기법이 대상 궤도전이 문제에서 실현 가능한 궤적을 생성하는지 확인한다. 둘째, 분할 수가 계산 비용과 (안전 여유)[[]] 및 제어 비용에 어떻게 영향을 주는지 측정한다. 셋째, Bézier 차수가 제어 비용과 계산 시간에 미치는 차이를 확인한다. 넷째, 제안 기법이 두 단계 direct collocation 파이프라인의 1단계 초기화를 대체할 수 있는지 확인한다.
+본 절에서는 다음 세 가지를 차례로 확인한다. 첫째, 제안 기법이 대상 궤도전이 문제에서 실현 가능한 궤적을 생성하는지 확인한다. 둘째, 분할 수가 계산 비용과 (안전 여유)[[]] 및 제어 비용에 어떻게 영향을 주는지 측정한다. 셋째, Bézier 차수가 제어 비용과 계산 시간에 미치는 차이를 확인한다.
 
 ### 5.1 대표 궤적과 기하에 따른 실현 가능성
 
@@ -466,44 +455,6 @@ $$
 
 > 이 그림은 표 4와 같은 값을 그린 것이며, 생성 출처는 `doc/results/paper_tables.md`에 기록된다.
 
-다음 절에서는 후속 활용 가능성에 관한 비교 결과를 제시한다.
-
-### 5.4 후속 direct collocation 파이프라인의 1단계 대체 비교
-
-(두 비교 대상은 모두 두 단계로 이루어진 direct collocation 파이프라인이며, 1단계에서 얻은 궤적과 phase 구조를 2단계의 초기값으로 사용한다. 기준 파이프라인은 1단계에서 Hermite-Simpson collocation을, 제안 파이프라인은 1단계에서 본 논문의 Bézier SCP를 사용하며, 두 파이프라인은 동일한 다구간 Legendre-Gauss-Lobatto(LGL) 2단계 solver와 동역학 모델, 허용오차, 경계조건을 공유한다. 따라서 두 파이프라인의 차이는 1단계 초기화와 phase 구조 결정의 출처뿐이며, 본 비교는 동일한 절차 안에서 1단계를 Bézier SCP로 대체했을 때 최종 해와 전체 계산 시간이 어떻게 달라지는지를 확인한다. 제안 파이프라인이 작동할 수 있는 영역의 경계 또한 이하에서 함께 제시한다.)[[should be checked if agent with no context can understand this prose]]
-
-> [그림 TODO] 두 파이프라인(기준: Hermite-Simpson 1단계 + LGL 2단계 / 제안: Bézier SCP 1단계 + LGL 2단계)의 단계 구조를 비교하는 개념도 필요 (교수 요청 #56).
-
-**표 5 [T5]. 1단계 대체 비교 결과 (작동 영역 경계 탐색에서 두 파이프라인이 모두 수렴한 7개 원궤도 사례).**
-
-| Case | $T_{\mathrm{normed}}$ | 초기 고도 (km) | $\Delta a$ (km) | $\Delta i$ (deg) | Baseline (s) | Bézier (s) | Pass 2 (s) | Proposed total (s) | 전체 시간 비 | $\|\Delta \mathrm{cost}\|$ | Peaks |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---|
-| 2   | 0.280 | 400 | −2.49  | 13.85 | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
-| 4   | 0.280 | 400 | −2.49  | 3.00  | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
-| 6   | 0.280 | 400 | −2.49  | 13.85 | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
-| 20  | 1.920 | 400 | −78.47 | 0.83  | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
-| 39  | 0.510 | 400 | 1262.69 | 9.39 | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
-| 114 | 2.052 | 400 | 1224.14 | 4.66 | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
-| 126 | 0.500 | 400 | 1137.93 | 4.14 | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
-
-> 표의 측정 수치(단계별 계산 시간·전체 계산 시간 비·비용 차이·peak 수)는 optimizer 루프 재작업 이후 재생성 예정 (TODO). 사례는 데이터베이스에서 두 파이프라인이 모두 수렴한 원궤도 사례를 추린 것이다.
-
-표 5는 동일한 2단계 절차 하에서 두 파이프라인이 모두 수렴한 7개 원궤도 사례를 정리한 것이다. 이들은 앞서 기술한 데이터베이스에서 선별한 것으로, 정규화 전이 시간이 짧은 전이부터 여러 바퀴를 도는(multi-revolution) 전이까지 걸쳐 있다. 대부분의 사례에서 최종 비용은 기준 파이프라인과 제안 파이프라인이 기계 정밀도 수준에서 일치한다. 다만 한 사례는 예외로, Bézier 1단계가 기준보다 phase 경계를 하나 더 검출하여 2단계가 인접한 다른 국소해로 수렴하였고, 그 결과 작은 비용 차이가 나타났다. 따라서 제안 기법은 1단계의 완전한 교체라기보다는, 두 파이프라인의 phase 구조가 일치하는 경우에 성립하는 조건부 교체로 해석해야 한다.
-
-전체 계산 시간 비(기준 파이프라인 시간 / 제안 파이프라인 총 시간)는 일부 사례에서 1보다 커서 제안 파이프라인이 더 빨랐고, 일부 사례에서는 1보다 작았다. Bézier 1단계 자체의 계산 시간은 모든 사례에서 일관되게 작으므로, 전체 계산 시간 비는 주로 2단계 계산 시간의 변동이 좌우한다. 특히 여러 바퀴를 도는 전이 사례에서는 제안 파이프라인의 2단계 계산 시간이 기준 파이프라인 전체보다 오히려 큰 경우가 있는데, 이는 Bézier 초기값이 2단계의 국소해와 부합하지 않을 수 있음을 보여주며, 1단계에서 절약한 시간이 항상 전체 계산 시간 개선으로 이어지지는 않음을 시사한다.
-
-1단계 대체가 전체 계산 시간에 미치는 영향은 [그림 7](#fig-downstream-speedup)에 사례별로 정리하였다. 이 그림은 1단계 대체의 이득이 사례에 따라 달라진다는 점과, 그 변동이 1단계가 아니라 2단계 계산 시간에서 비롯된다는 점을 보이기 위한 것이다.
-
-<a id="fig-downstream-speedup"></a>
-![그림 7. 1단계 대체의 사례별 전체 계산 시간 비 및 구성](../figures/downstream_speedup.png)
-**그림 7 [F7].** 1단계 대체가 전체 계산 시간에 미치는 영향을 보이기 위한 사례별 비교. 좌측은 전체 계산 시간 비, 우측은 단계별 계산 시간 구성이다.
-
-> 이 그림의 수치는 표 5와 출처가 같으며, optimizer 루프 재작업 이후 재생성 예정 (TODO).
-
-제안 파이프라인의 작동 영역은 두 가지 경계로 나뉜다. 첫째는 이심률 경계이다. 이심률 실험에서 시작·도착 궤도가 원궤도인 사례에서는 Bézier 1단계가 모두 실현 가능하였으나, 이심률이 작은 타원 궤도 사례에서는 모두 실현 불가능하였다. 모든 제어점이 출발 궤도 위에 놓여 있어도 곡선의 일부가 KOZ 안쪽으로 침범하기 때문이다. 둘째는 전이 시간 경계이다. 전이 시간이 길어질수록 Bézier 1단계가 실현 가능하더라도 2단계가 그 초기값으로부터 수렴하는 비율이 빠르게 낮아진다. 즉 이심률 축에서는 원궤도 여부가 뚜렷한 경계로 작용하고, 전이 시간 축에서는 2단계의 수렴 여부가 점진적인 병목으로 작용한다.
-
-이러한 결과는 두 가지 한계 안에서 해석해야 한다. 첫째, 표 5의 결과는 동일한 2단계 절차와 작동 영역 안에서만 성립하는 초기화 교체 가능성에 대한 것이며, 제안 파이프라인 자체가 하나의 direct collocation 파이프라인이고 1단계 구현만 기준과 다르므로, 이는 direct collocation 대비 방법론적 우월성 주장과는 구분된다. 둘째, 작동 영역이 좁고 사례 수가 제한적이므로, 측정된 계산 시간 비를 2단계가 수렴하지 못하는 더 넓은 영역으로 외삽할 근거는 아직 없다. 요약하면, 제시한 가정 아래에서 Bézier 1단계는 초기화 단계의 제한적인 교체 수단이며, 후속 solver 일반을 가속하는 수단은 아니다.
-
 ---
 
 ## 6. 결론
@@ -513,9 +464,7 @@ $$
 
 단순화된 궤도전이 문제에 대한 실험 결과, 제안 기법은 대표 차수 설정에서 실현 가능한 궤적을 생성할 수 있었다(다만 분할이 지나치게 거칠면 충분조건을 만족하는 영역이 좁아져 실현 불가능한 해가 나타날 수 있다). 분할 수 실험에서는 충분히 분할된 영역에서 안전 여유와 제어 비용이 분할 수에 대해 단조 감소하여, 분할 수 증가가 보수성을 실질적으로 줄임을 확인하였다. 차수 실험에서는 제어 비용이 차수에 대해 단조 감소하지만 계산 시간은 단조 증가하여 표현력-계산비용 상충 관계가 관찰되었다.
 
-후속 활용 가능성에 관해서는, 동일한 두 단계 direct collocation 파이프라인에서 1단계 초기화를 Bézier SCP로 대체하는 비교를 수행하였다. 두 파이프라인이 모두 수렴한 원궤도 사례에서 최종 비용은 대부분 기계 정밀도 수준으로 보존되었고 일부 사례에서는 전체 계산 시간이 감소하였으나, 한 사례에서는 phase 구조 검출의 차이로 다른 국소해에 수렴하였다. 이 결과의 적용 영역은 Bézier 1단계가 실현 가능하고 후속 2단계가 수렴하는 원궤도 사례에 한정된다.
-
-결론적으로, 제안 기법은 제어점 공간에서 연속시간 KOZ 제약을 구성하고 이를 SCvx 기반 최적화와 결합하는 하나의 정식화를 제공하며, 정의된 작동 영역 내에서 두 단계 direct collocation 파이프라인의 1단계 초기화를 대체하는 수단으로도 사용될 수 있다. 다만 본 논문의 연속시간 제약 만족 보장은 구형 KOZ와 고정 전이 시간 설정에 한정되고, 실험적 근거가 단일 시연 문제와 좁은 작동 영역에 기반한다는 한계가 있다. 향후 과제로는 타원 궤도에서의 Bézier 실현 가능성 확장(예: 여러 호(arc)로 분할한 Bézier 곡선), 다양한 전이 시간 영역에서의 2단계 수렴 특성 개선, 그리고 여러 문제 설정으로의 실험 확대와 시간 최적화 확장을 고려할 수 있다.
+결론적으로, 제안 기법은 제어점 공간에서 연속시간 KOZ 제약을 구성하고 이를 SCvx 기반 최적화와 결합하는 하나의 정식화를 제공한다. 다만 본 논문의 연속시간 제약 만족 보장은 구형 KOZ와 고정 전이 시간 설정에 한정되고, 실험적 근거도 단일 시연 문제의 몇 가지 전이 기하에 기반한다는 한계가 있다. 또한 출발 궤도와 도착 궤도가 원궤도가 아닌 경우에는 하나의 Bézier 곡선으로 실현 가능한 해를 얻지 못하였는데, 제어점이 모두 출발 궤도 위에 놓여 있어도 곡선의 일부가 KOZ 안쪽으로 들어가기 때문이다[[이 관찰을 본문에 남기려면 근거 실험을 다시 생성해야 한다]]. 향후 과제로는 타원 궤도에서의 Bézier 실현 가능성 확장(예: 여러 호(arc)로 분할한 Bézier 곡선)과, 여러 문제 설정으로의 실험 확대 및 시간 최적화 확장을 고려할 수 있다.
 
 ---
 
@@ -535,16 +484,10 @@ $$
 
 [7] Malyuta, D., Reynolds, T. P., Szmuk, M., Lew, T., Bonalli, R., Pavone, M., and Açıkmeşe, B., "Convex Optimization for Trajectory Generation: A Tutorial on Generating Dynamically Feasible Trajectories Reliably and Efficiently," *IEEE Control Systems Magazine*, Vol. 42, No. 5, 2022, pp. 40–113. doi:10.1109/MCS.2022.3187542
 
-[8] Patterson, M. A., and Rao, A. V., "GPOPS-II: A MATLAB Software for Solving Multiple-Phase Optimal Control Problems Using hp-Adaptive Gaussian Quadrature Collocation Methods and Sparse Nonlinear Programming," *ACM Transactions on Mathematical Software*, Vol. 41, No. 1, 2014, pp. 1–37. doi:10.1145/2558904
+[8] Dueri, D., Mao, Y., Mian, Z., Ding, J., and Açıkmeşe, B., "Trajectory Optimization with Inter-Sample Obstacle Avoidance via Successive Convexification," *2017 IEEE 56th Annual Conference on Decision and Control (CDC)*, Melbourne, Australia, 2017, pp. 1150–1156. doi:10.1109/CDC.2017.8263811
 
-[9] Wächter, A., and Biegler, L. T., "On the Implementation of an Interior-Point Filter Line-Search Algorithm for Large-Scale Nonlinear Programming," *Mathematical Programming*, Vol. 106, No. 1, 2006, pp. 25–57. doi:10.1007/s10107-004-0559-y
+[9] Elango, P., Luo, D., Kamath, A. G., Uzun, S., Kim, T., and Açıkmeşe, B., "Successive Convexification for Trajectory Optimization with Continuous-Time Constraint Satisfaction," arXiv:2404.16826, 2024. doi:10.48550/arXiv.2404.16826
 
-[10] Herman, A. L., and Conway, B. A., "Direct Optimization Using Collocation Based on High-Order Gauss-Lobatto Quadrature Rules," *Journal of Guidance, Control, and Dynamics*, Vol. 19, No. 3, 1996, pp. 592–599. doi:10.2514/3.21662
+[10] Han, S. P., and Mangasarian, O. L., "Exact Penalty Functions in Nonlinear Programming," *Mathematical Programming*, Vol. 17, No. 1, 1979, pp. 251–269. doi:10.1007/BF01588250
 
-[11] Dueri, D., Mao, Y., Mian, Z., Ding, J., and Açıkmeşe, B., "Trajectory Optimization with Inter-Sample Obstacle Avoidance via Successive Convexification," *2017 IEEE 56th Annual Conference on Decision and Control (CDC)*, Melbourne, Australia, 2017, pp. 1150–1156. doi:10.1109/CDC.2017.8263811
-
-[12] Elango, P., Luo, D., Kamath, A. G., Uzun, S., Kim, T., and Açıkmeşe, B., "Successive Convexification for Trajectory Optimization with Continuous-Time Constraint Satisfaction," arXiv:2404.16826, 2024. doi:10.48550/arXiv.2404.16826
-
-[13] Han, S. P., and Mangasarian, O. L., "Exact Penalty Functions in Nonlinear Programming," *Mathematical Programming*, Vol. 17, No. 1, 1979, pp. 251–269. doi:10.1007/BF01588250
-
-[14] Nocedal, J., and Wright, S. J., *Numerical Optimization*, 2nd ed., Springer, New York, 2006, Theorem 17.3. doi:10.1007/978-0-387-40065-5
+[11] Nocedal, J., and Wright, S. J., *Numerical Optimization*, 2nd ed., Springer, New York, 2006, Theorem 17.3. doi:10.1007/978-0-387-40065-5
