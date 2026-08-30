@@ -74,7 +74,10 @@ def solve_pair(scenario: str, N: int, n_seg: int,
         sound_clip=sound_clip,
         verbose=False, init_curve=sc.get("init_curve"),
     )
+    import time
+    t0 = time.perf_counter()
     P_con, info_con = optimize_spacetime(stations=sc["stations"], **common)
+    info_con["solve_seconds"] = time.perf_counter() - t0
     # The baseline differs by ONE thing: the occlusion rows. Same arrival
     # freedom, same band, same weights -- or the comparison is not a comparison.
     P_base, info_base = optimize_spacetime(stations=None, **common)
@@ -210,7 +213,12 @@ def main():
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig = plt.figure(figsize=(9.0, 3.4))
+    # Drawn AT the width it is printed: one KSAS column is 3.15 in, and a
+    # figure authored at 9 in and shrunk to fit had 2.5 pt legends on paper.
+    plt.rcParams.update({"font.size": 6.5, "axes.labelsize": 6.5,
+                         "xtick.labelsize": 6, "ytick.labelsize": 6,
+                         "axes.linewidth": 0.6, "lines.linewidth": 1.2})
+    fig = plt.figure(figsize=(3.4, 1.5))
     ax1 = fig.add_subplot(1, 2, 1)
     ax2 = fig.add_subplot(1, 2, 2)
 
@@ -236,34 +244,49 @@ def main():
     grid = np.where(np.isfinite(grid), grid, np.nan).reshape(UU.shape)
     axis_x = start_sp[0] + us * (end_sp[0] - start_sp[0])
     ax1.contourf(axis_x, ts, grid, levels=[-1e18, 0.0], colors=["#e8b4b4"])
-    ax1.contour(axis_x, ts, grid, levels=[0.0], colors=["#c04040"], linewidths=0.8)
-    ax1.plot(pts_base[:, 0], pts_base[:, -1], color="#999999", ls="--", lw=1.5,
+    ax1.contour(axis_x, ts, grid, levels=[0.0], colors=["#c04040"], linewidths=0.6)
+    ax1.plot(pts_base[:, 0], pts_base[:, -1], color="#999999", ls="--", lw=1.0,
              label="occlusion off")
-    ax1.plot(pts_con[:, 0], pts_con[:, -1], color="#2255bb", lw=2.0,
+    ax1.plot(pts_con[:, 0], pts_con[:, -1], color="#2255bb", lw=1.4,
              label="occlusion on")
-    ax1.set_xlabel("x"), ax1.set_ylabel("time")
+    ax1.set_xlabel("x [m]"), ax1.set_ylabel("time [s]")
+    for pts, colour, dx in ((pts_base, "#777777", 3), (pts_con, "#2255bb", 3)):
+        ax1.annotate(f"{pts[-1, -1]:.1f} s", (pts[-1, 0], pts[-1, -1]),
+                     xytext=(-3, 3), textcoords="offset points", ha="right",
+                     fontsize=5.5, color=colour)
     ax1.set_xlim(float(axis_x.min()), float(axis_x.max()))
     ax1.set_ylim(0.0, t_top)
     # The shaded set gets a legend entry of its own: a reader who takes it for a
     # spatial obstacle has read the panel backwards.
     from matplotlib.patches import Patch
     handles, labels = ax1.get_legend_handles_labels()
-    handles.append(Patch(facecolor="#e8b4b4", edgecolor="#c04040", lw=0.8))
-    labels.append("line of sight blocked")
-    ax1.legend(handles, labels, loc="upper left", fontsize=7)
+    handles.append(Patch(facecolor="#e8b4b4", edgecolor="#c04040", lw=0.6))
+    labels.append("line of sight blocked (corridor axis)")
+    ax1.legend(handles, labels, loc="upper left", fontsize=5, frameon=False,
+               handlelength=1.6, borderaxespad=0.2)
 
     # Right: the proof panel.
-    ax2.axhline(0.0, color="#666666", lw=0.8)
-    ax2.plot(t_base, m_base, color="#999999", ls="--", lw=1.4, label="occlusion off")
-    ax2.plot(t_con, m_con, color="#2255bb", lw=1.8, label="occlusion on")
+    ax2.axhline(0.0, color="#666666", lw=0.6)
+    ax2.plot(t_base, m_base, color="#999999", ls="--", lw=1.0, label="occlusion off")
+    ax2.plot(t_con, m_con, color="#2255bb", lw=1.4, label="occlusion on")
+    # The graft, drawn: the constrained run's path on the baseline's schedule.
+    # This is the curve that has to dip below zero for the retiming to be the
+    # thing that saved the link; if it stayed positive the path did the work.
+    graft_margins = los_margin_at(fine_con[:, :dim - 1], fine_base[:, -1],
+                                  station, sc["obstacles"])
+    ax2.plot(fine_base[:, -1], graft_margins, color="#2255bb", lw=1.0, ls=":",
+             label="constrained path, baseline schedule")
     ax2.axvspan(*loss_interval, color="#c04040", alpha=0.08)
-    ax2.set_xlabel("time"), ax2.set_ylabel("line-of-sight margin")
-    ax2.legend(fontsize=8)
+    ax2.set_xlabel("time [s]"), ax2.set_ylabel("line-of-sight margin [m]")
+    # Lower right is empty by construction: both runs end high and the loss
+    # interval sits in the first half. "best" put the box on the dashed tail.
+    ax2.legend(fontsize=5, frameon=False, handlelength=1.6, borderaxespad=0.2,
+               loc="lower right")
 
     fig.tight_layout()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     pdf, png = args.out_dir / "occlusion_figure.pdf", args.out_dir / "occlusion_figure.png"
-    fig.savefig(pdf), fig.savefig(png, dpi=160)
+    fig.savefig(pdf), fig.savefig(png, dpi=400)
 
     git = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
                          capture_output=True, text=True, cwd=REPO).stdout.strip()
@@ -296,6 +319,9 @@ def main():
             "unsound_clips": float(info_con.get("koz_unsound_clips", np.nan)),
             "lateral_deviation": lateral_dev_con,
             "graft_min_los_margin": graft_min_los,
+            # Wall-clock of the constrained solve alone, on `machine` below. A
+            # cost number is only honest with the hardware beside it.
+            "solve_seconds": float(info_con.get("solve_seconds", np.nan)),
         },
         "baseline": {
             "min_los_margin": float(np.min(m_base)),
@@ -304,6 +330,8 @@ def main():
             "arrival_time": float(info_base.get("arrival_time", np.nan)),
         },
         "occluder_top": occluder_top, "station": list(map(float, station)),
+        "machine": subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
+                                  capture_output=True, text=True).stdout.strip() or None,
     }
     (args.out_dir / "occlusion_figure.json").write_text(json.dumps(sidecar, indent=2))
     print(f"wrote {pdf}\nwrote {png}")

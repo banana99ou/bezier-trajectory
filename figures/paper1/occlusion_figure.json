@@ -1,6 +1,6 @@
 {
-  "generated": "2026-08-30T16:23:46",
-  "git": "c32e88b+dirty",
+  "generated": "2026-08-30T17:15:36",
+  "git": "69cc369+dirty",
   "scenario": "loiter",
   "N": 8,
   "n_seg": 8,
@@ -20,7 +20,8 @@
     "arrival_time": 55.746966629419695,
     "unsound_clips": 0.0,
     "lateral_deviation": 0.07825710203037772,
-    "graft_min_los_margin": -2.1085574054415255
+    "graft_min_los_margin": -2.1085574054415255,
+    "solve_seconds": 0.25013604199921247
   },
   "baseline": {
     "min_los_margin": -2.1694953445078213,
@@ -36,5 +37,6 @@
     0.0,
     0.0,
     0.0
-  ]
+  ],
+  "machine": "Apple M2"
 }
