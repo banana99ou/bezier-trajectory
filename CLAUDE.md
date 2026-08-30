@@ -70,7 +70,10 @@ A session can open with just an item id (`B1`, `A2`, `C1`).
 - ~~B9 slant-limit speed cap~~ **DONE 2026-08-20** — `c1866ea`, **second-order cone, not the fallback**. The cone carries no slack: the elastic penalty may relax keep-out rows, never the physics. Off by default (`v_max=None`)
 - ~~B10 time penalty + freed arrival~~ **DONE 2026-08-20** — `c1866ea`, same commit as B9. `free_arrival_time` is an explicit flag; `time_weight>0` with no speed cap raises `UncappedTimePenaltyError` — the trap was measured first (arrival collapses to exactly min_dt×gaps and ignores the weight). Golden config unchanged. **The B8–B10 freeze has landed: the one-pass re-measurement (B3) is now unblocked**
 - ~~B11 one run at three spatial dimensions plus time~~ **DONE 2026-08-19** — `fence3d` (renamed from `wall3d` 2026-08-24, definition unchanged), committed `c25503c`: all four configs converge and certify on the first ladder rung, the curve climbs the fence rather than going around, and deleting the third spatial coordinate makes every config penetrate. Its timing profile is an objective artifact (control-point times on the min_dt floor) — geometry is evidence, timing is not, until B8–B10 land
-- ~~B12 occlusion constraint builder~~ **DONE 2026-08-20** — `ed8c50a`+`dd51d3e`+`99a6714`. Rust core beside the KOZ builder; per-piece conservative ball approximation (containment is tested, with an uninflated counterfactual); exact/linearized split mirrors the KOZ; rows are elastic-relaxable but `occlusion_violation_reference` at the returned iterate feeds `figure_grade`, and the convergence guard grades both blocks. Occlusion rows carry a zero time coefficient BY DESIGN (prism with time-parallel walls) — documented as not-G1. Independent check: `compute_los_margin` in geometry.py, pure Python. Demo scenario `station_fence` (3 spatial + time, non-straight fence as two overlapping time-windowed pieces): baseline loses the link for 7.79 s of 10, constrained run climbs to z=2.12 over a 0.90 fence with occlusion certificate 0.0 and keep-out rows slack — the note-003 scenario exists in code. 2D version measured genuinely infeasible: the third dimension is load-bearing as a fact, not a claim
+- ~~B12 line-of-sight occlusion~~ **DONE 2026-08-20, REBUILT 2026-08-30** — `ed8c50a`+`dd51d3e`+`99a6714`, then `46a15f7`. **There is no occlusion builder, and there are not two keep-out zones.** An obstacle's zone and the shadow it casts are one set at two stretch factors, so the centreline generalizes to a **center surface**: the shadow of the centreline with the ground station as a point light source. `u = 1` is the body — the obstacle's radius never changes, the umbra widens, because a point source at finite distance casts constant *angular* thickness. For a fixed `u` the stretch is affine, so the surface is again a Bezier curve and subdivision, hodographs and the De Casteljau support bounds carry over unchanged. **No station means `u = 1` identically and every formula reduces to the plain lifted tube** — that reduction is the regression the rewrite stands on, witnessed by `tests/unit/test_spacetime_koz_geometry.py`. Derivation and the falsification test live in the `rust_optimizer/core/src/spacetime_generator.rs` module docstring and `tests/unit/test_center_surface_geometry.py`
+  - **API.** `spacetime_occlusion_rows_exact` is gone. `spacetime_koz_rows_exact` takes `stations` and returns both wall kinds in one row set, split on a per-row station index (`-1` is the obstacle's own zone). Rows stay elastic-relaxable, `occlusion_violation_reference` at the returned iterate still feeds `figure_grade`, and `compute_los_margin` in geometry.py is still the independent pure-Python check
+  - **RETIRED, do not reintroduce:** the per-piece conservative containing ball and the single flat wall against it; and clipping the BODY by proximity, then casting the cone from the shrunken body — the shadow depends on the whole occluder, so that destroys containment. **A zero time coefficient is now a REPORTABLE DEFECT on every row, shadow rows included** — the old "zero by design, a prism with time-parallel walls, not-G1" note is dead, because the center surface carries the obstacle's own time coordinate
+  - `station_fence`'s measured numbers (baseline loses the link 7.79 s of 10, the climb to z=2.12 over a 0.90 fence) are **stale** — retired builder. Its 2D-is-genuinely-infeasible finding is geometry, not builder, and stands
 
 **C. References** — external ground truth for solver logic and math. When C and an agent's assertion disagree, C wins, and the disagreement is recorded.
 - C1 novelty positioning (**blocks A2**) — time-as-a-coordinate is old (Erdmann & Lozano-Pérez configuration-time space, space-time A*/SIPP, velocity obstacles). The contribution has to be narrower and true.
@@ -92,8 +95,8 @@ and `tests/integration/test_scvx_invariants.py` are where the evidence lives.
 - **The keep-out wall is the SUPPORT of the clipped KOZ volume, not a hull projection.** Since `0a8bc9e`+ the plane is built against `K_m ∩ B(c, r_clip)` itself: normal from the component's own nearest centreline point, offset a rigorous De Casteljau ceiling on that component's support. **The retired route — select a parameter interval, hull the subdivided centreline, project the centroid, push out by `r_m` — is an OUTER approximation**, measured 1.13–2.23 past the clip radius on all six `curve` pairs, and it can never yield more than one wall. Do not reintroduce it. `r_clip = clamp(d, r_m, r_clip_max)`; the floor binds exactly when the centroid is inside the keep-out zone.
 - **`wall` and `diverse` are FEASIBLE.** Corrected 2026-08-19. Both clear and certify once the elastic penalty weight exceeds the scenario's exact-penalty threshold; the weight was pinned at 100 inside the Rust binding and unreachable from Python. Below threshold, a penetrating curve is genuinely the cheaper answer — the solver was right about the wrong problem.
 - **The certificate is evaluated at the RETURNED iterate.** Fixed 2026-08-19; it used to report the loop's final *reference* point, which is a different trajectory whenever the best-iterate fallback fires.
-- **`obstacle_pos0` / `obstacle_vel` are not parameters of anything.** `0918df5` moved the Rust API to lifted control points and did not update the tests. 75 of 338 tests were red at that commit and stayed red; 13 of them were `tests/unit/test_spacetime_koz_geometry.py`, which CLAUDE.md lists as the Rust builder's coverage — so **the Rust builder had no live coverage at all** between `0918df5` and 2026-08-26. Repaired for that file; the remaining 62 are the same drift in `test_objective_matches_rust.py`, `test_occlusion_geometry.py`, `test_speed_cap_and_time_penalty.py`, `test_station_fence_scenario.py` and others. Convert `pos0`/`vel` obstacles with `spacetime_bezier.geometry.obstacle_array_bundle`; a legacy obstacle with no window needs one, because the active window is now intrinsic to the control points.
-- **The KOZ tests in `test_spacetime_constraints.py` cannot fail on G1** — every one uses zero velocity, and line 65 asserts the time column is zero, which enshrines the old bug. They exercise `spacetime_bezier/constraints.py`, the dead Python builder. The Rust builder *is* covered, by `tests/unit/test_spacetime_koz_geometry.py`.
+- **`obstacle_pos0` / `obstacle_vel` are not parameters of anything.** `0918df5` moved the Rust API to lifted control points and did not update the tests. 75 of 338 tests were red at that commit and stayed red; 13 of them were `tests/unit/test_spacetime_koz_geometry.py`, which CLAUDE.md lists as the Rust builder's coverage — so **the Rust builder had no live coverage at all** between `0918df5` and 2026-08-26. Repaired for that file; **52 are still red at `46a15f7` (52 failed / 298 passed / 1 skipped, measured 2026-08-30)**, the same drift in `test_objective_matches_rust.py`, `test_speed_cap_and_time_penalty.py`, `test_station_fence_scenario.py` and others. `test_occlusion_geometry.py` is no longer among them because `46a15f7` deleted it — every one of its assertions was about the retired builder's objects. Convert `pos0`/`vel` obstacles with `spacetime_bezier.geometry.obstacle_array_bundle`; a legacy obstacle with no window needs one, because the active window is now intrinsic to the control points.
+- **The dead Python triple is gone** — `327a28e` deleted `spacetime_bezier/constraints.py`, `debug_stepper.py`, `tests/unit/test_spacetime_constraints.py` and `BENCHMARKS.md` on 2026-08-20. The lesson they carried is worth keeping: those KOZ tests could not fail on G1, because every one used zero velocity and one asserted the time column was zero, enshrining the bug. **The Rust builder's coverage is `tests/unit/test_spacetime_koz_geometry.py`** (and `tests/unit/test_center_surface_geometry.py` since `46a15f7`); nothing else covers it.
 - **The solver is already dimension-generic.** `dim` comes from the array shape; the only guard is `dim >= 2` (`rust_optimizer/pybind/src/lib.rs:144`). **A run at three spatial dimensions plus time costs one scenario definition and one run, not a solver change** — item B11, and the cheapest way to retire the paper's largest weakness.
 - **The core lift is NOT novel.** Osburn, Peterson & Salmon (arXiv:2508.10203, Aug 2025) published the lift, time as a Bezier coordinate, hull half-spaces in the lifted space, finite-height prisms and time monotonicity — on Clarabel. **What survives is decomposition-free.** Never phrase the hook as "time as a coordinate". See [`doc/refs/novelty_positioning.md`](doc/refs/novelty_positioning.md).
 - **Note 001 contradicts itself, so A1 is real work.** In `doc/notes/001_problem_formulation/main.tex` (a separate repo on disk, not tracked here): §"Body 경우" derives the zero-time normal and calls it "정확히 0"; §"잘못된 패턴" then forbids exactly those three steps; §"선형화 지점" presents per-control-point linearization as an improvement ("더 조밀한 표본"), which is G2. **The note enshrines both fixed defects as design. Do not seed the paper from it until A1 revises it.**
@@ -149,11 +152,12 @@ lifted space.
 
 **The bad pattern, which was defect G1 and is fixed:** evaluate the obstacle at `pos0 + vel*t`,
 build the normal from spatial coordinates only, emit a zero coefficient on the time coordinate.
-That is a 2D obstacle re-evaluated per time slice, not a static obstacle in space-time.
-`tube_geometry` now builds a capsule around the slanted centreline in the full lifted space.
-`SPACETIME_AXIS_SCALE` stays pinned at 1.0 as a declared modelling choice — the consequence, and
-the measured conservatism it buys, are documented at
-`rust_optimizer/core/src/spacetime_constraints.rs:47`.
+That is a 2D obstacle re-evaluated per time slice, not a static obstacle in space-time. The zone is
+now generated in the full lifted space by `Generator` in
+`rust_optimizer/core/src/spacetime_generator.rs`, and **a zero time coefficient is a reportable
+defect on every row, the shadow's included.** `SPACETIME_AXIS_SCALE` stays pinned at 1.0 as a
+declared modelling choice — the consequence, and the measured conservatism it buys, are documented
+at `rust_optimizer/core/src/spacetime_constraints.rs:97`.
 
 **Reuse, do not rewrite.** `orbital_docking/` supplies the dimension-agnostic building blocks the
 spacetime code imports: `bezier.py` (D/E/G matrices, `BezierCurve`) and `de_casteljau.py`
@@ -189,6 +193,13 @@ last measured pass, and the elastic weight each result needs: [`README.md`](READ
 
 The B8–B10 freeze landed and the one-pass re-measurement ran **2026-08-20** (item B3); README §Measurements is current at defaults. Runs enabling `v_max` / `time_weight` / `free_arrival_time` are different problems — re-measure per scenario.
 
+**`loiter` is the paper's demo scenario and it is NOT in README §Measurements.** Its elastic weight
+was re-measured to 1e4 on 2026-08-30 (`46a15f7`) — it was 1e5 under the retired occlusion builder,
+which the unified geometry made over-tuned. The rung has to be one that both the default and the
+priced run (free arrival, `v_max`) certify at, because the paper figure is the priced run. Every
+`station_fence` row in that table was measured under the retired builder and is stale for the same
+reason.
+
 ## Key Files
 
 The full tree is [`README.md`](README.md) § Repo map — not repeated here. Only the entries that
@@ -200,11 +211,12 @@ carry a warning or are easy to mistake:
   path is just the solve, and the client only draws -- verdict fields are computed server-side from the
   solver's own numbers. Serves `static/viewer.html`; shares port 8767 so it cannot run beside the sandbox
 - `spacetime_bezier/optimize.py` -- public API, the elastic-weight ladder, `optimize_scenario`
-- `rust_optimizer/core/src/spacetime_constraints.rs` -- KOZ capsule geometry; both fixed defects lived here
+- `rust_optimizer/core/src/spacetime_generator.rs` -- **the set itself**: `Generator`, the centreline read through a station as a point light source. `station: None` is the plain lifted tube. The module docstring carries the derivation and why the widening radius is required rather than cosmetic
+- `rust_optimizer/core/src/spacetime_obstacle.rs` -- the wall built on that set: `clip_band`, `component_support`, `clip_geometry`, `rotation_correction`
+- `rust_optimizer/core/src/spacetime_constraints.rs` -- row assembly and bookkeeping, `SPACETIME_AXIS_SCALE`; both fixed defects lived here, and the retired occlusion builder did too until `46a15f7`
 - `rust_optimizer/core/src/spacetime_optimizer.rs` -- SCP loop, ratio test, certificate at the returned iterate
 - `rust_optimizer/core/src/optimizer.rs` -- `solve_qp` + `solve_qp_with_socs`; second-order cones landed with B9 (the speed-cap cone carries no elastic slack, by design)
 - `paper/` -- one directory per venue, holding the manuscript in the society's own template. [`paper/README.md`](paper/README.md) is the handbook: the render/watch pipeline, the verified venue rules, the invariants that break silently (one template paragraph carries the section break that keeps the title block out of the two-column body), and the state of the draft. `tools/render_paper.py`, `watch_paper.sh`, `make_manuscript_skeleton.py`, `docx_edit.py` are its machinery
-- `spacetime_bezier/constraints.py`, `debug_stepper.py` -- **dead**, see Known Issues
 - `doc/notes/001_problem_formulation/` -- a separate repo, ignored by this one. **Contradicts itself**; do not seed the paper from it
 
 ## Known Issues
@@ -238,10 +250,5 @@ carry a warning or are easy to mistake:
   max_iter=10000`; the sandbox posts `tol=1e-6, max_iter=30`; the scenario table was made with
   neither, and there is no CLI flag for trust radius at all. A live violation of "one canonical
   execution model", left alone deliberately — changing a default silently changes every number.
-- **`BENCHMARKS.md` is untracked and four months stale.** It cites the deleted `ToDo.md` and
-  describes a solver that predates the SCvx port. **Its numbers must never be quoted.**
-- `spacetime_bezier/constraints.py`, `debug_stepper.py` and `tests/unit/test_spacetime_constraints.py`
-  are a dead triple — production uses none of them, and they pin a time scale (0.5) that disagrees
-  with the Rust (1.0). Delete all three together.
 - The venv may be broken (built against a Homebrew Python since upgraded). If `python3 -m
   spacetime_bezier` fails with a dyld error, rebuild it and re-run `maturin develop --release`.
