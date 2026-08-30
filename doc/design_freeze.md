@@ -614,9 +614,12 @@ adjacent field is not precedent; that rule is now general).
 
 ## 9. KOZ constraint — exact formulation (settled 2026-08-09)
 
-Settled during the ρ-test investigation. This is the FORMULATION of record;
-it supersedes §3's rows-REBUILT-AT-x definition of h. The matching code
-change is pending explicit approval and is NOT yet in the tree.
+Settled during the ρ-test investigation. This is the FORMULATION of record and
+the matching code change is IN THE TREE: resolution **(A)** — the subproblem
+models the normal re-aim. §3's rows-REBUILT-AT-x definition of h therefore
+STANDS; (A) is what makes it consistent with the rows the QP optimizes. This
+header previously recorded (B) as the resolution and h's definition as
+superseded — (B) was then implemented, measured and rejected (below).
 
 - True requirement: the continuous curve stays outside the KOZ sphere.
   Non-convex.
