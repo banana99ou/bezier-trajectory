@@ -230,7 +230,7 @@ fn violations_rebuilt_at(
     obstacles: &SpacetimeObstacleData<'_>,
     stations: &StationData<'_>,
     trust_radius: f64,
-) -> (f64, f64, usize, usize) {
+) -> (f64, f64, usize, usize, usize) {
     let nvars = pre.np1 * pre.dim;
     let Some(bundle) = spacetime_constraints::build_spacetime_koz_constraints(
         &pre.a_list,
@@ -243,7 +243,7 @@ fn violations_rebuilt_at(
         pre.sound_clip,
         stations.n_stations > 0,
     ) else {
-        return (0.0, 0.0, 0, 0);
+        return (0.0, 0.0, 0, 0, 0);
     };
     let a = &bundle.constraint.a;
     let lb = &bundle.constraint.lb;
@@ -266,7 +266,25 @@ fn violations_rebuilt_at(
         shadow,
         bundle.dropped_planes,
         bundle.dropped_shadow_planes,
+        bundle.unsound_clips,
     )
+}
+
+/// PAPER_1 statement (7) at `x`, counted: (segment, obstacle) pairs whose clip
+/// ball was smaller than the segment radius plus the trust-box reach, so their
+/// rows certify against the clipped piece and the whole zone is not covered.
+/// Zero means the hull certificate at `x` covers the FULL keep-out zone -- by
+/// construction when `sound_clip` is on, by luck otherwise.
+fn unsound_clips_rebuilt_at(
+    x: &[f64],
+    pre: &ScpPrecomputed,
+    obstacles: &SpacetimeObstacleData<'_>,
+    stations: &StationData<'_>,
+    trust_radius: f64,
+) -> usize {
+    let (_, _, _, _, unsound) =
+        violations_rebuilt_at(x, pre, obstacles, stations, trust_radius);
+    unsound
 }
 
 /// The keep-out CERTIFICATE at `x`: the violation, or infinity when any wall the
@@ -283,7 +301,7 @@ fn koz_violation_rebuilt_at(
     stations: &StationData<'_>,
     trust_radius: f64,
 ) -> f64 {
-    let (keep_out, _, dropped, _) =
+    let (keep_out, _, dropped, _, _) =
         violations_rebuilt_at(x, pre, obstacles, stations, trust_radius);
     if dropped > 0 {
         f64::INFINITY
@@ -306,7 +324,7 @@ fn occlusion_certificate_at(
     stations: &StationData<'_>,
     trust_radius: f64,
 ) -> (f64, usize) {
-    let (_, shadow, _, dropped) =
+    let (_, shadow, _, dropped, _) =
         violations_rebuilt_at(x, pre, obstacles, stations, trust_radius);
     if dropped > 0 {
         (f64::INFINITY, dropped)
@@ -333,7 +351,7 @@ fn relaxable_violation_rebuilt_at(
     stations: &StationData<'_>,
     trust_radius: f64,
 ) -> f64 {
-    let (keep_out, shadow, _, _) =
+    let (keep_out, shadow, _, _, _) =
         violations_rebuilt_at(x, pre, obstacles, stations, trust_radius);
     keep_out + shadow
 }
@@ -1470,6 +1488,22 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     info.insert(
         "koz_violation_reference".to_string(),
         koz_violation_rebuilt_at(&p, &pre, obstacles, stations, state.trust),
+    );
+    // What that certificate COVERS. `koz_unsound_clips` is PAPER_1 statement
+    // (7) counted at the returned iterate: pairs whose clip ball did not reach
+    // the segment radius plus the trust-box reach. Zero means the certificate
+    // above speaks for the whole keep-out zone, not only the clipped pieces;
+    // `sound_clip` echoes whether that zero was forced (the reach floor) or
+    // happened. The count existed per bundle since the clip landed and was
+    // read by nothing that reaches a sidecar -- the figure gate graded a
+    // certificate without recording what it certified against.
+    info.insert(
+        "koz_unsound_clips".to_string(),
+        unsound_clips_rebuilt_at(&p, &pre, obstacles, stations, state.trust) as f64,
+    );
+    info.insert(
+        "sound_clip".to_string(),
+        if pre.sound_clip { 1.0 } else { 0.0 },
     );
     // The occlusion certificate, kept as its own key rather than folded into the
     // keep-out one: they are different guarantees and a run that fails one has

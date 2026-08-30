@@ -47,7 +47,8 @@ import numpy as np
 
 
 def solve_pair(scenario: str, N: int, n_seg: int,
-               free_arrival: bool, time_weight: float, v_max):
+               free_arrival: bool, time_weight: float, v_max,
+               sound_clip: bool = False):
     from spacetime_bezier.scenarios import SCENARIO_MAP, scenario_elastic_weight
     from spacetime_bezier.optimize import optimize_spacetime
 
@@ -66,6 +67,11 @@ def solve_pair(scenario: str, N: int, n_seg: int,
         # arguments, so the key must be forwarded by hand here.
         coord_bounds=sc.get("coord_bounds"),
         free_arrival_time=free_arrival, time_weight=time_weight, v_max=v_max,
+        # PAPER_1 statement (8): floor the clip ball at the segment radius plus
+        # the trust-box reach, so every wall covers the whole keep-out zone and
+        # the certificate is sound BY CONSTRUCTION. Off, the certificate covers
+        # only the clipped pieces wherever `koz_unsound_clips` is nonzero.
+        sound_clip=sound_clip,
         verbose=False, init_curve=sc.get("init_curve"),
     )
     P_con, info_con = optimize_spacetime(stations=sc["stations"], **common)
@@ -140,17 +146,34 @@ def main():
     ap.add_argument("--time-weight", type=float, default=0.0)
     ap.add_argument("--v-max", type=float, default=None)
     ap.add_argument("--out-dir", type=pathlib.Path, default=REPO / "figures" / "paper1")
+    ap.add_argument("--sound-clip", action="store_true",
+                    help="floor the clip radius at the reach (PAPER_1 statement 8)")
     args = ap.parse_args()
 
-    from spacetime_bezier.geometry import bezier_curve, compute_min_clearance, compute_los_margin
+    from spacetime_bezier.geometry import (
+        bezier_curve, compute_min_clearance, compute_los_margin, los_margin_at)
 
     sc, weight, (P_con, info_con), (P_base, info_base) = solve_pair(
-        args.scenario, args.N, args.seg, args.free_arrival, args.time_weight, args.v_max)
+        args.scenario, args.N, args.seg, args.free_arrival, args.time_weight, args.v_max,
+        sound_clip=args.sound_clip)
     station = sc["stations"][0]
     dim = len(sc["start"])
 
     clear_con = float(compute_min_clearance(P_con, sc["obstacles"], dim=dim, n_eval=20001))
     figure_grade_or_die(info_con, clear_con, "constrained run")
+
+    # Gate 1b: the certificate must speak for the WHOLE keep-out zone. This is
+    # PAPER_1 statement (7) counted at the returned iterate: a nonzero count
+    # means some wall was built against a clipped piece the next iterate could
+    # leave, and the figure would rest on a certificate about less than the
+    # obstacle. Measured on `loiter` 2026-08-30: 24 such pairs at the default,
+    # 0 with --sound-clip, both runs "figure-grade" by gate 1 alone. NaN (an
+    # extension predating the key) refuses too -- absent evidence is not zero.
+    unsound = float(info_con.get("koz_unsound_clips", np.nan))
+    if not unsound <= 0.0:
+        sys.exit(f"REFUSING to draw: {unsound:.0f} (segment, obstacle) pair(s) have an "
+                 "unsound clip, so the certificate covers only the clipped pieces; "
+                 "pass --sound-clip")
 
     t_con, m_con = compute_los_margin(P_con, station, sc["obstacles"], dim=dim, n_eval=2001)
     t_base, m_base = compute_los_margin(P_base, station, sc["obstacles"], dim=dim, n_eval=2001)
@@ -164,6 +187,20 @@ def main():
 
     pts_con = bezier_curve(np.asarray(P_con, float), num_pts=600)
     pts_base = bezier_curve(np.asarray(P_base, float), num_pts=600)
+
+    # The schedule GRAFT, the measurement behind "timing is the decision
+    # variable": the constrained run's spatial path flown on the baseline's
+    # schedule (same curve parameter, baseline's time coordinate). If line of
+    # sight survives that, the retiming was decoration and the path did the
+    # work. Lateral deviation says how far the path itself moved off the
+    # corridor axis. Both through `los_margin_at`/plain arithmetic on the two
+    # solved curves -- no solver output beyond the control points.
+    fine_con = bezier_curve(np.asarray(P_con, float), num_pts=4001)
+    fine_base = bezier_curve(np.asarray(P_base, float), num_pts=4001)
+    graft_min_los = float(np.min(los_margin_at(
+        fine_con[:, :dim - 1], fine_base[:, -1], station, sc["obstacles"])))
+    axis_y = float(sc["start"][1])
+    lateral_dev_con = float(np.max(np.abs(fine_con[:, 1] - axis_y)))
     occluder_top = max(
         float(np.max(np.asarray(o["control_points"], float)[:, 2])) + float(o["radius"])
         if "control_points" in o else float(o["pos0"][2]) + float(o["r"])
@@ -174,29 +211,46 @@ def main():
     import matplotlib.pyplot as plt
 
     fig = plt.figure(figsize=(9.0, 3.4))
-    ax3 = fig.add_subplot(1, 2, 1, projection="3d")
+    ax1 = fig.add_subplot(1, 2, 1)
     ax2 = fig.add_subplot(1, 2, 2)
 
-    # Left: spatial view. Occluder sampled at a few times within its own
-    # window -- from the scenario parameters, not from any solver output.
-    t_lo, t_hi = float(P_con[0][-1]), float(P_con[-1][-1])
-    for o in sc["obstacles"]:
-        t0, t1 = obstacle_window(o, t_lo, t_hi)
-        if t1 < t0:
-            continue
-        radius = float(o.get("radius", o.get("r", 0.0)))
-        for t in np.linspace(t0, t1, 5):
-            c = occluder_centres(o, np.array([t]))[0]
-            th = np.linspace(0, 2 * np.pi, 24)
-            ax3.plot(c[0] + radius * np.cos(th), c[1] + radius * np.sin(th),
-                     np.full_like(th, c[2]), color="#c04040", alpha=0.25, lw=0.7)
-    ax3.plot(pts_base[:, 0], pts_base[:, 1], pts_base[:, 2],
-             color="#999999", lw=1.2, ls="--", label="occlusion off")
-    ax3.plot(pts_con[:, 0], pts_con[:, 1], pts_con[:, 2],
-             color="#2255bb", lw=2.0, label="occlusion on")
-    ax3.scatter(*station, marker="^", s=60, color="#117733", label="station")
-    ax3.set_xlabel("x"), ax3.set_ylabel("y"), ax3.set_zlabel("z")
-    ax3.legend(loc="upper left", fontsize=7)
+    # LEFT: the space-time panel, and it is the figure's whole argument. The
+    # blocked set is not an obstacle in space that a path steers around -- it is
+    # a REGION IN (position, time), and the constrained run leaves it along the
+    # time axis while flying the same line through space. A spatial view cannot
+    # show that: once the two runs share a path they plot on top of each other.
+    #
+    # The region is a property of the SCENE, not of either run: it is the set of
+    # (station-to-vehicle) pairs on the corridor centreline whose sight line the
+    # body blocks at that instant, evaluated on a grid neither solve visited,
+    # through `los_margin_at` -- the same function that draws the panel beside
+    # it, so the shading and the curves cannot disagree.
+    start_sp = np.asarray(sc["start"], float)[:dim - 1]
+    end_sp = np.asarray(sc["end"], float)[:dim - 1]
+    t_top = max(float(pts_con[-1, -1]), float(pts_base[-1, -1]))
+    us = np.linspace(0.0, 1.0, 241)
+    ts = np.linspace(0.0, t_top, 241)
+    UU, TT = np.meshgrid(us, ts)
+    line = start_sp[None, :] + UU.reshape(-1, 1) * (end_sp - start_sp)[None, :]
+    grid = los_margin_at(line, TT.reshape(-1), station, sc["obstacles"])
+    grid = np.where(np.isfinite(grid), grid, np.nan).reshape(UU.shape)
+    axis_x = start_sp[0] + us * (end_sp[0] - start_sp[0])
+    ax1.contourf(axis_x, ts, grid, levels=[-1e18, 0.0], colors=["#e8b4b4"])
+    ax1.contour(axis_x, ts, grid, levels=[0.0], colors=["#c04040"], linewidths=0.8)
+    ax1.plot(pts_base[:, 0], pts_base[:, -1], color="#999999", ls="--", lw=1.5,
+             label="occlusion off")
+    ax1.plot(pts_con[:, 0], pts_con[:, -1], color="#2255bb", lw=2.0,
+             label="occlusion on")
+    ax1.set_xlabel("x"), ax1.set_ylabel("time")
+    ax1.set_xlim(float(axis_x.min()), float(axis_x.max()))
+    ax1.set_ylim(0.0, t_top)
+    # The shaded set gets a legend entry of its own: a reader who takes it for a
+    # spatial obstacle has read the panel backwards.
+    from matplotlib.patches import Patch
+    handles, labels = ax1.get_legend_handles_labels()
+    handles.append(Patch(facecolor="#e8b4b4", edgecolor="#c04040", lw=0.8))
+    labels.append("line of sight blocked")
+    ax1.legend(handles, labels, loc="upper left", fontsize=7)
 
     # Right: the proof panel.
     ax2.axhline(0.0, color="#666666", lw=0.8)
@@ -223,6 +277,14 @@ def main():
         "free_arrival": bool(args.free_arrival),
         "time_weight": float(args.time_weight),
         "v_max": None if args.v_max is None else float(args.v_max),
+        "trust_radius": float(sc.get("trust_radius", 0.5)),
+        # The clip-soundness record, both halves: whether the reach floor was
+        # requested, and how many (segment, obstacle) pairs at the returned
+        # iterate fell short of it anyway. A certificate is a statement about
+        # what it was built against; with `unsound_clips` 0 that is the whole
+        # keep-out zone, otherwise only the clipped pieces. NaN if the
+        # extension predates the key, which fails any reader that compares it.
+        "sound_clip": bool(args.sound_clip),
         "constrained": {
             "min_clearance": clear_con,
             "min_los_margin": float(np.min(m_con)),
@@ -231,6 +293,9 @@ def main():
             "occlusion_certificate": float(info_con.get("occlusion_violation_reference", np.nan)),
             "iterations": int(info_con.get("iterations", -1)),
             "arrival_time": float(info_con.get("arrival_time", np.nan)),
+            "unsound_clips": float(info_con.get("koz_unsound_clips", np.nan)),
+            "lateral_deviation": lateral_dev_con,
+            "graft_min_los_margin": graft_min_los,
         },
         "baseline": {
             "min_los_margin": float(np.min(m_base)),

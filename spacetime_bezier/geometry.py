@@ -431,14 +431,36 @@ def compute_los_margin(P, station, obstacles: list[dict], dim: int, n_eval: int 
     pts = _eval_at(P, _sample_taus(P, obstacles, int(n_eval)))
     spatial_dim = dim - 1
     t_values = pts[:, -1]
-    positions = pts[:, :spatial_dim]
     s = np.asarray(station, dtype=float).reshape(-1)
     if s.shape[0] != spatial_dim:
         raise ValueError(f"Station must have {spatial_dim} spatial coordinates, got {s.shape[0]}")
+    return t_values, los_margin_at(pts[:, :spatial_dim], t_values, s, obstacles)
+
+
+def los_margin_at(positions, times, station, obstacles: list[dict]):
+    """The margin at arbitrary ``(position, time)`` pairs, not only along a curve.
+
+    This is the body of :func:`compute_los_margin`, lifted out so that anything
+    needing the margin somewhere OTHER than on a solved trajectory measures it
+    with this arithmetic instead of a second copy of it. The paper figure's
+    space-time panel is the caller that forced the split: the occluded REGION is
+    a property of the scene, evaluated on a grid the solver never visited, and a
+    figure that shaded it with its own reimplementation of this formula could
+    disagree with the margin plotted beside it and nobody would know.
+
+    ``positions`` is ``(n, spatial_dim)``, ``times`` is ``(n,)``. Returns the
+    margin per sample: the distance from the obstacle centre at that time to the
+    sight SEGMENT between station and position, less the obstacle radius,
+    minimised over the obstacles active then. ``+inf`` where none is active,
+    because an obstacle that does not exist blocks nothing.
+    """
+    positions = np.asarray(positions, dtype=float)
+    t_values = np.asarray(times, dtype=float)
+    s = np.asarray(station, dtype=float).reshape(-1)
 
     margins = np.full(t_values.shape, np.inf, dtype=float)
     if not obstacles:
-        return t_values, margins
+        return margins
 
     seg = positions - s[None, :]              # station -> vehicle, per sample
     seg_sq = np.einsum("ij,ij->i", seg, seg)
@@ -462,7 +484,7 @@ def compute_los_margin(P, station, obstacles: list[dict], dim: int, n_eval: int 
         dist = np.linalg.norm(foot - centers, axis=1) - radius
         margins = np.where(active, np.minimum(margins, dist), margins)
 
-    return t_values, margins
+    return margins
 
 
 def bezier_obstacle_from_moving(obstacle: dict, T: float) -> dict:

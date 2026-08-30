@@ -1,30 +1,35 @@
 {
-  "generated": "2026-08-28T18:13:42",
-  "git": "0fec64a+dirty",
+  "generated": "2026-08-30T16:23:46",
+  "git": "c32e88b+dirty",
   "scenario": "loiter",
   "N": 8,
   "n_seg": 8,
-  "elastic_weight": 1000000.0,
+  "elastic_weight": 100000.0,
   "free_arrival": true,
   "time_weight": 10.0,
   "v_max": 5.0,
+  "trust_radius": 5.0,
+  "sound_clip": true,
   "constrained": {
-    "min_clearance": 25.49941886783721,
-    "min_los_margin": 7.813790149701255,
-    "max_z": 62.5,
+    "min_clearance": 30.524266132114242,
+    "min_los_margin": 10.642379942551027,
+    "max_z": 62.50000000000001,
     "koz_certificate": 0.0,
     "occlusion_certificate": 0.0,
-    "iterations": 22,
-    "arrival_time": 64.77539064333281
+    "iterations": 12,
+    "arrival_time": 55.746966629419695,
+    "unsound_clips": 0.0,
+    "lateral_deviation": 0.07825710203037772,
+    "graft_min_los_margin": -2.1085574054415255
   },
   "baseline": {
-    "min_los_margin": -2.1694953456389308,
+    "min_los_margin": -2.1694953445078213,
     "los_loss_interval": [
-      14.959999999879926,
-      16.519999999865156
+      14.960000001416164,
+      16.52000000151878
     ],
-    "max_z": 62.50000005778648,
-    "arrival_time": 39.99999999957828
+    "max_z": 62.500000171677065,
+    "arrival_time": 40.00000000346005
   },
   "occluder_top": 56.0,
   "station": [

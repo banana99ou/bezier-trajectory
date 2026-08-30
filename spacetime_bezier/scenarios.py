@@ -379,20 +379,22 @@ SCENARIO_ELASTIC_WEIGHT = {
     # trajectory standing on occlusion slack. Measured at N8_seg8 -- occlusion
     # certificate 0.61 at 100, 0.29 at 800, 0.50 at 3000, and 0.0 at 1e5.
     "station_fence": 100000.0,
-    # Two measurements met at the 2026-08-30 merge, and neither is of this scene:
+    # MEASURED 2026-08-30 at N8_seg8, priced run (free arrival, time_weight 10,
+    # v_max 5), center-surface builder, `sound_clip=True` -- the configuration
+    # the paper figure is drawn from. Every rung certifies and returns the SAME
+    # trajectory (arrival 55.747, min line-of-sight +10.642, clearance 30.524,
+    # agreeing to 1e-6); they differ only in how long they take to get there:
     #
-    #   * 2026-08-28, metres-and-seconds rescale, OLD occlusion builder: the
-    #     exact-penalty threshold scales with the problem, 1e5 returned an
-    #     occlusion certificate of 4.2e-05 (standing on slack, gate refuses),
-    #     1e6 returned 0.0.
-    #   * 2026-08-28, center-surface builder, at a TENTH of these lengths: the
-    #     unified geometry is less conservative, 1e4 certified both the default
-    #     and the priced run, and 1e5 hit the iteration cap on the priced run.
+    #   1e4  121 iterations, 2.6 s     1e5  12 iterations, 0.3 s
+    #   1e6   11 iterations, 0.2 s
     #
-    # The scene below is the rescaled one solved by the center-surface builder,
-    # which neither measurement covers. The rung is carried over from the
-    # rescale and is RE-MEASURED in the commit that follows this merge.
-    "loiter": 1000000.0,
+    # 1e5 is registered: a decade above the rung that needs ten times the
+    # iterations for the identical answer, and a decade below one that buys
+    # nothing further. The two earlier readings were of other problems -- the
+    # 2026-08-28 rescale measured 1e5 standing on slack (4.2e-05) under the
+    # RETIRED occlusion builder, and the center-surface builder was measured at
+    # a tenth of these lengths (1e4 certified, 1e5 hit the iteration cap).
+    "loiter": 100000.0,
 }
 
 
@@ -456,11 +458,14 @@ def scenario_loiter() -> dict:
 
     **Timing is the only escape, and that is measured, not asserted.** Take the
     constrained run's spatial path, graft the BASELINE's schedule onto it, and
-    re-measure line of sight: it goes to -1.699 and the link is lost. The same
-    path flown on the earlier schedule fails, so the retiming is what saves the
-    run. The spatial path is not doing the work and cannot: the constrained run
-    deviates 0.00 m laterally over 200 m and its path is 200.01 m long, +0.00
-    percent against the straight line.
+    re-measure line of sight: it goes to -2.109 and the link is lost (the
+    reverse graft, the baseline's path on the constrained schedule, keeps it at
+    +10.620). The same path flown on the earlier schedule fails, so the retiming
+    is what saves the run. The spatial path is not doing the work and cannot:
+    the constrained run deviates 0.08 m laterally over 200 m and its path is
+    200.00 m long, +0.00 percent against the straight line. (Re-measured
+    2026-08-30 under the center-surface builder with the reach floor; the
+    2026-08-28 readings under the retired builder were -1.699 and 0.00 m.)
 
     Two design choices buy that, and the geometry earns both:
 
@@ -489,12 +494,16 @@ def scenario_loiter() -> dict:
     (occlusion certificate 3.13, standing on slack). Scanned 2026-08-28 at the
     registered weight, 9 of the phases tried satisfy all three conditions at
     once: the run certifies, the baseline loses the link, and the graft above
-    fails. 51 deg is the one where the spatial path is untouched. Measured
-    there: the baseline loses the link over [14.96, 16.52] s at min
-    line-of-sight -2.169, and the constrained run keeps it at +7.814 by
-    arriving 24.8 s later, clearing the body by 25.5 m, in 22 iterations with
-    both certificates 0.0. The deeper-baseline alternatives cost path purity --
-    12 deg gives -5.781 but 3.19 m of lateral deviation.
+    fails. 51 deg is the one where the spatial path is untouched. (That scan
+    ran under the retired occlusion builder; only 51 deg has been re-measured
+    since.) Measured there, 2026-08-30, center-surface builder with the reach
+    floor: the baseline loses the link over [14.96, 16.52] s at min
+    line-of-sight -2.169 -- bit-identical to the 2026-08-28 reading, as it must
+    be, since the baseline has no shadow rows and the builder change cannot
+    reach it -- and the constrained run keeps it at +10.642 by arriving 15.7 s
+    later, clearing the body by 30.5 m, in 12 iterations with both certificates
+    0.0 and zero unsound clips. The deeper-baseline alternatives cost path
+    purity -- 12 deg gave -5.781 but 3.19 m of lateral deviation.
 
     The remaining pieces close the ways the solver was measured to squirm out
     (2026-08-26, at a tenth of these lengths):
@@ -505,7 +514,7 @@ def scenario_loiter() -> dict:
       ground; measured at the authoring scale: it went to z = -1.86).
     * **The band sits above the body's reach** (floor 60 > body top 56), so the
       keep-out rows are present and never binding -- the constrained run clears
-      by 25.5 m. What forces the timing is the line-of-sight rows and nothing
+      by 30.5 m. What forces the timing is the line-of-sight rows and nothing
       else.
     * **One full lap over the horizon** (T = 80), so the shadow visits the
       corridor once and "wait for it to pass" is meaningful. A cubic cannot
@@ -522,10 +531,10 @@ def scenario_loiter() -> dict:
       in ``clip_band``), so the stock 0.5 against a 200 m scene is degenerate:
       the constrained run then pushes arrival to the horizon end and still loses
       the link. Callers must forward it the way they forward ``coord_bounds``.
-    * The elastic weight, 1e6 in ``SCENARIO_ELASTIC_WEIGHT``. The exact-penalty
-      threshold scales with the problem: at 1e5 this scene returns an occlusion
-      certificate of 4.2e-05 -- a run standing on slack, which the figure gate
-      refuses -- and at 1e6 it returns 0.0.
+    * The elastic weight, 1e5 in ``SCENARIO_ELASTIC_WEIGHT``, with the ladder
+      it was read off recorded beside it. The exact-penalty threshold scales
+      with the problem, which is why it is re-measured whenever the scene or
+      the builder changes.
 
     ``min_dt`` is the exception that needs no scaling: at an 80 s horizon the
     floor never binds.
@@ -534,7 +543,11 @@ def scenario_loiter() -> dict:
     key: tick ``free_arrival_time`` with a ``time_weight > 0`` and a ``v_max``,
     or the solver refuses by design (a freed arrival that nothing prices is an
     artifact generator -- see ``optimize.py``). The paper figure runs it with
-    ``time_weight=10.0`` and ``v_max=5.0``.
+    ``time_weight=10.0``, ``v_max=5.0`` and ``sound_clip=True`` -- the reach
+    floor on the clip radius (PAPER_1 statement 8), so the certificate speaks
+    for the whole keep-out zone. Measured to matter here: without it the
+    returned iterate has 24 (segment, obstacle) pairs whose wall covers only a
+    clipped piece, and the figure tool refuses to draw it.
     """
     orbit_r = 30.0   # m, radius of the loiter circle
     body_z = 50.0    # m, altitude of the loiter circle
