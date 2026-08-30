@@ -1,32 +1,32 @@
 {
-  "generated": "2026-08-27T16:53:45",
-  "git": "f55052f+dirty",
+  "generated": "2026-08-28T18:13:42",
+  "git": "0fec64a+dirty",
   "scenario": "loiter",
   "N": 8,
   "n_seg": 8,
-  "elastic_weight": 100000.0,
+  "elastic_weight": 1000000.0,
   "free_arrival": true,
-  "time_weight": 1.0,
+  "time_weight": 10.0,
   "v_max": 5.0,
   "constrained": {
-    "min_clearance": 2.3132652998602765,
-    "min_los_margin": 0.8303843610907492,
-    "max_z": 6.2,
+    "min_clearance": 25.49941886783721,
+    "min_los_margin": 7.813790149701255,
+    "max_z": 62.5,
     "koz_certificate": 0.0,
     "occlusion_certificate": 0.0,
-    "iterations": 29,
-    "arrival_time": 4.742701798741623
+    "iterations": 22,
+    "arrival_time": 64.77539064333281
   },
   "baseline": {
-    "min_los_margin": -0.42841753724589793,
+    "min_los_margin": -2.1694953456389308,
     "los_loss_interval": [
-      1.1396010349064625,
-      1.4051206340075286
+      14.959999999879926,
+      16.519999999865156
     ],
-    "max_z": 6.293524215969508,
-    "arrival_time": 4.000304839169795
+    "max_z": 62.50000005778648,
+    "arrival_time": 39.99999999957828
   },
-  "occluder_top": 5.6,
+  "occluder_top": 56.0,
   "station": [
     0.0,
     0.0,

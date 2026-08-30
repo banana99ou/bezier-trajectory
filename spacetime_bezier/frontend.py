@@ -496,6 +496,7 @@ def scenario_catalog() -> dict:
             "T": float(scenario["T"]),
             "stations": scenario.get("stations"),
             "coord_bounds": scenario.get("coord_bounds"),
+            "trust_radius": float(scenario.get("trust_radius", DEFAULT_TRUST_RADIUS)),
             "configs": [[int(N), int(n_seg)] for N, n_seg in configs],
             "registered_elastic_weight": scenario_elastic_weight(name),
             "views": axis_views(dim),

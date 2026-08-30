@@ -379,20 +379,20 @@ SCENARIO_ELASTIC_WEIGHT = {
     # trajectory standing on occlusion slack. Measured at N8_seg8 -- occlusion
     # certificate 0.61 at 100, 0.29 at 800, 0.50 at 3000, and 0.0 at 1e5.
     "station_fence": 100000.0,
-    # RE-MEASURED 2026-08-28 at N8_seg8, after the shadow moved onto the center
-    # surface. It was 1e5 under the old occlusion builder ("the ladder certified
-    # at this rung and no lower one", 2026-08-26); the unified geometry is less
-    # conservative and 1e5 is now over-tuned for it. Measured, both variants:
+    # Two measurements met at the 2026-08-30 merge, and neither is of this scene:
     #
-    #   default run   1e4  converged, certificates 0.0, slack 1.9e-13, clear 2.533
-    #                 1e5  converged, certificates 0.0, slack 6.2e-15, clear 2.626
-    #   priced run    1e4  converged, certificates 0.0, slack 3.3e-12, clear 2.398
-    #   (free arrival,1e5  ITERATION CAP -- certificates still 0.0 and slack
-    #    v_max 5)          2.9e-15, so the geometry is fine and the weight is not
+    #   * 2026-08-28, metres-and-seconds rescale, OLD occlusion builder: the
+    #     exact-penalty threshold scales with the problem, 1e5 returned an
+    #     occlusion certificate of 4.2e-05 (standing on slack, gate refuses),
+    #     1e6 returned 0.0.
+    #   * 2026-08-28, center-surface builder, at a TENTH of these lengths: the
+    #     unified geometry is less conservative, 1e4 certified both the default
+    #     and the priced run, and 1e5 hit the iteration cap on the priced run.
     #
-    # The paper figure is the priced run, so the rung has to be one both variants
-    # certify at.
-    "loiter": 10000.0,
+    # The scene below is the rescaled one solved by the center-surface builder,
+    # which neither measurement covers. The rung is carried over from the
+    # rescale and is RE-MEASURED in the commit that follows this merge.
+    "loiter": 1000000.0,
 }
 
 
@@ -447,59 +447,109 @@ def scenario_curve() -> dict:
 
 @_canonical
 def scenario_loiter() -> dict:
-    """A body ORBITING the ground station — the tube keeps coming back.
+    """A body ORBITING the ground station, and a corridor its shadow sweeps ALONG.
 
-    The geometry is built so that TIMING is the only escape. Each piece closes
-    one of the ways the solver was measured to squirm out (2026-08-26):
+    **The numbers are metres and seconds.** A ground control station on the soil,
+    another aircraft loitering 50 m above it on a 30 m circle at 2.4 m/s, and a
+    small unmanned aircraft crossing 200 m of corridor at 62.5 m altitude and
+    5 m/s while the loiterer's shadow sweeps that corridor.
+
+    **Timing is the only escape, and that is measured, not asserted.** Take the
+    constrained run's spatial path, graft the BASELINE's schedule onto it, and
+    re-measure line of sight: it goes to -1.699 and the link is lost. The same
+    path flown on the earlier schedule fails, so the retiming is what saves the
+    run. The spatial path is not doing the work and cannot: the constrained run
+    deviates 0.00 m laterally over 200 m and its path is 200.01 m long, +0.00
+    percent against the straight line.
+
+    Two design choices buy that, and the geometry earns both:
+
+    * **The corridor is TANGENT to the shadow ring, not a chord of it.** At
+      altitude z the shadow of the body falls on a ring of radius
+      ``orbit_r * z / body_z`` -- 37.5 m at z = 62.5 -- and its spot there has
+      radius ``body_r * z / body_z`` = 7.5 m. Put the corridor ON that ring
+      (y = 37.5) and the spot arrives moving PARALLEL to the corridor instead of
+      across it, so it sits on the path instead of crossing it. An earlier
+      version ran the corridor through the ring's centre line; the spot crossed
+      transversally, a sidestep cleared it, and the run's own retiming was
+      decoration -- grafting the baseline schedule onto that path still kept the
+      link at +2.393.
+    * **The corridor has a WIDTH, 5 m either side.** The spot's radius is 7.5 m
+      and at tangency it is centred on the corridor axis, so no lateral offset
+      the corridor allows can clear it. Without the width the solver sidesteps
+      15.8 m and never has to wait. Narrower does not work: at +-3, +-2 and +-1
+      the run stops certifying (occlusion certificate 5 to 13, standing on
+      slack, at both 1e6 and 1e7).
+
+    **The phase is scanned, and what it sets is WHEN the shadow reaches the
+    corridor relative to the baseline's transit.** Tangency alone does not pick
+    it: phase 0 puts the body at the tangency point at a quarter lap, which is
+    also when the baseline crosses that point, and it gives the deepest baseline
+    failure (-6.000) -- but the constrained run does not certify there
+    (occlusion certificate 3.13, standing on slack). Scanned 2026-08-28 at the
+    registered weight, 9 of the phases tried satisfy all three conditions at
+    once: the run certifies, the baseline loses the link, and the graft above
+    fails. 51 deg is the one where the spatial path is untouched. Measured
+    there: the baseline loses the link over [14.96, 16.52] s at min
+    line-of-sight -2.169, and the constrained run keeps it at +7.814 by
+    arriving 24.8 s later, clearing the body by 25.5 m, in 22 iterations with
+    both certificates 0.0. The deeper-baseline alternatives cost path purity --
+    12 deg gives -5.781 but 3.19 m of lateral deviation.
+
+    The remaining pieces close the ways the solver was measured to squirm out
+    (2026-08-26, at a tenth of these lengths):
 
     * **Station at the origin, ON the soil.** The floor of the altitude band is
-      what makes the soil real — without it the solver dives, because z < 0 is
+      what makes the soil real -- without it the solver dives, because z < 0 is
       shadow-free (a sight line to a ground station never passes below the
-      ground; measured: it went to z = -1.86).
-    * **Orbit higher than it is wide** — radius 3 at altitude 5. The shadow ring
-      at altitude z then sits at horizontal radius 0.6·z. With the orbit as wide
-      as it is high (the first attempt) the ring sits at the vehicle's own
-      altitude at EVERY altitude — a 45-degree cone the transit never touched.
-    * **Corridor overhead, endpoints inside the band.** The transit runs along
-      y = 0 at z = 3, under a ceiling of 6. At every altitude in the band the
-      ring radius (at most 3.6) is inside the transit span (10), so the path
-      crosses the swept shadow shell twice at EVERY reachable altitude. No
-      altitude avoids the shadow; only timing does. The occluded fraction of a
-      lap per crossing is about r_m / (pi * orbit_r) = 6 percent.
-    * **One full lap over the horizon** (T = 8), so the shadow sweeps each
-      crossing point once and "wait for it to pass" is meaningful. A cubic
-      cannot close a circle, so the lap is a CHAIN of four quarter-arc pieces on
-      contiguous time windows — the station_fence pattern with curved pieces;
+      ground; measured at the authoring scale: it went to z = -1.86).
+    * **The band sits above the body's reach** (floor 60 > body top 56), so the
+      keep-out rows are present and never binding -- the constrained run clears
+      by 25.5 m. What forces the timing is the line-of-sight rows and nothing
+      else.
+    * **One full lap over the horizon** (T = 80), so the shadow visits the
+      corridor once and "wait for it to pass" is meaningful. A cubic cannot
+      close a circle, so the lap is a CHAIN of four quarter-arc pieces on
+      contiguous time windows -- the station_fence pattern with curved pieces;
       the quarter-circle constant k = 0.5522847498 overshoots the radius by
-      0.03 percent, far below the body radius 0.6.
+      0.03 percent, far below the body radius 6.
 
-    Why a returning body at all: in the lifted space the tube comes near the
-    same spatial neighbourhood twice per lap, so a clipping ball centred between
-    the passes cuts it in TWO PLACES — two walls whose time components are
-    equal and opposite, and the free wedge between them is a time slot. The
-    planar ancestor measured exactly that through the production builder
-    (normals with time components +0.9141 / -0.9171, certificate 0.0).
+    Two solver knobs are lengths, so they do NOT come along for free when the
+    scene is scaled:
+
+    * ``trust_radius`` 5.0, and it is a scenario key for a measured reason. The
+      clip radius is built from it (``reach = seg_radius + trust * sqrt(dim)``
+      in ``clip_band``), so the stock 0.5 against a 200 m scene is degenerate:
+      the constrained run then pushes arrival to the horizon end and still loses
+      the link. Callers must forward it the way they forward ``coord_bounds``.
+    * The elastic weight, 1e6 in ``SCENARIO_ELASTIC_WEIGHT``. The exact-penalty
+      threshold scales with the problem: at 1e5 this scene returns an occlusion
+      certificate of 4.2e-05 -- a run standing on slack, which the figure gate
+      refuses -- and at 1e6 it returns 0.0.
+
+    ``min_dt`` is the exception that needs no scaling: at an 80 s horizon the
+    floor never binds.
 
     The arrival time is meant to be FREE. That is a solve flag, not a scenario
     key: tick ``free_arrival_time`` with a ``time_weight > 0`` and a ``v_max``,
     or the solver refuses by design (a freed arrival that nothing prices is an
-    artifact generator — see ``optimize.py``).
+    artifact generator -- see ``optimize.py``). The paper figure runs it with
+    ``time_weight=10.0`` and ``v_max=5.0``.
     """
-    orbit_r = 3.0
-    body_z = 5.0
-    body_r = 0.6
+    orbit_r = 30.0   # m, radius of the loiter circle
+    body_z = 50.0    # m, altitude of the loiter circle
+    body_r = 6.0     # m, keep-out radius of the loitering body
+    corridor_z = 62.5    # m, altitude of the transit
+    corridor_half = 5.0  # m, lateral half-width of the corridor
+    # The shadow ring at the corridor's altitude. Putting the corridor here is
+    # the whole design: the spot arrives moving along the corridor rather than
+    # across it. Derived, not tuned -- change either altitude and it follows.
+    corridor_y = orbit_r * corridor_z / body_z   # 37.5 m
     k = 0.5522847498  # cubic quarter-circle constant
-    # Starting phase of the lap. NOT free, and scanned against the right
-    # object: the figure's own PRICED baseline (occlusion rows off, free
-    # arrival with time_weight=1 and v_max=5), not the straight seed -- an
-    # unpriced baseline's timing is an interior-point tie-break on a flat face
-    # (the regularizer scores every timing equally), so a seed-based scan
-    # answers a question no run in the figure asks. Measured 2026-08-26 at the
-    # 6.2 corridor: 8 of 60 phases make the priced baseline lose the link.
-    # 126 is the deepest (-0.507) but no ladder rung certifies the CONSTRAINED
-    # run there; at 120 the baseline still loses by -0.428 and the constrained
-    # run certifies at the registered weight -- both figure gates pass.
-    phase = np.deg2rad(120.0)
+    # Scanned, not derived -- see the docstring. This is the phase where the run
+    # certifies AND the baseline fails AND the constrained path flown on the
+    # baseline's schedule still loses the link, with the spatial path untouched.
+    phase = np.deg2rad(51.0)
     lap = [
         # (x, y) control points of each quarter, counterclockwise from (orbit_r, 0).
         [(orbit_r, 0.0), (orbit_r, orbit_r * k), (orbit_r * k, orbit_r), (0.0, orbit_r)],
@@ -508,7 +558,7 @@ def scenario_loiter() -> dict:
         [(0.0, -orbit_r), (orbit_r * k, -orbit_r), (orbit_r, -orbit_r * k), (orbit_r, 0.0)],
     ]
     cs, sn = float(np.cos(phase)), float(np.sin(phase))
-    quarter = 2.0  # T / 4
+    quarter = 20.0  # s, T / 4
     obstacles = [
         {
             "control_points": [
@@ -526,28 +576,27 @@ def scenario_loiter() -> dict:
         "title": "Body Orbiting the Ground Station",
         "init_curve": {"mode": "straight"},
         "obstacles": obstacles,
-        "start": [-10.0, 0.0, 6.2, 0.0],
-        "end":   [ 10.0, 0.0, 6.2, 8.0],
+        "start": [-100.0, corridor_y, corridor_z, 0.0],
+        "end":   [ 100.0, corridor_y, corridor_z, 80.0],
         "stations": [[0.0, 0.0, 0.0]],
-        # The corridor LAYER, enforced as HARD box rows outside the elastic
-        # slack range -- the penalty cannot buy through them. Two measured
-        # mistakes fixed its altitude. Below the orbit the transit is always
-        # visible -- the shadow lies on the far side of the body from the
-        # station (at z=3 the seed cleared by exactly +1.400 = the 2.0 vertical
-        # gap minus the 0.6 radius, at every phase). AT the orbit altitude
-        # (z=5.5) the body itself blocks the crossing whenever the shadow does,
-        # so the keep-out rows alone force the same retiming and the occlusion
-        # rows are decoration -- the figure tool's gate 2 refused to draw it.
-        # The layer therefore sits ABOVE the body's reach (floor 6.0 > body top
-        # 5.6, keep-out present but never binding) and INSIDE the shadow's
-        # (ring radius 0.6z stays within the transit span up to the ceiling):
-        # in this layer the line-of-sight rows, and nothing else, are what
-        # forces the timing. Endpoints are pinned and exempt, and a band that
+        # The corridor as a TUBE, enforced as HARD box rows outside the elastic
+        # slack range -- the penalty cannot buy through them. The lateral pair
+        # is what makes timing the only escape (docstring); the altitude pair
+        # keeps the run above the body's reach and out of the shadow-free space
+        # below the soil. Endpoints are pinned and exempt, and a band that
         # excludes an endpoint is refused loudly.
-        "coord_bounds": [[-12.0, 12.0], [-12.0, 12.0], [6.0, 6.5]],
-        "T": 8.0,
+        "coord_bounds": [
+            [-120.0, 120.0],
+            [corridor_y - corridor_half, corridor_y + corridor_half],
+            [60.0, 65.0],
+        ],
+        # A LENGTH, and this scene is 200 m across. See the docstring: the
+        # stock 0.5 leaves the constrained run losing the link with its arrival
+        # pinned against the horizon. Callers that solve a scenario must
+        # forward this the way they forward `coord_bounds`.
+        "trust_radius": 5.0,
+        "T": 80.0,
     }
-
 
 SCENARIO_MAP = {
     "original": (scenario_original, [(4, 4), (4, 8), (6, 8), (8, 4), (8, 8)]),
