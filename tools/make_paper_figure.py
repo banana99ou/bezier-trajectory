@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """The paper's occlusion figure: one figure, two panels, from two runs.
 
-Left panel: the scenario's trajectory in three spatial dimensions, with the
-station and the occluder drawn from the same scenario parameters the solver
-consumed (canonical control-point obstacles are sampled along their own lifted
-centreline). Right panel: line-of-sight margin against time for both runs,
-computed by `compute_los_margin` -- the independent check, sampling the true
-geometry, never the solver's rows.
+Left panel: the SCENE, in plan view, frozen at the instant the baseline's
+sight line is most blocked -- station, the body on its lap, the shadow spot it
+throws onto the corridor's altitude, the corridor, and where each run's vehicle
+is at that instant with its sight line drawn. Everything in it comes from the
+scenario parameters and the two returned curves; nothing from the solver's
+rows. Right panel: line-of-sight margin against time for both runs, computed
+by `compute_los_margin` -- the independent check, sampling the true geometry.
+The two panels share the instant: it is marked on the time axis.
 
 The scenario is a parameter (default: loiter, the paper's demo since
 2026-08-26). Free arrival is exposed because it IS the demo's claim -- timing
@@ -215,75 +217,112 @@ def main():
 
     # Drawn AT the width it is printed: one KSAS column is 3.15 in, and a
     # figure authored at 9 in and shrunk to fit had 2.5 pt legends on paper.
-    plt.rcParams.update({"font.size": 6.5, "axes.labelsize": 6.5,
-                         "xtick.labelsize": 6, "ytick.labelsize": 6,
-                         "axes.linewidth": 0.6, "lines.linewidth": 1.2})
-    fig = plt.figure(figsize=(3.4, 1.5))
+    # No legends at all at this size -- every element is labelled where it is.
+    plt.rcParams.update({"font.size": 6, "axes.labelsize": 6,
+                         "xtick.labelsize": 5.5, "ytick.labelsize": 5.5,
+                         "axes.linewidth": 0.5, "lines.linewidth": 1.0,
+                         "xtick.major.width": 0.5, "ytick.major.width": 0.5,
+                         "xtick.major.size": 2, "ytick.major.size": 2})
+    from matplotlib.patches import Circle
+    fig = plt.figure(figsize=(3.4, 1.55))
     ax1 = fig.add_subplot(1, 2, 1)
     ax2 = fig.add_subplot(1, 2, 2)
+    GREY, BLUE, RED, GREEN = "#8a8a8a", "#2255bb", "#c04040", "#117733"
+    LAB = dict(fontsize=5, ha="left", va="center")
 
-    # LEFT: the space-time panel, and it is the figure's whole argument. The
-    # blocked set is not an obstacle in space that a path steers around -- it is
-    # a REGION IN (position, time), and the constrained run leaves it along the
-    # time axis while flying the same line through space. A spatial view cannot
-    # show that: once the two runs share a path they plot on top of each other.
-    #
-    # The region is a property of the SCENE, not of either run: it is the set of
-    # (station-to-vehicle) pairs on the corridor centreline whose sight line the
-    # body blocks at that instant, evaluated on a grid neither solve visited,
-    # through `los_margin_at` -- the same function that draws the panel beside
-    # it, so the shading and the curves cannot disagree.
-    start_sp = np.asarray(sc["start"], float)[:dim - 1]
-    end_sp = np.asarray(sc["end"], float)[:dim - 1]
-    t_top = max(float(pts_con[-1, -1]), float(pts_base[-1, -1]))
-    us = np.linspace(0.0, 1.0, 241)
-    ts = np.linspace(0.0, t_top, 241)
-    UU, TT = np.meshgrid(us, ts)
-    line = start_sp[None, :] + UU.reshape(-1, 1) * (end_sp - start_sp)[None, :]
-    grid = los_margin_at(line, TT.reshape(-1), station, sc["obstacles"])
-    grid = np.where(np.isfinite(grid), grid, np.nan).reshape(UU.shape)
-    axis_x = start_sp[0] + us * (end_sp[0] - start_sp[0])
-    ax1.contourf(axis_x, ts, grid, levels=[-1e18, 0.0], colors=["#e8b4b4"])
-    ax1.contour(axis_x, ts, grid, levels=[0.0], colors=["#c04040"], linewidths=0.6)
-    ax1.plot(pts_base[:, 0], pts_base[:, -1], color="#999999", ls="--", lw=1.0,
-             label="occlusion off")
-    ax1.plot(pts_con[:, 0], pts_con[:, -1], color="#2255bb", lw=1.4,
-             label="occlusion on")
-    ax1.set_xlabel("x [m]"), ax1.set_ylabel("time [s]")
-    for pts, colour, dx in ((pts_base, "#777777", 3), (pts_con, "#2255bb", 3)):
-        ax1.annotate(f"{pts[-1, -1]:.1f} s", (pts[-1, 0], pts[-1, -1]),
-                     xytext=(-3, 3), textcoords="offset points", ha="right",
-                     fontsize=5.5, color=colour)
-    ax1.set_xlim(float(axis_x.min()), float(axis_x.max()))
-    ax1.set_ylim(0.0, t_top)
-    # The shaded set gets a legend entry of its own: a reader who takes it for a
-    # spatial obstacle has read the panel backwards.
-    from matplotlib.patches import Patch
-    handles, labels = ax1.get_legend_handles_labels()
-    handles.append(Patch(facecolor="#e8b4b4", edgecolor="#c04040", lw=0.6))
-    labels.append("line of sight blocked (corridor axis)")
-    ax1.legend(handles, labels, loc="upper left", fontsize=5, frameon=False,
-               handlelength=1.6, borderaxespad=0.2)
+    # The instant the panels share: where the baseline's sight line is most
+    # blocked. A scene frozen at any other time shows nothing being avoided.
+    i_star = int(np.argmin(m_base))
+    t_star = float(t_base[i_star])
 
-    # Right: the proof panel.
-    ax2.axhline(0.0, color="#666666", lw=0.6)
-    ax2.plot(t_base, m_base, color="#999999", ls="--", lw=1.0, label="occlusion off")
-    ax2.plot(t_con, m_con, color="#2255bb", lw=1.4, label="occlusion on")
-    # The graft, drawn: the constrained run's path on the baseline's schedule.
-    # This is the curve that has to dip below zero for the retiming to be the
-    # thing that saved the link; if it stayed positive the path did the work.
-    graft_margins = los_margin_at(fine_con[:, :dim - 1], fine_base[:, -1],
-                                  station, sc["obstacles"])
-    ax2.plot(fine_base[:, -1], graft_margins, color="#2255bb", lw=1.0, ls=":",
-             label="constrained path, baseline schedule")
-    ax2.axvspan(*loss_interval, color="#c04040", alpha=0.08)
-    ax2.set_xlabel("time [s]"), ax2.set_ylabel("line-of-sight margin [m]")
-    # Lower right is empty by construction: both runs end high and the loss
-    # interval sits in the first half. "best" put the box on the dashed tail.
-    ax2.legend(fontsize=5, frameon=False, handlelength=1.6, borderaxespad=0.2,
-               loc="lower right")
+    def at_time(pts, t):
+        """Spatial position of a returned curve at time t (time is monotone)."""
+        return np.array([np.interp(t, pts[:, -1], pts[:, k]) for k in range(dim - 1)])
 
-    fig.tight_layout()
+    # The body at t*: the piece of the chain whose window holds t*.
+    body_c, body_r = None, None
+    for o in sc["obstacles"]:
+        t0, t1 = obstacle_window(o, -np.inf, np.inf)
+        if t0 - 1e-9 <= t_star <= t1 + 1e-9:
+            body_c = occluder_centres(o, np.array([t_star]))[0]
+            body_r = float(o.get("radius", o.get("r", 0.0)))
+            break
+    if body_c is None:
+        sys.exit("no obstacle piece is active at the blocking instant")
+    st = np.asarray(station, float)
+    z_c = float(sc["start"][2])
+    # The shadow spot on the corridor's altitude: the body's disc projected
+    # from the station as a point source. Similar triangles, nothing else.
+    k = (z_c - st[2]) / (body_c[2] - st[2])
+    spot_c = st[:2] + k * (body_c[:2] - st[:2])
+    spot_r = k * body_r
+    v_base, v_con = at_time(pts_base, t_star), at_time(pts_con, t_star)
+
+    # LEFT: plan view. The lap and its shadow ring are traced from the pieces'
+    # own control points over their windows, not assumed circular.
+    lap = np.vstack([occluder_centres(o, np.linspace(*obstacle_window(o, -np.inf, np.inf), 60))
+                     for o in sc["obstacles"]])
+    ring = st[:2] + k * (lap[:, :2] - st[:2])
+    ax1.plot(lap[:, 0], lap[:, 1], color=RED, lw=0.5, ls="--", alpha=0.6)
+    ax1.plot(ring[:, 0], ring[:, 1], color=RED, lw=0.5, ls=":", alpha=0.6)
+    # The corridor: its lateral band, and the shared spatial path along it.
+    bounds = sc.get("coord_bounds")
+    if bounds is not None:
+        ylo, yhi = float(bounds[1][0]), float(bounds[1][1])
+        ax1.fill_between([float(sc["start"][0]), float(sc["end"][0])], ylo, yhi,
+                         color="#e6e6e6", lw=0)
+    ax1.plot(pts_con[:, 0], pts_con[:, 1], color=BLUE, lw=0.8, alpha=0.5)
+    # Body and spot to scale; both vehicles and their sight lines at t*.
+    ax1.add_patch(Circle(body_c[:2], body_r, facecolor=RED, edgecolor="none", alpha=0.9))
+    ax1.add_patch(Circle(spot_c, spot_r, facecolor=RED, edgecolor=RED, lw=0.5, alpha=0.3))
+    ax1.plot([st[0], v_base[0]], [st[1], v_base[1]], color=GREY, lw=0.7, ls="--")
+    ax1.plot([st[0], v_con[0]], [st[1], v_con[1]], color=BLUE, lw=0.7)
+    ax1.plot(*st[:2], marker="^", ms=4, color=GREEN, ls="none")
+    ax1.plot(*v_base[:2], marker="o", ms=3, mfc="white", mec=GREY, mew=0.8, ls="none")
+    ax1.plot(*v_con[:2], marker="o", ms=3, color=BLUE, ls="none")
+    # Labels where the things are.
+    ax1.text(st[0] + 3, st[1] - 7, "station", color=GREEN, **LAB)
+    ax1.text(body_c[0] + body_r + 2, body_c[1] - 4, "body", color=RED, **LAB)
+    ax1.text(spot_c[0] - spot_r - 2, spot_c[1] + 5, "shadow", color=RED,
+             fontsize=5, ha="right", va="center")
+    ax1.text(v_base[0] + 3, v_base[1] + 9, "off", color=GREY, **LAB)
+    ax1.text(v_con[0], v_con[1] + 9, "on", color=BLUE, fontsize=5, ha="center", va="center")
+    ax1.text(0.03, 0.05, f"t = {t_star:.1f} s", transform=ax1.transAxes,
+             fontsize=5.5, ha="left", va="bottom")
+    ax1.set_aspect("equal")
+    # Crop to what matters: the lap, its shadow ring, the corridor band, and
+    # wherever the constrained vehicle is at t* -- not the corridor's full 200 m.
+    span = max(np.abs(ring).max(), np.abs(lap[:, :2]).max()) + 8
+    x_lo, x_hi = min(-span, v_con[0] - 8), max(span, spot_c[0] + spot_r) + 8
+    ax1.set_xlim(x_lo, x_hi)
+    ax1.set_ylim(-span, max(yhi + 8, span))
+    ax1.text(x_hi - 2, yhi + 2, "corridor", color="#666666",
+             fontsize=5, ha="right", va="bottom")
+    # The two traced circles, named where there is room: the lap on its right,
+    # the shadow ring under its bottom.
+    i_r = int(np.argmax(lap[:, 0]))
+    ax1.text(lap[i_r, 0] + 2, lap[i_r, 1] + 10, "lap", color=RED, alpha=0.8, **LAB)
+    i_b = int(np.argmin(ring[:, 1]))
+    ax1.text(ring[i_b, 0], ring[i_b, 1] - 2, "shadow ring", color=RED, alpha=0.8,
+             fontsize=5, ha="center", va="top")
+    ax1.set_xlabel("x [m]"), ax1.set_ylabel("y [m]")
+
+    # RIGHT: the proof panel. Labels at the curve ends, no legend.
+    ax2.axhline(0.0, color="#666666", lw=0.5)
+    ax2.axvspan(*loss_interval, color=RED, alpha=0.12, lw=0)
+    ax2.axvline(t_star, color="#444444", lw=0.5, ls=":")
+    ax2.plot(t_base, m_base, color=GREY, ls="--", lw=1.0)
+    ax2.plot(t_con, m_con, color=BLUE, lw=1.2)
+    top = float(max(np.max(m_base[np.isfinite(m_base)]), np.max(m_con[np.isfinite(m_con)])))
+    ax2.set_ylim(top=top + 9)
+    ax2.text(float(t_base[-1]), float(m_base[-1]) + 2, f"off, {t_base[-1]:.1f} s",
+             color=GREY, fontsize=5, ha="right", va="bottom")
+    ax2.text(float(t_con[-1]) - 0.5, float(m_con[-1]) - 3, f"on, {t_con[-1]:.1f} s",
+             color=BLUE, fontsize=5, ha="right", va="top")
+    ax2.set_xlabel("time [s]"), ax2.set_ylabel("sight margin [m]")
+    ax2.set_xlim(0.0, float(max(t_base[-1], t_con[-1])) * 1.02)
+
+    fig.tight_layout(pad=0.3, w_pad=0.8)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     pdf, png = args.out_dir / "occlusion_figure.pdf", args.out_dir / "occlusion_figure.png"
     fig.savefig(pdf), fig.savefig(png, dpi=400)
@@ -323,6 +362,7 @@ def main():
             # cost number is only honest with the hardware beside it.
             "solve_seconds": float(info_con.get("solve_seconds", np.nan)),
         },
+        "snapshot_time": t_star,
         "baseline": {
             "min_los_margin": float(np.min(m_base)),
             "los_loss_interval": loss_interval,

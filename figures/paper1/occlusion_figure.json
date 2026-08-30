@@ -1,6 +1,6 @@
 {
-  "generated": "2026-08-30T17:15:36",
-  "git": "69cc369+dirty",
+  "generated": "2026-08-30T17:30:41",
+  "git": "6a9547b+dirty",
   "scenario": "loiter",
   "N": 8,
   "n_seg": 8,
@@ -21,8 +21,9 @@
     "unsound_clips": 0.0,
     "lateral_deviation": 0.07825710203037772,
     "graft_min_los_margin": -2.1085574054415255,
-    "solve_seconds": 0.25013604199921247
+    "solve_seconds": 0.25097091600764543
   },
+  "snapshot_time": 15.740000001467939,
   "baseline": {
     "min_los_margin": -2.1694953445078213,
     "los_loss_interval": [
