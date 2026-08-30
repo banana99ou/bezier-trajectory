@@ -1,37 +1,39 @@
 {
-  "generated": "2026-08-30T17:30:41",
-  "git": "6a9547b+dirty",
+  "generated": "2026-08-30T18:34:10",
+  "git": "a61a9a2+dirty",
   "scenario": "loiter",
   "N": 8,
-  "n_seg": 8,
+  "n_seg": 48,
   "elastic_weight": 100000.0,
   "free_arrival": true,
-  "time_weight": 10.0,
+  "time_weight": 40.0,
   "v_max": 5.0,
-  "trust_radius": 5.0,
+  "trust_radius": 1.0,
   "sound_clip": true,
   "constrained": {
-    "min_clearance": 30.524266132114242,
-    "min_los_margin": 10.642379942551027,
+    "min_clearance": 18.033597837969353,
+    "min_los_margin": 3.343406842979105,
     "max_z": 62.50000000000001,
     "koz_certificate": 0.0,
     "occlusion_certificate": 0.0,
-    "iterations": 12,
-    "arrival_time": 55.746966629419695,
+    "iterations": 16,
+    "arrival_time": 46.57408360184046,
     "unsound_clips": 0.0,
-    "lateral_deviation": 0.07825710203037772,
-    "graft_min_los_margin": -2.1085574054415255,
-    "solve_seconds": 0.25097091600764543
+    "lateral_deviation": 0.5464580497591172,
+    "graft_min_los_margin": -1.691863210362765,
+    "solve_seconds": 0.46896254099556245,
+    "arrival_gap_to_axis_bound": 3.5740836018404565
   },
-  "snapshot_time": 15.740000001467939,
+  "axis_arrival_bound": 43.0,
+  "snapshot_time": 15.740000000245423,
   "baseline": {
-    "min_los_margin": -2.1694953445078213,
+    "min_los_margin": -2.1694953192795423,
     "los_loss_interval": [
-      14.960000001416164,
-      16.52000000151878
+      14.960000000226723,
+      16.52000000026488
     ],
-    "max_z": 62.500000171677065,
-    "arrival_time": 40.00000000346005
+    "max_z": 62.500000000000234,
+    "arrival_time": 40.000000001258705
   },
   "occluder_top": 56.0,
   "station": [

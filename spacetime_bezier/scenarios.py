@@ -543,11 +543,39 @@ def scenario_loiter() -> dict:
     key: tick ``free_arrival_time`` with a ``time_weight > 0`` and a ``v_max``,
     or the solver refuses by design (a freed arrival that nothing prices is an
     artifact generator -- see ``optimize.py``). The paper figure runs it with
-    ``time_weight=10.0``, ``v_max=5.0`` and ``sound_clip=True`` -- the reach
-    floor on the clip radius (PAPER_1 statement 8), so the certificate speaks
-    for the whole keep-out zone. Measured to matter here: without it the
-    returned iterate has 24 (segment, obstacle) pairs whose wall covers only a
-    clipped piece, and the figure tool refuses to draw it.
+    ``sound_clip=True`` -- the reach floor on the clip radius (PAPER_1
+    statement 8), so the certificate speaks for the whole keep-out zone.
+    Measured to matter here: without it the N8_seg8 returned iterate has 24
+    (segment, obstacle) pairs whose wall covers only a clipped piece, and the
+    figure tool refuses to draw it.
+
+    **The paper run is N8, 48 segments, time_weight 40, trust radius 1.0 m**
+    (``tools/make_paper_figure.py --seg 48 --time-weight 40 --trust-radius 1.0
+    --sound-clip --free-arrival --v-max 5``): arrival 46.57 s, 16 iterations,
+    min sight margin +3.34 m, graft -1.69, max lateral deviation 0.55 m. It
+    replaced N8_seg8 / time_weight 10 / trust 5.0 (arrival 55.75 s) after a
+    76-run sweep on 2026-08-30 (scratch, not tracked) measured against the
+    true-shadow reachability bound on the corridor axis, 43.0 s, which the
+    figure tool now computes and records as ``axis_arrival_bound``:
+
+    * about 9 s of the old run's 12.75 s gap was the clip floor E + delta
+      through fat segments (E) and the trust reach (delta, and trust_max is
+      4*delta): seg 8 -> 16 -> 24 -> 48 at delta 5 gave 55.8 -> 51.4 -> 49.9
+      -> 49.0 s; delta 5 -> 1 at seg 24 gave 49.9 -> 48.0 s;
+    * about 3.3 s is the time thickening of the lifted zone at
+      ``SPACETIME_AXIS_SCALE`` = 1: a 4-D ball's constant-time slice is wider
+      than the body when the body moves, and the reachability bound against
+      THAT zone is 46.3 s. Every run with lateral deviation under 0.6 m lands
+      at 46.4-46.7 s -- the walls are within 0.4 s of tight against the zone
+      they model. A frozen modelling choice; it belongs in the limitations;
+    * past that, only sidestepping inside the corridor band buys time
+      (time_weight 90 at seg 96: 44.1 s with 2.0 m of lateral deviation and
+      the graft within 0.3 m of flipping), so the run above is the frontier
+      that keeps "timing is the only escape" unambiguous.
+
+    ``trust_radius`` below stays 5.0 for the DEFAULT runs the README table
+    reports; the paper run overrides it on the command line and the sidecar
+    records the value used.
     """
     orbit_r = 30.0   # m, radius of the loiter circle
     body_z = 50.0    # m, altitude of the loiter circle

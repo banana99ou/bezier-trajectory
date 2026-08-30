@@ -108,12 +108,22 @@ def make_pdf(docx: Path) -> tuple[Path | None, str]:
     """Convert to PDF next to the source. Returns (path, note)."""
     if shutil.which("soffice") is None:
         return None, "soffice not on PATH — PDF not rendered"
+    # Export filter options as JSON (LibreOffice >= 7.4). The defaults recompress
+    # every image as JPEG and downsample it to 300 dpi -- measured on the
+    # manuscript: a 1360x620 PNG came out as a 944x430 JPEG. The figure is
+    # authored at 600 dpi so that the printed column is crisp; the exporter must
+    # not undo that.
+    pdf_filter = (
+        'pdf:writer_pdf_Export:{'
+        '"UseLosslessCompression":{"type":"boolean","value":"true"},'
+        '"ReduceImageResolution":{"type":"boolean","value":"false"}}'
+    )
     cmd = [
         "soffice",
         f"-env:UserInstallation={SOFFICE_PROFILE}",
         "--headless",
         "--convert-to",
-        "pdf",
+        pdf_filter,
         str(docx),
         "--outdir",
         str(docx.parent),
