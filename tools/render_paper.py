@@ -172,23 +172,26 @@ def _match_open(s: str) -> int | None:
     return None
 
 
-def split_annotations(body: str) -> tuple[str, list[tuple[str, str, str]]]:
-    """Strip the markers. Returns the plain body and (kind, anchor, comment)."""
+EQUATION_TAG = "[수식]"
+
+
+def _split_line(line: str) -> tuple[str, list[tuple[str, str, str]]]:
+    """One paragraph line: strip its markers, return the plain text and them."""
     plain = ""
     annots: list[tuple[str, str, str]] = []
     i = 0
-    while i < len(body):
-        ch = body[i]
+    while i < len(line):
+        ch = line[i]
         if ch != "{":
             plain += ch
             i += 1
             continue
-        j = body.find("}", i + 1)
+        j = line.find("}", i + 1)
         if j == -1:  # an unpaired brace is ordinary text
             plain += ch
             i += 1
             continue
-        comment = body[i + 1 : j]
+        comment = line[i + 1 : j]
         if plain.endswith(")"):
             k = _match_open(plain)
             if k is not None:
@@ -200,6 +203,25 @@ def split_annotations(body: str) -> tuple[str, list[tuple[str, str, str]]]:
         annots.append(("tail", plain[-BARE_ANCHOR_LEN:], comment))
         i = j + 1
     return plain, annots
+
+
+def split_annotations(body: str) -> tuple[str, list[tuple[str, str, str]]]:
+    """Strip the markers. Returns the plain body and (kind, anchor, comment).
+
+    Equation paragraphs are skipped whole. Braces are set-builder notation
+    there, and reading `b = max { n·x : x in L }` as a critique both invented
+    an annotation and would have deleted the braces from the manuscript on the
+    next render."""
+    plains: list[str] = []
+    annots: list[tuple[str, str, str]] = []
+    for line in body.split("\n"):
+        if line.startswith(EQUATION_TAG):
+            plains.append(line)
+            continue
+        plain, found = _split_line(line)
+        plains.append(plain)
+        annots.extend(found)
+    return "\n".join(plains), annots
 
 
 def _hangul(ch: str) -> bool:
