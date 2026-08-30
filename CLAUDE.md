@@ -193,12 +193,15 @@ last measured pass, and the elastic weight each result needs: [`README.md`](READ
 
 The B8–B10 freeze landed and the one-pass re-measurement ran **2026-08-20** (item B3); README §Measurements is current at defaults. Runs enabling `v_max` / `time_weight` / `free_arrival_time` are different problems — re-measure per scenario.
 
-**`loiter` is the paper's demo scenario and it is NOT in README §Measurements.** Its elastic weight
-was re-measured to 1e4 on 2026-08-30 (`46a15f7`) — it was 1e5 under the retired occlusion builder,
-which the unified geometry made over-tuned. The rung has to be one that both the default and the
-priced run (free arrival, `v_max`) certify at, because the paper figure is the priced run. Every
-`station_fence` row in that table was measured under the retired builder and is stale for the same
-reason.
+**`loiter` is the paper's demo scenario, it is NOT in README §Measurements, and its elastic weight
+is currently UNMEASURED for the scene it is set on.** Two measurements met at the `cc388aa` merge —
+the metres-and-seconds rescale under the retired occlusion builder (1e6), and the center-surface
+builder at a tenth of those lengths (1e4) — and neither covers the rescaled scene solved by the
+center-surface builder, which is what the registry now holds at 1e6. The full record is the comment
+above `"loiter"` in `spacetime_bezier/scenarios.py`; do not quote a rung from here. The rung has to
+be one that both the default and the priced run (free arrival, `v_max`) certify at, because the
+paper figure is the priced run. Every `station_fence` row in that table was measured under the
+retired builder and is stale for the same reason.
 
 ## Key Files
 
