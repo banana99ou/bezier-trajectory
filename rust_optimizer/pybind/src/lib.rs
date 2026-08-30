@@ -386,6 +386,7 @@ fn optimize_spacetime_bezier<'py>(
 #[pyfunction]
 #[pyo3(signature = (
     p, obstacle_ctrl, obstacle_r, n_seg = 8, trust_radius = 0.5, sound_clip = false,
+    stations = None,
 ))]
 fn spacetime_koz_rows_exact<'py>(
     py: Python<'py>,
@@ -395,6 +396,7 @@ fn spacetime_koz_rows_exact<'py>(
     n_seg: usize,
     trust_radius: f64,
     sound_clip: bool,
+    stations: Option<PyReadonlyArray2<'py, f64>>,
 ) -> PyResult<PyObject> {
     let p_arr = p.as_array();
     let np1 = p_arr.shape()[0];
@@ -413,12 +415,31 @@ fn spacetime_koz_rows_exact<'py>(
     };
     let a_list = bezier_opt_core::de_casteljau::segment_matrices_equal_params(np1 - 1, n_seg);
 
+    let (station_vec, n_stations) = station_arrays(stations, spatial_dim)?;
+    let station_data = StationData {
+        pos: &station_vec,
+        n_stations,
+    };
+
     let bundle = bezier_opt_core::spacetime_constraints::build_spacetime_koz_constraints(
-        &a_list, &p_flat, np1, dim, &obstacles, trust_radius, sound_clip,
+        &a_list,
+        &p_flat,
+        np1,
+        dim,
+        &obstacles,
+        &station_data,
+        trust_radius,
+        sound_clip,
+        n_stations > 0,
     );
-    let (rows, dropped, unsound) = match bundle {
-        Some(b) => (b.rows, b.dropped_planes, b.unsound_clips),
-        None => (Vec::new(), 0usize, 0usize),
+    let (rows, dropped, dropped_shadow, unsound) = match bundle {
+        Some(b) => (
+            b.rows,
+            b.dropped_planes,
+            b.dropped_shadow_planes,
+            b.unsound_clips,
+        ),
+        None => (Vec::new(), 0usize, 0usize, 0usize),
     };
 
     let normals: Vec<Vec<f64>> = rows.iter().map(|r| r.normal.clone()).collect();
@@ -429,6 +450,11 @@ fn spacetime_koz_rows_exact<'py>(
     let comp: Vec<i32> = rows.iter().map(|r| r.component_idx as i32).collect();
     let rho: Vec<f64> = rows.iter().map(|r| r.rho).collect();
     let sound: Vec<bool> = rows.iter().map(|r| r.sound).collect();
+    // -1 is "the obstacle's own zone"; a station index is that station's shadow.
+    let station: Vec<i32> = rows
+        .iter()
+        .map(|r| r.station_idx.map(|i| i as i32).unwrap_or(-1))
+        .collect();
 
     let normals_arr = if normals.is_empty() {
         PyArray2::from_vec2(py, &vec![vec![0.0; dim]; 0])
@@ -444,108 +470,12 @@ fn spacetime_koz_rows_exact<'py>(
         PyArray1::from_vec(py, cp),
         PyArray1::from_vec(py, obs),
         PyArray1::from_vec(py, comp),
+        PyArray1::from_vec(py, station),
         PyArray1::from_vec(py, rho),
         sound,
         dropped,
+        dropped_shadow,
         unsound,
-    )
-        .into_pyobject(py)?
-        .into())
-}
-
-/// The EXACT occlusion half-spaces at a given control polygon (item B12).
-///
-/// One plane per (segment, occluder piece, station), shared by every control
-/// point of that segment -- the same rows the certificate is evaluated with.
-/// Exposed so a test can check the two properties the guarantee rests on: that
-/// the piece body CONTAINS the true occluder across the window it was built for,
-/// and that the half-space contains the shadow that body casts.
-///
-/// Returns (normals, lower_bounds, segment_idx, cp_idx, obstacle_idx,
-/// station_idx, body_centers, body_radii, window_lo, window_hi, margins).
-#[pyfunction]
-#[pyo3(signature = (
-    p, obstacle_ctrl, obstacle_r, stations, n_seg = 8,
-    trust_radius = 0.5, sound_clip = false,
-))]
-#[allow(clippy::too_many_arguments)]
-fn spacetime_occlusion_rows_exact<'py>(
-    py: Python<'py>,
-    p: PyReadonlyArray2<'py, f64>,
-    obstacle_ctrl: PyReadonlyArray3<'py, f64>,
-    obstacle_r: PyReadonlyArray1<'py, f64>,
-    stations: PyReadonlyArray2<'py, f64>,
-    n_seg: usize,
-    trust_radius: f64,
-    sound_clip: bool,
-) -> PyResult<PyObject> {
-    let p_arr = p.as_array();
-    let np1 = p_arr.shape()[0];
-    let dim = p_arr.shape()[1];
-    let spatial_dim = dim - 1;
-    let p_flat: Vec<f64> = p_arr.iter().copied().collect();
-
-    let (ctrl, n_ctrl, radii, n_obs) = obstacle_arrays(obstacle_ctrl, obstacle_r, dim)?;
-
-    let obstacles = SpacetimeObstacleData {
-        ctrl: &ctrl,
-        n_ctrl,
-        radii: &radii,
-        n_obs,
-        spatial_dim,
-    };
-    let (station_vec, n_stations) = station_arrays(Some(stations), spatial_dim)?;
-    let station_data = StationData {
-        pos: &station_vec,
-        n_stations,
-    };
-    let a_list = bezier_opt_core::de_casteljau::segment_matrices_equal_params(np1 - 1, n_seg);
-
-    let rows = match bezier_opt_core::spacetime_constraints::build_spacetime_occlusion_constraints(
-        &a_list,
-        &p_flat,
-        np1,
-        dim,
-        &obstacles,
-        &station_data,
-        trust_radius,
-        sound_clip,
-    )
-    .bundle
-    {
-        Some(b) => b.rows,
-        None => Vec::new(),
-    };
-
-    let empty2 = |width: usize| PyArray2::from_vec2(py, &vec![vec![0.0; width]; 0]);
-    let normals_arr = if rows.is_empty() {
-        empty2(spatial_dim)
-    } else {
-        PyArray2::from_vec2(py, &rows.iter().map(|r| r.normal.clone()).collect::<Vec<_>>())
-    }
-    .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
-    let centers_arr = if rows.is_empty() {
-        empty2(spatial_dim)
-    } else {
-        PyArray2::from_vec2(
-            py,
-            &rows.iter().map(|r| r.body_center.clone()).collect::<Vec<_>>(),
-        )
-    }
-    .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{e}")))?;
-
-    Ok((
-        normals_arr,
-        PyArray1::from_vec(py, rows.iter().map(|r| r.lower_bound).collect::<Vec<_>>()),
-        PyArray1::from_vec(py, rows.iter().map(|r| r.segment_idx as i32).collect::<Vec<_>>()),
-        PyArray1::from_vec(py, rows.iter().map(|r| r.cp_idx as i32).collect::<Vec<_>>()),
-        PyArray1::from_vec(py, rows.iter().map(|r| r.obstacle_idx as i32).collect::<Vec<_>>()),
-        PyArray1::from_vec(py, rows.iter().map(|r| r.station_idx as i32).collect::<Vec<_>>()),
-        centers_arr,
-        PyArray1::from_vec(py, rows.iter().map(|r| r.body_radius).collect::<Vec<_>>()),
-        PyArray1::from_vec(py, rows.iter().map(|r| r.t_lo).collect::<Vec<_>>()),
-        PyArray1::from_vec(py, rows.iter().map(|r| r.t_hi).collect::<Vec<_>>()),
-        PyArray1::from_vec(py, rows.iter().map(|r| r.margin).collect::<Vec<_>>()),
     )
         .into_pyobject(py)?
         .into())
@@ -744,7 +674,10 @@ impl SpacetimeScpContext {
         info.set_item("converged", result.converged)?;
         info.set_item("cost", result.cost)?;
         info.set_item("koz_row_count", result.koz_rows.len())?;
-        info.set_item("occlusion_row_count", result.occlusion_rows.len())?;
+        info.set_item(
+            "occlusion_row_count",
+            result.koz_rows.iter().filter(|r| r.station_idx.is_some()).count(),
+        )?;
         // Windows in range whose supporting plane could not be built at this
         // reference. The QP got nothing for them, so the row count above does
         // not distinguish "nothing to constrain" from "could not constrain it".
@@ -834,7 +767,6 @@ fn bezier_opt(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(optimize_orbital_docking, m)?)?;
     m.add_function(wrap_pyfunction!(optimize_spacetime_bezier, m)?)?;
     m.add_function(wrap_pyfunction!(spacetime_koz_rows_exact, m)?)?;
-    m.add_function(wrap_pyfunction!(spacetime_occlusion_rows_exact, m)?)?;
     m.add_class::<SpacetimeScpContext>()?;
     Ok(())
 }

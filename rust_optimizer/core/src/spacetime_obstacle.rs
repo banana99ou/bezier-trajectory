@@ -1,4 +1,11 @@
-//! The obstacle, and the local convexification of its keep-out zone.
+//! The keep-out zone, and its local convexification.
+//!
+//! **Everything here is driven by a `Generator`**, not by an obstacle index. A
+//! generator is an obstacle's centreline, optionally read through a point light
+//! source, and the two readings are the same keep-out zone at two stretch
+//! factors — see `spacetime_generator`. With no station the stretch is pinned at
+//! one and every formula below reduces to the plain lifted tube, bit for bit;
+//! that reduction is the regression test the generalization stands on.
 //!
 //! This module is PAPER_1 §"Formulation — rigorous statement", statements (1)
 //! through (8), in code. Read that section before changing anything here; every
@@ -21,6 +28,7 @@
 
 use crate::bezier;
 use crate::de_casteljau;
+use crate::spacetime_generator::Generator;
 
 /// Obstacles as lifted Bezier control points.
 ///
@@ -120,31 +128,28 @@ impl SpacetimeObstacleData<'_> {
 /// The clipped stretch of one obstacle's centreline, exactly convexified.
 ///
 /// This is the shared object of PAPER_1 statements (1)-(3), and the literal
-/// content of "the shadow gets the identical treatment as the tube": the keep-out
-/// half-space and the occlusion half-space are two readings of this one band.
+/// content of "the shadow gets the identical treatment as the tube" — which is
+/// now literal rather than aspirational: the shadow is the SAME keep-out zone
+/// read at a larger stretch of the same generator, so there is one band, one
+/// clip, one wall construction, and no occlusion-specific branch anywhere below.
 pub struct ClipBand {
-    /// Obstacle-parameter interval, already widened to contain the true band.
-    /// This is the FUSED span, `[min alpha_j, max beta_j]` over `intervals` — the
-    /// occlusion prism wants one span and nothing else.
-    pub alpha: f64,
-    pub beta: f64,
     /// The MAXIMAL subintervals of the clipped stretch, in increasing order.
     ///
-    /// **Fusing these into `[alpha, beta]` is what made more than one wall
-    /// structurally impossible.** A centreline that leaves the ball and re-enters
-    /// puts two separate lumps of tube inside the same ball, and the gap between
-    /// them is a corridor the trajectory is entitled to use; hulling the fused
-    /// span swallows it. The keep-out builder reads this field. `band_over_times`
-    /// fills it with the single span it was asked for, which is correct: a time
-    /// window is one interval by construction.
+    /// **Fusing these into one span is what made more than one wall structurally
+    /// impossible.** A generator that leaves the ball and re-enters puts two
+    /// separate lumps inside the same ball, and the gap between them is a
+    /// corridor the trajectory is entitled to use; hulling the fused span
+    /// swallows it.
     pub intervals: Vec<(f64, f64)>,
-    /// Control points of the sub-Bezier over `[alpha, beta]`, `n_ctrl * dim`
-    /// row-major. `G = conv{g_tilde}` and `H = G (+) B(0, r_m)`.
-    pub g_tilde: Vec<f64>,
     /// The clip radius actually used.
     pub rho: f64,
-    /// Distance from the segment centroid to the nearest centreline point.
+    /// Distance from the segment centroid to the nearest point of the generator
+    /// — the centreline on a plain tube, the center surface under a station.
     pub r_nearest: f64,
+    /// The stretch factor at that nearest point, and the local ball radius
+    /// `u_star * r_m` there. Both are `1.0` and `r_m` on a plain tube.
+    pub u_star: f64,
+    pub local_radius: f64,
     /// Whether statement (7) holds here: `rho >= E + Delta * sqrt(d+1)`.
     ///
     /// **False is not an error and not a caveat to mention later — it is the
@@ -225,43 +230,67 @@ fn deriv_ctrl(ctrl: &[f64], n_ctrl: usize, dim: usize) -> (Vec<f64>, usize) {
 /// nothing. On a straight obstacle `g` is linear and one step is exact. A step is
 /// taken only when it does not increase the distance, so a runaway into a nearby
 /// maximum cannot happen.
-fn polish_nearest(
-    obs_data: &SpacetimeObstacleData<'_>,
-    obs: usize,
-    c: &[f64],
-    s0: f64,
-    lo: f64,
-    hi: f64,
-) -> f64 {
-    let dim = obs_data.dim();
-    let (d1, n1) = deriv_ctrl(obs_data.ctrl_of(obs), obs_data.n_ctrl, dim);
-    let (d2, n2) = deriv_ctrl(&d1, n1, dim);
-    let dist_sq = |s: f64| -> f64 {
-        let p = obs_data.lifted_at(obs, s);
-        p.iter().zip(c.iter()).map(|(a, b)| (a - b) * (a - b)).sum::<f64>()
-    };
+/// **On a plain tube this is the routine it replaces, unchanged.** With a
+/// station the stretch is held at its current optimum, which turns the surface
+/// back into a Bezier curve — `Sigma(., u)` has control points
+/// `(p + u(X_l - p), T_l)` — so the same Newton runs on the stretched control
+/// points. Three outer rounds re-solve `u` afterwards; each round is accepted
+/// only if the true distance did not increase, so alternating cannot diverge.
+fn polish_nearest(gen: &Generator<'_>, c: &[f64], s0: f64, lo: f64, hi: f64) -> f64 {
+    let dim = gen.dim;
+    let dist_sq = |s: f64| -> f64 { gen.dist_sq(s, c).map(|(d2, _)| d2).unwrap_or(f64::INFINITY) };
+    let rounds = if gen.casts_shadow() { 3 } else { 1 };
     let mut s = s0;
     let mut best = dist_sq(s);
-    for _ in 0..16 {
-        let p = obs_data.lifted_at(obs, s);
-        let v = bezier::evaluate(&d1, n1, dim, s);
-        let a = bezier::evaluate(&d2, n2, dim, s);
-        let diff: Vec<f64> = (0..dim).map(|k| c[k] - p[k]).collect();
-        let g: f64 = (0..dim).map(|k| v[k] * diff[k]).sum();
-        let gp: f64 = (0..dim).map(|k| a[k] * diff[k] - v[k] * v[k]).sum();
-        if !gp.is_finite() || gp.abs() < 1e-300 {
-            break;
+    for _ in 0..rounds {
+        let u = match gen.nearest_u(s, c) {
+            Ok(u) => u,
+            Err(_) => break,
+        };
+        let ctrl = gen.stretched_ctrl(u);
+        let (d1, n1) = deriv_ctrl(&ctrl, gen.n_ctrl, dim);
+        let (d2, n2) = deriv_ctrl(&d1, n1, dim);
+        // The stationarity condition of the FIXED-stretch curve. Newton uses the
+        // derivative rather than the value, so the flat minimum costs it nothing.
+        let curve_dist_sq = |s: f64| -> f64 {
+            let p = bezier::evaluate(&ctrl, gen.n_ctrl, dim, s.clamp(0.0, 1.0));
+            p.iter().zip(c.iter()).map(|(a, b)| (a - b) * (a - b)).sum::<f64>()
+        };
+        let mut t = s;
+        let mut curve_best = curve_dist_sq(t);
+        for _ in 0..16 {
+            let p = bezier::evaluate(&ctrl, gen.n_ctrl, dim, t.clamp(0.0, 1.0));
+            let v = bezier::evaluate(&d1, n1, dim, t);
+            let a = bezier::evaluate(&d2, n2, dim, t);
+            let diff: Vec<f64> = (0..dim).map(|k| c[k] - p[k]).collect();
+            let g: f64 = (0..dim).map(|k| v[k] * diff[k]).sum();
+            let gp: f64 = (0..dim).map(|k| a[k] * diff[k] - v[k] * v[k]).sum();
+            if !gp.is_finite() || gp.abs() < 1e-300 {
+                break;
+            }
+            let next = (t - g / gp).clamp(lo, hi);
+            let val = curve_dist_sq(next);
+            if !(val <= curve_best) {
+                break;
+            }
+            if (next - t).abs() <= 1e-16 {
+                t = next;
+                break;
+            }
+            t = next;
+            curve_best = val;
         }
-        let next = (s - g / gp).clamp(lo, hi);
-        let val = dist_sq(next);
+        // Re-solving `u` can only move the true distance down, but the Newton
+        // step was taken on a frozen stretch, so check before accepting.
+        let val = dist_sq(t);
         if !(val <= best) {
             break;
         }
-        if (next - s).abs() <= 1e-16 {
-            s = next;
+        if (t - s).abs() <= 1e-16 {
+            s = t;
             break;
         }
-        s = next;
+        s = t;
         best = val;
     }
     s
@@ -274,11 +303,9 @@ fn polish_nearest(
 /// and a larger `rho` gives a wider interval, a larger hull, and a plane pushed
 /// further out — the conservative direction. Refinement buys tightness, not
 /// validity.
-fn nearest_param(obs_data: &SpacetimeObstacleData<'_>, obs: usize, c: &[f64]) -> (f64, f64) {
-    let dist_sq = |s: f64| -> f64 {
-        let p = obs_data.lifted_at(obs, s);
-        p.iter().zip(c.iter()).map(|(a, b)| (a - b) * (a - b)).sum::<f64>()
-    };
+fn nearest_param(gen: &Generator<'_>, c: &[f64]) -> (f64, f64) {
+    let dist_sq =
+        |s: f64| -> f64 { gen.dist_sq(s, c).map(|(d2, _)| d2).unwrap_or(f64::INFINITY) };
 
     let mut best_s = 0.0;
     let mut best = f64::INFINITY;
@@ -301,73 +328,72 @@ fn nearest_param(obs_data: &SpacetimeObstacleData<'_>, obs: usize, c: &[f64]) ->
             lo = m1;
         }
     }
-    let s = polish_nearest(obs_data, obs, c, 0.5 * (lo + hi), lo, hi);
+    let s = polish_nearest(gen, c, 0.5 * (lo + hi), lo, hi);
     (s, dist_sq(s).sqrt())
 }
 
-/// Clip the obstacle centreline to the ball around the segment centroid and
-/// convexify the result exactly.
+/// Clip the generator to the ball around the segment centroid and convexify the
+/// result exactly.
 ///
-/// `apply_reach_cap` selects the `R_max` cap of PAPER_1 statement (7), row 1.
+/// **One reach rule, for tubes and shadows alike.** The cap of PAPER_1 statement
+/// (7) says: skip the pair when nothing inside the trust region can touch this
+/// keep-out zone. Written on the SIGNED distance — the distance from the centroid
+/// to the generator, less the local ball radius there — that is
+/// `r_nearest - local_radius > reach`, and it is correct for both readings.
 ///
-/// **The cap is correct for keep-out and wrong for occlusion.** For keep-out,
-/// `R > R_max` means nothing in the trust region can touch this obstacle, so
-/// emitting no row is right. An occluder, though, blocks a sight line from
-/// wherever it happens to be: a body far from the trajectory but sitting between
-/// it and the station casts its shadow onto the trajectory all the same. Capping
-/// there would silently drop exactly the occluders that matter. PAPER_1
-/// §"The shadow in the lifted space" says "clip to the same local ball" without
-/// distinguishing the two, so the occlusion caller passes `false` and the ball
-/// stays tangent to the centreline however far away that is.
+/// This is what dissolves the old special case. When the generator was the
+/// obstacle's centreline the rule had to be disabled for occlusion, because an
+/// occluder far from the trajectory still casts its shadow onto it and capping on
+/// proximity dropped exactly the occluders that mattered. The center surface
+/// REACHES the vehicle when its shadow does, so proximity to the generator is the
+/// right localizer again and no caller has to opt out.
 ///
-/// Returns `None` only when the cap applies and the obstacle is out of reach.
+/// Returns `None` when the generator is out of reach.
 pub fn clip_band(
     centroid: &[f64],
     seg_radius: f64,
     trust_radius: f64,
-    obs_data: &SpacetimeObstacleData<'_>,
-    obs: usize,
+    gen: &Generator<'_>,
     sound_clip: bool,
-    apply_reach_cap: bool,
-    radius_floor: f64,
 ) -> Option<ClipBand> {
-    let dim = obs_data.dim();
-    let r_m = obs_data.radii[obs];
+    let dim = gen.dim;
+    let r_m = gen.r_m;
 
     // Statement (6): an l-inf trust box of half-width Delta moves any segment
     // control point by at most Delta * sqrt(d+1) in Euclidean norm, because the
     // De Casteljau matrix is row-stochastic. `reach` is the radius that
     // statement (7) requires the clip to cover.
     let reach = seg_radius + trust_radius * (dim as f64).sqrt();
-    let r_max = r_m + reach;
 
-    let (s_star, r_nearest) = nearest_param(obs_data, obs, centroid);
+    let (s_star, r_nearest) = nearest_param(gen, centroid);
+    // The stretch at the nearest approach, and the ball radius there. `1.0` and
+    // `r_m` on a plain tube, which is what makes every line below reduce.
+    let u_star = gen.nearest_u(s_star, centroid).ok()?;
+    let local_radius = gen.radius(u_star);
+    let r_max = local_radius + reach;
 
-    if apply_reach_cap && r_nearest > r_max {
+    if r_nearest > r_max {
         return None;
     }
 
-    // TWO floors, and they are different numbers. `radius_floor` is the
-    // construction's own: the keep-out caller passes `r_m`, so the clip ball is
-    // never smaller than the obstacle. It binds only when the centroid is inside
-    // the keep-out zone (`r_max >= r_m` always, so `min(r_nearest, r_max) < r_m`
-    // iff `r_nearest < r_m`), and what it buys there is that the clipped volume
-    // stays a piece of the OBSTACLE instead of a ball floating inside it — an
-    // unfloored ball of radius 0.35 inside a tube of radius 0.9 puts the wall on
-    // the ball and reports a 0.55-deep penetration as margin exactly 0.00.
+    // TWO floors, and they are different numbers. The construction's own is the
+    // LOCAL ball radius, so the clip ball is never smaller than the keep-out
+    // material it is cutting. It binds only when the centroid is inside the
+    // keep-out zone (`r_max >= local_radius` always, so
+    // `min(r_nearest, r_max) < local_radius` iff `r_nearest < local_radius`), and
+    // what it buys there is that the clipped volume stays a piece of the ZONE
+    // instead of a ball floating inside it — an unfloored ball of radius 0.35
+    // inside a tube of radius 0.9 puts the wall on the ball and reports a
+    // 0.55-deep penetration as margin exactly 0.00.
     //
     // `sound_clip` raises the floor to `reach`, a different and LARGER condition
-    // addressing a different failure: tube material the next iterate can reach
-    // but that lies outside the ball, constrained by nothing. Applying one does
-    // not give you the other. Which is used is an open experimental question, so
-    // both are reachable and both are measurable; `sound` counts the pairs where
-    // the larger condition fails.
-    let floor = if sound_clip { reach.max(radius_floor) } else { radius_floor };
-    let rho = if apply_reach_cap {
-        r_nearest.clamp(floor.min(r_max), r_max)
-    } else {
-        r_nearest.max(floor)
-    };
+    // addressing a different failure: material the next iterate can reach but
+    // that lies outside the ball, constrained by nothing. Applying one does not
+    // give you the other. Which is used is an open experimental question, so both
+    // are reachable and both are measurable; `sound` counts the pairs where the
+    // larger condition fails.
+    let floor = if sound_clip { reach.max(local_radius) } else { local_radius };
+    let rho = r_nearest.clamp(floor.min(r_max), r_max);
     let sound = rho >= reach - 1e-12;
 
     // Statement (1): the clipped piece sits inside the band of centreline within
@@ -382,24 +408,25 @@ pub fn clip_band(
     // `L*h/2`, so testing against the padded threshold catches every one of them,
     // and widening the result by `h` covers the gap back to the parameter itself.
     //
-    // The runs of qualifying samples are kept SEPARATE here; `alpha`/`beta` below
-    // fuse them, and only the occlusion prism reads those. Padding each run by
+    // The runs of qualifying samples are kept SEPARATE here -- fusing them is what
+    // made more than one wall structurally impossible. Padding each run by
     // `h` and merging runs that then overlap errs toward FEWER, LARGER intervals,
     // which is the safe direction: over-splitting only adds walls that each still
     // contain their own lump, while under-splitting hides a corridor.
     let h = 1.0 / PARAM_SAMPLES as f64;
-    let threshold = rho + r_m + 0.5 * obs_data.speed_bound(obs) * h;
+    let pad = 0.5 * gen.param_lipschitz(centroid) * h;
     let mut runs: Vec<(f64, f64)> = Vec::new();
     let mut open: Option<(f64, f64)> = None;
     for i in 0..=PARAM_SAMPLES {
         let s = i as f64 / PARAM_SAMPLES as f64;
-        let p = obs_data.lifted_at(obs, s);
-        let d: f64 = p
-            .iter()
-            .zip(centroid.iter())
-            .map(|(a, b)| (a - b) * (a - b))
-            .sum::<f64>()
-            .sqrt();
+        let Ok((d2, u)) = gen.dist_sq(s, centroid) else {
+            continue;
+        };
+        let d = d2.sqrt();
+        // The material this parameter generates comes within `rho` of the
+        // centroid when `d - u*r_m <= rho`. Written with the radius on the right
+        // so a pinned stretch reproduces the tube's own test exactly.
+        let threshold = rho + gen.radius(u) + pad;
         if d <= threshold {
             open = Some(match open {
                 None => (s, s),
@@ -426,23 +453,14 @@ pub fn clip_band(
             _ => intervals.push((a, b)),
         }
     }
-    let alpha = intervals[0].0;
-    let beta = intervals[intervals.len() - 1].1;
-
-    // Statements (2) and (3): hulling and inflating commute, so only the
-    // centreline is convexified — and subdividing the obstacle's own Bezier makes
-    // that convexification EXACT. No sampling, no chord error to bound.
-    let n_ctrl = obs_data.n_ctrl;
-    let sub_matrix = de_casteljau::subdivide_between(obs_data.degree(), alpha, beta);
-    let g_tilde = bezier::matmul(&sub_matrix, n_ctrl, n_ctrl, obs_data.ctrl_of(obs), dim);
+    let _ = r_m;
 
     Some(ClipBand {
-        alpha,
-        beta,
         intervals,
-        g_tilde,
         rho,
         r_nearest,
+        u_star,
+        local_radius,
         sound,
     })
 }
@@ -540,15 +558,12 @@ const CUT_OVERLAP: f64 = 1.0 / 16.0;
 /// maximum, and a mirrored Newton would buy sub-cell precision that nothing
 /// measures.
 pub(crate) fn split_at_distance_maxima(
-    obs_data: &SpacetimeObstacleData<'_>,
-    obs: usize,
+    gen: &Generator<'_>,
     c: &[f64],
     intervals: &[(f64, f64)],
 ) -> Vec<(f64, f64)> {
-    let dist_sq = |s: f64| -> f64 {
-        let p = obs_data.lifted_at(obs, s);
-        p.iter().zip(c.iter()).map(|(a, b)| (a - b) * (a - b)).sum::<f64>()
-    };
+    let dist_sq =
+        |s: f64| -> f64 { gen.dist_sq(s, c).map(|(d2, _)| d2).unwrap_or(f64::INFINITY) };
     let mut out: Vec<(f64, f64)> = Vec::with_capacity(intervals.len());
     for iv in intervals {
         let w = iv.1 - iv.0;
@@ -628,15 +643,12 @@ pub(crate) fn split_at_distance_maxima(
 /// minimum sits on an interval endpoint, where the nearest point cannot slide
 /// with the centroid — the frozen case for the linearisation below.
 fn nearest_param_in(
-    obs_data: &SpacetimeObstacleData<'_>,
-    obs: usize,
+    gen: &Generator<'_>,
     c: &[f64],
     intervals: &[(f64, f64)],
 ) -> (f64, f64, bool) {
-    let dist_sq = |s: f64| -> f64 {
-        let p = obs_data.lifted_at(obs, s);
-        p.iter().zip(c.iter()).map(|(a, b)| (a - b) * (a - b)).sum::<f64>()
-    };
+    let dist_sq =
+        |s: f64| -> f64 { gen.dist_sq(s, c).map(|(d2, _)| d2).unwrap_or(f64::INFINITY) };
     let mut best = (f64::INFINITY, 0.0f64, (0.0f64, 1.0f64));
     for iv in intervals {
         for i in 0..=PARAM_SAMPLES {
@@ -659,36 +671,10 @@ fn nearest_param_in(
             lo = m1;
         }
     }
-    let s = polish_nearest(obs_data, obs, c, 0.5 * (lo + hi), iv.0, iv.1);
+    let s = polish_nearest(gen, c, 0.5 * (lo + hi), iv.0, iv.1);
     let edge = 1e-9 + 2.0 * h;
     let interior = (s - iv.0) > edge && (iv.1 - s) > edge;
     (s, dist_sq(s).sqrt(), interior)
-}
-
-/// Unit tangent of the lifted centreline, from the hodograph. Zero-length when
-/// the curve is stationary there, which the caller reads as "no face".
-fn unit_tangent(obs_data: &SpacetimeObstacleData<'_>, obs: usize, s: f64) -> Option<Vec<f64>> {
-    let dim = obs_data.dim();
-    let deg = obs_data.degree();
-    if deg == 0 {
-        return None;
-    }
-    let ctrl = obs_data.ctrl_of(obs);
-    let mut hodo = vec![0.0; deg * dim];
-    for l in 0..deg {
-        for k in 0..dim {
-            hodo[l * dim + k] = deg as f64 * (ctrl[(l + 1) * dim + k] - ctrl[l * dim + k]);
-        }
-    }
-    let mut v = bezier::evaluate(&hodo, deg, dim, s.clamp(0.0, 1.0));
-    let nv = v.iter().map(|x| x * x).sum::<f64>().sqrt();
-    if nv < 1e-12 {
-        return None;
-    }
-    for x in v.iter_mut() {
-        *x /= nv;
-    }
-    Some(v)
 }
 
 /// How many De Casteljau pieces each parameter interval is cut into when bounding
@@ -696,23 +682,35 @@ fn unit_tangent(obs_data: &SpacetimeObstacleData<'_>, obs: usize, s: f64) -> Opt
 /// this grows, so it is a tightness knob and never a correctness one.
 const SUPPORT_PIECES: usize = 32;
 
-/// A RIGOROUS upper bound on `max n.z` over one component of the clipped volume.
+/// How many stretch cells the `u` direction is cut into. Same status as
+/// `SUPPORT_PIECES`: rigorous at any value, tighter as it grows. **One cell when
+/// the generator has no station**, because the stretch is pinned there and the
+/// whole `u` loop collapses to the tube's single pass.
+const SUPPORT_U_PIECES: usize = 8;
+
+/// A RIGOROUS upper bound on `max n.z` over one approach's piece of the clipped
+/// keep-out volume.
 ///
-/// Each interval is De Casteljau-subdivided into pieces. On a piece the
-/// centreline lies inside `conv(sub)`, which lies inside `Ball(m, rad)` with `m`
-/// the mean of the subdivided control points. So the part of the component
-/// carried by that piece is contained in ALL THREE of
+/// Each interval is De Casteljau-subdivided in the parameter and bisected in the
+/// stretch. On a cell the generator lies inside `conv(sub^{u_lo} ∪ sub^{u_hi})`
+/// — the subdivided control points stretched by the cell's two endpoints — and
+/// that hull is EXACT, not sampled, for two reasons: the stretch map is affine in
+/// the control points at fixed `u`, and it is affine in `u` at fixed control
+/// point, so the cell's surface lies in the hull of the four corners' images.
+/// (This is the shadow lemma in coordinates: the shadow of a convex set is
+/// convex.) The cell's balls have radius at most `u_hi * r_m`, so its material is
+/// contained in ALL THREE of
 ///
 /// ```text
-///   conv(sub) (+) Ball(0, r_m)        support  max_l n.sub_l + r_m
-///   Ball(m, rad + r_m) ∩ Ball(c, rho) support  lens_support_point(..)  [exact]
+///   conv(sub_u) (+) Ball(0, R)        support  max_l n.sub_l + R
+///   Ball(m, rad + R) ∩ Ball(c, rho)   support  lens_support_point(..)  [exact]
 ///   Ball(c, rho)                      support  n.c + rho
 /// ```
 ///
-/// and the smallest of the three is taken; a piece whose containing ball misses
-/// the clip ball carries no material at all and is skipped. The middle term is
-/// what makes this CONVERGE: as the pieces shrink, `rad -> 0` and the lens
-/// collapses onto the true slice.
+/// with `R = u_hi * r_m`, and the smallest of the three is taken; a cell whose
+/// containing ball misses the clip ball carries no material and is skipped. The
+/// middle term is what makes this CONVERGE: as the cells shrink, `rad -> 0` and
+/// the lens collapses onto the true slice.
 ///
 /// **This is the emitted offset, not a diagnostic.** Taking a sampled maximum
 /// instead would risk stepping over a narrow peak, and an under-estimated offset
@@ -721,174 +719,100 @@ const SUPPORT_PIECES: usize = 32;
 /// what it costs is conservatism, which sequential convex programming pays for in
 /// step size rather than in correctness.
 fn component_support(
-    obs_data: &SpacetimeObstacleData<'_>,
-    obs: usize,
-    r_m: f64,
+    gen: &Generator<'_>,
     centroid: &[f64],
     rho: f64,
     intervals: &[(f64, f64)],
     n: &[f64],
 ) -> f64 {
-    let dim = obs_data.dim();
-    let n_ctrl = obs_data.n_ctrl;
+    let dim = gen.dim;
+    let n_ctrl = gen.n_ctrl;
+    let r_m = gen.r_m;
     let ball_cap: f64 = (0..dim).map(|k| n[k] * centroid[k]).sum::<f64>() + rho;
+
+    // The stretch cells. A pinned stretch gives the single cell [1,1], and then
+    // `stretched_ctrl` returns the centreline itself and the loop below is the
+    // tube's own pass, arithmetic included.
+    let u_top = gen.u_ceiling_in_ball(centroid, rho, gen.speed_bound());
+    if !u_top.is_finite() {
+        // No usable ceiling: the station is on the body somewhere. The clip
+        // ball's own support is sound, looser, never wrong.
+        return ball_cap;
+    }
+    let u_cells: Vec<(f64, f64)> = if u_top <= 1.0 {
+        vec![(1.0, 1.0)]
+    } else {
+        (0..SUPPORT_U_PIECES)
+            .map(|j| {
+                let a = 1.0 + (u_top - 1.0) * (j as f64) / (SUPPORT_U_PIECES as f64);
+                let b = 1.0 + (u_top - 1.0) * ((j + 1) as f64) / (SUPPORT_U_PIECES as f64);
+                (a, b)
+            })
+            .collect()
+    };
+
     let mut best = f64::NEG_INFINITY;
     for iv in intervals {
         for i in 0..SUPPORT_PIECES {
             let lo = iv.0 + (iv.1 - iv.0) * (i as f64) / (SUPPORT_PIECES as f64);
             let hi = iv.0 + (iv.1 - iv.0) * ((i + 1) as f64) / (SUPPORT_PIECES as f64);
-            let sub_matrix = de_casteljau::subdivide_between(obs_data.degree(), lo, hi);
-            let sub = bezier::matmul(&sub_matrix, n_ctrl, n_ctrl, obs_data.ctrl_of(obs), dim);
+            let sub_matrix = de_casteljau::subdivide_between(gen.degree(), lo, hi);
+            let sub = bezier::matmul(&sub_matrix, n_ctrl, n_ctrl, gen.ctrl, dim);
 
-            let mut hull_cap = f64::NEG_INFINITY;
-            let mut m = vec![0.0; dim];
-            for l in 0..n_ctrl {
-                let v: f64 = (0..dim).map(|k| n[k] * sub[l * dim + k]).sum();
-                hull_cap = hull_cap.max(v);
-                for k in 0..dim {
-                    m[k] += sub[l * dim + k] / n_ctrl as f64;
+            for (u_lo, u_hi) in u_cells.iter().copied() {
+                let cell_radius = gen.radius(u_hi);
+                // The cell's corners: the subdivided control points at the two
+                // stretch ends. Identical points when the stretch is pinned, and
+                // then only one copy is taken so the mean and the max distance
+                // are computed over exactly the tube's own N points.
+                let stretches: &[f64] =
+                    if u_lo == u_hi { &[u_lo] } else { &[u_lo, u_hi] };
+                let mut corners: Vec<f64> = Vec::with_capacity(stretches.len() * n_ctrl * dim);
+                for u in stretches.iter().copied() {
+                    for l in 0..n_ctrl {
+                        let point = gen.stretch_point(&sub[l * dim..(l + 1) * dim], u);
+                        corners.extend_from_slice(&point);
+                    }
                 }
-            }
-            hull_cap += r_m;
+                let n_corner = corners.len() / dim;
 
-            let mut rad: f64 = 0.0;
-            for l in 0..n_ctrl {
-                let d2: f64 = (0..dim)
-                    .map(|k| (sub[l * dim + k] - m[k]) * (sub[l * dim + k] - m[k]))
-                    .sum();
-                rad = rad.max(d2.sqrt());
+                let mut hull_cap = f64::NEG_INFINITY;
+                let mut m = vec![0.0; dim];
+                for l in 0..n_corner {
+                    let v: f64 = (0..dim).map(|k| n[k] * corners[l * dim + k]).sum();
+                    hull_cap = hull_cap.max(v);
+                    for k in 0..dim {
+                        m[k] += corners[l * dim + k] / n_corner as f64;
+                    }
+                }
+                hull_cap += cell_radius;
+
+                let mut rad: f64 = 0.0;
+                for l in 0..n_corner {
+                    let d2: f64 = (0..dim)
+                        .map(|k| (corners[l * dim + k] - m[k]) * (corners[l * dim + k] - m[k]))
+                        .sum();
+                    rad = rad.max(d2.sqrt());
+                }
+                // Empty lens: this cell carries no material inside the clip ball,
+                // so it contributes nothing rather than a loose bound.
+                let Some(p) = lens_support_point(&m, rad + cell_radius, centroid, rho, n)
+                else {
+                    continue;
+                };
+                let lens_cap: f64 = (0..dim).map(|k| n[k] * p[k]).sum();
+                best = best.max(hull_cap.min(ball_cap).min(lens_cap));
             }
-            // Empty lens: this piece's tube carries no material inside the clip
-            // ball, so it contributes nothing rather than a loose bound.
-            let Some(p) = lens_support_point(&m, rad + r_m, centroid, rho, n) else {
-                continue;
-            };
-            let lens_cap: f64 = (0..dim).map(|k| n[k] * p[k]).sum();
-            best = best.max(hull_cap.min(ball_cap).min(lens_cap));
         }
     }
-    // Every piece came back empty. `L ⊆ Ball(c, rho)` always, so its support is a
+    let _ = r_m;
+    // Every cell came back empty. `L ⊆ Ball(c, rho)` always, so its support is a
     // sound fallback; it is looser, never wrong.
     if best.is_finite() {
         best
     } else {
         ball_cap
     }
-}
-
-/// A spatial ball containing the obstacle body over the clipped stretch.
-///
-/// The spatial part of the curve lies in the hull of the spatial parts of the
-/// subdivided control points, so a ball centred on their average with radius
-/// `max_l ||G_l - centre|| + r_m` contains the body at every instant in the
-/// stretch. Larger than the truth, never smaller.
-///
-/// **At degree 1 this is exactly the formula it replaces.** The two subdivided
-/// control points sit at the obstacle's positions at the ends of the stretch,
-/// their average is the position at the midpoint, and the max distance is
-/// `|v| * (stretch length) / 2` — the old `occluder_piece_body` verbatim. A
-/// divergence at degree 1 means the subdivision is wrong.
-pub fn spatial_containing_ball(band: &ClipBand, spatial_dim: usize, r_m: f64) -> (Vec<f64>, f64) {
-    let dim = spatial_dim + 1;
-    let n_ctrl = band.g_tilde.len() / dim;
-    let mut center = vec![0.0; spatial_dim];
-    for l in 0..n_ctrl {
-        for d in 0..spatial_dim {
-            center[d] += band.g_tilde[l * dim + d];
-        }
-    }
-    for value in center.iter_mut() {
-        *value /= n_ctrl as f64;
-    }
-    let mut radius: f64 = 0.0;
-    for l in 0..n_ctrl {
-        let mut acc = 0.0;
-        for d in 0..spatial_dim {
-            let delta = band.g_tilde[l * dim + d] - center[d];
-            acc += delta * delta;
-        }
-        radius = radius.max(acc.sqrt());
-    }
-    (center, radius + r_m)
-}
-
-/// The obstacle's material over `[t_lo, t_hi]`, exactly convexified.
-///
-/// **This is the occlusion band, and it is deliberately NOT the clip ball.**
-///
-/// PAPER_1 §"The shadow in the lifted space" says the shadow gets "the identical
-/// treatment as the tube: clip to the same local ball". Implementing that
-/// literally is wrong, and the reason is not a detail. The clip ball localizes by
-/// DISTANCE TO THE SEGMENT CENTROID, which is exactly right for keep-out — only
-/// tube material the segment can reach is able to hit it — and exactly wrong for
-/// occlusion, because a body blocks a sight line from wherever it happens to be.
-/// An occluder far from the trajectory and squarely between it and the station
-/// blocks the link completely. Localizing by proximity shrinks the body until it
-/// no longer CONTAINS the true occluder, and containment is the only reason the
-/// half-space certifies anything. Measured on `station_fence`: the ball-clipped
-/// body left the run losing line of sight with an occlusion certificate of 1.96
-/// even at elastic weight 1e5, where the coexisting-material body certifies.
-///
-/// What localizes an occluder is therefore TIME, not distance: it blocks only
-/// while it exists. That is not privileging the time axis over the spatial ones,
-/// it is the definition of occlusion. The gate is load-bearing because an
-/// occlusion row's normal is SPATIAL with a zero time coefficient by design (the
-/// shadow extruded across the band is a prism with time-parallel walls), so the
-/// row forbids its side FOR ALL TIME and a row built against an occluder that has
-/// vanished would go on blocking the vehicle forever.
-///
-/// Returns `None` when the obstacle does not exist during `[t_lo, t_hi]`.
-pub fn band_over_times(
-    obs_data: &SpacetimeObstacleData<'_>,
-    obs: usize,
-    t_lo: f64,
-    t_hi: f64,
-) -> Option<ClipBand> {
-    let (obs_t0, obs_t1) = (obs_data.t_start(obs), obs_data.t_end(obs));
-
-    // Overlap is decided in TIME, before any clamping. Clamping first is a real
-    // defect and it was measured: with the obstacle live over [0, 5.2] and the
-    // segment over [8.75, 10], the parameters 1.68 and 1.92 both clamp to 1.0
-    // and yield a degenerate band at the obstacle's final instant — so a body
-    // that vanished 3.5 s earlier still emitted a shadow row, and because that
-    // row is time-blind it forbade its side forever. On `station_fence` it made
-    // the pinned goal infeasible (margin -0.89 at the last control point) for a
-    // trajectory whose true line-of-sight margin was +0.44 throughout.
-    if t_hi < obs_t0 || t_lo > obs_t1 {
-        return None;
-    }
-
-    let span = obs_t1 - obs_t0;
-    // A degenerate-in-time obstacle exists at one instant only.
-    let (s_lo, s_hi) = if span > 1e-15 {
-        (((t_lo - obs_t0) / span), ((t_hi - obs_t0) / span))
-    } else {
-        (0.0, 1.0)
-    };
-    let alpha = s_lo.clamp(0.0, 1.0);
-    let beta = s_hi.clamp(0.0, 1.0);
-    if beta < alpha {
-        return None;
-    }
-
-    let dim = obs_data.dim();
-    let n_ctrl = obs_data.n_ctrl;
-    let sub_matrix = de_casteljau::subdivide_between(obs_data.degree(), alpha, beta);
-    let g_tilde = bezier::matmul(&sub_matrix, n_ctrl, n_ctrl, obs_data.ctrl_of(obs), dim);
-    Some(ClipBand {
-        alpha,
-        beta,
-        // A time window is one interval by construction.
-        intervals: vec![(alpha, beta)],
-        g_tilde,
-        // No ball was involved, so there is no clip radius and statement (7) has
-        // nothing to say here. Reported as sound because the band covers every
-        // instant the segment occupies: there is no material left outside it for
-        // the next iterate to reach.
-        rho: f64::INFINITY,
-        r_nearest: f64::INFINITY,
-        sound: true,
-    })
 }
 
 /// What one keep-out clip attempt produced — including what it could not produce.
@@ -952,29 +876,27 @@ pub fn clip_geometry(
     centroid: &[f64],
     seg_radius: f64,
     trust_radius: f64,
-    obs_data: &SpacetimeObstacleData<'_>,
-    obs: usize,
+    gen: &Generator<'_>,
     sound_clip: bool,
 ) -> ClipOutcome {
-    let dim = obs_data.dim();
-    let r_m = obs_data.radii[obs];
-    let Some(band) = clip_band(
-        centroid,
-        seg_radius,
-        trust_radius,
-        obs_data,
-        obs,
-        sound_clip,
-        true,
-        // The construction's own floor: the clip ball is never smaller than the
-        // obstacle. Binds exactly when the centroid is inside the keep-out zone.
-        r_m,
-    ) else {
+    let dim = gen.dim;
+    // A generator that is not defined anywhere on its range cannot produce a
+    // wall, and that is a HOLE, not silence. Checked before the reach test on
+    // purpose: "out of reach" means no row is needed, which is the opposite
+    // claim, and letting a fault fall through to it is how "cannot be certified"
+    // becomes "certified 0.0".
+    if gen.fault().is_some() {
+        return ClipOutcome::Components(ClipComponents {
+            planes: Vec::new(),
+            dropped: 1,
+        });
+    }
+    let Some(band) = clip_band(centroid, seg_radius, trust_radius, gen, sound_clip) else {
         return ClipOutcome::OutOfReach;
     };
 
     let scale = centroid.iter().fold(1.0f64, |acc, v| acc.max(v.abs()));
-    let subs = split_at_distance_maxima(obs_data, obs, centroid, &band.intervals);
+    let subs = split_at_distance_maxima(gen, centroid, &band.intervals);
 
     let mut planes: Vec<ClipGeometry> = Vec::with_capacity(subs.len());
     let mut dropped = 0usize;
@@ -982,38 +904,46 @@ pub fn clip_geometry(
         // A one-interval slice, so `nearest_param_in` / `component_support`
         // keep their signatures and the loop body stays untouched.
         let ivs = std::slice::from_ref(iv);
-        let (s_star, r_near, interior) = nearest_param_in(obs_data, obs, centroid, ivs);
-        let f = obs_data.lifted_at(obs, s_star);
+        let (s_star, r_near, interior) = nearest_param_in(gen, centroid, ivs);
+        // The generator point this approach is aimed from: the centreline point
+        // on a plain tube, the surface point at its own best stretch otherwise.
+        let Ok(u_star) = gen.nearest_u(s_star, centroid) else {
+            // The station lies inside the obstacle: the shadow is everything
+            // beyond the body and no supporting half-space exists. A hole,
+            // counted, never silent.
+            dropped += 1;
+            continue;
+        };
+        let local_radius = gen.radius(u_star);
+        let f = gen.point(s_star, u_star);
         let diff: Vec<f64> = (0..dim).map(|k| centroid[k] - f[k]).collect();
         let dist = diff.iter().map(|v| v * v).sum::<f64>().sqrt();
         if dist <= 1e-12 * scale {
-            // The centroid sits ON the centreline. Every direction is equally
+            // The centroid sits ON the generator. Every direction is equally
             // valid and none is determined; count it rather than inventing one.
             dropped += 1;
             continue;
         }
         let normal: Vec<f64> = diff.iter().map(|v| v / dist).collect();
-        let offset = component_support(obs_data, obs, r_m, centroid, band.rho, ivs, &normal);
+        let offset = component_support(gen, centroid, band.rho, ivs, &normal);
         // `y*` — the point of this component nearest the centroid. It is the
-        // projection onto the tube when the centroid is outside, and the centroid
+        // projection onto the zone when the centroid is outside, and the centroid
         // itself when it is inside, where the distance is zero by definition.
-        let y_star: Vec<f64> = if r_near > r_m {
-            (0..dim).map(|k| f[k] + r_m * normal[k]).collect()
+        let y_star: Vec<f64> = if r_near > local_radius {
+            (0..dim).map(|k| f[k] + local_radius * normal[k]).collect()
         } else {
             centroid.to_vec()
         };
-        // The linearisation's face. `n` is anchored on a CURVE, not a polytope:
-        // as the centroid moves, the nearest parameter slides along the tangent,
-        // so to first order `df/dc` is the projection onto the unit tangent and
-        // `dist` is `|c - f|`, the denominator that goes with it. At an interval
-        // endpoint the nearest point cannot slide, which is the frozen case and
-        // an empty face. For a straight obstacle this reproduces what the hull
-        // projection produced, because the hull's active face there IS the
-        // centreline direction.
-        let face = match (interior, unit_tangent(obs_data, obs, s_star)) {
-            (true, Some(t)) => vec![t],
-            _ => Vec::new(),
-        };
+        // The linearisation's face. `n` is anchored on the GENERATOR, not a
+        // polytope: as the centroid moves the nearest point slides along the
+        // generator, so to first order `df/dc` is the projection onto its tangent
+        // space and `dist` is `|c - f|`, the denominator that goes with it. At an
+        // interval endpoint the parameter cannot slide, which is the frozen case;
+        // at `u = 1` the stretch cannot slide either, so the surface contributes
+        // one tangent instead of two. A plain tube has no stretch at all and this
+        // is the single unit tangent the tube builder used.
+        let u_interior = gen.casts_shadow() && u_star > 1.0 + 1e-12;
+        let face = gen.tangents(s_star, u_star, interior, u_interior);
         planes.push(ClipGeometry {
             face,
             normal,
@@ -1078,20 +1008,23 @@ mod tests {
     const RADII: [f64; 1] = [0.2];
     const CENTROID: [f64; 3] = [0.0, 1.0, 0.0];
 
-    fn data() -> SpacetimeObstacleData<'static> {
-        SpacetimeObstacleData {
+    /// The plain tube reading of the parabola: no station, stretch pinned at one.
+    fn data() -> Generator<'static> {
+        Generator {
             ctrl: &PARABOLA,
             n_ctrl: 3,
-            radii: &RADII,
-            n_obs: 1,
-            spatial_dim: 2,
+            dim: 3,
+            r_m: RADII[0],
+            station: None,
+            obstacle_idx: 0,
+            station_idx: None,
         }
     }
 
     #[test]
     fn one_wall_per_approach_where_components_gave_one() {
         let d = data();
-        let ClipOutcome::Components(c) = clip_geometry(&CENTROID, 0.0, 1.0, &d, 0, false)
+        let ClipOutcome::Components(c) = clip_geometry(&CENTROID, 0.0, 1.0, &d, false)
         else {
             panic!("the obstacle is in reach; OutOfReach is wrong");
         };
@@ -1116,9 +1049,9 @@ mod tests {
     #[test]
     fn each_wall_contains_its_own_piece_of_the_clipped_volume() {
         let d = data();
-        let band = clip_band(&CENTROID, 0.0, 1.0, &d, 0, false, true, RADII[0]).unwrap();
-        let subs = split_at_distance_maxima(&d, 0, &CENTROID, &band.intervals);
-        let ClipOutcome::Components(c) = clip_geometry(&CENTROID, 0.0, 1.0, &d, 0, false)
+        let band = clip_band(&CENTROID, 0.0, 1.0, &d, false).unwrap();
+        let subs = split_at_distance_maxima(&d, &CENTROID, &band.intervals);
+        let ClipOutcome::Components(c) = clip_geometry(&CENTROID, 0.0, 1.0, &d, false)
         else {
             panic!("in reach");
         };
@@ -1146,7 +1079,7 @@ mod tests {
             ];
             for k in 0..=200 {
                 let s = iv.0 + (iv.1 - iv.0) * (k as f64) / 200.0;
-                let g = d.lifted_at(0, s);
+                let g = d.centre_at(s);
                 for dir in dirs.iter() {
                     let z: Vec<f64> = (0..3).map(|q| g[q] + RADII[0] * dir[q]).collect();
                     let r: f64 = (0..3)
@@ -1176,7 +1109,7 @@ mod tests {
         let d = data();
         let c = [3.0, 0.0, 0.0];
         let ivs = [(0.0, 1.0)];
-        let subs = split_at_distance_maxima(&d, 0, &c, &ivs);
+        let subs = split_at_distance_maxima(&d, &c, &ivs);
         assert_eq!(subs, ivs.to_vec());
     }
 }

@@ -379,9 +379,20 @@ SCENARIO_ELASTIC_WEIGHT = {
     # trajectory standing on occlusion slack. Measured at N8_seg8 -- occlusion
     # certificate 0.61 at 100, 0.29 at 800, 0.50 at 3000, and 0.0 at 1e5.
     "station_fence": 100000.0,
-    # Measured 2026-08-26 at N8_seg8 with the corridor-layer geometry: the
-    # ladder certified at this rung and no lower one.
-    "loiter": 100000.0,
+    # RE-MEASURED 2026-08-28 at N8_seg8, after the shadow moved onto the center
+    # surface. It was 1e5 under the old occlusion builder ("the ladder certified
+    # at this rung and no lower one", 2026-08-26); the unified geometry is less
+    # conservative and 1e5 is now over-tuned for it. Measured, both variants:
+    #
+    #   default run   1e4  converged, certificates 0.0, slack 1.9e-13, clear 2.533
+    #                 1e5  converged, certificates 0.0, slack 6.2e-15, clear 2.626
+    #   priced run    1e4  converged, certificates 0.0, slack 3.3e-12, clear 2.398
+    #   (free arrival,1e5  ITERATION CAP -- certificates still 0.0 and slack
+    #    v_max 5)          2.9e-15, so the geometry is fine and the weight is not
+    #
+    # The paper figure is the priced run, so the rung has to be one both variants
+    # certify at.
+    "loiter": 10000.0,
 }
 
 

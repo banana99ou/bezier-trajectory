@@ -271,6 +271,14 @@ function curveAt(t) {
 // curve, the control points, every obstacle's swept extent (capsule cap bulge
 // included in lift views), and the station. Reset on every new solve.
 let RANGES = {};
+
+// Default span for EVERY axis of EVERY view, and the margin kept around any
+// geometry that pushes past it. The scenarios live in roughly 0..10 in x, y and
+// t; z is small, and giving it the same box rather than its own tight one is
+// the point -- a squashed z axis makes a 0.4 climb look like a 9-unit one.
+const AXIS_DEFAULT = [0, 10];
+const AXIS_PAD = 0.4;
+
 function viewRanges() {
   const key = camKey();
   if (RANGES[key]) return RANGES[key];
@@ -303,10 +311,18 @@ function viewRanges() {
     else if (VIEW.kind === "flat") eat(st[sa], st[sb], 0);
     else eat(st[sa], st[sb], st[sc3]);
   }
-  const pad = i => 0.07 * ((hi[i] - lo[i]) || 1);
-  const R = { x: [lo[0] - pad(0), hi[0] + pad(0)],
-              y: [lo[1] - pad(1), hi[1] + pad(1)],
-              z: [lo[2] - pad(2), hi[2] + pad(2)] };
+  // THE UNIFORM BOX. Every axis of every view starts at the same 0..10 span, so
+  // two scenarios (or two views of one) are read at the same scale and nothing
+  // is silently squashed -- a z excursion of 0.4 must LOOK like 0.4 next to an x
+  // sweep of 9. An axis grows past the default only where geometry actually
+  // falls outside it, and never shrinks below it.
+  const R = {};
+  ["x", "y", "z"].forEach((axis, i) => {
+    let a = Math.min(AXIS_DEFAULT[0], lo[i] - AXIS_PAD);
+    let b = Math.max(AXIS_DEFAULT[1], hi[i] + AXIS_PAD);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) [a, b] = AXIS_DEFAULT;
+    R[axis] = [a, b];
+  });
   RANGES[key] = R;
   return R;
 }
@@ -424,127 +440,158 @@ function obstacleWindow(o) {
 }
 
 function tubeTraces(o, oi, opacity) {
-  // Lift view: a circle in the two displayed SPATIAL coordinates, swept along the
-  // slanted centreline over the obstacle's own active window. Solid surface, not
-  // a dot cloud.
+  // Lift view: the capsule as ONE surface -- the slanted tube and both rounded
+  // caps in a single grid, rather than three traces. Trace COUNT is what makes
+  // this page lag (`wall` has 23 obstacles; at 4 traces each that was ~92
+  // surfaces to composite every frame), so the geometry is unchanged and the
+  // packaging is not.
+  //
+  // Rows of the grid walk the capsule end to end: the bottom cap sweeps u from
+  // pi to pi/2 (radius r*sin u, offset r*cos u below t0), the body sweeps t,
+  // the top cap mirrors it. Every row has the same column count, which is what
+  // lets one surface hold all three pieces.
   const [t0, t1, finite0, finite1] = obstacleWindow(o);
   if (t1 < t0) return [];
-  const [sa, sb] = VIEW.space_idx, nT = 26, nTh = 32, out = [];
+  const [sa, sb] = VIEW.space_idx, nT = 14, nTh = 20, nCap = 5, r = o.radius;
   const X = [], Y = [], Z = [];
-  for (let i = 0; i <= nT; i++) {
-    const t = t0 + (t1 - t0) * i / nT, c = obstacleCenter(o, t);
-    const xr = [], yr = [], zr = [];
+  const ring = (cx, cy, rad, z) => {
+    const xs = [], ys = [], zs = [];
     for (let k = 0; k <= nTh; k++) {
       const th = 2 * Math.PI * k / nTh;
-      xr.push(c[sa] + o.radius * Math.cos(th));
-      yr.push(c[sb] + o.radius * Math.sin(th));
-      zr.push(t);
+      xs.push(cx + rad * Math.cos(th)); ys.push(cy + rad * Math.sin(th)); zs.push(z);
+    }
+    X.push(xs); Y.push(ys); Z.push(zs);
+  };
+  if (finite0) {
+    const c = obstacleCenter(o, t0);
+    for (let i = 0; i <= nCap; i++) {
+      const u = Math.PI - (Math.PI / 2) * i / nCap;
+      ring(c[sa], c[sb], r * Math.sin(u), t0 + r * Math.cos(u));
+    }
+  }
+  for (let i = 0; i <= nT; i++) {
+    const t = t0 + (t1 - t0) * i / nT, c = obstacleCenter(o, t);
+    ring(c[sa], c[sb], r, t);
+  }
+  if (finite1) {
+    const c = obstacleCenter(o, t1);
+    for (let i = 0; i <= nCap; i++) {
+      const u = (Math.PI / 2) * (1 - i / nCap);
+      ring(c[sa], c[sb], r * Math.sin(u), t1 + r * Math.cos(u));
+    }
+  }
+  const capNote = (finite0 || finite1)
+    ? " — rounded cap: forbidden up to r beyond the window" : "";
+  return [{
+    type: "surface", x: X, y: Y, z: Z, opacity: opacity, ...LIGHT,
+    colorscale: [[0, "rgb(196,64,64)"], [1, "rgb(196,64,64)"]], showscale: false,
+    hoverinfo: "text",
+    text: `obstacle ${oi}${o.name ? " (" + o.name + ")" : ""} r=${r}${capNote}`,
+    name: "obstacle capsules", showlegend: oi === 0, legendgroup: "obs",
+  }];
+}
+
+function centrelineTrace() {
+  // Every obstacle's slanted axis in ONE trace, segments separated by nulls: a
+  // still obstacle is vertical, a moving one leans. 23 traces became 1.
+  if (VIEW.kind !== "lift") return [];
+  const [sa, sb] = VIEW.space_idx, x = [], y = [], z = [];
+  RES.scenario.obstacles.forEach(o => {
+    const [t0, t1] = obstacleWindow(o);
+    if (t1 < t0) return;
+    const c0 = obstacleCenter(o, t0), c1 = obstacleCenter(o, t1);
+    x.push(c0[sa], c1[sa], null); y.push(c0[sb], c1[sb], null); z.push(t0, t1, null);
+  });
+  if (!x.length) return [];
+  return [{ type: "scatter3d", mode: "lines", x: x, y: y, z: z,
+    line: { color: "#6b1a1a", width: 2 }, hoverinfo: "skip",
+    name: "tube centrelines", legendgroup: "cl" }];
+}
+
+function ball(cx, cy, cz, r, nU, nV) {
+  const X = [], Y = [], Z = [];
+  for (let i = 0; i <= nU; i++) {
+    const u = Math.PI * i / nU, xr = [], yr = [], zr = [];
+    for (let k = 0; k <= nV; k++) {
+      const v = 2 * Math.PI * k / nV;
+      xr.push(cx + r * Math.sin(u) * Math.cos(v));
+      yr.push(cy + r * Math.sin(u) * Math.sin(v));
+      zr.push(cz + r * Math.cos(u));
     }
     X.push(xr); Y.push(yr); Z.push(zr);
   }
-  out.push({
-    type: "surface", x: X, y: Y, z: Z, opacity: opacity, ...LIGHT,
-    colorscale: [[0, "rgb(196,64,64)"], [1, "rgb(196,64,64)"]], showscale: false,
-    hoverinfo: "text", text: `obstacle ${oi}${o.name ? " (" + o.name + ")" : ""} r=${o.radius}`,
-    name: oi === 0 ? "obstacle tubes" : undefined, showlegend: oi === 0, legendgroup: "obs",
+  return [X, Y, Z];
+}
+
+function obstacleMoves(o) {
+  const [t0, t1] = obstacleWindow(o);
+  if (t1 < t0) return false;
+  const c0 = obstacleCenter(o, t0), c1 = obstacleCenter(o, t1);
+  return c0.some((v, i) => Math.abs(v - c1[i]) > 1e-9);
+}
+
+function sweepPathTrace() {
+  // Every MOVING obstacle's centre path in one trace. Static ones contribute
+  // nothing -- a dotted line of zero length is noise, not information.
+  if (VIEW.kind === "lift") return [];
+  const idx = VIEW.space_idx, x = [], y = [], z = [];
+  RES.scenario.obstacles.forEach(o => {
+    if (!obstacleMoves(o)) return;
+    const [t0, t1] = obstacleWindow(o);
+    const c0 = obstacleCenter(o, t0), c1 = obstacleCenter(o, t1);
+    x.push(c0[idx[0]], c1[idx[0]], null);
+    y.push(c0[idx[1]], c1[idx[1]], null);
+    const zc = i => (idx.length > 2 ? i[idx[2]] : 0);
+    z.push(zc(c0), zc(c1), null);
   });
-  // The slanted axis itself: a still obstacle is vertical, a moving one leans.
-  const cx = [], cy = [], cz = [];
-  for (let i = 0; i <= nT; i++) {
-    const t = t0 + (t1 - t0) * i / nT, c = obstacleCenter(o, t);
-    cx.push(c[sa]); cy.push(c[sb]); cz.push(t);
-  }
-  out.push({ type: "scatter3d", mode: "lines", x: cx, y: cy, z: cz,
-    line: { color: "#6b1a1a", width: 2 }, hoverinfo: "skip",
-    name: "tube centreline", showlegend: oi === 0, legendgroup: "cl" });
-  // Rounded caps at genuinely finite ends. The solver's forbidden set is a
-  // CAPSULE around the slanted centreline (spacetime_constraints.rs: "clamping
-  // to the segment ends gives rounded caps"), so the set bulges up to r BEYOND
-  // the window in the lifted metric -- a flat disc here understated it. Drawn
-  // as the full cap ball (its inner half hides inside the tube), and the
-  // projection of a lifted-space ball is a ball, so this is right in every
-  // lift view. Ends clipped by the plotting horizon get no cap.
-  const cap = (t, show) => {
-    if (!show) return;
-    const c = obstacleCenter(o, t), nU = 12, nV = 24, X = [], Y = [], Z = [];
-    for (let i = 0; i <= nU; i++) {
-      const u = Math.PI * i / nU, xs = [], ys = [], zs = [];
-      for (let k = 0; k <= nV; k++) {
-        const v = 2 * Math.PI * k / nV;
-        xs.push(c[sa] + o.radius * Math.sin(u) * Math.cos(v));
-        ys.push(c[sb] + o.radius * Math.sin(u) * Math.sin(v));
-        zs.push(t + o.radius * Math.cos(u));
-      }
-      X.push(xs); Y.push(ys); Z.push(zs);
-    }
-    out.push({ type: "surface", x: X, y: Y, z: Z, opacity: opacity, ...LIGHT,
-      colorscale: [[0, "rgb(168,48,48)"], [1, "rgb(168,48,48)"]], showscale: false,
-      hoverinfo: "text",
-      text: `obstacle ${oi} capsule cap at t=${t.toFixed(2)} (forbidden up to r beyond the window)`,
-      showlegend: false });
-  };
-  cap(t0, finite0 && t0 <= t1); cap(t1, finite1 && t1 >= t0);
-  return out;
+  if (!x.length) return [];
+  return [{ type: "scatter3d", mode: "lines", x: x, y: y, z: z,
+    line: { color: "rgba(150,40,40,0.55)", width: 2, dash: "dot" },
+    name: "obstacle sweep paths", legendgroup: "sweep", hoverinfo: "skip" }];
 }
 
 function sphereTraces(o, oi, opacity) {
   // Spatial view: ONE solid body, at the time cursor's instant -- drawn only
   // while the cursor sits inside the obstacle's own window, because outside it
-  // the body is not there. A faint dotted line shows the path the centre sweeps
-  // over the window; both come straight from the scenario parameters.
+  // the body is not there. The sweep path is a separate merged trace.
   const [t0, t1] = obstacleWindow(o);
-  if (t1 < t0) return [];
-  const [a, b, cc] = VIEW.space_idx, out = [];
-  const c0 = obstacleCenter(o, t0), c1 = obstacleCenter(o, t1);
-  out.push({ type: "scatter3d", mode: "lines",
-    x: [c0[a], c1[a]], y: [c0[b], c1[b]], z: [c0[cc], c1[cc]],
-    line: { color: "rgba(150,40,40,0.5)", width: 2, dash: "dot" },
-    name: "obstacle sweep path", showlegend: oi === 0, legendgroup: "sweep",
-    hoverinfo: "text",
-    text: `obstacle ${oi} centre path, window [${t0.toFixed(2)}, ${t1.toFixed(2)}]` });
   const t = cursorT();
-  if (t < t0 - 1e-9 || t > t1 + 1e-9) return out;
-  const c = obstacleCenter(o, t), nU = 16, nV = 24, X = [], Y = [], Z = [];
-  for (let i = 0; i <= nU; i++) {
-    const u = Math.PI * i / nU, xr = [], yr = [], zr = [];
-    for (let k = 0; k <= nV; k++) {
-      const v = 2 * Math.PI * k / nV;
-      xr.push(c[a] + o.radius * Math.sin(u) * Math.cos(v));
-      yr.push(c[b] + o.radius * Math.sin(u) * Math.sin(v));
-      zr.push(c[cc] + o.radius * Math.cos(u));
-    }
-    X.push(xr); Y.push(yr); Z.push(zr);
-  }
-  out.push({
+  if (t1 < t0 || t < t0 - 1e-9 || t > t1 + 1e-9) return [];
+  const [a, b, cc] = VIEW.space_idx, c = obstacleCenter(o, t);
+  const [X, Y, Z] = ball(c[a], c[b], c[cc], o.radius, 10, 16);
+  return [{
     type: "surface", x: X, y: Y, z: Z, opacity: Math.min(1, opacity + 0.3), ...LIGHT,
     colorscale: [[0, "rgb(196,64,64)"], [1, "rgb(196,64,64)"]], showscale: false,
     hoverinfo: "text", text: `obstacle ${oi} @ t=${t.toFixed(2)}`,
     name: "obstacle @ cursor t", showlegend: oi === 0, legendgroup: "obs",
-  });
-  return out;
+  }];
 }
 
 function sphereAllTraces(o, oi, opacity) {
-  // The "all t" spatial view: snapshots of the body over its own window,
-  // coloured by the instant they belong to on the SAME scale as the trajectory
-  // -- "same colour and near each other" means "close at the same moment", and
-  // distant colours crossing the same place are not a conflict.
+  // The "all t" spatial view. A MOVING body gets snapshots over its own window,
+  // coloured by the instant they belong to on the same scale as the trajectory.
+  // A STATIC body gets exactly one, in the obstacle colour rather than a time
+  // shade: six identical spheres would be six times the cost saying the same
+  // thing, and a time colour on a body that never moves would imply an instant
+  // it does not have. Its hover carries the window instead.
   const [t0, t1] = obstacleWindow(o);
   if (t1 < t0) return [];
-  const [tLo, tSpan] = timeSpan(), nSnap = 6, nU = 14, nV = 20, out = [];
-  for (let s = 0; s < nSnap; s++) {
-    const t = t0 + (t1 - t0) * s / (nSnap - 1 || 1), c = obstacleCenter(o, t);
-    const [a, b, cc] = VIEW.space_idx, X = [], Y = [], Z = [];
-    for (let i = 0; i <= nU; i++) {
-      const u = Math.PI * i / nU, xr = [], yr = [], zr = [];
-      for (let k = 0; k <= nV; k++) {
-        const v = 2 * Math.PI * k / nV;
-        xr.push(c[a] + o.radius * Math.sin(u) * Math.cos(v));
-        yr.push(c[b] + o.radius * Math.sin(u) * Math.sin(v));
-        zr.push(c[cc] + o.radius * Math.cos(u));
-      }
-      X.push(xr); Y.push(yr); Z.push(zr);
-    }
+  const [a, b, cc] = VIEW.space_idx;
+  if (!obstacleMoves(o)) {
+    const c = obstacleCenter(o, t0);
+    const [X, Y, Z] = ball(c[a], c[b], c[cc], o.radius, 8, 14);
+    return [{
+      type: "surface", x: X, y: Y, z: Z, opacity: opacity, ...LIGHT,
+      colorscale: [[0, "rgb(196,64,64)"], [1, "rgb(196,64,64)"]], showscale: false,
+      hoverinfo: "text",
+      text: `obstacle ${oi} — static, present t in [${t0.toFixed(2)}, ${t1.toFixed(2)}]`,
+      name: "obstacle (static)", showlegend: oi === 0, legendgroup: "obs",
+    }];
+  }
+  const [tLo, tSpan] = timeSpan(), nSnap = 5, out = [];
+  for (let sIdx = 0; sIdx < nSnap; sIdx++) {
+    const t = t0 + (t1 - t0) * sIdx / (nSnap - 1 || 1), c = obstacleCenter(o, t);
+    const [X, Y, Z] = ball(c[a], c[b], c[cc], o.radius, 8, 14);
     const shade = (t - tLo) / tSpan;
     out.push({
       type: "surface", x: X, y: Y, z: Z, opacity: opacity, ...LIGHT,
@@ -552,7 +599,7 @@ function sphereAllTraces(o, oi, opacity) {
       colorscale: "Viridis", cmin: 0, cmax: 1, showscale: false,
       hoverinfo: "text", text: `obstacle ${oi} @ t=${t.toFixed(2)}`,
       name: "obstacle snapshots (colour = time)",
-      showlegend: oi === 0 && s === 0, legendgroup: "obs",
+      showlegend: oi === 0 && sIdx === 0, legendgroup: "obs",
     });
   }
   return out;
@@ -567,6 +614,9 @@ function obstacleTraces(only, opacity) {
           : tubeTraces(o, i, opacity);
     out.push(...t);
   });
+  // The merged one-trace layers, added once rather than per obstacle.
+  out.push(...(only === null ? centrelineTrace() : []));
+  out.push(...(only === null ? sweepPathTrace() : []));
   return out;
 }
 
@@ -677,33 +727,33 @@ function stationTraces() {
 }
 
 function sightTraces() {
+  // Two traces, not one per line: every held line in one polyline with null
+  // breaks, every lost line in another. `lost` is decided server-side by the
+  // INDEPENDENT margin check -- this only picks the colour.
   if (!RES.sight) return [];
-  const st = RES.sight.station, out = [];
-  let firstKept = true, firstLost = true;
+  const st = RES.sight.station, lift = VIEW.kind === "lift";
+  const idx = VIEW.space_idx;
+  const held = { x: [], y: [], z: [] }, lost = { x: [], y: [], z: [] };
   RES.sight.lines.forEach(L => {
-    let sx, sy, sz, vx, vy, vz;
-    if (VIEW.kind !== "lift") {
-      const [a, b, c] = VIEW.space_idx;
-      sx = st[a]; sy = st[b]; sz = st[c];
-      vx = L.v[a]; vy = L.v[b]; vz = L.v[c];
+    const g = L.lost ? lost : held;
+    if (lift) {
+      g.x.push(st[idx[0]], L.v[idx[0]], null);
+      g.y.push(st[idx[1]], L.v[idx[1]], null);
+      g.z.push(L.t, L.t, null);
     } else {
-      const [a, b] = VIEW.space_idx;
-      sx = st[a]; sy = st[b]; sz = L.t;
-      vx = L.v[a]; vy = L.v[b]; vz = L.t;
+      const zc = v => (idx.length > 2 ? v[idx[2]] : 0);
+      g.x.push(st[idx[0]], L.v[idx[0]], null);
+      g.y.push(st[idx[1]], L.v[idx[1]], null);
+      g.z.push(zc(st), zc(L.v), null);
     }
-    const lost = L.lost, showLegend = lost ? firstLost : firstKept;
-    if (lost) firstLost = false; else firstKept = false;
-    out.push({
-      type: "scatter3d", mode: "lines",
-      name: lost ? "sight line LOST" : "sight line held",
-      showlegend: showLegend, legendgroup: lost ? "lost" : "kept",
-      x: [sx, vx], y: [sy, vy], z: [sz, vz],
-      line: { color: lost ? "rgba(200,40,40,0.95)" : "rgba(20,120,60,0.3)",
-              width: lost ? 5 : 1.2 },
-      hoverinfo: "text",
-      text: `t=${L.t.toFixed(2)} margin=${fmt(L.m, 4)}`,
-    });
   });
+  const out = [];
+  if (held.x.length) out.push({ type: "scatter3d", mode: "lines",
+    x: held.x, y: held.y, z: held.z, name: "sight line held", legendgroup: "kept",
+    line: { color: "rgba(20,120,60,0.3)", width: 1.2 }, hoverinfo: "skip" });
+  if (lost.x.length) out.push({ type: "scatter3d", mode: "lines",
+    x: lost.x, y: lost.y, z: lost.z, name: "sight line LOST", legendgroup: "lost",
+    line: { color: "rgba(200,40,40,0.95)", width: 5 }, hoverinfo: "skip" });
   return out;
 }
 
@@ -769,7 +819,7 @@ function shadowConeTraces() {
     // far (user-reported 2026-08-26, `loiter`: body at ~4, vehicle at ~24).
     const sLo = L * Math.cos(alpha) * Math.cos(alpha),
           sHi = Math.max(2.2 * L, 1.15 * sceneReach);
-    const nS = 10, nTh = 26, X = [], Y = [], Z = [];
+    const nS = 6, nTh = 16, X = [], Y = [], Z = [];
     for (let i = 0; i <= nS; i++) {
       const s = sLo + (sHi - sLo) * i / nS, rad = s * tanA;
       const xr = [], yr = [], zr = [];
@@ -824,28 +874,35 @@ function shadowConeTraces() {
 
 // --- half-space patches ----------------------------------------------------
 function planeTraces(planes, thresh, label) {
-  const out = [];
-  let first = true;
-  planes.forEach(pl => {
-    const q = pl.corners;
-    const col = marginColor(pl.margin, thresh);
-    out.push({
-      type: "mesh3d", x: C(q, px), y: C(q, py), z: C(q, pz),
-      i: [0, 0], j: [1, 2], k: [2, 3], opacity: 0.42, color: col, flatshading: true,
-      name: label, showlegend: first, legendgroup: label, hoverinfo: "text",
-      text: `${pl.kind} plane seg ${pl.seg} obs ${pl.obs}` +
-            (pl.station !== undefined ? ` station ${pl.station}` : "") +
-            `\nmargin ${fmt(pl.margin, 4)}`,
-    });
+  // ALL patches in a single mesh3d, coloured per face, and all free-side arrows
+  // in a single polyline. Plotly composites one trace far more cheaply than
+  // 2N of them, and `wall` at 16 segments has hundreds of patches. The patch
+  // corners are the server's -- each already proven to satisfy its own row.
+  if (!planes.length) return [];
+  const X = [], Y = [], Z = [], I = [], J = [], K = [], FC = [], HOVER = [];
+  const ax = [], ay = [], az = [];
+  planes.forEach((pl, n) => {
+    const q = pl.corners, base = 4 * n, col = marginColor(pl.margin, thresh);
+    q.forEach(c => { X.push(px(c)); Y.push(py(c)); Z.push(pz(c));
+      HOVER.push(`${pl.kind} plane seg ${pl.seg} obs ${pl.obs}` +
+        (pl.station !== undefined ? ` station ${pl.station}` : "") +
+        `\nmargin ${fmt(pl.margin, 4)}`); });
+    I.push(base, base); J.push(base + 1, base + 2); K.push(base + 2, base + 3);
+    FC.push(col, col);
     const a = pl.free_arrow;
-    out.push({
-      type: "scatter3d", mode: "lines", x: C(a, px), y: C(a, py), z: C(a, pz),
-      line: { color: col, width: 6 }, showlegend: false, legendgroup: label,
-      hoverinfo: "text", text: "free side",
-    });
-    first = false;
+    ax.push(px(a[0]), px(a[1]), null);
+    ay.push(py(a[0]), py(a[1]), null);
+    az.push(pz(a[0]), pz(a[1]), null);
   });
-  return out;
+  return [{
+    type: "mesh3d", x: X, y: Y, z: Z, i: I, j: J, k: K, facecolor: FC,
+    opacity: 0.42, flatshading: true, name: label, legendgroup: label,
+    showlegend: true, hoverinfo: "text", text: HOVER,
+  }, {
+    type: "scatter3d", mode: "lines", x: ax, y: ay, z: az,
+    line: { color: "#444", width: 3 }, showlegend: false, legendgroup: label,
+    hoverinfo: "skip",
+  }];
 }
 
 function allPlanes() {
@@ -867,23 +924,22 @@ function hullTrace(segIdx) {
 
 // --- trust boxes (replay only) ---------------------------------------------
 function trustBoxTraces(P, radius) {
+  // Every control point's box in ONE polyline, null-separated.
   if (!(radius > 0)) return [];
-  const out = [];
-  P.forEach((p, idx) => {
-    const cx = px(p), cy = py(p), cz = pz(p), r = radius;
+  const X = [], Y = [], Z = [], r = radius;
+  const edges = [[0,1],[1,3],[3,2],[2,0],[4,5],[5,7],[7,6],[6,4],[0,4],[1,5],[2,6],[3,7]];
+  P.forEach(p => {
+    const cx = px(p), cy = py(p), cz = pz(p);
     const lo = [cx - r, cy - r, cz - r], hi = [cx + r, cy + r, cz + r];
     const V = [];
     for (const zz of [lo[2], hi[2]]) for (const yy of [lo[1], hi[1]]) for (const xx of [lo[0], hi[0]]) V.push([xx, yy, zz]);
-    const edges = [[0,1],[1,3],[3,2],[2,0],[4,5],[5,7],[7,6],[6,4],[0,4],[1,5],[2,6],[3,7]];
-    const X = [], Y = [], Z = [];
     edges.forEach(([a, b]) => { X.push(V[a][0], V[b][0], null); Y.push(V[a][1], V[b][1], null);
                                 Z.push(V[a][2], V[b][2], null); });
-    out.push({ type: "scatter3d", mode: "lines", x: X, y: Y, z: Z,
-      line: { color: "rgba(90,90,90,0.55)", width: 1 },
-      name: "trust box (half-width = trust radius)", showlegend: idx === 0,
-      legendgroup: "trust", hoverinfo: "text", text: `trust radius ${fmt(radius, 3)}` });
   });
-  return out;
+  return [{ type: "scatter3d", mode: "lines", x: X, y: Y, z: Z,
+    line: { color: "rgba(90,90,90,0.55)", width: 1 },
+    name: "trust box (half-width = trust radius)", legendgroup: "trust",
+    hoverinfo: "text", text: `trust radius ${fmt(radius, 3)}` }];
 }
 
 // --- scene assembly --------------------------------------------------------
@@ -974,6 +1030,44 @@ const CAMERA = {};
 let cameraBound = false;
 const camKey = () => RES.scenario.name + "/" + VIEW.id;
 
+// Coalesced render. A slider fires `input` far faster than a gl3d scene can be
+// re-rendered, and every event used to run a full synchronous `render()`: a
+// 25-step drag cost 4.2 s on `wall` and 6.5 s on `diverse` (measured in Chrome
+// on Metal, 2026-08-27). Requesting an animation frame collapses a burst into
+// ONE redraw, and because `render()` is synchronous the pending frame cannot
+// fire until the previous one finishes, so renders can never queue up.
+//
+// Measured caveat worth keeping: the cost is plotly's per-call gl3d re-render,
+// NOT the scene this file builds -- `buildScene()` is 0.3-2.4 ms, under 1% of
+// a frame, and hiding every surface trace changes the frame by less than 5%.
+// So the lever is calling Plotly LESS OFTEN. Do not "optimise" this by
+// thinning geometry; that was measured and it does not help.
+let renderPending = false;
+function scheduleRender() {
+  if (renderPending) return;
+  renderPending = true;
+  requestAnimationFrame(() => { renderPending = false; render(); });
+}
+
+// plotly 3.1.0's gl3d draws axes and NOTHING ELSE when a scene contains only
+// scatter3d traces -- measured 2026-08-27: `door3d` past t=5, when its wall has
+// expired, rendered an empty box for the whole second half of the slider even
+// though 400 curve markers were in the trace list. Adding one near-invisible
+// surface restores them. It is a renderer workaround, not geometry, so it is
+// placed at a single degenerate point and carries no hover and no legend entry.
+function gl3dSentinel(traces) {
+  if (traces.some(t => t.type === "surface")) return [];
+  const R = viewRanges();
+  return [{
+    type: "surface",
+    x: [[R.x[0], R.x[0]], [R.x[0], R.x[0]]],
+    y: [[R.y[0], R.y[0]], [R.y[0], R.y[0]]],
+    z: [[R.z[0], R.z[0]], [R.z[0], R.z[0]]],
+    opacity: 0.01, showscale: false, hoverinfo: "skip", showlegend: false,
+    colorscale: [[0, "rgb(255,255,255)"], [1, "rgb(255,255,255)"]],
+  }];
+}
+
 function render() {
   if (!RES || !VIEW) return;
   // The all-t view is the only one without the cursor.
@@ -1010,7 +1104,9 @@ function render() {
   };
   const cam = CAMERA[camKey()];
   if (cam) layout.scene.camera = cam;
-  Plotly.react("view3d", buildScene(), layout, { responsive: true });
+  const scene = buildScene();
+  scene.push(...gl3dSentinel(scene));
+  Plotly.react("view3d", scene, layout, { responsive: true });
   if (!cameraBound) {
     cameraBound = true;
     $("view3d").on("plotly_relayout", ev => {
@@ -1509,7 +1605,7 @@ async function boot() {
     replayIndex = -1; updateReplayLabel(); render();
   });
   $("replaySlider").addEventListener("input", e => {
-    replayIndex = +e.target.value; updateReplayLabel(); render();
+    replayIndex = +e.target.value; updateReplayLabel(); scheduleRender();
   });
   const stepReplay = delta => {
     if (!REPLAY || !REPLAY.frames.length) return;
@@ -1528,15 +1624,15 @@ async function boot() {
   });
   $("timeSlider").addEventListener("input", e => {
     timeFrac = +e.target.value / +e.target.max;
-    updateTimeLabel(); render();
+    updateTimeLabel(); scheduleRender();
   });
   bindToggle("tPoly"); bindToggle("tNear", "subNear"); bindToggle("tSeg", "subSeg");
   bindToggle("tCert", "subCert"); bindToggle("tSpeed"); bindToggle("tTrust");
   $("nearThresh").addEventListener("input", e => {
-    $("nearVal").textContent = (+e.target.value).toFixed(2); render();
+    $("nearVal").textContent = (+e.target.value).toFixed(2); scheduleRender();
   });
   ["segPick", "certSeg", "certObs"].forEach(id =>
-    $(id).addEventListener("input", render));
+    $(id).addEventListener("input", scheduleRender));
 }
 
 boot();

@@ -14,15 +14,18 @@ one is a constraint on what may be computed WHERE:
   ``tools/trace_viewer.py``'s child script -- imported, not copied, so the
   parameter list cannot drift -- and returns that script's own drift check.
 * **Rust is the sole engine.** Constraint rows come from
-  ``spacetime_koz_rows_exact`` / ``spacetime_occlusion_rows_exact``, the builders
-  the certificate itself uses. Nothing here re-derives a half-space.
+  ``spacetime_koz_rows_exact``, the builder the certificate itself uses -- ONE
+  call, returning the obstacle's own walls and its shadow's walls together, split
+  here on the row's station index. Nothing here re-derives a half-space.
 * **Trace is observability over the real run.** The replay frames are the
   stepping context's own state; there is no viewer-side stepper.
 * **Geometry authenticity.** Everything the page draws is either a solver output,
   a scenario parameter, or a bounded patch of a solver-emitted half-space
-  computed here from that row's own normal. The one derived object -- the shadow
-  cone tessellated from the solver's exported occlusion balls -- is labelled
-  "derived" in the legend, which is why the balls are exported at all.
+  computed here from that row's own normal. The lift view's shadow cone is gone
+  with the conservative containing ball it was tessellated from: since the shadow
+  moved onto the center surface there is no such ball, and drawing a cone the
+  solver never built would be a picture of a constraint that is not there. The
+  shadow's walls are exported like any other wall.
 
 The verdicts are computed here and not in the browser. ``figure_grade`` comes
 from ``figure_grade_failures``, reached through the same info-key mapping
@@ -758,7 +761,9 @@ def _plane_patch(normal, lower_bound: float, hull: np.ndarray) -> dict | None:
     }
 
 
-def _koz_planes(P: np.ndarray, obstacles: list[dict], n_seg: int, a_list, dim: int):
+def _koz_planes(
+    P: np.ndarray, obstacles: list[dict], n_seg: int, a_list, dim: int, stations=None
+):
     """One patch per (segment, obstacle, component), plus the full exact-row ledger.
 
     Both come from ``spacetime_koz_rows_exact`` -- the builder the certificate
@@ -784,12 +789,17 @@ def _koz_planes(P: np.ndarray, obstacles: list[dict], n_seg: int, a_list, dim: i
     # are unpacked by name so a future widening of the tuple fails loudly here
     # rather than silently mis-assigning a column.
     (
-        normals, lbs, seg, cp, obs, comp, _rho, _sound, _dropped, _unsound,
+        normals, lbs, seg, cp, obs, comp, sta, _rho, _sound,
+        _dropped, _dropped_shadow, _unsound,
     ) = bezier_opt.spacetime_koz_rows_exact(
         p=P,
         obstacle_ctrl=obstacle_ctrl,
         obstacle_r=obstacle_radii,
         n_seg=n_seg,
+        stations=(
+            None if stations is None
+            else np.asarray(stations, dtype=float).reshape(-1, spatial_dim)
+        ),
     )
     normals = np.asarray(normals, dtype=float).reshape(-1, dim)
     lbs = np.asarray(lbs, dtype=float)
@@ -797,47 +807,71 @@ def _koz_planes(P: np.ndarray, obstacles: list[dict], n_seg: int, a_list, dim: i
     cp = np.asarray(cp, dtype=int)
     obs = np.asarray(obs, dtype=int)
     comp = np.asarray(comp, dtype=int)
+    sta = np.asarray(sta, dtype=int)
 
     hulls = [np.asarray(a, dtype=float) @ P for a in a_list]
-    ledger = []
-    groups: dict[tuple[int, int, int], dict] = {}
+    # ONE row set, split by which generator built each wall. A row with a station
+    # index is a wall on that station's shadow; -1 is the obstacle's own zone.
+    # The split is bookkeeping, not a second geometry -- they come from the same
+    # call, at the same iterate, through the same builder.
+    ledger: list[dict] = []
+    occ_ledger: list[dict] = []
+    groups: dict[tuple[int, int, int, int], dict] = {}
     for k in range(normals.shape[0]):
         s_i, c_i, o_i, j_i = int(seg[k]), int(cp[k]), int(obs[k]), int(comp[k])
+        st_i = int(sta[k])
         q = hulls[s_i][c_i]
         slack = float(normals[k] @ q) - float(lbs[k])
-        ledger.append({
+        row = {
             "seg": s_i,
             "cp": c_i,
             "obs": o_i,
             "component": j_i,
+            "station": st_i,
             "n_spatial": normals[k, :-1].tolist(),
             "n_time": float(normals[k, -1]),
             "slack": slack,
-        })
-        key = (s_i, o_i, j_i)
+        }
+        (occ_ledger if st_i >= 0 else ledger).append(row)
+        key = (s_i, o_i, j_i, st_i)
         entry = groups.get(key)
         if entry is None or slack < entry["margin"]:
             groups[key] = {
                 "seg": s_i,
                 "obs": o_i,
                 "component": j_i,
+                "station": st_i,
                 "normal": normals[k].tolist(),
                 "lb": float(lbs[k]),
                 "margin": slack,
             }
 
-    planes = []
+    planes, occ_planes = [], []
     for key in sorted(groups):
         entry = groups[key]
         patch = _plane_patch(entry["normal"], entry["lb"], hulls[entry["seg"]])
         if patch is None:
             continue
-        planes.append({**entry, **patch, "kind": "koz"})
+        if entry["station"] >= 0:
+            occ_planes.append({**entry, **patch, "kind": "occlusion"})
+        else:
+            planes.append({**entry, **patch, "kind": "koz"})
 
-    certificate = sum(max(0.0, -row["slack"]) for row in ledger)
-    violated = sum(1 for row in ledger if row["slack"] < 0.0)
-    zero_time = sum(1 for row in ledger if abs(row["n_time"]) < 1e-12)
+    def _summary(rows):
+        cert = sum(max(0.0, -row["slack"]) for row in rows)
+        return cert, sum(1 for row in rows if row["slack"] < 0.0)
+
+    certificate, violated = _summary(ledger)
+    occ_certificate, occ_violated = _summary(occ_ledger)
+    # A zero time coefficient is now a REPORTABLE DEFECT on every row, shadow rows
+    # included. They used to be time-parallel prisms by construction; the center
+    # surface carries the obstacle's own time coordinate, so a shadow wall is a
+    # space-time wall like any other and a zero here means the same thing G1 meant.
+    zero_time = sum(
+        1 for row in ledger + occ_ledger if abs(row["n_time"]) < 1e-12
+    )
     ledger.sort(key=lambda row: row["slack"])
+    occ_ledger.sort(key=lambda row: row["slack"])
     return {
         "planes": planes,
         "ledger": ledger[:LEDGER_ROWS],
@@ -846,110 +880,18 @@ def _koz_planes(P: np.ndarray, obstacles: list[dict], n_seg: int, a_list, dim: i
         "ledger_zero_time": zero_time,
         "ledger_truncated": len(ledger) > LEDGER_ROWS,
         "certificate_recomputed": float(certificate),
-    }
-
-
-def _occlusion_planes(
-    P: np.ndarray, obstacles: list[dict], stations, n_seg: int, a_list, dim: int
-):
-    """Occlusion patches and the solver's own inflated shadow balls.
-
-    The rows carry a SPATIAL normal with no time component -- by design, not by
-    the G1 defect: a shadow half-space is a prism with time-parallel walls, and
-    the piece's time window does the gating instead. The patch is therefore built
-    with an explicit zero in the time column, which is what makes it span the
-    segment's time extent in a lift view. That is the geometry, drawn.
-    """
-    import bezier_opt
-
-    spatial_dim = dim - 1
-    obstacle_ctrl, obstacle_radii = obstacle_array_bundle(obstacles, spatial_dim)
-    out = bezier_opt.spacetime_occlusion_rows_exact(
-        p=P,
-        obstacle_ctrl=obstacle_ctrl,
-        obstacle_r=obstacle_radii,
-        stations=np.asarray(stations, dtype=float).reshape(-1, spatial_dim),
-        n_seg=n_seg,
-    )
-    normals, lbs, seg, cp, obs, sta, centers, radii_b, win_lo, win_hi, margins = out
-    normals = np.asarray(normals, dtype=float).reshape(-1, spatial_dim)
-    lbs = np.asarray(lbs, dtype=float)
-    seg = np.asarray(seg, dtype=int)
-    cp = np.asarray(cp, dtype=int)
-    obs = np.asarray(obs, dtype=int)
-    sta = np.asarray(sta, dtype=int)
-    centers = np.asarray(centers, dtype=float).reshape(-1, spatial_dim)
-    radii_b = np.asarray(radii_b, dtype=float)
-    win_lo = np.asarray(win_lo, dtype=float)
-    win_hi = np.asarray(win_hi, dtype=float)
-
-    hulls = [np.asarray(a, dtype=float) @ P for a in a_list]
-    rows = []
-    groups: dict[tuple[int, int, int], dict] = {}
-    for k in range(normals.shape[0]):
-        s_i, c_i, o_i, st_i = int(seg[k]), int(cp[k]), int(obs[k]), int(sta[k])
-        q = hulls[s_i][c_i]
-        slack = float(normals[k] @ q[:spatial_dim]) - float(lbs[k])
-        rows.append({
-            "seg": s_i,
-            "cp": c_i,
-            "obs": o_i,
-            "station": st_i,
-            "n_spatial": normals[k].tolist(),
-            "slack": slack,
-            "t_lo": float(win_lo[k]),
-            "t_hi": float(win_hi[k]),
-        })
-        key = (s_i, o_i, st_i)
-        entry = groups.get(key)
-        if entry is None or slack < entry["margin"]:
-            groups[key] = {
-                "seg": s_i,
-                "obs": o_i,
-                "station": st_i,
-                # Zero time coefficient, written out rather than inherited: the
-                # prism's walls are parallel to the time axis.
-                "normal": normals[k].tolist() + [0.0],
-                "lb": float(lbs[k]),
-                "margin": slack,
-            }
-
-    planes = []
-    for key in sorted(groups):
-        entry = groups[key]
-        patch = _plane_patch(entry["normal"], entry["lb"], hulls[entry["seg"]])
-        if patch is None:
-            continue
-        planes.append({**entry, **patch, "kind": "occlusion"})
-
-    # The bodies the sight line must clear, deduplicated by (window, radius,
-    # CENTER). The center is part of the key deliberately: two balls sharing a
-    # window and radius but sitting at different centers are different bodies,
-    # and a key without the center silently dropped one of their cones
-    # (user-reported 2026-08-24: "not all shadow cone drawn").
-    balls, seen = [], set()
-    for c, r, a, b in zip(centers, radii_b, win_lo, win_hi):
-        key = (round(float(a), 6), round(float(b), 6), round(float(r), 6),
-               tuple(round(float(v), 6) for v in c))
-        if key in seen:
-            continue
-        seen.add(key)
-        balls.append({
-            "c": [float(v) for v in c],
-            "R": float(r),
-            "t0": float(a),
-            "t1": float(b),
-        })
-
-    certificate = sum(max(0.0, -row["slack"]) for row in rows)
-    rows.sort(key=lambda row: row["slack"])
-    return {
-        "planes": planes,
-        "rows": rows[:LEDGER_ROWS],
-        "rows_total": len(rows),
-        "rows_violated": sum(1 for row in rows if row["slack"] < 0.0),
-        "certificate_recomputed": float(certificate),
-        "shadow_balls": balls,
+        "occlusion": {
+            "planes": occ_planes,
+            "rows": occ_ledger[:LEDGER_ROWS],
+            "rows_total": len(occ_ledger),
+            "rows_violated": occ_violated,
+            "certificate_recomputed": float(occ_certificate),
+            # The conservative containing ball this used to draw a cone from no
+            # longer exists: the shadow is generated by the center surface and its
+            # walls ARE the geometry, drawn above. Emitting a cone the solver
+            # never built would be a picture of a constraint that is not there.
+            "shadow_balls": [],
+        },
     }
 
 
@@ -1059,15 +1001,15 @@ def solve_from_payload(payload: dict) -> dict:
     clearance = float(
         compute_min_clearance(P_opt, scenario["obstacles"], dim=dim, n_eval=CLEARANCE_SAMPLES)
     )
-    koz = _koz_planes(P_opt, scenario["obstacles"], n_seg, a_list, dim)
+    koz = _koz_planes(
+        P_opt, scenario["obstacles"], n_seg, a_list, dim, stations=stations or None
+    )
 
     occlusion = None
     los = None
     sight = None
     if stations:
-        occlusion = _occlusion_planes(
-            P_opt, scenario["obstacles"], stations, n_seg, a_list, dim
-        )
+        occlusion = koz["occlusion"]
         t_vals, margins = compute_los_margin(
             P_opt, stations[0], scenario["obstacles"], dim=dim, n_eval=LOS_SAMPLES
         )
@@ -1486,15 +1428,12 @@ def replay_from_payload(payload: dict) -> dict:
     a_list = [np.asarray(a, dtype=float) for a in segment_matrices_equal_params(N, n_seg)]
     for frame in frames:
         P_f = np.asarray(frame["P"], dtype=float)
+        built = _koz_planes(
+            P_f, scenario["obstacles"], n_seg, a_list, dim, stations=stations or None
+        )
         frame["planes"] = {
-            "koz": _koz_planes(P_f, scenario["obstacles"], n_seg, a_list, dim)["planes"],
-            "occlusion": (
-                _occlusion_planes(
-                    P_f, scenario["obstacles"], stations, n_seg, a_list, dim
-                )["planes"]
-                if stations
-                else []
-            ),
+            "koz": built["planes"],
+            "occlusion": built["occlusion"]["planes"] if stations else [],
         }
 
     drift = float(child.get("replay_drift", float("nan")))

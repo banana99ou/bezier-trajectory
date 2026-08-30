@@ -68,10 +68,14 @@ def _exact_rows(P, obstacles, n_seg):
     # Unpacked by name so a future widening of the tuple fails loudly here rather
     # than silently mis-assigning a column.
     (
-        normals, lbs, seg, cp, obs, comp, _rho, _sound, _dropped, _unsound,
+        normals, lbs, seg, cp, obs, comp, sta, _rho, _sound,
+        _dropped, _dropped_shadow, _unsound,
     ) = bezier_opt.spacetime_koz_rows_exact(
         p=P, obstacle_ctrl=ctrl, obstacle_r=radii, n_seg=n_seg,
     )
+    # No station was passed, so every row must be a body row. A shadow row here
+    # would mean the generator list grew one nobody asked for.
+    assert np.all(np.asarray(sta) == -1)
     return {
         "normals": np.asarray(normals, dtype=float).reshape(-1, dim),
         "lbs": np.asarray(lbs, dtype=float),
@@ -638,7 +642,8 @@ def _panel_walls(Q, ctrl, r_m, trust):
     """
     Q = np.asarray(Q, dtype=float)
     (
-        normals, lbs, _seg, _cp, _obs, comp, rho, sound, dropped, unsound,
+        normals, lbs, _seg, _cp, _obs, comp, _sta, rho, sound,
+        dropped, _dropped_shadow, unsound,
     ) = bezier_opt.spacetime_koz_rows_exact(
         p=Q, obstacle_ctrl=ctrl, obstacle_r=np.array([r_m]), n_seg=1,
         trust_radius=trust,

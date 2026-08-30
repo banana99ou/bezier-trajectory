@@ -51,7 +51,8 @@ def main(argv: list[str]) -> int:
         p=P, obstacle_ctrl=ctrl, obstacle_r=radii, n_seg=n_seg,
         trust_radius=trust, sound_clip=sound,
     )
-    normals, lbs, seg, cp, obs, rho, sound_flags, dropped, unsound = res
+    (normals, lbs, seg, cp, obs, _comp, _sta, rho, sound_flags,
+     dropped, _dropped_shadow, unsound) = res
     seg = np.asarray(seg)
     obs = np.asarray(obs)
     pairs = {(int(a), int(b)) for a, b in zip(seg, obs)}
