@@ -22,8 +22,6 @@ use pyo3::types::{PyDict, PyList};
     prograde_n_samples = 16,
     elastic_weight = 1e-2,
     transfer_time = 1500.0,
-    freeze_gravity_jacobian = false,
-    freeze_after_iter = 1,
     strict_koz_normals = false,
 ))]
 fn optimize_orbital_docking<'py>(
@@ -44,8 +42,6 @@ fn optimize_orbital_docking<'py>(
     prograde_n_samples: usize,
     elastic_weight: f64,
     transfer_time: f64,
-    freeze_gravity_jacobian: bool,
-    freeze_after_iter: usize,
     // false = Skip (historical): a segment whose centroid sits on the KOZ centre
     // emits no rows and is invisible to the certificate.
     // true  = Fallback: deterministic replacement normal, counted in
@@ -83,8 +79,6 @@ fn optimize_orbital_docking<'py>(
         enforce_prograde,
         prograde_n_samples,
         elastic_weight,
-        freeze_gravity_jacobian,
-        freeze_after_iter,
         if strict_koz_normals {
             constraints::DegenerateNormal::Fallback
         } else {

@@ -10,7 +10,7 @@ from pathlib import Path
 
 # Increment to invalidate old caches when the optimization formulation changes.
 # NOTE: the cache key does NOT hash the Rust binary; bump this after any solver rebuild.
-CACHE_VERSION = "15.0-abs-pred-stationarity"
+CACHE_VERSION = "16.0-freeze-knobs-removed"
 
 
 def get_cache_key(
@@ -26,8 +26,6 @@ def get_cache_key(
     a1,
     scp_prox_weight: float = 0.0,
     scp_trust_radius: float = 0.0,
-    freeze_gravity_jacobian: bool = False,
-    freeze_after_iter: int = 1,
     elastic_weight: float = 1e-2,
     enforce_prograde: bool = False,
     prograde_n_samples: int = 16,
@@ -64,8 +62,6 @@ def get_cache_key(
         'a1': a1.tobytes() if a1 is not None and isinstance(a1, np.ndarray) else str(a1),
         'scp_prox_weight': float(scp_prox_weight),
         'scp_trust_radius': float(scp_trust_radius),
-        'freeze_gravity_jacobian': bool(freeze_gravity_jacobian),
-        'freeze_after_iter': int(freeze_after_iter),
         # Every argument that changes the returned solution MUST appear here.
         # elastic_weight and transfer_time were previously absent, so runs differing
         # only in w_s or T collided on one entry and the second silently returned the

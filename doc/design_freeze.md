@@ -228,15 +228,25 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
 - `scvx_freeze`: **DELETED** 2026-08-09 (commit `9c673b0`). No literature
   basis, measurably worse on objective and wall time where the KOZ binds
   (evidence #5), and a permanent config-provenance hazard.
-- `freeze_gravity_jacobian`/`freeze_after_iter`, `scp_prox_weight`, and the
-  legacy fixed-point path (`scp_trust_radius=0`): legacy knobs, unused by the
-  paper configuration. These two freeze knobs are STILL LIVE — signature
-  `optimization.py:373-374`, forwarded at `:476-477`, declared in
-  `rust_optimizer/pybind/src/lib.rs:25-26`. Only `scvx_freeze` was deleted;
-  earlier wording here wrongly called them deleted. The proximal is skipped
-  entirely when `trust_active`, so the pillar-2 prox cell compares identical
-  code paths — documentation of intent, NOT evidence, and excluded from that
-  pillar's verdict.
+- `freeze_gravity_jacobian`/`freeze_after_iter`: **DELETED** 2026-08-25.
+  The last of the freeze family, removed end to end — Python signature and
+  cache key, the pybind signature, and the `lin_frozen_cache` / `use_frozen`
+  branch in `optimizer.rs`. The gravity linearization is now rebuilt at the
+  current reference every iteration with no way to ask otherwise, which is
+  what makes the method successive convexification rather than a one-shot
+  linearization. Removal is provably a no-op: `tools/build_tables.py`
+  regenerated all fourteen T2/T3/T4 configurations and every solver-produced
+  column — margin, control cost, objective, iteration count, stop reason,
+  hull violation — is bit-identical to the values committed at `db97dcd`
+  (runtime moved ≤1%, within the ±5% the tables already declare). Dead code
+  cannot change an answer; had any number moved, the branch was not dead.
+  `CACHE_VERSION` bumped to `16.0-freeze-knobs-removed` because the cache key
+  no longer carries the two fields.
+- `scp_prox_weight` and the legacy fixed-point path (`scp_trust_radius=0`):
+  legacy knobs, unused by the paper configuration, still live. The proximal is
+  skipped entirely when `trust_active`, so the pillar-2 prox cell compares
+  identical code paths — documentation of intent, NOT evidence, and excluded
+  from that pillar's verdict.
 - The nine `tools/probe_*.py` freeze-era investigation scripts were DELETED
   2026-08-10: they passed the `objective_mode` argument removed in `1581e54`,
   so they raised on use, and they probed `scvx_freeze`, itself since deleted.

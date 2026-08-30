@@ -152,9 +152,21 @@ previously said "~1e-6, estimated" and nobody had ever measured it.
 
 ### 3. Housekeeping
 
-- **Push** (15 commits).
-- Nine `tools/probe_*.py` reference the deleted freeze knobs.
-- Pre-existing unused-variable warning, `optimizer.rs:390` (`total_rows`).
+- **Push** — now **49 commits** ahead of `origin/main`. Still unpushed: the
+  push was **blocked by the permission classifier**; needs explicit approval.
+  Note `origin` is the PUBLIC GitHub repo (`banana99ou/bezier-trajectory`);
+  `gitlab` (self-hosted) did not answer and was left alone.
+- ~~Nine `tools/probe_*.py` reference the deleted freeze knobs.~~ Those scripts
+  were deleted 2026-08-10 (design_freeze §6).
+- ~~`freeze_gravity_jacobian`/`freeze_after_iter` still live.~~ **DELETED
+  2026-08-25**, end to end (Python signature + cache key, pybind, and the
+  `lin_frozen_cache` branch in `optimizer.rs`). `CACHE_VERSION` → `16.0`.
+  Proven a no-op: all fourteen T2/T3/T4 configurations regenerate
+  bit-identical on every solver-produced column. See design_freeze §6.
+- ~~Pre-existing unused-variable warning, `optimizer.rs:390` (`total_rows`).~~
+  Removed; `cargo check` on the library is now warning-clean. (Two warnings
+  remain in `tests/baseline_test.rs` — a dead `p_opt` field and a non-snake-case
+  fixture field — both pre-existing and untouched.)
 - (B) was never re-measured against the fixed `J_true` — the internal-merit
   comparison makes this optional. A `git checkout <commit> -- <path>` + rebuild
   was **blocked by the permission classifier**; needs explicit approval.

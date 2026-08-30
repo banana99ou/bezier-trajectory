@@ -33,7 +33,6 @@ pub struct OptResult {
     /// Per-iteration, per-segment Frobenius drift of the gravity Jacobian
     /// relative to its iter-1 value. Outer index = SCP iteration (0-based,
     /// iter 1 is index 0 and is identically zero), inner index = segment.
-    /// Empty when freeze_gravity_jacobian is true (drift is zero by construction).
     pub jacobian_drift_history: Vec<Vec<f64>>,
     /// Per-accepted-outer-step SCvx diagnostics (trust path only). One entry per
     /// accepted step. `rho_history` is the penalized-merit ratio (actual/predicted
@@ -387,8 +386,6 @@ fn solve_qp(
         cones.push(clarabel::solver::SupportedConeT::NonnegativeConeT(n_ineq));
     }
 
-    let total_rows = a_rows.len();
-
     // Build A as CSC
     // Clarabel convention: A x + s = b, s in cone
     // For zero cone: Ax = b (equality)
@@ -737,8 +734,6 @@ pub fn optimize_orbital_docking(
     enforce_prograde: bool,
     prograde_n_samples: usize,
     elastic_weight: f64,
-    freeze_gravity_jacobian: bool,
-    freeze_after_iter: usize,
     koz_degenerate_mode: constraints::DegenerateNormal,
 ) -> OptResult {
     let consts = OrbitalConstants::default();
@@ -852,15 +847,9 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
     let mut slack_history: Vec<f64> = Vec::new();
     let mut phase_history: Vec<f64> = Vec::new();
 
-    // Cache of iter-1 gravity linearization (always populated, used for drift
-    // diagnostic baseline even when not frozen).
+    // Cache of the iter-1 gravity linearization: the drift-diagnostic baseline.
     let mut lin_baseline: Option<Vec<SegmentGravLin>> = None;
-    // Cached frozen lin (populated at iter `freeze_after_iter` when freeze enabled).
-    let mut lin_frozen_cache: Option<Vec<SegmentGravLin>> = None;
     let mut jacobian_drift_history: Vec<Vec<f64>> = Vec::new();
-    // Effective freeze point: clamp to >=1 when flag is on (semantics: freeze_after_iter=K
-    // means iters 1..=K compute fresh, lin from iter K is cached, iters K+1.. reuse cache).
-    let effective_freeze_after = freeze_after_iter.max(1);
 
     for it in 1..=max_iter {
         iterations = it;
@@ -869,8 +858,7 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
 
         // KOZ + gravity linearization, rebuilt fresh at the current reference every
         // iteration — this is what makes the method successive convexification.
-        // (Honours the legacy freeze_gravity_jacobian knob and updates the
-        // Jacobian-drift diagnostic against the iter-1 baseline.)
+        // (Also updates the Jacobian-drift diagnostic against the iter-1 baseline.)
         // KOZ rows: one supporting half-space per De Casteljau segment, normal aimed
         // from the KOZ centre at the segment centroid. The centroid rule re-aims every
         // iteration, so the half-space the QP optimizes against is NOT the one the next
@@ -899,33 +887,18 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
             )
         };
         koz_degenerate_max = koz_degenerate_max.max(koz_degen);
-        let use_frozen =
-            freeze_gravity_jacobian && it > effective_freeze_after && lin_frozen_cache.is_some();
-        let lin_for_qp_owned: Option<Vec<SegmentGravLin>> = if use_frozen {
-            None
-        } else {
-            let lin_t = compute_segment_lin(&p, np1, dim, t, sample_count, &consts);
-            if it == 1 {
-                lin_baseline = Some(lin_t.clone());
-                jacobian_drift_history.push(vec![0.0; lin_t.len()]);
-            } else if let Some(base) = lin_baseline.as_deref() {
-                let mut drift_row = Vec::with_capacity(lin_t.len());
-                for (s_t, s_0) in lin_t.iter().zip(base.iter()) {
-                    drift_row.push(frobenius_norm_3x3(&s_t.j_i, &s_0.j_i));
-                }
-                jacobian_drift_history.push(drift_row);
+        let lin_t = compute_segment_lin(&p, np1, dim, t, sample_count, &consts);
+        if it == 1 {
+            lin_baseline = Some(lin_t.clone());
+            jacobian_drift_history.push(vec![0.0; lin_t.len()]);
+        } else if let Some(base) = lin_baseline.as_deref() {
+            let mut drift_row = Vec::with_capacity(lin_t.len());
+            for (s_t, s_0) in lin_t.iter().zip(base.iter()) {
+                drift_row.push(frobenius_norm_3x3(&s_t.j_i, &s_0.j_i));
             }
-            if freeze_gravity_jacobian && it == effective_freeze_after {
-                lin_frozen_cache = Some(lin_t.clone());
-            }
-            Some(lin_t)
-        };
-        let lin_for_qp_ref: &[SegmentGravLin] = match &lin_for_qp_owned {
-            Some(v) => v.as_slice(),
-            None => lin_frozen_cache
-                .as_deref()
-                .expect("lin_frozen_cache set when use_frozen is true"),
-        };
+            jacobian_drift_history.push(drift_row);
+        }
+        let lin_for_qp_ref: &[SegmentGravLin] = &lin_t;
 
         // Build quadratic objective. Keep the unregularized (H_obj, f_obj) for the
         // SCvx merit/ratio computation; the solved system adds proximal damping on top.
@@ -1599,11 +1572,6 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
     // Prop-1 certificate at the final iterate (0 ⇒ curve provably clears the KOZ).
     info.insert("final_hull_violation_km".to_string(), final_hull_violation);
     info.insert("final_cp_violation_km".to_string(), final_cp_violation);
-    info.insert(
-        "freeze_gravity_jacobian".to_string(),
-        if freeze_gravity_jacobian { 1.0 } else { 0.0 },
-    );
-    info.insert("freeze_after_iter".to_string(), freeze_after_iter as f64);
     info.insert(
         "scvx_converged".to_string(),
         if converged_scvx { 1.0 } else { 0.0 },

@@ -216,9 +216,7 @@ fn test_optimizer_golden_run() {
         None,
         false,
         16,
-        1e-2,  // elastic_weight -- locked w_s (exact-penalty rule)
-        false, // freeze_gravity_jacobian
-        1,     // freeze_after_iter
+        1e-2, // elastic_weight -- locked w_s (exact-penalty rule)
         constraints::DegenerateNormal::Skip,
     );
 
@@ -342,7 +340,7 @@ fn optimizer_stops_for_a_stated_reason() {
     let result = optimizer::optimize_orbital_docking(
         &p_init, np1, dim, bl.scenario.n_seg, bl.scenario.r_e,
         200, 1e-8, bl.scenario.t, 100, 0.0, 2000.0,
-        None, None, None, None, false, 16, 1e-2, false, 1,
+        None, None, None, None, false, 16, 1e-2,
         constraints::DegenerateNormal::Skip,
     );
     // 1 = K-consecutive merit streak, 4 = model stationarity. Both are principled
