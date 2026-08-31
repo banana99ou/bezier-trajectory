@@ -43,7 +43,7 @@ inconvenient must raise it, not work around it. **Full text, rationale and deriv
 5. Arrival time is freed with a **linear** time penalty; the subproblem stays a QP. Speed cap and time penalty must land **together**, or arrival collapses to an artifact.
 6. The energy-versus-time weight is a **preference, not a threshold** — report it as a scenario parameter.
 7. **Every number here is stale by construction** until B8–B10 land. Measurement is one pass at the end; the PI's draft carries none.
-8. Linearization handles a non-convex **free side**, never a non-convex **forbidden set** — the latter has no supporting half-space, so the certificate has nothing to stand on.
+8. Linearization handles a non-convex **free side**, never a non-convex **forbidden set** — the latter has no supporting half-space, so the certificate has nothing to stand on. **Corrected 2026-08-31, PAPER_1 §"The obstacle" / §"The wall":** the forbidden set — the lifted tube, and the shadow — IS non-convex, and that is the problem the construction solves. What has a supporting half-space is each *approach's piece* of the clipped keep-out volume, and the wall is the support of that piece. The decision stands as: never build a wall against the forbidden set as a whole, and never take the tube for a capsule.
 
 ## Workstreams
 
@@ -59,9 +59,9 @@ A session can open with just an item id (`B1`, `A2`, `C1`).
 
 **B. Solver**
 - ~~B0 repair the venv~~ **DONE**
-- ~~B1 fix G1~~ **DONE** — tube is a capsule around the slanted centreline; the time component falls out of the slant
+- ~~B1 fix G1~~ **DONE** — tube is a capsule around the slanted centreline; the time component falls out of the slant. (Capsule was the constant-velocity case B1 fixed; the tube has since been generalised to a curved one, and to the shadow's center surface — PAPER_1 §"The obstacle", §"The shadow in the lifted space")
 - ~~B2 a KOZ test with a **moving** obstacle that fails before B1 and passes after~~ **DONE** — `tests/unit/test_spacetime_koz_geometry.py`
-- ~~B3 re-benchmark after the freeze~~ **DONE 2026-08-20** — one pass, 22 configurations, table in README §Measurements. Swept `elastic_weight` via the ladder; `cap_bulge_ratio` untouched (dead code, measured flat)
+- ~~B3 re-benchmark after the freeze~~ **DONE 2026-08-20** — one pass, 28 runs (README corrected its own earlier "22"), table in README §Measurements. Swept `elastic_weight` via the ladder; `cap_bulge_ratio` untouched (dead code, measured flat)
 - ~~B4 fix G2~~ **DONE** — one plane per (segment, obstacle) aimed at the segment centroid
 - ~~B5 port the SCvx machinery from `main`~~ **DONE** — `848bf3b`, then reduced to one canonical iteration in `9b9c3d3`
 - B6 procedural seeds (left/right/wait/hurry) + multi-start. **Demoted 2026-08-19** — it was justified by `wall` being infeasible, which was false. May still buy better local optima; blocks nothing.
@@ -141,10 +141,14 @@ iterate / final returned iterate*. These are different concepts; never conflate 
 ## Core Idea
 
 Lift 2D (or 3D) moving-obstacle avoidance into space-time by adding time as an explicit Bezier
-coordinate, so a curve in (x, y, t) plans **path and timing at once**. Constant-velocity obstacles
-become straight tubes, time-limited ones become finite-height tubes the curve can wait out, and the
-existing convex-hull / De Casteljau / supporting-half-space machinery applies directly in the
-lifted space.
+coordinate, so a curve in (x, y, t) plans **path and timing at once**. An obstacle with arbitrary
+polynomial motion becomes a **curved tube** around its lifted centreline (constant velocity is the
+straight special case and is never the setup); a time-limited one is a finite tube the curve can
+wait out; and with a ground station **the keep-out zone is the obstacle and its shadow as one set**
+— the centreline generalises to a **center surface**, the shadow of the centreline with the station
+as a point light, the obstacle's radius fixed and the umbra widening as a cone. The existing
+convex-hull / De Casteljau / supporting-half-space machinery applies directly in the lifted space,
+to the tube and to the shadow alike.
 
 > ⚠️ **That paragraph is a description, not a novelty claim.** Osburn et al. published all of it in
 > August 2025 — [`doc/refs/novelty_positioning.md`](doc/refs/novelty_positioning.md). What is new
@@ -193,15 +197,20 @@ last measured pass, and the elastic weight each result needs: [`README.md`](READ
 
 The B8–B10 freeze landed and the one-pass re-measurement ran **2026-08-20** (item B3); README §Measurements is current at defaults. Runs enabling `v_max` / `time_weight` / `free_arrival_time` are different problems — re-measure per scenario.
 
-**`loiter` is the paper's demo scenario, it is NOT in README §Measurements, and its elastic weight
-is currently UNMEASURED for the scene it is set on.** Two measurements met at the `cc388aa` merge —
-the metres-and-seconds rescale under the retired occlusion builder (1e6), and the center-surface
-builder at a tenth of those lengths (1e4) — and neither covers the rescaled scene solved by the
-center-surface builder, which is what the registry now holds at 1e6. The full record is the comment
-above `"loiter"` in `spacetime_bezier/scenarios.py`; do not quote a rung from here. The rung has to
-be one that both the default and the priced run (free arrival, `v_max`) certify at, because the
-paper figure is the priced run. Every `station_fence` row in that table was measured under the
-retired builder and is stale for the same reason.
+**`loiter` is the paper's demo scenario and its elastic weight is MEASURED.** Corrected
+2026-08-31 — this paragraph previously said the weight was unmeasured, that `loiter` was absent from
+README §Measurements, and that the registry held 1e6. All three were wrong. The registry holds
+**1e5** (`SCENARIO_ELASTIC_WEIGHT` in `spacetime_bezier/scenarios.py`), the measurement was taken
+2026-08-30 across six runs — defaults and priced, each with and without `sound_clip` — and README
+§Measurements carries it in both the main table and its own dated block. Every rung certifies and
+returns the same trajectory; the rungs differ only in iteration count, which is why 1e5 is
+registered rather than the first rung that certifies.
+
+**Re-measured 2026-08-31 on the current build: all six runs reproduce exactly** — iterations
+3/3/3/3/10/12, weights 100 ×4 then 1e5 ×2, clearances 35.3204 / 35.3767 / 36.8417 / 36.8459 /
+24.3026 / 30.5243, arrival 80.000 pinned ×4 then 51.502 and 55.747, hull and occlusion certificates
+0.000 throughout, slack ≤ 3e-12, figure-grade on all six. The full record is the comment above
+`"loiter"` in `scenarios.py`; do not quote a rung from here.
 
 ## Key Files
 

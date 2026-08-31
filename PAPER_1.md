@@ -75,7 +75,7 @@ two-dimensional toy.
 
 기여는 세 가지이다. 첫째, 장애물의 운동이 임의로 주어져 관이 휘더라도 **관 전체가 볼록일 필요가
 없다** — 클리핑된 KOZ 볼륨에 대한 지지 반공간(supporting half-space)만 세우면 된다. 둘째, 그
-반공간을 분할구간·장애물·클리핑된 성분마다 하나씩 두고 해당 분할구간의 모든 제어점에 부과하면
+반공간을 분할구간·장애물·근접 구간마다 하나씩 두고 해당 분할구간의 모든 제어점에 부과하면
 연속 시간에 대한 볼록 껍질 보장이 유지된다. 제어점마다 다른 평면을 부과하면 이 보장은 유한 개의 점
 조건으로 약해진다. 셋째, 동일한 구성이 휘어진 KOZ 관과 관측자에 대한 차폐 영역을 모두 처리한다.
 
@@ -137,7 +137,10 @@ It is a special case and must never be the setup.*
 *Symbols, fixed 2026-08-25. The **clipping radius is `r_clip`**. `ρ` is reserved for the merit-function
 ratio of the successive-convexification loop and never denotes a clipping radius. `d` is the
 distance from the segment centroid to the nearest centreline point. `r_clip_max` is the cap on `r_clip`. In
-the formal section the spatial dimension is written `D`, not `d`, for exactly this reason.*
+the formal section the spatial dimension is written `D`, not `d`, for exactly this reason. The Rust
+predates this rule: its identifier `rho` on every row IS `r_clip`, and the merit ratio is the
+`rho` column of the trace — same word, two objects. Read the code with that map; write the paper
+with this rule.*
 
 Per (segment, obstacle), per SCP iteration:
 
@@ -339,8 +342,11 @@ Measured: centroid `0.55` inside a tube of radius `0.9`, floored clip radius `0.
 **Refusing a wall here was a measured defect, and that has not changed.** On `diverse` at 8
 segments it left the single penetrating (segment, obstacle) pair with no row at all, and the
 constraint-residual certificate then reported 4.6e-13 — clean — for a trajectory penetrating by
-0.219. **A component in reach always yields a wall.** The only outcome that legitimately carries
-none is the clip ball missing the KOZ entirely.
+0.219. **An approach in reach always yields a wall.** Only two outcomes legitimately carry none,
+and they are opposites: the clip ball missing the KOZ entirely (nothing to constrain, silence is
+correct), and a wall that *cannot* be built — the centroid exactly on the centreline, or a station
+inside the body (§"The shadow in the lifted space") — which is **counted as dropped**, never
+silent.
 
 ### What conservatism costs, and what it does not
 
@@ -622,8 +628,9 @@ whenever the left-hand quotient exists at all. Two consequences:
   onto the un-inflated centreline hull $\mathcal G_\ell$, which is retired with the rest of the
   outer approximation. $b$ remains the support of $\mathcal L^{(k)}_{m,\ell}$ along $n$. The only
   undefined case is $c=f_\ell$, i.e. the centroid exactly on the centreline, where every direction
-  is equally valid. **An approach in reach always yields a wall. Refusing one was a measured
-  defect** — on `diverse` at $8$ segments the single penetrating pair got no row, and the
+  is equally valid, and it is counted as a dropped wall rather than passed over — as is the
+  shadow's own undefined case, a station inside the body. **An approach in reach always yields a
+  wall. Refusing one was a measured defect** — on `diverse` at $8$ segments the single penetrating pair got no row, and the
   constraint-residual certificate reported $4.6\times10^{-13}$ for a trajectory penetrating by
   $0.219$.
 - **Wrapping is not an existence problem — and it is a grouping problem the cut solves.**
@@ -853,36 +860,84 @@ Consequence — hiding is cheaper than avoiding:
 | **stay out of the shadow** (keep the link) | outside a cone | no | supporting half-space plus a committed side — the same code |
 | stay inside the shadow (hide) | inside a cone | yes | plain linear rows, no side to commit |
 
-## The shadow in the lifted space
+## The shadow in the lifted space — one keep-out zone, not two
 
-At each instant the shadow is convex, but the cone swings as the obstacle moves, so the shadow
-volume in the lifted space is **not** convex. It gets the identical treatment as the tube, and that
-treatment is now the corrected one: clip the shadow volume to the same local ball about the segment
-centroid to get the **clipped shadow volume**; take the point of that volume nearest the centroid;
-take the unit direction from it back to the centroid; and set the offset to the **support of the
-clipped shadow volume in that direction** — its most protruding point along the normal. One wall
-per time-windowed piece of the shadow, imposed on every control point of the segment. *(The KOZ
-side's approach cut — one wall per interior local maximum of the distance profile, 2026-08-26 —
-has no occlusion analogue yet: a shadow piece is one time window, not one approach.)*
+**The keep-out zone is the obstacle and its shadow, as one set. Nothing is logically different
+between the two.** The obstacle's **centreline generalises to a center surface**: the shadow of
+the centreline with respect to the ground station as a point light source. Station `p` is a point
+in space present at every instant; obstacle centreline `γ(s) = (x(s), t(s))`, radius `r_m`, fixed.
 
-**Do not take the convex hull of the clipped shadow volume and build the plane against that.** As with the
-KOZ, that hull is a strict **outer approximation** of the clipped shadow volume, because
-intersection distributes over neither hulling nor inflation. It is also unnecessary: a set and its
-convex hull have the same support in every direction, so the wall against the clipped shadow volume
-*is* the wall against its hull. **Convexity of the clipped shadow volume is not required by the
-construction** — which is what makes the non-convexity measured below survivable rather than fatal.
+```text
+  center surface   Σ(s, u) = ( p + u·(x(s) − p),  t(s) ),   u ≥ 1
+  keep-out zone    K       = ⋃ over (s, u) of  B( Σ(s, u),  u·r_m )
+```
+
+- **`u = 1` is the obstacle itself**: `Σ(s, 1) = γ(s)`, radius `r_m`. **The obstacle's radius never
+  changes.** What widens with `u` is the *shadow*, because a point source at finite distance casts
+  a widening umbra — the cone tangent to the body, `sin α = r_m / |x(s) − p|`, of constant
+  **angular** thickness. A shadow has to look like a shadow and behave like a shadow. A constant
+  radius would model a cylinder, not a cone, and was measured unsound: it leaves 162 of 8 000
+  genuinely occluded positions on the allowed side.
+- **The sweep is the umbra exactly, not an outer approximation.** A position `q` is occluded iff
+  the sight segment `[p, q]` meets `B(x(s), r_m)`, iff `q = p + u(z − p)` for some `z` in the body
+  and `u ≥ 1`, and then `|q − Σ(s, u)| = u·|z − x(s)| ≤ u·r_m`. Body and shadow are one connected
+  set with no seam. Checked against an independent segment-distance oracle over 20 000 random
+  configurations in two and three spatial dimensions: zero disagreements.
+- **Time is not stretched.** The light source is a point in space present at every instant, so it
+  maps each instant into itself; the stretch acts on the spatial coordinates alone and the surface
+  carries the obstacle's own time coordinate. Nothing here singles out the time axis, which is the
+  rule of §"The lift" — and it is why every shadow wall carries a **nonzero time component**, like
+  every other wall. A zero time coefficient on a shadow row is defect G1, wherever it appears.
+- **No station means `u ≡ 1`**, and every formula reduces to the plain lifted tube bit for bit.
+  Scenarios without a shadow are the majority case, and that exact reduction is the regression the
+  generalisation stands on: a no-op cannot move a single row.
+
+**The construction above applies unchanged, because nothing about it was specific to a curve.**
+For a fixed `u` the stretch is affine, so `Σ(·, u)` is again a Bézier curve with control points
+`(p + u(X_l − p), T_l)`; subdivision, hodographs and the De Casteljau support bounds apply to the
+stretched control points as they stand. Clip `K` to the ball about the segment centroid; take the
+nearest point — now over `(s, u)`, with the nearest stretch in closed form for each `s`; take the
+direction from it back to the centroid; cut the band at the interior local maxima of the distance
+profile `s ↦ |c − Σ(s, u*(s))|`, one wall per approach; set the offset to the support of that
+approach's piece, bounded from above over cells in `s` (De Casteljau) and cells in `u`. **There is
+no occlusion-specific branch in the construction.** The only thing a station adds is a
+definedness check before it: a centreline that passes
+within `r_m` of the station casts a shadow that is all of space beyond the body, which has no
+supporting half-space in any direction. That is a **dropped wall, counted**, never "out of reach"
+— silence there would leave the row set summing to zero exactly where line of sight is most
+certainly lost.
+
+**Two readings of one zone, deliberately overlapping.** Each obstacle always contributes its own
+generator with `u` pinned at one — the rows a station-free scenario has always produced. When a
+station is present and occlusion is on, the same centreline is read a second time through that
+station, sweeping `u ≥ 1`: body at `u = 1`, shadow beyond. The station reading contains the body
+again, and the redundancy is kept on purpose. It is sound — two valid walls on the same material —
+and it is what lets the certificate stay two separately reported numbers (keep-out, line of sight):
+a merged set with no body-only rows would report "keep-out certified 0.0" for a run with no
+keep-out rows at all. The baseline run is the same list minus the station generators, not a second
+code path. With several stations the link must hold to *every* one; "any one station suffices" is a
+disjunction, which needs binaries, which is decided against.
+
+**Retired, do not reintroduce:** clipping the shadow into time-windowed pieces and walling each
+with a single flat plane tangent to a containing ball; clipping the *body* by proximity and casting
+the cone from the shrunken body (the shadow depends on the whole occluder, so that destroys
+containment); a zero time coefficient "by design"; and any convex hull of the clipped shadow volume
+— as for the KOZ, a set and its convex hull have the same support in every direction, so the wall
+against the clipped volume *is* the wall against its hull, and hulling buys nothing.
 
 **Measured 2026-08-19 — the check ran and it can fail.** The space-time shadow of a moving occluder
 is not convex, and the mechanism is not the one originally predicted: the half-angle change from
 varying observer distance is *minor*; the dominant contributor is the **cone rotating** as the
 occluder crosses the sight line. Purely tangential motion, where distance barely changes, violates
 convexity an order of magnitude worse than radial motion. The stationary control case comes out
-exactly convex. **Conclusion: the conservative outer approximation is mandatory, not optional.**
+exactly convex. **Conclusion: the shadow volume must be treated as non-convex, which is exactly why
+the wall is a support of its clipped piece and not a tangent plane** — the same reason as for the
+tube.
 
-⚠️ *That sweep measured pieces cut along the time axis. It does not transfer to a ball-defined
-piece and must be re-measured before it is quoted.* When quoting, quote the violation magnitude and
-the window length — the failure *fraction* depends on the sampling box and is a property of the
-measure, not the geometry.
+⚠️ *That sweep measured pieces cut along the time axis, under the retired construction. It does not
+transfer to a ball-defined piece and must be re-measured before it is quoted.* When quoting, quote
+the violation magnitude and the window length — the failure *fraction* depends on the sampling box
+and is a property of the measure, not the geometry.
 
 ---
 
@@ -973,8 +1028,9 @@ One pass, after the new construction lands. Nothing before it may be quoted.
 
 - **Venue.** Both, or 항공우주 only. Decides the title (mission-first for 항공우주, method-first
   for 기계학회 — the PI supplied a candidate for each) and it is on the 8/26 clock.
-- **`CLAUDE.md` §"Formulation decisions" item 8** still asserts the keep-out tube is a capsule and
-  therefore convex, which is now false. Needs the same correction as this file; not done here.
+- ~~**`CLAUDE.md` §"Formulation decisions" item 8** still asserts the keep-out tube is a capsule and
+  therefore convex, which is now false.~~ Corrected 2026-08-31: the item now carries the same
+  correction as this file.
 - **Occlusion mission motivation.** The PI's review requires a statement of *which mission, and
   why* line-of-sight maintenance is needed in aerospace practice. Currently the constraint is
   presented only as a methodological differentiator. Required in both manuscript and talk.

@@ -73,11 +73,13 @@ pub struct KozConstraintBundle {
     /// versa.
     pub dropped_planes: usize,
     pub dropped_shadow_planes: usize,
-    /// (segment, obstacle) pairs where statement (7) failed: the clip radius was
-    /// smaller than the segment radius plus the trust box radius, so the rows
-    /// certify against the clipped piece and the next iterate can leave it.
-    /// **This is the hole, counted.** Zero at every iteration means the run was
-    /// sound by construction whether or not `sound_clip` was requested.
+    /// Walls where statement (7) failed — counted per emitted plane, per
+    /// generator, so a clip cut into two approaches counts twice and a shadow
+    /// generator counts on its own. The clip radius was smaller than the segment
+    /// radius plus the trust box radius, so the rows certify against the clipped
+    /// piece and the next iterate can leave it. **This is the hole, counted.**
+    /// Zero at every iteration means the run was sound by construction whether
+    /// or not `sound_clip` was requested.
     pub unsound_clips: usize,
 }
 
@@ -155,15 +157,17 @@ fn segment_points_and_weights(
     (q, w, centroid, seg_radius)
 }
 
-/// EXACT obstacle rows: one half-space per (segment, obstacle), aimed by the
-/// projection of the segment centroid onto the convexified clipped centreline,
-/// applied to every control point of that segment.
+/// EXACT obstacle rows: one half-space per (segment, generator, approach) — a
+/// support of that approach's piece of the clipped keep-out volume, aimed from
+/// the piece's nearest point back to the segment centroid — applied to every
+/// control point of that segment. The generator is the obstacle's own centreline
+/// or its center surface through a station; the rows are built the same way.
 ///
 /// These are the rows the CERTIFICATE is evaluated with. Satisfying them proves
-/// the curve segment is outside the convexified clipped piece `H`, by PAPER_1
-/// statement (5): a Bezier segment lies in the convex hull of its control points,
-/// the rows are linear, and `H` lies entirely on the other side of the plane by
-/// statement (4).
+/// the curve segment is outside every approach's piece: a Bezier segment lies in
+/// the convex hull of its control points, the rows are linear, and the piece
+/// lies entirely on the other side of its plane because the offset is a rigorous
+/// ceiling on the piece's support. No hull of the piece is ever taken.
 ///
 /// **What they do NOT prove.** They certify against `K_m ∩ B(c, rho)`, not
 /// against `K_m`. The gap closes only when statement (7) holds, which is reported
