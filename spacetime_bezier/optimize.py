@@ -402,7 +402,7 @@ def _optimize_spacetime_rust(
     # construction is sound by construction, at the cost of conservatism where
     # the row binds. Off by default -- PAPER_1 calls the choice between the two
     # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
-    sound_clip: bool = False,
+    sound_clip: bool = True,
     v_max: float | None = None,
     time_weight: float = 0.0,
     free_arrival_time: bool = False,
@@ -567,7 +567,7 @@ def optimize_spacetime_from_control_points(
     # construction is sound by construction, at the cost of conservatism where
     # the row binds. Off by default -- PAPER_1 calls the choice between the two
     # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
-    sound_clip: bool = False,
+    sound_clip: bool = True,
     v_max: float | None = None,
     time_weight: float = 0.0,
     free_arrival_time: bool = False,
@@ -625,7 +625,7 @@ def optimize_spacetime(
     # construction is sound by construction, at the cost of conservatism where
     # the row binds. Off by default -- PAPER_1 calls the choice between the two
     # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
-    sound_clip: bool = False,
+    sound_clip: bool = True,
     v_max: float | None = None,
     time_weight: float = 0.0,
     free_arrival_time: bool = False,
@@ -678,7 +678,7 @@ def optimize_scenario(
     v_max: float | None = None,
     time_weight: float = 0.0,
     free_arrival_time: bool = False,
-    sound_clip: bool = False,
+    sound_clip: bool = True,
     verbose: bool = True,
 ) -> dict:
     """Run optimization for all requested degree/segment-count pairs.

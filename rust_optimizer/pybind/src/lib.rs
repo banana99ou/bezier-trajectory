@@ -247,7 +247,7 @@ fn resolve_coord_bounds(
     time_lb = 0.0,
     time_ub = 15.0,
     elastic_weight = 100.0,
-    sound_clip = false,
+    sound_clip = true,
     v_max = None,
     time_weight = 0.0,
     free_arrival_time = false,
@@ -385,7 +385,7 @@ fn optimize_spacetime_bezier<'py>(
 /// when the grouping moved from connected components to approaches, 2026-08-26.)
 #[pyfunction]
 #[pyo3(signature = (
-    p, obstacle_ctrl, obstacle_r, n_seg = 8, trust_radius = 0.5, sound_clip = false,
+    p, obstacle_ctrl, obstacle_r, n_seg = 8, trust_radius = 0.5, sound_clip = true,
     stations = None,
 ))]
 fn spacetime_koz_rows_exact<'py>(
@@ -520,7 +520,7 @@ impl SpacetimeScpContext {
         scp_trust_radius = 0.0,
         elastic_weight = 100.0,
         tol = 1e-6,
-        sound_clip = false,
+        sound_clip = true,
         v_max = None,
         time_weight = 0.0,
         free_arrival_time = false,

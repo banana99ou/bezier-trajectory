@@ -214,11 +214,21 @@ The `curve` N8_seg16 row is the honest cost and is recorded rather than dropped:
 ceiling is paid in step size, and on the one scenario whose tube is genuinely non-convex it is
 sometimes paid in convergence. `curve` N8_seg4 was a standing failure before this change.
 
-**The reach floor is not the default.** `sound_clip=False` is what produced every number in this
-repository's history, and changing a default silently changes every number. It is now exposed on
-the frontend panel and taken by `optimize_scenario`, `optimize_spacetime` and
-`tools/make_paper_figure.py`; whether it should become the default is an open decision, and the
-table above is the evidence for it.
+**The reach floor is now the DEFAULT — decided 2026-08-31, and it is not a mode.** Every number in
+this repository's history before that date was produced with it off, which means produced with a
+certificate that covers only the clipped piece wherever the segment came close to an obstacle. The
+flag survives so this table stays reproducible; `sound_clip=False` is a measurement setting, not a
+way to run the solver.
+
+**One interaction, measured, that the flip exposed.** The reach is the segment's own radius plus one
+trust step, so the floor GROWS WITH THE TRUST RADIUS. On `original` (a 10-unit scene) with a speed
+cap and a priced free arrival: trust 2.0 takes 21 iterations without the floor and 22 with it, trust
+4.0 takes 13 either way, and **trust 8.0 goes from converging in 13 iterations to hitting the
+300-iteration cap** — its returned iterate is still certified at 2.36e-07, so that is a convergence
+declaration rather than a correctness failure, but the clip has stopped localizing anything: the
+floor is about 14 on a scene 10 across. A trust radius large relative to the scene and a sound clip
+are in tension by construction, which is exactly what the reachability lemma says and is worth
+stating in the paper rather than discovering twice.
 
 **What the clipped-volume construction changed, measured against the same configurations built
 with the retired hull-of-band plane.** Where the obstacle is straight its tube is convex and the

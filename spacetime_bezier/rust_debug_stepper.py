@@ -66,7 +66,7 @@ class RustOptimizerStepper:
     # construction is sound by construction, at the cost of conservatism where
     # the row binds. Off by default -- PAPER_1 calls the choice between the two
     # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
-    sound_clip: bool = False,
+    sound_clip: bool = True,
         elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,
     ) -> None:
         if _bezier_opt_rs is None or not hasattr(_bezier_opt_rs, "SpacetimeScpContext"):
@@ -561,7 +561,7 @@ def create_spacetime_debug_stepper_from_control_points(
     # construction is sound by construction, at the cost of conservatism where
     # the row binds. Off by default -- PAPER_1 calls the choice between the two
     # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
-    sound_clip: bool = False,
+    sound_clip: bool = True,
     elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,
 ) -> RustOptimizerStepper:
     """Create a Rust-backed debug stepper from an existing control polygon."""
@@ -606,7 +606,7 @@ def create_spacetime_debug_stepper(
     # construction is sound by construction, at the cost of conservatism where
     # the row binds. Off by default -- PAPER_1 calls the choice between the two
     # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
-    sound_clip: bool = False,
+    sound_clip: bool = True,
     elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,
     init_curve: dict | None = None,
 ) -> RustOptimizerStepper:

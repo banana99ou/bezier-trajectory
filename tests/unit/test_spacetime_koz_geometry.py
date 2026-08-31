@@ -647,6 +647,16 @@ def _panel_walls(Q, ctrl, r_m, trust):
     ) = bezier_opt.spacetime_koz_rows_exact(
         p=Q, obstacle_ctrl=ctrl, obstacle_r=np.array([r_m]), n_seg=1,
         trust_radius=trust,
+        # PINNED, not inherited. These panels demonstrate the CONSTRUCTION's own
+        # floor -- the clip radius at the obstacle radius, PAPER_1 statement (7)
+        # -- and the reach floor (`sound_clip`, statement (8)) is a larger,
+        # separate one that hides it: with the reach floor on, panel B3's radius
+        # is 0.907107 instead of 0.900000 and the obstacle-radius floor never
+        # binds. `sound_clip` became the DEFAULT 2026-08-31, so this has to be
+        # written down rather than inherited; a panel whose subject is decided by
+        # a default is a panel that silently changes subject when the default
+        # moves, which is the whole lesson of that day.
+        sound_clip=False,
     )
     normals = np.asarray(normals, dtype=float).reshape(-1, 2)
     lbs = np.asarray(lbs, dtype=float)

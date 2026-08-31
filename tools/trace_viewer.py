@@ -88,7 +88,7 @@ def _capture_replay():
         n_seg=req["seg"], min_dt=req["min_dt"], coord_lb=-20.0, coord_ub=20.0,
         time_lb=0.0, time_ub=float(P0[-1, -1]) * 1.5,
         scp_prox_weight=0.5, scp_trust_radius=req["trust_radius"],
-        elastic_weight=weight, tol=req["tol"], sound_clip=False,
+        elastic_weight=weight, tol=req["tol"], sound_clip=True,
         stations=(np.asarray(st, float) if st else None),
     )
     frames, prev = [], np.asarray(P0, float)

@@ -48,7 +48,7 @@ import numpy as np
 
 def solve_pair(scenario: str, N: int, n_seg: int,
                free_arrival: bool, time_weight: float, v_max,
-               sound_clip: bool = False):
+               sound_clip: bool = True):
     from spacetime_bezier.scenarios import SCENARIO_MAP, scenario_elastic_weight
     from spacetime_bezier.optimize import optimize_spacetime
 

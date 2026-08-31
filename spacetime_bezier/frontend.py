@@ -108,7 +108,7 @@ SOLVE_DEFAULTS = {
     # configurations return pairs the certificate does not cover, so a solve with
     # this off is honestly reported as not figure-grade rather than passing on a
     # condition nothing checked.
-    "sound_clip": False,
+    "sound_clip": True,
 }
 
 # Dense samples of the returned curve. The same evaluator the clearance check
