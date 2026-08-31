@@ -7,7 +7,7 @@
 //! one and every formula below reduces to the plain lifted tube, bit for bit;
 //! that reduction is the regression test the generalization stands on.
 //!
-//! This module is PAPER_1 §"Formulation — rigorous statement", statements (1)
+//! This module is idea/spacetime.md §"Formulation — rigorous statement", statements (1)
 //! through (8), in code. Read that section before changing anything here; every
 //! constant and every branch below is traceable to a numbered statement, and a
 //! change that is not is a change that breaks the paper.
@@ -127,7 +127,7 @@ impl SpacetimeObstacleData<'_> {
 
 /// The clipped stretch of one obstacle's centreline, exactly convexified.
 ///
-/// This is the shared object of PAPER_1 statements (1)-(3), and the literal
+/// This is the shared object of idea/spacetime.md statements (1)-(3), and the literal
 /// content of "the shadow gets the identical treatment as the tube" — which is
 /// now literal rather than aspirational: the shadow is the SAME keep-out zone
 /// read at a larger stretch of the same generator, so there is one band, one
@@ -335,7 +335,7 @@ fn nearest_param(gen: &Generator<'_>, c: &[f64]) -> (f64, f64) {
 /// Clip the generator to the ball around the segment centroid and convexify the
 /// result exactly.
 ///
-/// **One reach rule, for tubes and shadows alike.** The cap of PAPER_1 statement
+/// **One reach rule, for tubes and shadows alike.** The cap of idea/spacetime.md statement
 /// (7) says: skip the pair when nothing inside the trust region can touch this
 /// keep-out zone. Written on the SIGNED distance — the distance from the centroid
 /// to the generator, less the local ball radius there — that is
@@ -958,7 +958,7 @@ pub fn clip_geometry(
     ClipOutcome::Components(ClipComponents { planes, dropped })
 }
 
-/// The rotation term of PAPER_1's linearized row:
+/// The rotation term of idea/spacetime.md's linearized row:
 /// `corr = (I - P_F)(I - n n^T) d_k / ||c - y*||`.
 ///
 /// **This is not a new derivation — it is the old one, generalized.**

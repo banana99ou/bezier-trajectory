@@ -288,7 +288,7 @@ def scenario_station_fence() -> dict:
     * The fence's path is **non-straight**: it descends in y and drifts in +x,
       then reverses on both. That is expressed as a CHAIN of two straight pieces
       on adjacent time windows whose caps overlap at the joint, which is the
-      construction PAPER_1 sec. "Occluder geometry" requires -- a capsule around
+      construction idea/spacetime.md sec. "Occluder geometry" requires -- a capsule around
       a curved centreline is not convex and would break the certificate, while
       each straight piece is convex on its own.
 
@@ -543,7 +543,7 @@ def scenario_loiter() -> dict:
     key: tick ``free_arrival_time`` with a ``time_weight > 0`` and a ``v_max``,
     or the solver refuses by design (a freed arrival that nothing prices is an
     artifact generator -- see ``optimize.py``). The paper figure runs it with
-    ``sound_clip=True`` -- the reach floor on the clip radius (PAPER_1
+    ``sound_clip=True`` -- the reach floor on the clip radius (idea/spacetime.md
     statement 8), so the certificate speaks for the whole keep-out zone.
     Measured to matter here: without it the N8_seg8 returned iterate has 24
     (segment, obstacle) pairs whose wall covers only a clipped piece, and the

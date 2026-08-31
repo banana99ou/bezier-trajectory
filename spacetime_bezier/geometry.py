@@ -16,7 +16,7 @@ class MovingObstacle:
     """An obstacle whose motion is a polynomial in time, as lifted control points.
 
     ``control_points`` is ``(n_ctrl, spatial_dim + 1)``; the last coordinate is
-    time, and it is AFFINE in the curve parameter (PAPER_1 statement 3 says the
+    time, and it is AFFINE in the curve parameter (idea/spacetime.md statement 3 says the
     motion is a polynomial *in time*, and lifting such a motion gives affine time
     by definition). The active window is the first and last control point's time
     coordinate, so it is derived rather than carried alongside.

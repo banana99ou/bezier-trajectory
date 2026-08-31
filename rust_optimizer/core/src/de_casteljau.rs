@@ -74,7 +74,7 @@ pub fn segment_matrices_equal_params(n: usize, n_seg: usize) -> Vec<Vec<f64>> {
 /// Control points of the piece of a degree-`n` Bezier lying over `[alpha, beta]`,
 /// as an (N+1) x (N+1) row-major matrix acting on the original control points.
 ///
-/// This is what makes PAPER_1 statement (3) exact. The alternative — sampling the
+/// This is what makes idea/spacetime.md statement (3) exact. The alternative — sampling the
 /// curve over `[alpha, beta]` and hulling the samples — produces a set the curve
 /// bulges OUTSIDE of between samples, so containment fails and every certificate
 /// resting on it fails with it. Subdivision removes that error instead of
@@ -148,7 +148,7 @@ mod tests {
         }
     }
 
-    /// The falsifier for the construction PAPER_1 statement (3) forbids.
+    /// The falsifier for the construction idea/spacetime.md statement (3) forbids.
     ///
     /// Hulling SAMPLES of the curve over [alpha, beta] gives a set the curve
     /// bulges outside of between samples. Here that hull — the chord, for two

@@ -11,7 +11,7 @@ Two things live here, and the distinction is the point of item B8:
   cost terms.
 
 Why the cost is not "acceleration energy" (frozen formulation decisions 1-3,
-derived in ``PAPER_1.md`` sec. "The derivation behind the decisions"): the curve
+derived in ``idea/spacetime.md`` sec. "The derivation behind the decisions"): the curve
 parameter is not time. Physical velocity is the spatial parameter-derivative
 divided by the time parameter-derivative -- a ratio of two Beziers, hence not a
 polynomial -- and physical acceleration has that ratio's derivative, with a cubic

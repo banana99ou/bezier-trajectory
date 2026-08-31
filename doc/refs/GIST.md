@@ -3,7 +3,7 @@
 PDF 원문은 `papers/`에 있다(저작권 때문에 커밋하지 않는다). 이 파일은 커밋한다.
 에이전트는 이 파일을 채우지 않는다. 한 줄이라도 직접 쓴 것만 신뢰한다.
 
-검증된 선행연구 지도는 [`novelty_positioning.md`](novelty_positioning.md).
+검증된 선행연구 지도는 [`idea/spacetime.md`](../../idea/spacetime.md) §Novelty and prior art로 옮겼다.
 
 ---
 

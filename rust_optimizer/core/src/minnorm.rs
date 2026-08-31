@@ -1,6 +1,6 @@
 //! Minimum-norm point in the convex hull of finitely many points.
 //!
-//! This is the projection `y* = argmin_{y in G} ||c - y||` of PAPER_1 statement
+//! This is the projection `y* = argmin_{y in G} ||c - y||` of idea/spacetime.md statement
 //! (4), and it is the whole reason the construction is sound for a curved tube.
 //!
 //! **Why not the tube's nearest surface point.** Taking the normal from `c - f`
@@ -243,7 +243,7 @@ pub fn min_norm_point(points: &[f64], n_pts: usize, dim: usize) -> MinNormPoint 
 
 /// Orthonormal basis of the corral's direction space — `span{p_i - p_i0}`.
 ///
-/// This is the `F` of PAPER_1's rotation term. `P_F = sum_b b b^T` projects onto
+/// This is the `F` of idea/spacetime.md's rotation term. `P_F = sum_b b b^T` projects onto
 /// it, and `corr = (I - P_F)(I - n n^T) d_k / ||c - y*||` is the derivative of the
 /// row's clearance through the aiming direction. A single-point corral gives an
 /// empty basis, so `P_F = 0`, which reproduces the frozen-nearest-point case the

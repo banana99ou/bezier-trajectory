@@ -1,52 +1,39 @@
-# Paper 1 — offline space-time trajectory optimization, known obstacle motion
+# Idea 1 — decomposition-free space-time trajectory optimization
 
-**Central doc for paper 1.** Everything about this paper lives here or is linked from here. One
-linear document: there is no Part A / Part B split and no "where these disagree, X wins" rule.
-That device is what let ten contradictions accumulate by 2026-08-21.
+Time is lifted into the curve as an explicit Bezier coordinate, so a curve in (x, y, t) plans path
+and timing at once, and the obstacle's convex over-approximation is built over a local neighbourhood
+of the current iterate and rebuilt every iteration — instead of free space being decomposed into
+convex cells before the solve begins.
+
+Everything about this idea lives here: claim, formulation, geometry, novelty, and the scenario that
+demonstrates it. **One linear document** — no Part A / Part B split, and no "where these disagree, X
+wins" rule. That device is what let ten contradictions accumulate by 2026-08-21.
+
+**Artifacts rendering this idea.** Each one owns its own venue rules, schedule, figures and state:
+
+- [`paper/ksas_2026_fall/README.md`](../paper/ksas_2026_fall/README.md) — 한국항공우주학회 2026년도 추계학술대회 발표논문 (2 pages), and its poster
+- the journal version — in progress in the `bezier-trajectory-journal` worktree, branch `paper/journal-1`
+
+**What every artifact has to contain, whatever its length.** These recur per rendering, so they are
+listed here once rather than re-derived per venue:
+
+1. **Related work**, including how this differs from TEB — see §Novelty and prior art below.
+2. **Limitations**: the passing homotopy class comes from the initialization, and multi-start is not
+   exhaustive. §Honest counter-position states the rest.
+3. **The mission motivation** for the line-of-sight constraint — see §Open at the end of this file.
+4. **A figure slot defined before the figure exists**: what it must show, and what would make it
+   fail. The occlusion figure's slot is §Demo scenario.
 
 **Scope boundary.** Obstacle motion is known and deterministic. The solve is offline. There is no
 sensing model and nothing to re-estimate, which is why receding-horizon replanning is explicitly
-declined. The online / uncertain-hazard regime is a *separate* paper: [`PAPER_2.md`](PAPER_2.md).
-Stating this assumption plainly is what makes paper 2's contribution legible as a contribution
-rather than a correction.
+declined. The online / uncertain-hazard regime is a *separate* idea:
+[`idea/risk_field.md`](risk_field.md). Stating this assumption plainly is what makes idea 2's
+contribution legible as a contribution rather than a correction.
 
 **Supporting evidence, kept separate on purpose** (verification records, not paper content):
-- [`doc/refs/novelty_positioning.md`](doc/refs/novelty_positioning.md) — prior-art map, comparison against Osburn, per-source verification status
-- [`doc/refs/safe_corridor_references.md`](doc/refs/safe_corridor_references.md) — external ground truth for one plane per (segment, obstacle)
-- [`doc/refs/advisor_review_20260820.md`](doc/refs/advisor_review_20260820.md) — the PI's review; outranks any agent's assertion about scope, venue, or the objective
 
----
-
-# 제출 일정
-
-**한국항공우주학회 2026년도 추계학술대회로 확정 — 2026-08-25.** 대한기계학회 추계는 포기했다.
-두 학회가 11/11~13에 겹치고 다른 도(道)에서 동시에 열려 한 곳만 고를 수 있으며, 지도교수 역시
-둘 중 하나를 고르라는 입장이었다. **검토의견 §1의 "6페이지 기계학회에도 낸다" 제안은 이 결정으로
-닫혔다 — 다시 꺼내지 말 것.**
-
-| | 한국항공우주학회 추계 |
-|---|---|
-| 논문 제출 마감 | **2026-09-04(금)** |
-| 분량 | 2페이지 + 별도 400자 초록 |
-| 학술대회 | 11/10(화)~13(금) |
-| 장소 | 하이원리조트 (강원 정선) |
-
-**400자 초록은 원고가 아니라 제출 웹페이지에 입력한다.** 별도 산출물이고 마감은 같다. 제출에는
-회비 납부와 사전등록 결제 완료가 전제이며, 결제 기한은 사전등록 마감이 아니라 논문 마감 전이다.
-
-**6페이지가 필요했던 논증은 저널로 간다.** 학회 발표 이후 내용을 보완해 저널에 제출하는 것이
-후속 계획이다. 지지 반공간 구성, 매 반복 재구성, 볼록성 논의는 거기서 전개하고, 2페이지 원고는
-그 논증을 다 담으려 하지 말고 현장 토론용으로 유지한다.
-
-마감일 재확인 — `ksas.or.kr`는 HTTPS로 응답하지 않는다(타임아웃). HTTP로만 열리고 인코딩은
-EUC-KR이므로 웹 조회 도구는 실패한다. 결과가 비면 마감이 바뀐 것이다:
-
-```bash
-curl -s "http://ksas.or.kr/Conference/ConferenceView.asp?AC=0&CODE=CC20260701" \
-  | iconv -f EUC-KR -t UTF-8 | grep "9월 4일"
-```
-
----
+- [`doc/refs/safe_corridor_references.md`](../doc/refs/safe_corridor_references.md) — external ground truth for one plane per (segment, obstacle)
+- [`doc/refs/advisor_review_20260820.md`](../doc/refs/advisor_review_20260820.md) — the PI's review; outranks any agent's assertion about scope, venue, or the objective
 
 # The claim
 
@@ -98,6 +85,253 @@ KOZ와 다른 구성을 요구하는 사례가 나오면 무너진다.
   better trajectory costing 17× the compute, with free-space coverage still incomplete at the top
   of the sweep. Both halves of that machine — sampling convex regions, then searching the graph —
   degrade as dimensions are added, and we are adding one.
+
+---
+
+# Novelty and prior art
+
+External ground truth for what is new here. **It outranks any agent's assertion about novelty**,
+and it outranks this document's own claim section if the two ever disagree. Everything below was
+read from the source, not recalled; where a source was read only at abstract level, or through a
+fetch summarizer rather than the PDF, it says so.
+
+**Chosen claim: (a) decomposition-free.** See "The claim that survives" below.
+
+---
+
+## Verdict
+
+**The core idea — the lift itself — is not novel.** "Lift moving obstacles into space-time
+so a constant-velocity obstacle becomes a static tube, then apply Bezier convex-hull supporting
+half-spaces in the lifted space" was published in August 2025 by Osburn, Peterson & Salmon.
+
+Four of the five items that were once listed as "what is genuinely new" appear in that paper.
+They have been removed from the claim; §핵심 기여 above states what survives.
+
+| the retired claim | Osburn et al. 2025 |
+|---|---|
+| 1. moving obstacle → static tube in space-time | yes, §F |
+| 2. time as a Bezier coordinate; hull applies in lifted space | yes — control points carry an explicit `t` component |
+| 3. finite-height tubes for time-limited obstacles | yes — prism runs from initial time to final time |
+| 4. time monotonicity `P[i+1,t] − P[i,t] ≥ min_dt` | yes — `(x_{v,i+1} − x_{v,i})_t ≥ 0`, plus an explicit "minimum time separation" variant |
+| 5. objective penalizes only spatial acceleration | no — they minimize `(x,y)` path length via the control-polygon upper bound |
+
+---
+
+## Why free space cannot be convexified (settles a recurring proposal)
+
+Recorded because it will be re-proposed: *can a coordinate transform (inversion, conformal
+map, Nyquist-style) turn the non-convex free space into a convex one?*
+
+**No, and the obstruction is topological, not geometric.**
+
+- A convex set is contractible, hence simply connected.
+- Free space around an obstacle is not simply connected — a loop around the obstacle cannot be
+  contracted.
+- Homeomorphisms preserve the fundamental group.
+
+Therefore no continuous invertible map takes free space onto a convex set. Sphere inversion
+`x → x/‖x‖²` maps the exterior of the unit disc to the *punctured* interior: the obstacle centre
+goes to infinity and infinity comes to the origin, exactly as the proposal intends — and the hole
+survives as the puncture. The hole is not an artifact. It is the fact that passing left and
+passing right are genuinely distinct plans; convexity would imply their average is also a
+solution, and the average is "straight through the obstacle."
+
+Prior art for the strongest version of this idea: **Rimon & Koditschek**, navigation functions —
+*"Exact robot navigation in geometrically complicated but topologically simple spaces"*, and
+*"The construction of analytic diffeomorphisms for exact robot navigation on star worlds"*
+(Trans. AMS, 1991). They deform complicated geometry into simple geometry; they do not attempt to
+change the topology. The tell is that convergence holds from *"almost all"* initial
+configurations — the excluded set is the saddle points the topology forces to exist, one per
+obstacle. (Read at abstract/summary level only; PDF not archived here.)
+
+**Consequence, and a usable framing for the paper's introduction:** there are exactly two moves
+available. Cover free space with convex pieces (IRIS + GCS), or cut it to one convex piece per
+obstacle by committing to a side (supporting half-spaces). Everything in the prior art is one of
+these two. What the space-time lift actually buys is not convexity — it is turning a
+**time-varying** constraint into a **static** one.
+
+---
+
+## The prior-art map
+
+Four families, all with time as a genuine dimension.
+
+| family | representative | how time enters |
+|---|---|---|
+| configuration-time space | Erdmann & Lozano-Pérez 1987 | the origin; represents space-time **approximately, by 2D slices** |
+| search-based | SIPP (Phillips & Likhachev 2011), CBS variants | discrete space-time graph |
+| sampling-based | ST-RRT\* (Grothe et al., ICRA 2022, arXiv:2203.02176; in OMPL) | samples `(x,t)` directly, free arrival time |
+| corridor / convex-opt | SSC 2019 → GCS 2023 → ST-GCS 2025 → Osburn 2025 → Tang 2026 | convex sets **in space-time**, curve constrained inside |
+
+### The corridor / convex-opt family in detail
+
+| | ST-GCS (2503.00583) | SPOT (2602.01189) | **Osburn (2508.10203)** | us |
+|---|---|---|---|---|
+| time | coordinate, continuous | coordinate, **binned Δt=0.2 s, 2 s horizon** | coordinate, continuous | coordinate, continuous |
+| curve | **piecewise linear** | MINCO polynomial | **Bezier** | **Bezier** |
+| dynamic obstacle | other robots' planned paths only | perceived bounding boxes | any constant-velocity **polygon** | any constant-velocity **capsule** |
+| free space | extrude 2D sets + exact carve (ECD) | inflate along an RRT\* path | **IRIS sampled in 3D** | **none — half-space per (segment, obstacle)** |
+| optimality | time-optimal, global | local | **global w.r.t. its graph** | local |
+| arrival time | free | — | free | **fixed** (endpoint pins `t`) |
+| solver | Mosek (commercial) | L-BFGS | **Clarabel** | **Clarabel** |
+| spatial dims | 2 | **3** | 2 | 2 today, 3 intended |
+
+**Osburn is the only real competitor.** ST-GCS produces no smooth trajectory; SPOT cannot plan
+past two seconds. Nobody occupies *continuous time + smooth curve + 3 spatial dimensions* at once.
+
+---
+
+## The claim that survives
+
+Every method in the corridor family requires a **convex decomposition of free space-time computed
+before optimization**, plus a combinatorial layer to select cells. Ours requires neither:
+supporting half-spaces are generated directly against the tube, each SCP iteration.
+
+> **Decomposition-free**: moving obstacles enter as linearized supporting half-spaces on a lifted
+> tube rather than as a precomputed convex cell complex, so there is no cell-selection search.
+> This is what makes the lift practical at 3 spatial dimensions plus time, where building and
+> searching the cell complex is the dominant cost.
+
+Do **not** phrase the hook as "time as a coordinate" — that is Osburn's, published.
+
+### Evidence that the decomposition is the bottleneck, from their own papers
+
+Osburn Table I — cluttered scenario, 20 obstacles, 100 runs per row, **3D (2 spatial + time)**:
+
+| IRIS samples | convex sets | edges | cost (m) | time (s) |
+|---|---|---|---|---|
+| 80 | 15.22 | 22.71 | 1.24 | 4.75 |
+| 100 | 17.05 | 26.45 | 1.23 | 5.28 |
+| 250 | 27.58 | 52.28 | 1.12 | 11.50 |
+| 500 | 40.16 | 95.27 | 1.05 | 26.80 |
+| 1000 | 55.62 | 148.44 | 1.03 | 82.30 |
+
+17 % better trajectory for 17× the compute, and coverage is still incomplete at the bottom row:
+*"the sets themselves do not provide complete coverage of the free space… This results in a
+trajectory that is not globally optimal with respect to the geometric minimum distance."* Their
+conclusion concedes it: *"Although the convex set generation method limits solution quality…"*
+
+Both halves of the machine degrade with dimension. IRIS places seeds by **random sampling** —
+Osburn: *"can generate collision-free convex sets in dimensions higher than R³… However, its main
+drawback is that it requires sampling."* GCS then solves over whatever graph results.
+
+SPOT is the corroborating data point: the only genuinely 4D method in the family, and it caps its
+horizon at **2 seconds** for tractability with time binned at 0.2 s. A decomposition-free
+formulation has no such term — a 20-second horizon costs what a 2-second one costs, because the
+tube is one static object either way. **This is the `wall` scenario's reason to exist.**
+
+### Honest counter-position
+
+Their strengths are real and must be stated in every limitations section:
+
+- Osburn and ST-GCS need **no initial guess**. We need seeds and multi-start.
+- They are **globally optimal** (w.r.t. their graph). We are local.
+- Osburn's small dynamic-obstacle case takes **0.52 s**, and his static case 0.29 s. These are not
+  slow. Whatever our current numbers turn out to be, the gap on small problems is unlikely to be
+  more than a small factor — **"we are fast" cannot carry the paper.** The argument is how the
+  cost scales with dimension, not the wall-clock on a 2D toy.
+
+---
+
+## Benchmark comparison
+
+Osburn: Python, CVXPY, **Clarabel**, AMD Ryzen 7 9700X / 32 GB. Ours: Rust, **Clarabel**, Apple M1
+(`BENCHMARKS.md`). Same solver — an unusually fair comparison.
+
+| | scenario | time | feasible |
+|---|---|---|---|
+| Osburn | 1 static obstacle | 0.29 s | yes, globally optimal |
+| Osburn | **1 moving obstacle**, agent speeds up to pass then slows | **0.52 s** | yes, globally optimal |
+| Osburn | 20 obstacles, cluttered | 4.12 s (→ 82.3 s for 17 % better) | yes, optimal w.r.t. its graph |
+| us | — | **no current measurement** | — |
+
+**Our side of this table is deliberately empty.** `BENCHMARKS.md` predated commit `848bf3b`
+(the SCvx ratio-test port) and the large solver diff on top of it — it has since been deleted. Its numbers
+(`original` 177 ms feasible, `wall` 12.3 s infeasible −0.112, `diverse` 4.4 s infeasible −0.495)
+describe a solver that no longer exists and **must not be quoted**. `wall` is reported to wait
+correctly on the current build. Re-measure before any number here reaches the paper.
+
+Osburn's 0.52 s dynamic case is behaviourally our `wall`: the agent speeds up to slip past a
+moving obstacle, using timing as a real decision. That is the comparison the paper has to win,
+and it needs a fresh measurement to be made at all.
+
+---
+
+## Differentiation beyond (a) — for related work and limitations, not for implementation
+
+Adding constraints is Osburn's own stated contribution (*"the derivation of general
+GCS-compatible constraints"*), so competing there head-on loses. The seam is the **kind** of
+constraint GCS structurally cannot absorb: GCS's vocabulary is a convex set per vertex and a
+convex cost per edge, so a constraint must be expressible as "stay inside this convex region."
+
+| constraint | shape in `(x,y,z,t)` | cost to us | cost to GCS |
+|---|---|---|---|
+| **max** range from a moving station | ball swept along a line — convex tube | one linear row | fine, convex |
+| **min** range keep-out | keep-out tube — non-convex free side | one linearized supporting half-space — *machinery we already have* | must be carved around |
+| **line-of-sight / occlusion** by an obstacle | shadow cast from a *moving* station — twisting, neither convex nor a straw | one linearized row per (segment, obstacle, station) | IRIS must carve a twisting shadow; set count explodes |
+
+A minimum-range keep-out around a moving station is *the same object as our KOZ tube* and comes
+free from the slanted-centreline tube. Supporting evidence for the seam: the visibility-aware / perception-aware
+trajectory literature (RAPTOR arXiv:2007.03465, SVPTO, FOV-constrained flight arXiv:2403.17067)
+is entirely local NLP/SQP over splines — nobody does it by convex decomposition. The two
+literatures do not overlap.
+
+**Naming:** do not call this "semantic." SSC (Ding et al. 2019) owns that word here and it means
+traffic lights and speed limits. Use *mission constraints* or *sensing-constrained*.
+
+**Scope:** this is a positioning paragraph and future work. Do not implement before the deadline.
+
+---
+
+## Cite-list (≈15 for 2 pages)
+
+- Erdmann & Lozano-Pérez, *On multiple moving objects*, Algorithmica 2:477–521, 1987 — origin of configuration space-time
+- Phillips & Likhachev, *SIPP: Safe Interval Path Planning for Dynamic Environments*, ICRA 2011
+- Grothe, Hartmann, Orthey, Toussaint, *ST-RRT\**, ICRA 2022, arXiv:2203.02176
+- Marcucci, Umenberger, Parrilo, Tedrake, *Shortest Paths in Graphs of Convex Sets*, SIAM J. Opt. 34(1):507–532, 2024, arXiv:2101.11565
+- Marcucci, Petersen, von Wrangel, Tedrake, *Motion planning around obstacles with convex optimization*, Science Robotics 8(84), 2023, arXiv:2205.04422
+- Deits & Tedrake, *Computing Large Convex Regions of Obstacle-Free Space Through Semidefinite Programming* (IRIS), WAFR 2015
+- **Osburn, Peterson, Salmon, arXiv:2508.10203, 2025 — the nearest prior work; mandatory**
+- Tang, Mao, Yang, Ma, *Space-Time Graphs of Convex Sets*, IROS 2025, arXiv:2503.00583
+- Ding, Zhang, Chen, Shen, *Safe Trajectory Generation … Spatio-Temporal Semantic Corridor*, RA-L 2019
+- Tordesillas & How, *MADER*, IEEE T-RO 38(1), 2022, arXiv:2010.11061
+- Zhang, Yadmellat, Gao, *A Sufficient Condition for Convex Hull Property in General Convex Spatio-Temporal Corridors*, arXiv:2110.00065, 2021
+- Rimon & Koditschek, navigation functions (only if the convexification question is addressed in text)
+
+## Read-list, ranked
+
+1. Osburn arXiv:2508.10203 — ~40 min, read §E–§F and Table I closely. Our twin. **PDF archived.**
+2. Zhang/Yadmellat/Gao arXiv:2110.00065 — ~25 min, short, load-bearing for the hull argument
+3. MADER §V-A separating planes — ~30 min; plane-as-decision-variable is the alternative to our
+   linearization, and MINVO gives a hull 2.36× tighter than Bernstein
+4. Marcucci et al. GCS — for framing; perspective-operator relaxation is why "one-shot" works
+
+## Lead-list — found, not verified
+
+- SPOT arXiv:2602.01189 — read via fetch summarizer only; PDF exceeds fetch size limit
+- Deolasee et al. arXiv:2209.15150 — trapezoidal prism corridors
+- "Mao et al. 2024, collision avoidance with Bezier curves" — cited by arXiv:2607.00444, unverified
+
+---
+
+## Confidence and known gaps
+
+- **Read from PDF text, in full:** Osburn 2508.10203; ST-GCS 2503.00583.
+- **Read via fetch summarizer (HTML/abstract):** GCS 2205.04422, Marcucci SIAM 2101.11565,
+  Zhang 2110.00065, SPOT 2602.01189, Tang 2607.00444, IRIS (search summary only).
+- **Search-level only, bibliography not verified against the source:** SSC 2019, MADER, SIPP,
+  velocity obstacles, Rimon & Koditschek.
+- **Not verified: Erdmann & Lozano-Pérez 1987.** The archived PDF is a scan with no text layer;
+  `pdftotext` yields nothing. No verbatim quote is available without OCR. The abstract's
+  "two-dimensional slices" phrasing, used above, comes from a search summary of the Springer page
+  and is **not** confirmed against the paper.
+- **Bibliographic data that passes through a summarizer is unreliable.** Concrete instance: a
+  fetch of arXiv:2607.00444 reported MADER as "Tordesillas & Beard, 2021"; it is Tordesillas &
+  How, T-RO 2022. Verify every author list before it reaches the `.bib`.
+- **"No paper does X" is weaker than a proof.** No decomposition-free space-time formulation was
+  found, but absence of evidence is not proof of absence.
+
 
 ---
 
@@ -778,8 +1012,16 @@ fails, it is the only statement there is.
 
 # Frozen decisions that survived the change
 
-Recorded 2026-08-19, unaffected by the 08-21 construction change. Full guardrail form in
-`CLAUDE.md` §"Formulation decisions".
+> **Do not seed a manuscript from 연구노트 001.** `doc/notes/001_problem_formulation/main.tex` (a
+> separate repo on disk, not tracked here) contradicts itself: §"Body 경우" derives the zero-time
+> normal and calls it "정확히 0"; §"잘못된 패턴" then forbids exactly those three steps; §"선형화
+> 지점" presents per-control-point linearization as an improvement ("더 조밀한 표본"), which is the
+> G2 defect. **The note enshrines both fixed defects as design**, and revising it is still open work.
+
+
+Recorded 2026-08-19, unaffected by the 08-21 construction change. These are decisions, not
+findings: they define the problem the solver must answer. An agent that finds one inconvenient must
+raise it, not work around it.
 
 **No quadratic acceleration energy exists.** The lifted Bézier is drawn by a parameter, and
 converting to real time makes physical velocity a *ratio* of two Béziers and physical acceleration
@@ -1026,11 +1268,8 @@ One pass, after the new construction lands. Nothing before it may be quoted.
 
 # Open
 
-- **Venue.** Both, or 항공우주 only. Decides the title (mission-first for 항공우주, method-first
-  for 기계학회 — the PI supplied a candidate for each) and it is on the 8/26 clock.
-- ~~**`CLAUDE.md` §"Formulation decisions" item 8** still asserts the keep-out tube is a capsule and
-  therefore convex, which is now false.~~ Corrected 2026-08-31: the item now carries the same
-  correction as this file.
-- **Occlusion mission motivation.** The PI's review requires a statement of *which mission, and
-  why* line-of-sight maintenance is needed in aerospace practice. Currently the constraint is
-  presented only as a methodological differentiator. Required in both manuscript and talk.
+- **Mission motivation for the line-of-sight constraint.** Which mission needs line-of-sight
+  maintenance in aerospace practice, and why. The constraint is currently justified only as
+  something convex-decomposition methods cannot express — a methodological differentiator, not a
+  reason anyone would need it. Every artifact rendering this idea has to state it.
+

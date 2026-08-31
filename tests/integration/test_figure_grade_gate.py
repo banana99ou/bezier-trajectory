@@ -255,7 +255,7 @@ def test_a_clearing_run_can_still_be_standing_on_slack():
     clearance of +0.102 -- it passes the clearance condition outright -- while
     holding 1.35 of elastic slack and a hull certificate of 1.35. The sampled
     curve misses the obstacles; the control-point hull does not. That is the
-    distinction PAPER_1 sec. 6 turns on, and this row is what it looks like.
+    distinction idea/spacetime.md sec. 6 turns on, and this row is what it looks like.
 
     Its 1.35 is also the smallest genuine relaxation across the 22 registered
     configurations -- the closest the bad population comes to the threshold, and

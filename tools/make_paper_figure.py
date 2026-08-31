@@ -21,7 +21,7 @@ Honesty gates, in order:
      no figure exists for it.
   2. The baseline (occlusion rows off) must actually LOSE line of sight for a
      measurable interval. A baseline that stays visible means the constraint
-     was decoration and the figure proves nothing (PAPER_1: "the baseline that
+     was decoration and the figure proves nothing (idea/spacetime.md: "the baseline that
      must be able to fail"); the script aborts rather than draw it.
 
 Output: figures/paper1/occlusion_figure.pdf (vector, for the manuscript) and
@@ -73,7 +73,7 @@ def solve_pair(scenario: str, N: int, n_seg: int,
         # arguments, so the key must be forwarded by hand here.
         coord_bounds=sc.get("coord_bounds"),
         free_arrival_time=free_arrival, time_weight=time_weight, v_max=v_max,
-        # PAPER_1 statement (8): floor the clip ball at the segment radius plus
+        # idea/spacetime.md statement (8): floor the clip ball at the segment radius plus
         # the trust-box reach, so every wall covers the whole keep-out zone and
         # the certificate is sound BY CONSTRUCTION. Off, the certificate covers
         # only the clipped pieces wherever `koz_unsound_clips` is nonzero.
@@ -195,7 +195,7 @@ def main():
     ap.add_argument("--v-max", type=float, default=None)
     ap.add_argument("--out-dir", type=pathlib.Path, default=REPO / "figures" / "paper1")
     ap.add_argument("--sound-clip", action="store_true",
-                    help="floor the clip radius at the reach (PAPER_1 statement 8)")
+                    help="floor the clip radius at the reach (idea/spacetime.md statement 8)")
     ap.add_argument("--trust-radius", type=float, default=None,
                     help="override the scene's trust radius (a length, in metres)")
     args = ap.parse_args()
@@ -213,7 +213,7 @@ def main():
     figure_grade_or_die(info_con, clear_con, "constrained run")
 
     # Gate 1b: the certificate must speak for the WHOLE keep-out zone. This is
-    # PAPER_1 statement (7) counted at the returned iterate: a nonzero count
+    # idea/spacetime.md statement (7) counted at the returned iterate: a nonzero count
     # means some wall was built against a clipped piece the next iterate could
     # leave, and the figure would rest on a certificate about less than the
     # obstacle. Measured on `loiter` 2026-08-30: 24 such pairs at the default,

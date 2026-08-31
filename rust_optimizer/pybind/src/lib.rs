@@ -274,9 +274,9 @@ fn optimize_spacetime_bezier<'py>(
     time_lb: f64,
     time_ub: f64,
     elastic_weight: f64,
-    // PAPER_1 statement (8): clamp the clip radius from below so statement (7)
+    // idea/spacetime.md statement (8): clamp the clip radius from below so statement (7)
     // holds unconditionally and the construction is sound by construction, at the
-    // cost of conservatism where the row binds. Off by default; PAPER_1 calls the
+    // cost of conservatism where the row binds. Off by default; idea/spacetime.md calls the
     // choice an open experimental question.
     sound_clip: bool,
     // Slant-limit speed cap (item B9). `None` means no cap, which is the

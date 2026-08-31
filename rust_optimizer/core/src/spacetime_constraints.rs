@@ -53,7 +53,7 @@ pub struct KozRowData {
     pub lower_bound: f64,
     pub lhs: f64,
     pub margin: f64,
-    /// Clip radius used for this row, and whether PAPER_1 statement (7) held.
+    /// Clip radius used for this row, and whether idea/spacetime.md statement (7) held.
     pub rho: f64,
     pub sound: bool,
 }
@@ -89,7 +89,7 @@ pub struct KozConstraintBundle {
 /// **This is structural, not a tuning knob.** The construction is built from
 /// balls, distances and orthogonal projections in the lifted space; none of them
 /// is defined until the axes are commensurable. Pinned at 1.0, which is the
-/// formal content of PAPER_1's "no axis is privileged": remove it and the clip
+/// formal content of idea/spacetime.md's "no axis is privileged": remove it and the clip
 /// ball, the projection `y*` and the normal `n` all stop meaning anything.
 ///
 /// Consequence, stated plainly: at this scale the constant-time cross-section of
@@ -108,7 +108,7 @@ fn dot(a: &[f64], b: &[f64]) -> f64 {
 /// centroid. It is what makes the centroid — and therefore the aiming direction —
 /// a function of the optimization variables.
 ///
-/// `E = max_i ||Q_i - c||` is the segment radius of PAPER_1 statements (6) and
+/// `E = max_i ||Q_i - c||` is the segment radius of idea/spacetime.md statements (6) and
 /// (7). Together with the trust radius it decides whether the clip covers
 /// everywhere the next iterate can reach.
 fn segment_points_and_weights(

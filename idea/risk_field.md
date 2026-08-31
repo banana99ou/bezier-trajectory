@@ -1,12 +1,13 @@
-# Paper 2 — online space-time planning against uncertain hazards
+# Idea 2 — online space-time planning against uncertain hazards
 
-**Central doc for paper 2.** Future work. Nothing here belongs in paper 1.
+**Central doc for idea 2.** Future work. Nothing here belongs in idea 1. No artifact renders this
+idea yet; when one does, it gets its own directory under `paper/` and links back here.
 
 **Scope boundary.** Hazard motion is *not* known. Sensing range is limited. The field is
-re-estimated as observations arrive, and the plan is recomputed on a receding horizon. Paper 1
-([`PAPER_1.md`](PAPER_1.md)) assumes known deterministic motion and declines receding-horizon
-replanning for that reason. Paper 2 relaxes exactly that assumption — it is the sequel, not a
-correction.
+re-estimated as observations arrive, and the plan is recomputed on a receding horizon. Idea 1
+([`idea/spacetime.md`](spacetime.md)) assumes known deterministic motion and declines
+receding-horizon replanning for that reason. Idea 2 relaxes exactly that assumption — it is the
+sequel, not a correction.
 
 **Formal write-up.** The mathematics of §5 is written up properly, in Korean, with its own
 figures, in 연구노트 002 (`doc/notes/002_probabilistic_koz/`, its own repository — on disk here,
@@ -48,7 +49,7 @@ Recorded because these terms are load-bearing and non-obvious.
   Two paths are the same class if one can be slid onto the other without ever crossing a hazard.
 - **Committing to a class** — making that discrete choice before optimizing. A continuous
   optimizer polishes *within* a class and can never jump between classes, which is why something
-  upstream must choose. Solver item B6 (procedural seeds, multi-start) is that something.
+  upstream must choose. Procedural seeds with multi-start is that something.
 - **Filtration** — the whole nested family of thresholded free spaces as `ε` sweeps, treated as
   one object rather than one map per `ε`.
 - **Barcode** — one horizontal bar per class, spanning the range of `ε` over which that class is
@@ -215,8 +216,8 @@ forbidding the gap — which is the desired behaviour, since threading a closing
 fast hazards is the failure mode object-based methods have.
 
 Pipeline: cluster on lobe overlap → convex hull each cluster → one supporting half-space per
-(segment, cluster). That is exactly paper 1's B4 machinery; the new work sits upstream of the
-solver.
+(segment, cluster). That is exactly idea 1's one-plane-per-(segment, obstacle) machinery; the new work sits
+upstream of the solver.
 
 ## 6. Do not claim
 

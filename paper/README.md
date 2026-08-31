@@ -4,8 +4,11 @@ Everything under `paper/` is a manuscript in a society's own template, plus the 
 makes a binary template file behave like source. One directory per venue
 (`ksas_2026_fall/`); this file is what applies to all of them.
 
-The claims themselves are not here. [`PAPER_1.md`](../PAPER_1.md) carries what the paper argues and
-why; this file carries how to get it into the file the society accepts.
+**This file is venue-agnostic machinery.** What a given paper argues lives with its idea
+([`idea/spacetime.md`](../idea/spacetime.md)); the deadline, that society's rules, which figures go
+in and what state the draft is in live in the artifact's own README next to its manuscript
+([`ksas_2026_fall/README.md`](ksas_2026_fall/README.md)). This file is only how to get words into
+the file the society accepts.
 
 ## The writing loop
 
@@ -56,61 +59,14 @@ deliberately. If you write your own transform, assert that **both** `<w:cols w:s
 2026-08-20 download. The sha256 pin is what turns "the society re-uploaded the template" into a
 loud failure instead of a scrambled manuscript.
 
-## Venue rules that change what you write
+## Where the rest went
 
-Full verified list, with source URLs and fetch date:
-[`ksas_2026_fall/template/PROVENANCE.md`](ksas_2026_fall/template/PROVENANCE.md). The ones that
-constrain the writing rather than the formatting:
-
-- **참고문헌 5개 이내**, all in English. Related work has to make its whole case in five citations.
-- The **400자 초록** is typed into the submission web page, **not** the manuscript. Separate
-  deliverable, same deadline.
-- Citations are **superscript numbers in parentheses**; captions in English, table above, figure
-  below; every template guide sentence deleted before submission.
-- Submitting requires a **paid membership and completed 사전등록 결제** — the registration payment
-  is due before the paper deadline, not before the 사전등록 deadline.
-- A **late oral request is demoted to poster**. Submitting early is what buys the oral slot.
-
-## Two things not to assert
-
-1. **No page limit is stated** for the regular conference. Two pages is the length of the template
-   file, nothing more. The "A4 4쪽 이내" on the same page belongs to the separate 산업·정책
-   경진대회, a different submission path. Write to two pages by choice; do not cite it as a rule.
-2. **`ksas.or.kr` has no working HTTPS.** The TLS handshake hangs, port 443 accepts and then dies.
-   `WebFetch` force-upgrades http to https, so it can never reach this site. Use
-   `curl -4` over `http://`.
-
-## Who wins when sources disagree
-
-| question | authority |
+| you want | read |
 |---|---|
-| what the paper claims | [`PAPER_1.md`](../PAPER_1.md) Part B §핵심 기여 |
-| whether something is novel | [`doc/refs/novelty_positioning.md`](../doc/refs/novelty_positioning.md) |
-| scope, venue, objective function | [`doc/refs/advisor_review_20260820.md`](../doc/refs/advisor_review_20260820.md) |
-| any number | [`README.md`](../README.md) §Measurements and `figures/paper1/*.json` |
+| what the paper claims, and whether it is novel | [`idea/spacetime.md`](../idea/spacetime.md) |
+| 제출 일정, 분량, venue rules, manuscript state, poster | [`ksas_2026_fall/README.md`](ksas_2026_fall/README.md) |
+| any number that could go in a paper | [`SOLVER.md`](../SOLVER.md) §Measurements |
 
-**A number that is not in a figure-grade sidecar does not go in the paper.** `figure_grade` means
+**A number that is not in a figure-grade sidecar does not go in a paper.** `figure_grade` means
 converged, certificate ≤ 1e-6, clearance > 0, slack ≤ 1e-6; `tools/make_paper_figure.py` refuses to
 draw a run that fails it.
-
-The advisor's instruction from the 2026-08-20 review is already applied and must not be undone:
-**장애물 페널티 항은 목적함수에서 뺀다.** §2.2 of the manuscript states that avoidance is the
-supporting half-space constraint and that the SCP slack variables are a numerical device, not the
-avoidance mechanism.
-
-## State of the KSAS manuscript, 2026-08-21
-
-Written: title block, 서론 (three paragraphs), 본론 2.1–2.5, 결론, five references. Two pages.
-
-Open, each needing the author rather than an agent:
-
-- **후 기 is empty** — funding and acknowledgment text.
-- **The figure is not in the document.** It exists and is figure-grade —
-  `figures/paper1/occlusion_figure.png`, sidecar `occlusion_figure.json` recording LOS margin
-  +0.3379, clearance +1.1625, occlusion certificate 0.0, 124 iterations, git `950a5ec`. Placing it
-  will cost space the current two pages do not have.
-- **The mission motivation for the line-of-sight constraint is missing.** The advisor's review
-  requires it in both manuscript and talk; the constraint is currently presented only as something
-  convex-decomposition methods cannot express.
-- **Author names, affiliation and romanization are unverified guesses** made by an agent from
-  repository filenames. Confirm every one before submission.

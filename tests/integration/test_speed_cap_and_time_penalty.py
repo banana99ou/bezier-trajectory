@@ -7,7 +7,7 @@ written on the control polygon:
 
 and it lands as a second-order cone, not as the per-axis linear fallback.
 Sufficiency for the whole curve is the Bernstein-weights-plus-triangle-inequality
-argument in PAPER_1; what is tested here is the *consequence*: the physical speed
+argument in idea/spacetime.md; what is tested here is the *consequence*: the physical speed
 of the sampled curve, ``d(spatial)/dt`` between consecutive samples, obeys the
 bound.
 
@@ -18,7 +18,7 @@ Every assertion below is written so that it can fail:
   from passing silently.
 * the constrained run is asserted to obey it, with a margin far tighter than the
   gap between the two runs.
-* the time-penalty trap is asserted against the number PAPER_1 predicts --
+* the time-penalty trap is asserted against the number idea/spacetime.md predicts --
   ``min_dt`` times the number of control-point gaps -- not against a range.
 """
 

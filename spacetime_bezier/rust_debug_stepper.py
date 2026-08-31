@@ -61,10 +61,10 @@ class RustOptimizerStepper:
         coord_ub: float = 20.0,
         time_lb: float = 0.0,
         time_ub_scale: float = 1.5,
-        # PAPER_1 statement (8): clamp the clip radius from below by
+        # idea/spacetime.md statement (8): clamp the clip radius from below by
     # E + Delta*sqrt(d+1) so statement (7) holds unconditionally and the
     # construction is sound by construction, at the cost of conservatism where
-    # the row binds. Off by default -- PAPER_1 calls the choice between the two
+    # the row binds. Off by default -- idea/spacetime.md calls the choice between the two
     # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
     sound_clip: bool = False,
         elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,
@@ -556,10 +556,10 @@ def create_spacetime_debug_stepper_from_control_points(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
-    # PAPER_1 statement (8): clamp the clip radius from below by
+    # idea/spacetime.md statement (8): clamp the clip radius from below by
     # E + Delta*sqrt(d+1) so statement (7) holds unconditionally and the
     # construction is sound by construction, at the cost of conservatism where
-    # the row binds. Off by default -- PAPER_1 calls the choice between the two
+    # the row binds. Off by default -- idea/spacetime.md calls the choice between the two
     # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
     sound_clip: bool = False,
     elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,
@@ -601,10 +601,10 @@ def create_spacetime_debug_stepper(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
-    # PAPER_1 statement (8): clamp the clip radius from below by
+    # idea/spacetime.md statement (8): clamp the clip radius from below by
     # E + Delta*sqrt(d+1) so statement (7) holds unconditionally and the
     # construction is sound by construction, at the cost of conservatism where
-    # the row binds. Off by default -- PAPER_1 calls the choice between the two
+    # the row binds. Off by default -- idea/spacetime.md calls the choice between the two
     # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
     sound_clip: bool = False,
     elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,

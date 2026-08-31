@@ -786,7 +786,7 @@ def _koz_planes(
     spatial_dim = dim - 1
     obstacle_ctrl, obstacle_radii = obstacle_array_bundle(obstacles, spatial_dim)
     # The builder also reports the clip radius per row and the two hole counts
-    # (PAPER_1 statements 7 and 8). The drawing does not use them yet, but they
+    # (idea/spacetime.md statements 7 and 8). The drawing does not use them yet, but they
     # are unpacked by name so a future widening of the tuple fails loudly here
     # rather than silently mis-assigning a column.
     (

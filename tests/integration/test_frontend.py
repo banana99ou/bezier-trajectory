@@ -58,7 +58,7 @@ def assert_koz_planes_are_one_per_pair(planes, P, obstacles, n_seg, trust_radius
     control point, and the count used to be asserted as exactly n_seg * n_obs.
     Since the 2026-08-24 construction change that is no longer right: a clip ball
     of radius `min(R, R_max)` with `R_max = r + E + Delta*sqrt(d+1)` emits NO row
-    for an obstacle nothing in the trust region can reach, which is PAPER_1
+    for an obstacle nothing in the trust region can reach, which is idea/spacetime.md
     statement (7)'s first regime.
 
     Relaxing the count to "<= 12" would turn this into a check that cannot fail --

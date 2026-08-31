@@ -76,7 +76,7 @@ except ImportError:  # pragma: no cover - exercised when the native extension is
 #   clearance        -- the sampled curve misses the TRUE obstacle trajectories.
 #                       Re-verified in Python against the obstacles themselves,
 #                       not against the hulls the solver used, which is the
-#                       condition PAPER_1 sec. 6 requires because an
+#                       condition idea/spacetime.md sec. 6 requires because an
 #                       adaptively-built hull is valid only inside the time span
 #                       it was built for.
 #   total_slack      -- the elastic relaxation bought nothing. Every subproblem
@@ -225,7 +225,7 @@ class UncappedTimePenaltyError(ValueError):
 def check_time_penalty_is_capped(v_max, time_weight) -> None:
     """Refuse the one configuration that can only produce an artifact.
 
-    Formulation decision 5 and PAPER_1 sec. "Arrival time is linear": a linear
+    Formulation decision 5 and idea/spacetime.md sec. "Arrival time is linear": a linear
     penalty on the arrival time with **no** speed cap has nothing opposing it.
     The smoothness regularizer is blind to timing (item B8), and the only
     remaining floor on arrival is the time-monotonicity minimum separation, so
@@ -376,10 +376,10 @@ def _optimize_spacetime_rust(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
-    # PAPER_1 statement (8): clamp the clip radius from below by
+    # idea/spacetime.md statement (8): clamp the clip radius from below by
     # E + Delta*sqrt(d+1) so statement (7) holds unconditionally and the
     # construction is sound by construction, at the cost of conservatism where
-    # the row binds. Off by default -- PAPER_1 calls the choice between the two
+    # the row binds. Off by default -- idea/spacetime.md calls the choice between the two
     # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
     sound_clip: bool = False,
     v_max: float | None = None,
@@ -541,10 +541,10 @@ def optimize_spacetime_from_control_points(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
-    # PAPER_1 statement (8): clamp the clip radius from below by
+    # idea/spacetime.md statement (8): clamp the clip radius from below by
     # E + Delta*sqrt(d+1) so statement (7) holds unconditionally and the
     # construction is sound by construction, at the cost of conservatism where
-    # the row binds. Off by default -- PAPER_1 calls the choice between the two
+    # the row binds. Off by default -- idea/spacetime.md calls the choice between the two
     # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
     sound_clip: bool = False,
     v_max: float | None = None,
@@ -599,10 +599,10 @@ def optimize_spacetime(
     coord_ub: float = 20.0,
     time_lb: float = 0.0,
     time_ub_scale: float = 1.5,
-    # PAPER_1 statement (8): clamp the clip radius from below by
+    # idea/spacetime.md statement (8): clamp the clip radius from below by
     # E + Delta*sqrt(d+1) so statement (7) holds unconditionally and the
     # construction is sound by construction, at the cost of conservatism where
-    # the row binds. Off by default -- PAPER_1 calls the choice between the two
+    # the row binds. Off by default -- idea/spacetime.md calls the choice between the two
     # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
     sound_clip: bool = False,
     v_max: float | None = None,

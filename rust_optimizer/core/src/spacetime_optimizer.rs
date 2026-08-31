@@ -270,7 +270,7 @@ fn violations_rebuilt_at(
     )
 }
 
-/// PAPER_1 statement (7) at `x`, counted: (segment, obstacle) pairs whose clip
+/// idea/spacetime.md statement (7) at `x`, counted: (segment, obstacle) pairs whose clip
 /// ball was smaller than the segment radius plus the trust-box reach, so their
 /// rows certify against the clipped piece and the whole zone is not covered.
 /// Zero means the hull certificate at `x` covers the FULL keep-out zone -- by
@@ -390,10 +390,10 @@ pub struct ScpPrecomputed {
     pub speed_cap: Vec<SocBlock>,
     pub np1: usize,
     pub dim: usize,
-    /// PAPER_1 statement (8): clamp the clip radius from below by
+    /// idea/spacetime.md statement (8): clamp the clip radius from below by
     /// `E + Delta*sqrt(d+1)` so statement (7) holds unconditionally and the
     /// construction is sound by construction, at the cost of conservatism exactly
-    /// where the row binds. Off by default — PAPER_1 calls the choice between the
+    /// where the row binds. Off by default — idea/spacetime.md calls the choice between the
     /// two an OPEN EXPERIMENTAL QUESTION, so both are reachable and both are
     /// measurable, and neither is described as the better one here.
     pub sound_clip: bool,
@@ -1489,7 +1489,7 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
         "koz_violation_reference".to_string(),
         koz_violation_rebuilt_at(&p, &pre, obstacles, stations, state.trust),
     );
-    // What that certificate COVERS. `koz_unsound_clips` is PAPER_1 statement
+    // What that certificate COVERS. `koz_unsound_clips` is idea/spacetime.md statement
     // (7) counted at the returned iterate: pairs whose clip ball did not reach
     // the segment radius plus the trust-box reach. Zero means the certificate
     // above speaks for the whole keep-out zone, not only the clipped pieces;

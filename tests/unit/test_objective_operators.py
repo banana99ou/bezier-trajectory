@@ -8,7 +8,7 @@ Two independent claims are checked here.
    coordinate and differ arbitrarily in time must score identically.
    FAILS IF the objective ever acquires a time-coordinate term -- which is what
    would happen if someone "re-derived the acceleration energy matrix" (a thing
-   that cannot exist; see PAPER_1 sec. "The derivation behind the decisions").
+   that cannot exist; see idea/spacetime.md sec. "The derivation behind the decisions").
 
 2. **The difference operators are exact.** The relation between control-point
    differences and parameter-domain derivatives is polynomial and exact, so it is

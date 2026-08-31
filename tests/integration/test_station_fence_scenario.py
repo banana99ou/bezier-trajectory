@@ -1,6 +1,6 @@
 """The `station_fence` demo scenario (item B12).
 
-PAPER_1 sec. "The demo scenario and its figure" states what this scenario has to
+idea/spacetime.md sec. "The demo scenario and its figure" states what this scenario has to
 do, and the sentence that matters is **"the baseline that must be able to fail"**:
 
     Run the same scenario with the occlusion rows removed: it must lose contact
@@ -154,7 +154,7 @@ def test_scenario_is_three_spatial_dimensions_plus_time():
 def test_the_occluder_path_is_a_chain_of_straight_pieces_with_overlapping_caps():
     """FAILS IF the two pieces leave a gap in time, or bend the same capsule.
 
-    PAPER_1 sec. "Occluder geometry": a capsule around a CURVED centreline is not
+    idea/spacetime.md sec. "Occluder geometry": a capsule around a CURVED centreline is not
     convex and the certificate would have nothing to stand on. The remedy is a
     chain of straight pieces on adjacent windows with the caps overlapping at the
     joint, so the union covers the swept region with no seam.
