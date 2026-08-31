@@ -221,8 +221,13 @@ def test_an_unsolvable_scenario_is_not_figure_grade():
     -0.689, hull certificate 6.52, total slack 6.52.
     """
     scenario = scenario_original()
+    # The scenario's own obstacles left this module canonical; a replacement
+    # written the legacy way has to carry its own window, because the active
+    # window is intrinsic to the control points since 2026-08-21. The blob is
+    # there for the whole horizon, which is what makes it unsolvable.
     scenario["obstacles"] = [
-        {"pos0": [4.5, 4.5], "vel": [0.0, 0.0], "r": 6.0, "color": "#000", "name": "BLOB"}
+        {"pos0": [4.5, 4.5], "vel": [0.0, 0.0], "r": 6.0, "color": "#000", "name": "BLOB",
+         "t_start": 0.0, "t_end": float(scenario["T"])}
     ]
     out = optimize_scenario(scenario, [(8, 4)], elastic_weight=100.0, verbose=False)
     row = out["results"]["N8_seg4"]
