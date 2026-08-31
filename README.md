@@ -45,13 +45,17 @@ uncertain hazards, receding horizon. Do not mix their claims.
 │   ├── rust_debug_stepper.py    steps the real Rust run via its emitted trace
 │   ├── debug_session.py         stateful session for the step-debugger UI
 │   ├── debug_trace.py           DebugFrame schema
-│   ├── constraints.py           Python KOZ builder — debug stepper only, NOT production
+│   ├── constraints.py           dead Python KOZ builder (pins a stale time scale); delete with debug_stepper.py
 │   └── debug_stepper.py         dead Python SCP stepper; not a reference implementation
 │
 ├── rust_optimizer/            the only optimizer backend
 │   ├── core/src/
 │   │   ├── spacetime_optimizer.rs   SCP outer loop, SCvx ratio test, elastic relaxation
-│   │   ├── spacetime_constraints.rs KOZ tube geometry, boundary, time monotonicity, box
+│   │   ├── spacetime_generator.rs   the keep-out generator: centreline, or its shadow (center
+│   │   │                            surface) through a station — one zone, two stretch factors
+│   │   ├── spacetime_obstacle.rs    clip ball, nearest point, approach cut, support ceiling
+│   │   ├── spacetime_constraints.rs one row builder over the generators; boundary, time
+│   │   │                            monotonicity, trust box
 │   │   ├── optimizer.rs             shared solve_qp() (Clarabel) + orbital docking optimizer
 │   │   ├── bezier.rs                D/E/G matrices, byte-identical to main branch
 │   │   ├── de_casteljau.rs          subdivision matrices
@@ -149,10 +153,13 @@ obstacles, fixed endpoints, and the optimizer plans path *and* timing.
 | `diverse` | varied sizes / speeds / directions; stress case |
 | `fence3d` | three spatial dimensions + time; the curve climbs a wide low **moving** fence instead of going around — the dimension is load-bearing, and the motion is what makes waiting futile. Renamed from `wall3d` 2026-08-24; the problem definition is unchanged |
 | `door3d` | the complement of `fence3d`: a **static** tall wall in three spatial dimensions that vanishes at t=5, so the cheap answer is to wait rather than climb. Nothing here makes the third dimension load-bearing — a 2D cut would wait identically |
-| `station_fence` | **the paper's demo** — keep line of sight to a fixed station past a moving, non-straight fence (chain of time-windowed pieces). Occlusion rows on: climbs and holds the link; off: loses it for 7.8 s of 10. The fence is both occluder and keep-out body, so the occlusion constraint subsumes collision |
+| `station_fence` | the first line-of-sight scenario — keep line of sight to a fixed station past a moving, non-straight fence (chain of time-windowed pieces). Occlusion rows on: climbs and holds the link; off: loses it for 7.8 s of 10. The fence is both occluder and keep-out body, so the occlusion constraint subsumes collision. **Its numbers below were measured under the retired occlusion builder and are stale** |
+| `loiter` | **the paper's demo** — metres and seconds: a body loitering 50 m above a ground control station on a 30 m circle, and a 200 m corridor at 62.5 m altitude whose axis lies ON the shadow ring, so the shadow spot sweeps ALONG the corridor instead of across it. Occlusion rows off: the link is lost over [14.96, 16.52] s at −2.169. On: the run arrives 15.7 s later and holds +10.642. **Retiming is the escape and it is measured, not asserted** — graft the baseline's schedule onto the constrained path and line of sight falls to −2.109, while the path itself deviates 0.08 m laterally over 200 m |
 
-The paper's figure comes from `station_fence` via `tools/make_paper_figure.py`, which refuses to
-draw unless the constrained run is figure-grade AND the baseline measurably fails.
+The paper's figure comes from `loiter` via `tools/make_paper_figure.py --free-arrival --time-weight
+10 --v-max 5 --sound-clip`, which refuses to draw unless the constrained run is figure-grade, the
+baseline measurably fails, **and** `koz_unsound_clips` is zero — see the `loiter` block under
+§Measurements for why that third gate exists.
 
 ## Measurements
 
@@ -174,7 +181,50 @@ occlusion certificate where a station exists.
 | `wall` | N10_seg16 | **+0.2058** | 9 | 3000 | **3 of 6.** N8_seg16 +0.2017 @3000, N10_seg24 +0.1484 @800. **N8_seg2/3/4 penetrate** — that is the 2026-08-24 densification (spacing 0.8 → 0.5, 13 → 21 circles), not this change; see Known Issues in CLAUDE.md |
 | `fence3d` | N8_seg2 | **+0.1623** | 9 | 100 | **yes — all 4 configs**, first ladder rung. Measured under the name `wall3d`; the rename changed no parameter |
 | `door3d` | N8_seg4 | +0.9827 | 9 | 100 | **yes — both configs**, first ladder rung. Clearance is not the point: the evidence is that the curve **waits** |
-| `station_fence` | N8_seg16 | +1.5454 | 56 | 100000 | **1 of 2.** Clearance is slack by construction (occlusion subsumes keep-out); the binding number is the occlusion certificate **0.000**. **N8_seg8 does not converge**, and did not before this change either |
+| `station_fence` | N8_seg8 | **+1.0770** | 17 | 10000 | **1 of 2 — re-measured 2026-08-31 under the center-surface builder, and the two configs traded places.** Clearance is slack by construction (occlusion subsumes keep-out); the binding number is the occlusion certificate **0.000**, with slack 1.4e-12. **N8_seg16 now fails**: 37 iterations, ladder stuck at 100, trust collapse without certifying, occlusion certificate **1.067e-02** and slack 1.06e-02 — it holds the larger clearance (+1.1429) while having lost the link. Under the retired builder this was reversed: N8_seg16 certified at 1e5 in 56 iterations (+1.5454) and N8_seg8 did not converge. **`best` is picked by clearance, not by figure-grade, so this scenario's `best` key still names the failing config** |
+| `loiter` | N8_seg16 | **+36.8417** | 3 | 100 | **yes — both configs**, first ladder rung. **Measured 2026-08-30, not part of the pass above.** At defaults the arrival is pinned, so the scenario's own point does not show here; the demo is the priced run in the block below, and so is the finding |
+
+### `loiter`, measured 2026-08-30 — and the figure-grade gate does not see an unsound clip
+
+`loiter` was not in the pass above; these six runs are its own, all on one build of the extension
+(checked: same mtime before and after). `sound_clip` floors the clip radius at the reach, PAPER_1
+statement 8. `koz_unsound_clips` is statement 7 counted at the returned iterate: **walls** — one count per
+emitted plane, per generator, so a two-approach clip counts twice — whose clip ball did not reach
+the segment radius plus the trust-box reach, so the wall was built against a clipped piece **the
+next iterate could leave**.
+
+| Run | Iters | Weight | Clearance | Min sight margin | Arrival | Unsound clips | `figure_grade` |
+|---|---|---|---|---|---|---|---|
+| N8_seg8 defaults | 3 | 100 | +35.3204 | +12.067 | 80.00 pinned | **2** | yes |
+| N8_seg8 defaults + `sound_clip` | 3 | 100 | +35.3767 | +12.090 | 80.00 pinned | 0 | yes |
+| N8_seg16 defaults | 3 | 100 | +36.8417 | +12.646 | 80.00 pinned | 0 | yes |
+| N8_seg16 defaults + `sound_clip` | 3 | 100 | +36.8459 | +12.647 | 80.00 pinned | 0 | yes |
+| N8_seg8 priced | 10 | 1e5 | +24.3026 | +7.365 | 51.502 | **24** | yes |
+| N8_seg8 priced + `sound_clip` — **the figure** | 12 | 1e5 | +30.5243 | +10.642 | 55.747 | 0 | yes |
+
+Priced is free arrival, `time_weight` 10, `v_max` 5, weight pinned at the registered 1e5 — the
+registry value at measurement time, `c32e88b` plus the center-surface working tree. Both
+certificates are 0.000, total slack ≤ 3e-12 and the speed-cap violation is 0.0 on all six. Every
+row was taken twice, once through the elastic ladder and once pinned at the rung it settled on, and
+the two clearances agree exactly; the second pass exists only because the result row does not carry
+`koz_unsound_clips`.
+
+**Measured twice, down two different call paths.** The table above came through
+`optimize_scenario` and its ladder; the same six configurations were run independently through
+`optimize_spacetime` via `make_paper_figure`'s own `solve_pair`, and the counts agree — 2 at
+N8_seg8 defaults, 0 with the floor, 0 at N8_seg16 either way, 24 priced at the default clip, 0
+priced with the floor. Two paths that share only the Rust core had to agree, and do.
+
+**The last two columns together are the finding.** `figure_grade` passes the priced default-clip
+run while 24 of its clipped volumes escape the ball their wall was built against.
+`figure_grade_failures` in `optimize.py` never reads `koz_unsound_clips` — the key is not even
+propagated into the result row — so **on this condition the B7 gate cannot fail.** Only
+`tools/make_paper_figure.py` refuses, and only for the figure. A run can be reported figure-grade
+in this table and still rest on a certificate that covers less than the obstacle.
+
+**The ladder settles at 100 at defaults, not at the registered 1e5.** The registered weight belongs
+to the priced problem; a defaults row quoting it would be quoting a rung this scenario never needs
+with the arrival pinned.
 
 **What the clipped-volume construction changed, measured against the same configurations built
 with the retired hull-of-band plane.** Where the obstacle is straight its tube is convex and the
