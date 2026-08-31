@@ -152,7 +152,16 @@ def post(base: str, path: str, payload, timeout: float = 900.0):
 
 @pytest.fixture(scope="module")
 def original(server):
-    status, data = post(server, "/api/solve", {"scenario": "original", "N": 8, "n_seg": 4})
+    # `sound_clip` on, because figure-grade requires the certificate to cover the
+    # whole keep-out zone since 2026-08-31 and `original` N8_seg4 at the default
+    # clip returns 4 pairs it does not cover. The floor costs this run nothing --
+    # clearance 0.6189 either way -- and the default-clip run is asserted to be
+    # refused, with its reason, in `test_the_default_clip_is_reported_uncovered`.
+    status, data = post(
+        server,
+        "/api/solve",
+        {"scenario": "original", "N": 8, "n_seg": 4, "sound_clip": True},
+    )
     assert status == 200, data
     return data
 
@@ -179,6 +188,9 @@ def loiter(server):
             "n_seg": 8,
             "elastic_weight": 100.0,
             "trust_radius": 5.0,
+            # See the `original` fixture: 2 uncovered pairs at the default clip
+            # here, 0 with the floor, and the clearance moves by 0.06 in 35.
+            "sound_clip": True,
         },
     )
     assert status == 200, data
@@ -455,7 +467,9 @@ def test_solve_matches_the_batch_path_exactly(original):
     not.
     """
     scenario_fn, _ = SCENARIO_MAP["original"]
-    batch = optimize_scenario(scenario_fn(), [(8, 4)], verbose=False)["results"]["N8_seg4"]
+    batch = optimize_scenario(
+        scenario_fn(), [(8, 4)], verbose=False, sound_clip=True
+    )["results"]["N8_seg4"]
     assert np.allclose(
         np.asarray(batch["control_points"], dtype=float),
         np.asarray(original["solution"]["control_points"], dtype=float),
@@ -464,6 +478,37 @@ def test_solve_matches_the_batch_path_exactly(original):
     )
     assert batch["elastic_weight"] == original["resolved"]["elastic_weight"]
     assert batch["figure_grade"] is original["verdict"]["figure_grade"]
+
+
+def test_the_default_clip_is_reported_uncovered(server):
+    """The same solve without the reach floor must be REFUSED, and say why.
+
+    This is the condition that could not fail before 2026-08-31: the Rust core
+    counted uncovered pairs from the day the clip landed, `optimize_scenario`
+    never put the count in the result row, and `figure_grade_failures` never read
+    it -- so a run whose walls were built against clipped pieces the next iterate
+    could leave was graded figure-grade. Only `tools/make_paper_figure.py`
+    refused, and only for the figure.
+
+    FAILS IF the count stops being forwarded, or the gate stops reading it: this
+    run would go back to passing, which is exactly what it used to do.
+    """
+    status, data = post(
+        server,
+        "/api/solve",
+        {"scenario": "original", "N": 8, "n_seg": 4, "sound_clip": False},
+    )
+    assert status == 200, data
+    verdict = data["verdict"]
+    assert verdict["koz_unsound_clips"] > 0.0, (
+        "the default clip covers everything on this run, so it cannot show the "
+        "condition firing -- pick another configuration"
+    )
+    assert verdict["figure_grade"] is False
+    assert any("does not cover" in reason for reason in verdict["figure_grade_reasons"])
+    # And the certificate itself is satisfied, which is the whole point: the run
+    # is refused for what the certificate COVERS, not for violating it.
+    assert verdict["certificate_recomputed"] == pytest.approx(0.0, abs=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -895,7 +940,14 @@ def test_solve_cache_answers_with_the_stored_run_and_says_so(server, original):
     provenance -- the cached copy must be the run's own response with only the
     `cached` flag flipped, because its solved_at and solve_ms describe THAT run.
     """
-    status, again = post(server, "/api/solve", {"scenario": "original", "N": 8, "n_seg": 4})
+    # Byte-identical to the `original` fixture's payload, `sound_clip` included:
+    # the cache key is the RESOLVED parameter set, so dropping one of them here
+    # would be testing a cache miss and calling it a hit.
+    status, again = post(
+        server,
+        "/api/solve",
+        {"scenario": "original", "N": 8, "n_seg": 4, "sound_clip": True},
+    )
     assert status == 200, again
     assert original["provenance"]["cached"] is False
     assert again["provenance"]["cached"] is True

@@ -173,24 +173,52 @@ the plane-drop refusal test, and the obstacle-format tests all now run against `
 
 ## Measurements
 
-Last full pass **2026-08-26, after the keep-out wall moved onto the clipped KOZ volume** — one
-run of every registered configuration at defaults: speed cap off, arrival time pinned,
-elastic-weight ladder on. It read **28 runs** — `original` 5, `curve` 4, `diverse` 5, `wall` 6,
-`fence3d` 4, `door3d` 2, `station_fence` 2 — and **26 of those survive**: `station_fence` was
-removed 2026-08-30 and its two rows went with it. A run that enables `v_max` /
-`time_weight` / `free_arrival_time` is a different problem and must be re-measured.
-**FIGURE-GRADE** is the B7 gate, checked per run: converged AND certificate ≤ 1e-6 at the returned
-iterate AND clearance > 0 against the true obstacle trajectories AND total slack ≤ 1e-6 — plus the
-occlusion certificate where a station exists.
+Last full pass **2026-08-31, after the figure-grade gate started reading what the certificate
+COVERS** — every registered configuration run twice, once at the default clip and once with the
+reach floor (`sound_clip=True`, PAPER_1 statement 8). 28 configurations, 56 runs: `original` 5,
+`curve` 4, `loiter` 2, `diverse` 5, `wall` 6, `fence3d` 4, `door3d` 2. Defaults otherwise: speed cap
+off, arrival pinned, elastic-weight ladder on. A run that enables `v_max` / `time_weight` /
+`free_arrival_time` is a different problem and must be re-measured.
 
-| Key | Best config | Clearance | Iters | Elastic weight | Figure-grade |
-|-----|-------------|-----------|-------|----------------|--------------|
-| `original` | N8_seg4 | **+0.6204** | 9 | 100 | **yes — all 5 configs** |
-| `curve` | N8_seg16 | **+0.1000** | 14 | 300 | **3 of 4.** N8_seg8 +0.0919 @800, N10_seg8 +0.1000 @1e5. **N8_seg4 does not converge** (certificate 0.44) — it did not converge before this change either (certificate 0.35 @1e4), so it is a standing failure, not a regression |
-| `diverse` | N8_seg4 | **+0.1136** | 9 | 800 (3000–10000 at 8–16 seg; N10_seg16 certifies at 3000) | **yes — all 5 configs** |
-| `wall` | N10_seg16 | **+0.2058** | 9 | 3000 | **3 of 6.** N8_seg16 +0.2017 @3000, N10_seg24 +0.1484 @800. **N8_seg2/3/4 penetrate** — that is the 2026-08-24 densification (spacing 0.8 → 0.5, 13 → 21 circles), not this change; see Known Issues in CLAUDE.md |
-| `fence3d` | N8_seg2 | **+0.1623** | 9 | 100 | **yes — all 4 configs**, first ladder rung. Measured under the name `wall3d`; the rename changed no parameter |
-| `door3d` | N8_seg4 | +0.9827 | 9 | 100 | **yes — both configs**, first ladder rung. Clearance is not the point: the evidence is that the curve **waits** |
+**FIGURE-GRADE** is the B7 gate: converged AND certificate ≤ 1e-6 at the returned iterate AND
+clearance > 0 against the true obstacle trajectories AND total slack ≤ 1e-6 AND the occlusion
+certificate where a station exists AND — **new 2026-08-31** — **zero uncovered clipped volumes.**
+
+### The finding: at the default clip, 26 of 28 configurations were graded on a certificate that covers less than the obstacle
+
+The rows certify against `K_m ∩ B(c, ρ)`, not against `K_m`. The gap closes only where PAPER_1
+statement (7) holds, counted at the returned iterate as `koz_unsound_clips`. The Rust core has
+counted it since the clip landed; `optimize_scenario` never put it in the result row and
+`figure_grade_failures` never read it, so **on this condition the gate could not fail.** Only
+`tools/make_paper_figure.py` refused, and only for the figure. Closed 2026-08-31.
+
+Measured across the registry at defaults, only **`curve` N10_seg8 and `loiter` N8_seg16** have zero
+uncovered pairs. Every other configuration has between 1 and **197** (`wall` N10_seg24). With the
+reach floor on, **every configuration goes to zero**, and figure-grade goes from **2 of 28 to 23 of
+28**. Of the five that still fail with the floor on, four were already failing for reasons that
+have nothing to do with the clip; the fifth is a regression the floor causes and it is named below.
+
+**The floor is free on most of the registry and not on all of it.** Clearance, default clip → floor:
+
+| Key | Configs | Uncovered at default | Cost of the floor | Figure-grade with floor |
+|---|---|---|---|---|
+| `original` | 5 | 4–10 | **none** — clearance identical to 4 dp on all five (best N8_seg4 **+0.6204** @100, 9 iters) | **5 of 5** |
+| `diverse` | 5 | 25–54 | **none** — identical on all five (best N8_seg4 **+0.1136** @800, 9 iters) | **5 of 5** |
+| `fence3d` | 4 | 22–49 | **none** — identical on all four (best N8_seg2 **+0.1623** @100, 9 iters) | **4 of 4** |
+| `door3d` | 2 | 36, 60 | **none**, slightly better (N8_seg4 +0.9827 → +0.9828, N8_seg8 +1.0009 → +1.0044) | **2 of 2** |
+| `loiter` | 2 | 2, 0 | **none**, slightly better (N8_seg8 +35.3204 → +35.3767, N8_seg16 +36.8417 → +36.8459) | **2 of 2** |
+| `wall` | 6 | 13–197 | **real.** N8_seg16 +0.2017 → **+0.0556**, N10_seg24 +0.1484 → **+0.0673**; N10_seg16 unchanged at **+0.2058**. N8_seg2/3/4 penetrate either way — the 2026-08-24 densification, see Known Issues in CLAUDE.md | **3 of 6** |
+| `curve` | 4 | 0–10 | **mixed, and one regression.** N8_seg8 +0.1000 → +0.0947 but certifies at 800 instead of 1e4; N10_seg8 +0.1000 → +0.0976 at 3000 instead of 1e5. **N8_seg16 loses its certificate**: 2.6e-11 @300 at the default clip, 6.35e-06 @1e5 with the floor, hitting the 200-iteration cap. N8_seg4 does not converge either way | **2 of 4** |
+
+The `curve` N8_seg16 row is the honest cost and is recorded rather than dropped: a rigorous support
+ceiling is paid in step size, and on the one scenario whose tube is genuinely non-convex it is
+sometimes paid in convergence. `curve` N8_seg4 was a standing failure before this change.
+
+**The reach floor is not the default.** `sound_clip=False` is what produced every number in this
+repository's history, and changing a default silently changes every number. It is now exposed on
+the frontend panel and taken by `optimize_scenario`, `optimize_spacetime` and
+`tools/make_paper_figure.py`; whether it should become the default is an open decision, and the
+table above is the evidence for it.
 
 **What the clipped-volume construction changed, measured against the same configurations built
 with the retired hull-of-band plane.** Where the obstacle is straight its tube is convex and the

@@ -177,6 +177,27 @@ def figure_grade_failures(row: dict) -> list[str]:
             f"{dropped:.0f} occlusion plane(s) could not be built; line of sight "
             "is uncertifiable here, not certified"
         )
+    # WHAT THE CERTIFICATE COVERS, which is a different question from whether it
+    # is satisfied. The rows certify against `K_m` intersected with the clip ball
+    # `B(c, rho)`, not against `K_m`; the gap closes only where PAPER_1 statement
+    # (7) holds, counted at the returned iterate as `koz_unsound_clips`. A
+    # nonzero count means the wall was built against a clipped piece the NEXT
+    # iterate could leave, so a certificate of 0.0 speaks for less than the
+    # obstacle. Measured on `loiter` 2026-08-30: the priced run passed this gate
+    # with 24 such pairs, because nothing here read the key -- it was not even
+    # propagated into the result row. Only `tools/make_paper_figure.py` refused,
+    # and only for the figure.
+    #
+    # Absent from the row defaults to 0.0, for hand-built rows and callers that
+    # predate the key. PRESENT AND NaN FAILS, which is the polarity that matters:
+    # a stale extension that stopped emitting the count must refuse, not pass.
+    unsound = float(row.get("koz_unsound_clips", 0.0))
+    if not unsound <= 0.0:
+        reasons.append(
+            f"{unsound:.0f} clipped volume(s) the certificate does not cover; "
+            "the wall was built against a piece the next iterate could leave "
+            "(PAPER_1 statement 7 -- `sound_clip=True` floors the clip at the reach)"
+        )
     clearance = float(row.get("min_clearance", float("nan")))
     if not clearance > 0.0:
         reasons.append(f"penetrates by {-clearance:.3e}")
@@ -793,6 +814,15 @@ def optimize_scenario(
             "occlusion_planes_dropped": float(
                 opt_info.get("occlusion_planes_dropped", 0.0)
             ),
+            # PAPER_1 statement (7) at the returned iterate, and a gate
+            # condition since 2026-08-31. NaN when the extension did not emit
+            # it, so a stale build refuses rather than grades as sound.
+            "koz_unsound_clips": float(
+                opt_info.get("koz_unsound_clips", float("nan"))
+            ),
+            # Whether that count was FORCED to zero by the reach floor or simply
+            # came out zero. Not a gate condition -- the count is.
+            "sound_clip": bool(opt_info.get("sound_clip", 0.0)),
             "total_slack": total_slack,
             "accept_count": int(opt_info.get("accept_count", 0)),
             "reject_count": int(opt_info.get("reject_count", 0)),

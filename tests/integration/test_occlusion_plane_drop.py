@@ -198,7 +198,14 @@ def test_loiter_drops_nothing_and_stays_figure_grade():
     out of range rather than generators whose wall failed -- because the paper's
     occlusion demo would stop being figure-grade.
     """
-    out = optimize_scenario(SCENARIO_MAP["loiter"][0](), [(8, 8)], verbose=False)
+    # `sound_clip=True`: figure-grade requires the certificate to cover the whole
+    # keep-out zone since 2026-08-31, and `loiter` N8_seg8 at the default clip
+    # returns 2 pairs it does not cover. That is a different condition than the
+    # drop counter under test, and a control that fails for the wrong reason is
+    # not a control. The floor costs this run 0.06 m of 35.
+    out = optimize_scenario(
+        SCENARIO_MAP["loiter"][0](), [(8, 8)], verbose=False, sound_clip=True
+    )
     row = out["results"]["N8_seg8"]
     assert row["occlusion_planes_dropped"] == 0.0
     assert row["occlusion_violation"] == pytest.approx(0.0, abs=1e-9)
@@ -215,8 +222,11 @@ def test_a_run_with_no_station_is_unaffected():
     """
     from spacetime_bezier.scenarios import scenario_original
 
+    # `sound_clip=True` for the same reason as above: `original` N8_seg4 returns
+    # 4 uncovered pairs at the default clip, at no cost in clearance.
     out = optimize_scenario(
-        scenario_original(), [(8, 4)], elastic_weight=100.0, verbose=False
+        scenario_original(), [(8, 4)], elastic_weight=100.0, verbose=False,
+        sound_clip=True,
     )
     row = out["results"]["N8_seg4"]
     assert row["occlusion_planes_dropped"] == 0.0

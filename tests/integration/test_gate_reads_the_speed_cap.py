@@ -64,7 +64,13 @@ def test_a_capless_run_is_unaffected():
     assert figure_grade_failures(row) == []
 
     out = optimize_scenario(
-        scenario_original(), [(8, 4)], elastic_weight=100.0, verbose=False
+        # `sound_clip=True`: figure-grade requires the certificate to cover the
+        # whole keep-out zone since 2026-08-31, and this configuration at the
+        # default clip returns pairs it does not cover. That is a different
+        # condition than the one under test here, and a control that fails for
+        # the wrong reason is not a control.
+        scenario_original(), [(8, 4)], elastic_weight=100.0, verbose=False,
+        sound_clip=True,
     )
     result = out["results"]["N8_seg4"]
     assert result["figure_grade"] is True, result["figure_grade_reasons"]

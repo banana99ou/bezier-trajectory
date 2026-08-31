@@ -102,6 +102,13 @@ SOLVE_DEFAULTS = {
     "scp_prox_weight": 0.3,
     "trust_radius": DEFAULT_TRUST_RADIUS,
     "min_dt": 0.1,
+    # PAPER_1 statement (8), off by default because that is what produced every
+    # number in README sec. Measurements. It is exposed on the panel because the
+    # gate now READS what the certificate covers: at the default clip most
+    # configurations return pairs the certificate does not cover, so a solve with
+    # this off is honestly reported as not figure-grade rather than passing on a
+    # condition nothing checked.
+    "sound_clip": False,
 }
 
 # Dense samples of the returned curve. The same evaluator the clearance check
@@ -581,6 +588,7 @@ def _run_ladder(scenario: dict, N: int, n_seg: int, params: dict):
             scp_trust_radius=params["trust_radius"],
             elastic_weight=weight,
             min_dt=params["min_dt"],
+            sound_clip=params["sound_clip"],
             v_max=params["v_max"],
             time_weight=params["time_weight"],
             free_arrival_time=params["free_arrival_time"],
@@ -649,7 +657,11 @@ def _gate_row(info: dict, clearance: float, has_stations: bool) -> dict:
         row["occlusion_violation"] = float(
             info.get("occlusion_violation_reference", np.nan)
         )
-    for passthrough in ("speed_cap_violation", "occlusion_planes_dropped"):
+    for passthrough in (
+        "speed_cap_violation",
+        "occlusion_planes_dropped",
+        "koz_unsound_clips",
+    ):
         if passthrough in info:
             row[passthrough] = float(info[passthrough])
     return row
@@ -954,6 +966,7 @@ def _solve_params(payload: dict):
         "v_max": _float_or_none(payload, "v_max"),
         "time_weight": _float(payload, "time_weight", 0.0),
         "free_arrival_time": bool(payload.get("free_arrival_time", False)),
+        "sound_clip": bool(payload.get("sound_clip", SOLVE_DEFAULTS["sound_clip"])),
     }
     if params["trust_radius"] <= 0.0:
         raise RequestError(f"trust_radius must be > 0, got {params['trust_radius']}")
@@ -1080,6 +1093,11 @@ def solve_from_payload(payload: dict) -> dict:
             occlusion["certificate_recomputed"] if occlusion is not None else None
         ),
         "occlusion_planes_dropped": float(info.get("occlusion_planes_dropped", 0.0)),
+        # WHAT THE CERTIFICATE COVERS -- a gate condition since 2026-08-31, and
+        # shown beside the certificate because the two answer different
+        # questions. `sound_clip` says whether the zero was forced or happened.
+        "koz_unsound_clips": float(info.get("koz_unsound_clips", float("nan"))),
+        "sound_clip": bool(info.get("sound_clip", 0.0)),
         "los_min_margin": (los["min"] if los is not None else None),
         "los_lost": (los["lost"] if los is not None else None),
         "speed_cap_violation": float(info.get("speed_cap_violation", 0.0)),
@@ -1093,6 +1111,7 @@ def solve_from_payload(payload: dict) -> dict:
             "N": N,
             "n_seg": n_seg,
             "elastic_weight": params["elastic_weight"],
+            "sound_clip": params["sound_clip"],
             "v_max": params["v_max"],
             "time_weight": params["time_weight"],
             "free_arrival_time": params["free_arrival_time"],
