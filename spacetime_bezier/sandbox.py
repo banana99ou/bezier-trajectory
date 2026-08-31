@@ -288,7 +288,7 @@ def solve_from_payload(payload: dict) -> dict:
     max_iter = int(payload.get("max_iter", 30))
     tol = float(payload.get("tol", 1e-6))
     min_dt = float(payload.get("min_dt", 0.1))
-    sound_clip = bool(payload.get("sound_clip", False))
+    sound_clip = bool(payload.get("sound_clip", True))
     # Exact-penalty weight on the KOZ slack. Below the problem's threshold a
     # penetrating curve is genuinely cheaper than a clear one, so this decides
     # feasibility, not just conditioning. Defaults per scenario.

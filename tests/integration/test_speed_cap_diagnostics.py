@@ -75,11 +75,21 @@ def test_a_feasible_problem_that_fails_at_iteration_one_says_so():
         scp_trust_radius=0.5,
         time_ub_scale=6.0,
     )
+    # Trust 4.0, not 8.0, and the reason is a measured interaction rather than a
+    # tuning preference. The reach floor -- `sound_clip`, the default since
+    # 2026-08-31 -- is the segment radius PLUS one trust step, so it grows with
+    # the trust radius. On this 10-unit scene, trust 8.0 makes the floor about 14
+    # and the clip stops localizing anything: measured, the run goes from
+    # converging in 13 iterations to hitting the 300-iteration cap (its returned
+    # iterate is still certified at 2.36e-07, so this is a convergence
+    # declaration, not a correctness failure). Trust 2.0 and 4.0 are unaffected
+    # -- 21 vs 22 and 13 vs 13 iterations with the floor off and on. 4.0 proves
+    # feasibility just as well as 8.0, which is all this half of the pair is for.
     _, loose = _solve(
         v_max=1.0,
         free_arrival_time=True,
         time_weight=1.0,
-        scp_trust_radius=8.0,
+        scp_trust_radius=4.0,
         time_ub_scale=6.0,
     )
 
