@@ -63,6 +63,7 @@ def _passing_row() -> dict:
         "min_clearance": 0.62,
         "total_slack": 1e-14,
         "speed_cap_violation": 0.0,
+        "koz_unsound_clips": 0.0,
     }
 
 
@@ -77,6 +78,11 @@ _CONDITIONS = [
     ("min_clearance", -1e-9, "penetrates"),
     ("total_slack", FIGURE_GRADE_SLACK_TOL * 10.0, "slack"),
     ("speed_cap_violation", 1e9, "speed cap"),
+    # PAPER_1 statement (7): what the certificate COVERS, not whether it is
+    # satisfied. This was the second `speed_cap_violation` -- counted by the
+    # Rust core since the clip landed, never propagated into the result row,
+    # never read by the predicate. Added as a gate condition 2026-08-31.
+    ("koz_unsound_clips", 2.0, "does not cover"),
 ]
 
 
@@ -186,8 +192,13 @@ def test_a_negative_slack_residue_is_measured_by_magnitude():
 
 
 def test_every_result_row_carries_total_slack_and_a_verdict():
+    # `sound_clip=True` because figure-grade now requires the certificate to
+    # cover the whole keep-out zone, and `original` N8_seg4 at the default clip
+    # returns 4 pairs it does not cover (measured 2026-08-31). The floor costs
+    # this run nothing: clearance 0.6189 either way.
     out = optimize_scenario(
-        scenario_original(), [(8, 4)], elastic_weight=100.0, verbose=False
+        scenario_original(), [(8, 4)], elastic_weight=100.0, verbose=False,
+        sound_clip=True,
     )
     row = out["results"]["N8_seg4"]
     assert "total_slack" in row
