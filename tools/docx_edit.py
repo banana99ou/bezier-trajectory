@@ -86,6 +86,24 @@ def set_text(p: ET.Element, text: str) -> None:
     if not text:
         return
 
+    # An equation paragraph in the KSAS template carries two tab stops (centre,
+    # right) and lays "body (k)" out as tab, body, tab, (k). Reproduce that
+    # whenever the paragraph has tab stops and the text ends in an equation
+    # number; written as plain text the number just trails the body.
+    ppr = p.find(f"{{{W}}}pPr")
+    eq = re.match(r"^(.*\S)\s+(\(\d+\))$", text)
+    if eq and ppr is not None and ppr.find(f"{{{W}}}tabs") is not None:
+        run = ET.SubElement(p, f"{{{W}}}r")
+        if rpr is not None:
+            run.append(copy.deepcopy(rpr))
+        ET.SubElement(run, f"{{{W}}}tab")
+        t = ET.SubElement(run, f"{{{W}}}t")
+        t.text = eq.group(1)
+        t.set(XML_SPACE, "preserve")
+        ET.SubElement(run, f"{{{W}}}tab")
+        ET.SubElement(run, f"{{{W}}}t").text = eq.group(2)
+        return
+
     for chunk, is_sup in split_superscripts(text):
         run = ET.SubElement(p, f"{{{W}}}r")
         run_pr = copy.deepcopy(rpr) if rpr is not None else None
