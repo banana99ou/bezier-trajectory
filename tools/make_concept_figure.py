@@ -81,6 +81,9 @@ def bezier(cp, n=400):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", type=pathlib.Path, default=REPO / "figures" / "paper1")
+    ap.add_argument("--panel-b", choices=("solver", "schematic", "none"), default="solver",
+                    help="right panel: the two RETURNED curves from the sidecar in (x, t) "
+                         "(default), the hand-drawn construction sketch, or no right panel")
     args = ap.parse_args()
 
     from spacetime_bezier.scenarios import scenario_loiter
@@ -110,9 +113,13 @@ def main():
                          "xtick.major.width": 0.5, "ytick.major.width": 0.5,
                          "xtick.major.size": 2, "ytick.major.size": 2})
     GREY, BLUE, RED, DARK = "#8a8a8a", "#2255bb", "#c04040", "#404040"
-    fig = plt.figure(figsize=(3.15, 1.6))
-    ax1 = fig.add_subplot(1, 2, 1)
-    ax2 = fig.add_subplot(1, 2, 2)
+    if args.panel_b == "none":
+        fig = plt.figure(figsize=(3.15, 1.2))
+        ax1, ax2 = fig.add_subplot(1, 1, 1), None
+    else:
+        fig = plt.figure(figsize=(3.15, 1.6))
+        ax1 = fig.add_subplot(1, 2, 1)
+        ax2 = fig.add_subplot(1, 2, 2)
 
     # ---- left: the scene, body at the instant its shadow sits on the corridor
     body = np.array([0.0, orbit_r, body_z])
@@ -182,16 +189,20 @@ def main():
     spc = proj(spot)[0]
     ax1.text(spc[0] + 10, spc[1] - 1, "shadow", ha="left", va="center", **L)
     ax1.text(pv[0] - 3, pv[1] + 5, "vehicle", ha="right", va="bottom", color=BLUE, fontsize=5, zorder=6)
-    ax1.text(top[2][0] - 1, top[2][1] + 2, "corridor", ha="right", va="bottom", color=BLUE, fontsize=5, zorder=6)
+    ax1.text(top[1][0], top[1][1] - 9, "corridor", ha="right", va="top", color=BLUE, fontsize=5, zorder=6)
     mid = 0.5 * (ps + pv)
     ax1.text(mid[0] - 3, mid[1], "sight line", ha="right", va="center", fontsize=4.5, color=DARK, zorder=6)
     ax1.set_aspect("equal")
     ax1.set_xlim(-100, 62)
     ax1.set_ylim(-14, 96)
     ax1.axis("off")
-    ax1.set_title("(a) scene", fontsize=6, pad=1)
+    if ax2 is not None:
+        ax1.set_title("(a) scene", fontsize=6, pad=1)
 
     # ---- right: the lift, x along the corridor against time
+    if ax2 is None:
+        fig.subplots_adjust(left=0.0, right=1.0, bottom=0.0, top=1.0)
+        return save(fig, args.out_dir)
     t = np.linspace(0.0, T, 1601)
     theta = phase + 2 * np.pi * t / T
     xs, ys = orbit_r * np.cos(theta) * scale, orbit_r * np.sin(theta) * scale
@@ -200,6 +211,34 @@ def main():
     w = np.sqrt(np.where(ok, gap, 0.0))
     ax2.fill_betweenx(t, xs - w, xs + w, where=ok, fc="#bbbbbb", ec="none", alpha=0.7, zorder=1)
     ax2.plot(xs[ok], t[ok], color=GREY, lw=0.4, ls=(0, (2, 1.5)), zorder=2)
+
+    if args.panel_b == "solver":
+        # The two RETURNED control polygons of the measured run, read from the
+        # figure sidecar -- a picture of the run the tables report, not a re-solve.
+        import json
+        side = json.loads((REPO / "figures" / "paper1" / "occlusion_figure.json").read_text())
+        cp = side["control_points"]
+        cb, cc = bezier(np.asarray(cp["baseline"])[:, [0, 3]]), bezier(np.asarray(cp["constrained"])[:, [0, 3]])
+        ax2.plot(cb[:, 0], cb[:, 1], color=DARK, lw=0.7, ls=(0, (3, 2)), zorder=3)
+        ax2.plot(cc[:, 0], cc[:, 1], color=BLUE, lw=0.9, zorder=4)
+        i_mid = int(np.argmax(ok))
+        ax2.annotate("", xy=(xs[ok][-1], t[ok][-1]), xytext=(xs[i_mid], t[i_mid]),
+                     arrowprops=dict(arrowstyle="-|>", color=GREY, lw=0.5, mutation_scale=5), zorder=2)
+        ax2.text(float(xs[ok].mean()) + 9, float(t[ok].mean()) - 1, "shadow", fontsize=5, color=DARK,
+                 ha="left", va="top", zorder=6)
+        ax2.text(x_end + 2, cb[-1, 1], f"{side['baseline']['arrival_time']:.1f} s", fontsize=5,
+                 color=DARK, ha="left", va="center", zorder=6)
+        ax2.text(x_end + 2, cc[-1, 1], f"{side['constrained']['arrival_time']:.1f} s", fontsize=5,
+                 color=BLUE, ha="left", va="center", zorder=6)
+        ax2.text(-96, 30, "proposed", fontsize=5, color=BLUE, ha="left", va="bottom", zorder=6)
+        ax2.text(-96, 24, "baseline", fontsize=5, color=DARK, ha="left", va="top", zorder=6)
+        ax2.set_xlim(x_start, x_end + 22)
+        ax2.set_ylim(0, 50)
+        ax2.set_xlabel("x along corridor [m]", labelpad=1)
+        ax2.set_ylabel("t [s]", labelpad=1)
+        ax2.set_title("(b) the two runs in (x, t)", fontsize=6, pad=1)
+        fig.subplots_adjust(left=0.0, right=0.985, bottom=0.17, top=0.92, wspace=0.05)
+        return save(fig, args.out_dir)
 
     v_max = 5.0
     ax2.plot([x_start, x_end], [0, (x_end - x_start) / v_max], color=DARK, lw=0.7, ls=(0, (3, 2)), zorder=3)
@@ -247,8 +286,12 @@ def main():
     ax2.set_title("(b) space-time lift", fontsize=6, pad=1)
 
     fig.subplots_adjust(left=0.0, right=0.985, bottom=0.17, top=0.92, wspace=0.05)
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    png, pdf = args.out_dir / "concept_figure.png", args.out_dir / "concept_figure.pdf"
+    return save(fig, args.out_dir)
+
+
+def save(fig, out_dir: pathlib.Path):
+    out_dir.mkdir(parents=True, exist_ok=True)
+    png, pdf = out_dir / "concept_figure.png", out_dir / "concept_figure.pdf"
     fig.savefig(pdf)
     fig.savefig(png, dpi=600)
     print(f"wrote {png} and {pdf}  (figure {fig.get_figwidth():.2f} x {fig.get_figheight():.2f} in)")

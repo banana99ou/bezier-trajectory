@@ -86,7 +86,9 @@ def solve_pair(scenario: str, N: int, n_seg: int,
     info_con["solve_seconds"] = time.perf_counter() - t0
     # The baseline differs by ONE thing: the occlusion rows. Same arrival
     # freedom, same band, same weights -- or the comparison is not a comparison.
+    t0 = time.perf_counter()
     P_base, info_base = optimize_spacetime(stations=None, **common)
+    info_base["solve_seconds"] = time.perf_counter() - t0
     return sc, weight, (P_con, info_con), (P_base, info_base)
 
 
@@ -251,6 +253,7 @@ def main():
         fine_con[:, :dim - 1], fine_base[:, -1], station, sc["obstacles"])))
     axis_y = float(sc["start"][1])
     lateral_dev_con = float(np.max(np.abs(fine_con[:, 1] - axis_y)))
+    lateral_dev_base = float(np.max(np.abs(fine_base[:, 1] - axis_y)))
     occluder_top = max(
         float(np.max(np.asarray(o["control_points"], float)[:, 2])) + float(o["radius"])
         if "control_points" in o else float(o["pos0"][2]) + float(o["r"])
@@ -269,7 +272,7 @@ def main():
                          "xtick.major.width": 0.5, "ytick.major.width": 0.5,
                          "xtick.major.size": 2, "ytick.major.size": 2})
     from matplotlib.patches import Circle
-    fig = plt.figure(figsize=(3.4, 1.55))
+    fig = plt.figure(figsize=(3.4, 1.3))
     ax1 = fig.add_subplot(1, 2, 1)
     ax2 = fig.add_subplot(1, 2, 2)
     GREY, BLUE, RED, GREEN = "#8a8a8a", "#2255bb", "#c04040", "#117733"
@@ -435,7 +438,7 @@ def main():
     ax2.set_xlabel("time [s]"), ax2.set_ylabel("sight margin [m]")
     ax2.set_xlim(0.0, float(max(t_base[-1], t_con[-1])) * 1.02)
 
-    fig.subplots_adjust(left=0.0, right=0.985, bottom=0.2, top=0.97, wspace=0.42)
+    fig.subplots_adjust(left=0.0, right=0.985, bottom=0.25, top=0.97, wspace=0.42)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     pdf, png = args.out_dir / "occlusion_figure.pdf", args.out_dir / "occlusion_figure.png"
     fig.savefig(pdf), fig.savefig(png, dpi=600)
@@ -477,6 +480,7 @@ def main():
             # Wall-clock of the constrained solve alone, on `machine` below. A
             # cost number is only honest with the hardware beside it.
             "solve_seconds": float(info_con.get("solve_seconds", np.nan)),
+            "total_slack": float(info_con.get("total_koz_slack_returned", np.nan)),
             # Against the true-shadow, axis-only reachability bound below:
             # what the formulation's conservatism costs on this scene.
             "arrival_gap_to_axis_bound": float(info_con.get("arrival_time", np.nan)) - bound,
@@ -488,6 +492,17 @@ def main():
             "los_loss_interval": loss_interval,
             "max_z": float(np.max(pts_base[:, 2])),
             "arrival_time": float(info_base.get("arrival_time", np.nan)),
+            "koz_certificate": float(info_base.get("koz_violation_reference", np.nan)),
+            "iterations": int(info_base.get("iterations", -1)),
+            "lateral_deviation": lateral_dev_base,
+            "solve_seconds": float(info_base.get("solve_seconds", np.nan)),
+            "total_slack": float(info_base.get("total_koz_slack_returned", np.nan)),
+        },
+        # The two returned control polygons, so a figure can be redrawn from
+        # the run that was measured instead of from a re-solve.
+        "control_points": {
+            "constrained": np.asarray(P_con, float).tolist(),
+            "baseline": np.asarray(P_base, float).tolist(),
         },
         "occluder_top": occluder_top, "station": list(map(float, station)),
         "machine": subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
