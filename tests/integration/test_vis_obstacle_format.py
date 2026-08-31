@@ -86,7 +86,7 @@ def test_the_page_places_obstacles_where_the_solver_does(tmp_path):
     `pos0 + vel*t` would agree on the straight obstacles and diverge here.
     """
     cases = []
-    for key in ("original", "curve", "station_fence", "door3d"):
+    for key in ("original", "curve", "loiter", "door3d"):
         scenario = SCENARIO_MAP[key][0]()
         for obs in scenario["obstacles"][:4]:
             cps = np.asarray(obs["control_points"], dtype=float)
@@ -106,7 +106,7 @@ def test_the_page_places_obstacles_where_the_solver_does(tmp_path):
     )
 
     window_case = np.asarray(
-        SCENARIO_MAP["station_fence"][0]()["obstacles"][-1]["control_points"], dtype=float
+        SCENARIO_MAP["loiter"][0]()["obstacles"][-1]["control_points"], dtype=float
     )
     out = _run_js(
         {"cases": cases, "window_case": window_case.tolist()}, tmp_path
@@ -131,12 +131,12 @@ def test_the_page_places_obstacles_where_the_solver_does(tmp_path):
 def test_the_page_reads_the_active_window_from_the_control_points(tmp_path):
     """The window is intrinsic now; a page defaulting to the plot range fails.
 
-    The fixture is a fence piece that appears partway through the run, so a
+    The fixture is a loiter arc that appears partway through the run, so a
     reader that fell back to the plotted horizon would report 0.0 and this test
     would catch it.
     """
     cps = np.asarray(
-        SCENARIO_MAP["station_fence"][0]()["obstacles"][-1]["control_points"], dtype=float
+        SCENARIO_MAP["loiter"][0]()["obstacles"][-1]["control_points"], dtype=float
     )
     t0 = float(cps[0, -1])
     assert t0 > 0.0, "fixture no longer starts late; it cannot detect a horizon fallback"

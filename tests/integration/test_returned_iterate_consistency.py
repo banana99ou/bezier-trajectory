@@ -114,13 +114,13 @@ def test_converged_is_never_reported_alongside_the_fallback(
 # ---------------------------------------------------------------------------
 
 
-def _step_station_fence(weight, n_steps, n_seg=8):
+def _step_loiter(weight, n_steps, n_seg=8):
     """Drive the canonical iteration one step at a time, recording what it does.
 
     The stepping API and the batch loop call the same `scp_iterate`, so what is
     observed here is what the batch loop does.
     """
-    sc = SCENARIO_MAP["station_fence"][0]()
+    sc = SCENARIO_MAP["loiter"][0]()
     N = 8
     P0 = np.array(
         [np.linspace(a, b, N + 1) for a, b in zip(sc["start"], sc["end"])]
@@ -170,9 +170,11 @@ def _step_station_fence(weight, n_steps, n_seg=8):
 def test_best_never_advances_onto_an_uncertified_candidate_when_a_station_exists():
     """`update_best` used to rank on keep-out clearance alone.
 
-    `station_fence` at a low elastic weight spends its early iterations with the
-    line of sight genuinely lost -- the occlusion certificate is 0.6132 at w=100
-    -- while the keep-out clearance is comfortably positive and rising. Under the
+    A station scenario at a low elastic weight spends its early iterations with
+    the line of sight genuinely lost while the keep-out clearance is comfortably
+    positive and rising. (The 0.6132-at-w=100 reading was `station_fence`, which
+    was removed 2026-08-30; the number this scene produces is UNMEASURED and the
+    non-vacuity guard below is what will say so.) Under the
     old ordering those iterates were exactly the ones "best" selected, so the
     fallback's answer would be a trajectory that clears every obstacle and cannot
     see the station.
@@ -182,7 +184,7 @@ def test_best_never_advances_onto_an_uncertified_candidate_when_a_station_exists
     FAILS IF the certificate condition is dropped from `update_best`: the early
     high-clearance, high-violation iterates advance `best_clearance` again.
     """
-    history = _step_station_fence(weight=100.0, n_steps=30)
+    history = _step_loiter(weight=100.0, n_steps=30)
 
     uncertified = [h for h in history if h["vtrue_c"] > 1e-6]
     assert uncertified, (
@@ -203,7 +205,7 @@ def test_the_old_ordering_would_have_advanced_here():
     recorded steps. If that ordering would never have advanced onto an
     uncertified candidate either, the assertion above proves nothing.
     """
-    history = _step_station_fence(weight=100.0, n_steps=30)
+    history = _step_loiter(weight=100.0, n_steps=30)
 
     best = -np.inf
     would_have_advanced = []

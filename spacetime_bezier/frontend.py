@@ -479,7 +479,7 @@ def scenario_catalog() -> dict:
     """Every registered scenario, with the configs it is registered with.
 
     Unlike ``viewer.py``, nothing is filtered out: a four-column scenario gets an
-    axis picker instead of being withheld, so `wall3d` and `station_fence` are
+    axis picker instead of being withheld, so `fence3d` and `loiter` are
     reachable from the page.
     """
     catalog = {}
@@ -632,7 +632,7 @@ def _gate_row(info: dict, clearance: float, has_stations: bool) -> dict:
     free as long as its row key is forwarded.
 
     The one generalisation over that script: it hard-codes a NaN default for
-    ``occlusion_violation`` because `station_fence` always has a station, so a
+    ``occlusion_violation`` because `loiter` always has a station, so a
     missing key means a stale extension. Here the scenario may genuinely have no
     station, and a run with no occlusion rows has nothing to violate -- so the key
     is only forced to NaN when stations are present, and otherwise left for

@@ -191,14 +191,14 @@ def test_a_partial_drop_also_sinks_the_gate():
     assert is_figure_grade(_row(info)) is False
 
 
-def test_station_fence_drops_nothing_and_stays_figure_grade():
+def test_loiter_drops_nothing_and_stays_figure_grade():
     """The scenario the refusal must NOT break.
 
     FAILS IF the drop counter over-reports -- e.g. counting generators that were
     out of range rather than generators whose wall failed -- because the paper's
     occlusion demo would stop being figure-grade.
     """
-    out = optimize_scenario(SCENARIO_MAP["station_fence"][0](), [(8, 8)], verbose=False)
+    out = optimize_scenario(SCENARIO_MAP["loiter"][0](), [(8, 8)], verbose=False)
     row = out["results"]["N8_seg8"]
     assert row["occlusion_planes_dropped"] == 0.0
     assert row["occlusion_violation"] == pytest.approx(0.0, abs=1e-9)

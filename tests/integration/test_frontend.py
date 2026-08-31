@@ -158,18 +158,27 @@ def original(server):
 
 
 @pytest.fixture(scope="module")
-def station_fence(server):
+def loiter(server):
     # The weight is pinned at the one measured to certify. Left blank the ladder
     # would walk six rungs of a run that takes seconds each, and the rung that
     # wins is already known; the ladder itself is exercised by `original`.
+    #
+    # 100, not the registered 1e5: the registry value belongs to the PRICED
+    # problem (free arrival, `v_max`), and this endpoint solves at defaults with
+    # the arrival pinned, where README sec. Measurements records the ladder
+    # settling at 100. `trust_radius` is a LENGTH and this scene is 200 m
+    # across, so the endpoint's 0.5 default is degenerate here -- the scenario
+    # carries 5.0 and the payload has to say so, because /api/solve reads the
+    # trust radius from the request rather than from the scenario.
     status, data = post(
         server,
         "/api/solve",
         {
-            "scenario": "station_fence",
+            "scenario": "loiter",
             "N": 8,
             "n_seg": 8,
-            "elastic_weight": scenario_elastic_weight("station_fence"),
+            "elastic_weight": 100.0,
+            "trust_radius": 5.0,
         },
     )
     assert status == 200, data
@@ -240,8 +249,8 @@ def test_catalog_offers_every_scenario_with_the_agreed_views(server):
     assert [v["id"] for v in catalog["original"]["views"]] == ["xyt", "xy"]
     assert catalog["original"]["default_view"] == "xyt"
     assert [v["id"] for v in catalog["fence3d"]["views"]] == ["xyz", "xyz_all", "xyt"]
-    assert catalog["station_fence"]["default_view"] == "xyz"
-    assert catalog["station_fence"]["stations"] == [[5.0, -2.0, 0.3]]
+    assert catalog["loiter"]["default_view"] == "xyz"
+    assert catalog["loiter"]["stations"] == [[0.0, 0.0, 0.0]]
 
 
 def test_axis_banners_say_how_time_is_carried(server):
@@ -458,11 +467,11 @@ def test_solve_matches_the_batch_path_exactly(original):
 
 
 # ---------------------------------------------------------------------------
-# (c) the solve, for `station_fence`
+# (c) the solve, for `loiter`
 # ---------------------------------------------------------------------------
 
 
-def test_station_fence_returns_the_occlusion_layers(station_fence):
+def test_loiter_returns_the_occlusion_layers(loiter):
     """Station, sight fan, line-of-sight margin, occlusion rows.
 
     FAILS IF: any of the four is missing or empty -- each is a layer the page
@@ -476,25 +485,25 @@ def test_station_fence_returns_the_occlusion_layers(station_fence):
     walls ARE the geometry, exported as `planes["occlusion"]`. Drawing a cone the
     solver never built would be a picture of a constraint that is not there.
     """
-    assert station_fence["scenario"]["stations"] == [[5.0, -2.0, 0.3]]
-    sight = station_fence["sight"]
+    assert loiter["scenario"]["stations"] == [[0.0, 0.0, 0.0]]
+    sight = loiter["sight"]
     assert sight is not None
-    assert sight["station"] == [5.0, -2.0, 0.3]
+    assert sight["station"] == [0.0, 0.0, 0.0]
     assert len(sight["lines"]) == frontend.SIGHT_LINES
     for line in sight["lines"]:
         assert len(line["v"]) == 3
         assert line["lost"] is (line["m"] is not None and line["m"] < 0.0)
 
-    los = station_fence["los"]
+    los = loiter["los"]
     assert los is not None and len(los["t"]) == len(los["m"]) >= frontend.LOS_SAMPLES
-    assert los["min"] == pytest.approx(station_fence["verdict"]["los_min_margin"])
+    assert los["min"] == pytest.approx(loiter["verdict"]["los_min_margin"])
 
-    assert station_fence["shadow_balls"] == []
-    assert station_fence["planes"]["occlusion"]
-    assert station_fence["ledger"]["occlusion_total"] > 0
+    assert loiter["shadow_balls"] == []
+    assert loiter["planes"]["occlusion"]
+    assert loiter["ledger"]["occlusion_total"] > 0
 
 
-def test_station_fence_keeps_line_of_sight_and_certifies_it(station_fence):
+def test_loiter_keeps_line_of_sight_and_certifies_it(loiter):
     """The constrained run holds the link, and both certificates say so.
 
     FAILS IF: the occlusion certificate leaves zero, a plane could not be built
@@ -502,7 +511,7 @@ def test_station_fence_keeps_line_of_sight_and_certifies_it(station_fence):
     the certificate stays at zero -- the disagreement that would mean one of the
     two is wrong -- or the run stops being figure-grade.
     """
-    verdict = station_fence["verdict"]
+    verdict = loiter["verdict"]
     assert verdict["occlusion_reported"] == pytest.approx(0.0, abs=1e-6)
     assert verdict["occlusion_recomputed"] == pytest.approx(0.0, abs=1e-6)
     assert verdict["occlusion_planes_dropped"] == 0.0
@@ -512,7 +521,7 @@ def test_station_fence_keeps_line_of_sight_and_certifies_it(station_fence):
     assert verdict["figure_grade"] is True
 
 
-def test_station_fence_occlusion_normals_carry_a_time_component(station_fence):
+def test_loiter_occlusion_normals_carry_a_time_component(loiter):
     """Shadow rows are space-time rows, exactly like keep-out rows.
 
     **This assertion is the reverse of the one it replaces, and the reversal is
@@ -524,22 +533,47 @@ def test_station_fence_occlusion_normals_carry_a_time_component(station_fence):
     so a shadow wall is slanted in time for the same reason the tube's wall is. A
     zero here now means what it has always meant on a keep-out row: G1.
 
-    FAILS IF: any wall on a moving obstacle -- shadow or body -- comes back
-    time-blind.
+    FAILS IF: any shadow wall on a moving occluder comes back time-blind.
+
+    **The keep-out half of this assertion lives on `original`, not here, and that
+    is a property of the scene rather than a gap.** `loiter` puts the corridor
+    30.5 m clear of the body, so every (segment, obstacle) BODY pair is out of
+    clip reach and the builder emits no row for it -- measured 2026-08-30 at the
+    returned N8_seg8 iterate: 18 exact rows, all of them shadow rows, zero body
+    rows. Asserting a time component on `loiter`'s keep-out planes would be
+    asserting something about an empty list.
     """
-    occlusion = station_fence["planes"]["occlusion"]
+    occlusion = loiter["planes"]["occlusion"]
     assert occlusion, "the scenario has a station; it must produce shadow walls"
     slanted = [p for p in occlusion if abs(p["normal"][-1]) > 1e-12]
     assert slanted, "every occluder here moves; a time-blind shadow wall is G1"
     for plane in occlusion:
         assert any(abs(c) > 0.0 for c in plane["normal"][:-1])
-    moving = [
-        plane for plane in station_fence["planes"]["koz"] if abs(plane["normal"][-1]) > 1e-12
-    ]
+    assert loiter["planes"]["koz"] == [], (
+        "the corridor is above the body's reach, so no body wall should exist; "
+        "one appearing means the clip reached further than the scene allows"
+    )
+
+
+def test_keep_out_normals_carry_a_time_component(original):
+    """The body half of the pair above, on a scene where keep-out actually binds.
+
+    G1 was: evaluate the obstacle at `pos0 + vel*t`, build the normal from the
+    spatial coordinates alone, emit a zero on the time coordinate. Every obstacle
+    in `original` moves, so every one of its walls is slanted in the lifted space
+    and a zero time coefficient is the defect itself.
+
+    FAILS IF: a keep-out wall on a moving obstacle comes back time-blind, or the
+    scenario stops producing keep-out walls at all -- in which case this test
+    would be vacuous and says so rather than passing quietly.
+    """
+    koz = original["planes"]["koz"]
+    assert koz, "no keep-out walls at all; this test would prove nothing"
+    moving = [plane for plane in koz if abs(plane["normal"][-1]) > 1e-12]
     assert moving, "every obstacle here moves; a keep-out plane with no time term is G1"
 
 
-def test_station_fence_offers_the_agreed_views(station_fence):
+def test_loiter_offers_the_agreed_views(loiter):
     """The 4-column scenario is reachable, with the agreed view roster.
 
     The roster: the two spatial views (2026-08-24 decision) plus the (x,y,t)
@@ -550,9 +584,9 @@ def test_station_fence_offers_the_agreed_views(station_fence):
     direction, the default is not the cursor view, or a view stops declaring
     its patches projections from the full lifted space.
     """
-    views = station_fence["scenario"]["views"]
+    views = loiter["scenario"]["views"]
     assert [v["id"] for v in views] == ["xyz", "xyz_all", "xyt"]
-    assert station_fence["scenario"]["default_view"] == "xyz"
+    assert loiter["scenario"]["default_view"] == "xyz"
     for view in views:
         assert view["cols"] == ([0, 1, 3] if view["id"] == "xyt" else [0, 1, 2])
         assert "projections" in view["dropped_note"]

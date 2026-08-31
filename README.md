@@ -67,8 +67,16 @@ uncertain hazards, receding horizon. Do not mix their claims.
 │   ├── README.md                HANDBOOK — pipeline, venue rules, invariants, draft state
 │   └── ksas_2026_fall/          KSAS 2026 추계: manuscript.docx + .md sidecar, template/
 │
-├── tools/                     spacetime_opt_debug.py (debug UI server),
-│                              compare_backends.py (scenario diff), plus legacy diagnostics
+├── tools/                     11 legacy diagnostics were deleted 2026-08-30 (`paper/journal-1`):
+│                              7 imported only `orbital_docking`, 2 were branch-migration
+│                              artifact diffing, 2 were matplotlib concept demos the frontend
+│                              replaced. What is left is what the paper or the solver uses.
+│   ├── sweep_scenarios.py       one pass over the registry at defaults, gate fields printed
+│   ├── diagnose_clip.py         per (segment, obstacle): row, out of reach, or no half-space
+│   ├── compare_backends.py      run scenarios through the Rust optimizer, dump traces
+│   ├── trace_viewer.py          replay child script, imported by frontend.py
+│   ├── spacetime_opt_debug.py   debug UI server
+│   ├── make_paper_figure.py     the paper figure, refused unless figure-grade
 │   ├── render_paper.py          manuscript .docx -> .md sidecar + .pdf
 │   ├── watch_paper.sh           re-render on every save (fswatch, hash-guarded)
 │   ├── make_manuscript_skeleton.py  build the empty manuscript from the template
@@ -149,18 +157,27 @@ obstacles, fixed endpoints, and the optimizer plans path *and* timing.
 | `diverse` | varied sizes / speeds / directions; stress case |
 | `fence3d` | three spatial dimensions + time; the curve climbs a wide low **moving** fence instead of going around — the dimension is load-bearing, and the motion is what makes waiting futile. Renamed from `wall3d` 2026-08-24; the problem definition is unchanged |
 | `door3d` | the complement of `fence3d`: a **static** tall wall in three spatial dimensions that vanishes at t=5, so the cheap answer is to wait rather than climb. Nothing here makes the third dimension load-bearing — a 2D cut would wait identically |
-| `station_fence` | **the paper's demo** — keep line of sight to a fixed station past a moving, non-straight fence (chain of time-windowed pieces). Occlusion rows on: climbs and holds the link; off: loses it for 7.8 s of 10. The fence is both occluder and keep-out body, so the occlusion constraint subsumes collision |
+| `curve` | one obstacle on a genuinely **curved** lifted centreline, so its tube is non-convex and has no supporting half-space. The only scenario where the clip-and-support construction is doing real work rather than reproducing an easier answer |
+| `loiter` | **the paper's demo** — a body orbiting a ground station, its shadow sweeping *along* a corridor the vehicle must cross. Occlusion rows on: waits and holds the link; off: loses it. Metres and seconds. The corridor sits above the body's reach, so keep-out never binds and the **timing** is set by line of sight alone |
 
-The paper's figure comes from `station_fence` via `tools/make_paper_figure.py`, which refuses to
+The paper's figure comes from `loiter` via `tools/make_paper_figure.py`, which refuses to
 draw unless the constrained run is figure-grade AND the baseline measurably fails.
+
+`station_fence` was **removed 2026-08-30**. It was the occlusion demo before `loiter`, every one of
+its numbers was measured under the occlusion builder that `46a15f7` retired, and its own test file
+asserted the retired design — that a curved occluder must be a chain of *straight* pieces, because
+a capsule around a curved centreline is not convex. The center-surface builder handles the curved
+centreline directly, so that assertion had become a test of a decision the code no longer makes.
+Its live coverage moved to `loiter` rather than being deleted: the frontend occlusion-layer tests,
+the plane-drop refusal test, and the obstacle-format tests all now run against `loiter`.
 
 ## Measurements
 
 Last full pass **2026-08-26, after the keep-out wall moved onto the clipped KOZ volume** — one
 run of every registered configuration at defaults: speed cap off, arrival time pinned,
-elastic-weight ladder on. **28 runs**, not the 22 this section used to claim — `original` 5,
-`curve` 4, `diverse` 5, `wall` 6, `fence3d` 4, `door3d` 2, `station_fence` 2. The old count
-predated three of those scenarios and was never corrected. A run that enables `v_max` /
+elastic-weight ladder on. It read **28 runs** — `original` 5, `curve` 4, `diverse` 5, `wall` 6,
+`fence3d` 4, `door3d` 2, `station_fence` 2 — and **26 of those survive**: `station_fence` was
+removed 2026-08-30 and its two rows went with it. A run that enables `v_max` /
 `time_weight` / `free_arrival_time` is a different problem and must be re-measured.
 **FIGURE-GRADE** is the B7 gate, checked per run: converged AND certificate ≤ 1e-6 at the returned
 iterate AND clearance > 0 against the true obstacle trajectories AND total slack ≤ 1e-6 — plus the
@@ -174,7 +191,6 @@ occlusion certificate where a station exists.
 | `wall` | N10_seg16 | **+0.2058** | 9 | 3000 | **3 of 6.** N8_seg16 +0.2017 @3000, N10_seg24 +0.1484 @800. **N8_seg2/3/4 penetrate** — that is the 2026-08-24 densification (spacing 0.8 → 0.5, 13 → 21 circles), not this change; see Known Issues in CLAUDE.md |
 | `fence3d` | N8_seg2 | **+0.1623** | 9 | 100 | **yes — all 4 configs**, first ladder rung. Measured under the name `wall3d`; the rename changed no parameter |
 | `door3d` | N8_seg4 | +0.9827 | 9 | 100 | **yes — both configs**, first ladder rung. Clearance is not the point: the evidence is that the curve **waits** |
-| `station_fence` | N8_seg16 | +1.5454 | 56 | 100000 | **1 of 2.** Clearance is slack by construction (occlusion subsumes keep-out); the binding number is the occlusion certificate **0.000**. **N8_seg8 does not converge**, and did not before this change either |
 
 **What the clipped-volume construction changed, measured against the same configurations built
 with the retired hull-of-band plane.** Where the obstacle is straight its tube is convex and the
