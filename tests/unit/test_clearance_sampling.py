@@ -28,6 +28,20 @@ from spacetime_bezier.geometry import (
 _STRAIGHT = np.array([[i * 10 / 8, 0.0, i * 10 / 8] for i in range(9)])
 
 
+# Every curve in this file runs 0 to 10 s. A legacy `{pos0, vel, r}` obstacle no
+# longer carries an implicit window -- since the 2026-08-21 formulation change
+# the active window IS the first and last control point's time coordinate -- so
+# an obstacle written that way has to say when it is there. The window here is
+# the full horizon, which is what "no window trickery" means in the docstrings
+# below; the tests that are ABOUT windows write their own.
+_HORIZON = 10.0
+
+
+def _body(pos0, vel, r):
+    """A straight legacy obstacle, present for the whole horizon."""
+    return {"pos0": pos0, "vel": vel, "r": r, "t_start": 0.0, "t_end": _HORIZON}
+
+
 def _uniform_reference(P, obstacles, n_eval):
     """What a purely uniform grid of ``n_eval`` samples would have reported.
 
@@ -124,7 +138,7 @@ def test_a_small_fast_obstacle_is_no_longer_missed():
 
     FAILS IF the injected spacing stops scaling with the obstacle's speed.
     """
-    obstacles = [{"pos0": [5.0 + 50.0 * 5.0, 0.0], "vel": [-50.0, 0.0], "r": 0.05}]
+    obstacles = [_body([5.0 + 50.0 * 5.0, 0.0], [-50.0, 0.0], 0.05)]
     assert _uniform_reference(_STRAIGHT, obstacles, 3000) > 0.0, (
         "the uniform grid caught it, so this construction proves nothing"
     )
@@ -148,9 +162,7 @@ def test_beyond_the_injection_cap_the_sign_is_still_right(radius, speed):
     honest-limitation note in the docstrings an understatement rather than a
     caveat.
     """
-    obstacles = [
-        {"pos0": [5.0 + speed * 5.0, 0.0], "vel": [-speed, 0.0], "r": radius}
-    ]
+    obstacles = [_body([5.0 + speed * 5.0, 0.0], [-speed, 0.0], radius)]
     truth = _uniform_reference(_STRAIGHT, obstacles, 8_000_001)
     got = compute_min_clearance(_STRAIGHT, obstacles, 3, 3000)
     assert truth < 0.0
@@ -196,7 +208,7 @@ def test_a_run_with_no_obstacles_gets_no_injection():
 
 def test_injection_is_bounded():
     """FAILS IF an extreme obstacle can make the cross-check unboundedly slow."""
-    obstacles = [{"pos0": [0.0, 0.0], "vel": [1e6, 0.0], "r": 1e-6}]
+    obstacles = [_body([0.0, 0.0], [1e6, 0.0], 1e-6)]
     taus = _sample_taus(_STRAIGHT, obstacles, 3000)
     assert len(taus) <= 3000 + _MAX_INJECTED_PER_OBSTACLE
 
@@ -239,7 +251,7 @@ def test_los_margin_returns_at_least_n_eval_samples_in_order():
     costs; anything larger would be a real inversion.
     """
     station = np.array([0.0, 0.0])
-    obstacles = [{"pos0": [4.0, -5.0], "vel": [0.0, 1.0], "r": 1.0}]
+    obstacles = [_body([4.0, -5.0], [0.0, 1.0], 1.0)]
     P = np.array([[8.0, 0.0, i * 10 / 8] for i in range(9)])
     t_values, margins = compute_los_margin(P, station, obstacles, dim=3, n_eval=501)
     assert len(t_values) == len(margins) >= 501

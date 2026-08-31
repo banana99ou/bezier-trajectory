@@ -34,6 +34,20 @@ def _straight_polygon(p_start, p_end, n_cp):
     return (1.0 - alphas) * p_start[None, :] + alphas * p_end[None, :]
 
 
+# Every trajectory in this file runs 0 to 10 s, and a legacy `{pos0, vel, r}`
+# obstacle no longer carries an implicit window: since the 2026-08-21
+# formulation change the active window IS the first and last control point's
+# time coordinate, so an obstacle written the legacy way has to say when it is
+# there. Stamping the horizon here keeps each test's geometry paragraph about
+# geometry. `test_inactive_time_window_blocks_nothing` overrides it on purpose.
+_HORIZON = 10.0
+
+
+def _body(pos0, vel, r):
+    """A straight legacy obstacle, present for the whole horizon."""
+    return {"pos0": pos0, "vel": vel, "r": r, "t_start": 0.0, "t_end": _HORIZON}
+
+
 def test_margin_goes_negative_exactly_on_the_analytic_interval():
     """FAILS IF the blocked interval is off by more than the sampling step.
 
@@ -51,7 +65,7 @@ def test_margin_goes_negative_exactly_on_the_analytic_interval():
     |y| < 8/sqrt(15). Converting to time gives the interval asserted below.
     """
     station = np.array([0.0, 0.0])
-    obstacles = [{"pos0": [4.0, 0.0], "vel": [0.0, 0.0], "r": 1.0}]
+    obstacles = [_body([4.0, 0.0], [0.0, 0.0], 1.0)]
     P = _straight_polygon([8.0, -6.0, 0.0], [8.0, 6.0, 10.0], n_cp=7)
 
     n_eval = 20001
@@ -86,7 +100,7 @@ def test_margin_uses_the_sight_segment_not_the_infinite_line():
     is large and positive. An unclamped implementation reports about -0.8.
     """
     station = np.array([0.0, 0.0])
-    obstacles = [{"pos0": [6.0, 0.2], "vel": [0.0, 0.0], "r": 1.0}]
+    obstacles = [_body([6.0, 0.2], [0.0, 0.0], 1.0)]
     P = _straight_polygon([2.0, 0.0, 0.0], [2.0, 0.0, 10.0], n_cp=5)
 
     _, margins = compute_los_margin(P, station, obstacles, dim=3, n_eval=101)
@@ -109,7 +123,7 @@ def test_a_moving_occluder_blocks_only_while_it_crosses():
     """
     station = np.array([0.0, 0.0])
     # Centre passes through (4, 0) at t = 5, moving in +y at 1.0 per second.
-    obstacles = [{"pos0": [4.0, -5.0], "vel": [0.0, 1.0], "r": 1.0}]
+    obstacles = [_body([4.0, -5.0], [0.0, 1.0], 1.0)]
     P = _straight_polygon([8.0, 0.0, 0.0], [8.0, 0.0, 10.0], n_cp=5)
 
     n_eval = 20001
@@ -127,7 +141,7 @@ def test_a_moving_occluder_blocks_only_while_it_crosses():
 def test_inactive_time_window_blocks_nothing():
     """An obstacle outside its window is not there, so it cannot occlude."""
     station = np.array([0.0, 0.0])
-    blocking = {"pos0": [4.0, 0.0], "vel": [0.0, 0.0], "r": 1.0}
+    blocking = _body([4.0, 0.0], [0.0, 0.0], 1.0)
     P = _straight_polygon([8.0, 0.0, 0.0], [8.0, 0.0, 10.0], n_cp=5)
 
     _, blocked = compute_los_margin(P, station, [blocking], dim=3, n_eval=201)
@@ -141,8 +155,8 @@ def test_inactive_time_window_blocks_nothing():
 def test_margin_is_the_minimum_over_obstacles():
     """Several bodies: the sight line is blocked by the worst of them."""
     station = np.array([0.0, 0.0])
-    near = {"pos0": [4.0, 0.5], "vel": [0.0, 0.0], "r": 1.0}
-    far = {"pos0": [4.0, 3.0], "vel": [0.0, 0.0], "r": 1.0}
+    near = _body([4.0, 0.5], [0.0, 0.0], 1.0)
+    far = _body([4.0, 3.0], [0.0, 0.0], 1.0)
     P = _straight_polygon([8.0, 0.0, 0.0], [8.0, 0.0, 10.0], n_cp=5)
 
     _, both = compute_los_margin(P, station, [near, far], dim=3, n_eval=51)

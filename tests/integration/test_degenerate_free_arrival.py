@@ -88,8 +88,8 @@ def test_the_objective_really_is_flat_in_the_arrival_time():
     for trust in (0.1, 0.5, 2.0):
         _, info = bezier_opt.optimize_spacetime_bezier(
             p_init=P0,
-            obstacle_pos0=np.zeros((0, 2)),
-            obstacle_vel=np.zeros((0, 2)),
+            # No obstacles: the empty bundle shape, (n_obs, n_ctrl, dim).
+            obstacle_ctrl=np.zeros((0, 2, 3)),
             obstacle_r=np.zeros((0,)),
             n_seg=8,
             max_iter=80,

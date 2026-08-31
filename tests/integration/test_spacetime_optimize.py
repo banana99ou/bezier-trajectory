@@ -28,7 +28,11 @@ def _toy_scenario() -> dict:
             "workspace_center": [5.0, 5.0],
         },
         "obstacles": [
-            {"pos0": [4.5, 4.0], "vel": [0.0, 0.0], "r": 0.7, "name": "O1"},
+            # `T` below is the scenario duration, but `optimize_spacetime`
+            # takes obstacles directly and a legacy obstacle carries its own
+            # window since 2026-08-21, so it is written here too.
+            {"pos0": [4.5, 4.0], "vel": [0.0, 0.0], "r": 0.7, "name": "O1",
+             "t_start": 0.0, "t_end": 10.0},
         ],
         "start": [0.5, 1.0, 0.0],
         "end": [8.5, 8.5, 10.0],
@@ -44,7 +48,8 @@ def _require_rust():
 
 
 def test_optimize_spacetime_keeps_time_monotone():
-    obstacles = [{"pos0": [20.0, 20.0], "vel": [0.0, 0.0], "r": 1.0}]
+    obstacles = [{"pos0": [20.0, 20.0], "vel": [0.0, 0.0], "r": 1.0,
+                  "t_start": 0.0, "t_end": 10.0}]
     P_opt, info = optimize_spacetime(
         N=4,
         dim=3,

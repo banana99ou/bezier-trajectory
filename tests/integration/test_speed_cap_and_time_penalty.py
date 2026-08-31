@@ -213,8 +213,8 @@ def _obstacle_free_run(v_max, time_weight):
     P0 = build_initial_guess([0.5, 1.0, 0.0], [8.5, 8.5, 10.0], _N_CP)
     _, info = bezier_opt.optimize_spacetime_bezier(
         p_init=P0,
-        obstacle_pos0=np.zeros((0, 2)),
-        obstacle_vel=np.zeros((0, 2)),
+        # No obstacles: the empty bundle shape, (n_obs, n_ctrl, dim).
+        obstacle_ctrl=np.zeros((0, 2, 3)),
         obstacle_r=np.zeros((0,)),
         n_seg=N_SEG,
         max_iter=400,
