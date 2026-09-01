@@ -38,27 +38,26 @@ the advisor's review requires in the talk as well as the manuscript.
 
 ## Blocking honesty, not the deadline
 
-### `solver.test-drift` — 52 tests red, and the occlusion claim is uncovered
-52 failed / 298 passed / 1 skipped, re-run 2026-08-31 at `e9d953f` — the identical count first
-measured 2026-08-30, so nothing has regressed and nothing has been repaired. The failures are API
-drift, not wrong math: `normalize_obstacle` raises `ValueError: a legacy obstacle with an unbounded
-window needs the scenario duration T`. **The consequence is the item.** `compute_los_margin` — the
-independent pure-Python line-of-sight check the paper's occlusion claim rests on — has no live
-coverage, and neither does the Python-vs-Rust objective oracle.
-*Closes when:* legacy `pos0`/`vel` obstacles in the affected tests are converted with
-`spacetime_bezier.geometry.obstacle_array_bundle`, and the suite is green or its remaining failures
-are each explained. → [`SOLVER.md`](SOLVER.md) §Established facts
+### `demo.baseline-untested` — the paper's central claim is not tested, only drawn
+`station_fence` carried seven tests. The 2026-09-01 merge of `8092a08` moved four to `loiter`,
+correctly dropped one that asserted the retired straight-chain design, and **lost two**:
 
-**The fix exists on another branch and has not been imported.** `paper/journal-1` carries
-`d3a1426` (tests: the dark files run again — 46 red to 3) and `8c948a7` (the last two reds are
-explained). They were reported to fix `test_los_margin.py` and `test_clearance_sampling.py` —
-the latter being how `min_clearance` is computed, so the source of every clearance number in
-§Measurements. Those files fail at the CALL in 0.09 s (`TypeError: unexpected keyword
-'obstacle_pos0'`), so no assertion in them has run since `0918df5`. Importing is a decision, not a
-formality: `d3a1426` also touches `tests/integration/test_returned_iterate_consistency.py`, where
-it *replaces the scene* because `loiter` cannot carry those two ordering tests, and that file was
-also touched by the `station_fence` removal this branch has not taken. Read that hunk before
-resolving.
+- **baseline-must-fail.** Nothing runs `loiter` with the occlusion rows OFF and asserts it loses
+  the link. Only `tools/make_paper_figure.py` enforces it, and only while drawing the figure — so
+  the claim is gated at figure time and untested at suite time.
+- **the causal claim.** `station_fence` asserted the climb exists and only the occlusion rows cause
+  it. `loiter`'s analogue is that the run WAITS, verified by the schedule graft — fly the
+  constrained path on the baseline's schedule and the sight margin goes to −2.109. That graft lives
+  in the scenario docstring and in `make_paper_figure`, and in no test.
+
+Both are the demo claim every artifact rendering idea 1 rests on:
+[`idea/spacetime.md`](idea/spacetime.md) §Demo scenario says in as many words that if the baseline
+also keeps line of sight, the constraint was slack and the figure proves nothing. Nothing currently
+checks that.
+
+*Closes when:* `tests/integration/test_loiter_scenario.py` exists carrying the pair structure —
+two runs differing only in the occlusion rows, every assertion checked against both, plus the
+schedule graft. `bezier-trajectory-merge-f7` has offered to write it against the merged result.
 
 ### `repo.red-test` — one test is red by choice, and the choice is yours
 `tests/integration/test_figure_grade_gate.py::test_a_clearing_run_can_still_be_standing_on_slack`

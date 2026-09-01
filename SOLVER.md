@@ -103,7 +103,7 @@ and `tests/integration/test_scvx_invariants.py` are where the evidence lives.
 - **The keep-out wall is the SUPPORT of the clipped KOZ volume, not a hull projection.** Since `0a8bc9e`+ the plane is built against `K_m ∩ B(c, r_clip)` itself: normal from the component's own nearest centreline point, offset a rigorous De Casteljau ceiling on that component's support. **The retired route — select a parameter interval, hull the subdivided centreline, project the centroid, push out by `r_m` — is an OUTER approximation**, measured 1.13–2.23 past the clip radius on all six `curve` pairs, and it can never yield more than one wall. Do not reintroduce it. `r_clip = clamp(d, r_m, r_clip_max)`; the floor binds exactly when the centroid is inside the keep-out zone.
 - **`wall` and `diverse` are FEASIBLE.** Corrected 2026-08-19. Both clear and certify once the elastic penalty weight exceeds the scenario's exact-penalty threshold; the weight was pinned at 100 inside the Rust binding and unreachable from Python. Below threshold, a penetrating curve is genuinely the cheaper answer — the solver was right about the wrong problem.
 - **The certificate is evaluated at the RETURNED iterate.** Fixed 2026-08-19; it used to report the loop's final *reference* point, which is a different trajectory whenever the best-iterate fallback fires.
-- **`obstacle_pos0` / `obstacle_vel` are not parameters of anything.** `0918df5` moved the Rust API to lifted control points and did not update the tests. 75 of 338 tests were red at that commit and stayed red; 13 of them were `tests/unit/test_spacetime_koz_geometry.py`, the Rust builder's only coverage — so **the Rust builder had no live coverage at all** between `0918df5` and 2026-08-26. Repaired for that file; **52 are still red — re-run 2026-08-31 at `e9d953f`: 52 failed / 298 passed / 1 skipped, the identical count first measured at `46a15f7` on 2026-08-30, so nothing has regressed and nothing has been repaired. The failures are API drift, not wrong math: `normalize_obstacle` raises `ValueError: a legacy obstacle with an unbounded window needs the scenario duration T`. The consequence is that `compute_los_margin` — the independent pure-Python line-of-sight check behind the occlusion claim — has NO live coverage (`test_los_margin.py` 5, `test_clearance_sampling.py` 4), and neither does the Python-vs-Rust objective oracle (`test_objective_matches_rust.py` 15)**, the same drift in `test_objective_matches_rust.py`, `test_speed_cap_and_time_penalty.py`, `test_station_fence_scenario.py` and others. `test_occlusion_geometry.py` is no longer among them because `46a15f7` deleted it — every one of its assertions was about the retired builder's objects. Convert `pos0`/`vel` obstacles with `spacetime_bezier.geometry.obstacle_array_bundle`; a legacy obstacle with no window needs one, because the active window is now intrinsic to the control points.
+- **`obstacle_pos0` / `obstacle_vel` are not parameters of anything — and the drift they caused is CLOSED.** `0918df5` moved the Rust API to lifted control points and did not update the tests. 75 of 338 were red at that commit; 52 were still red as late as `e9d953f` on 2026-08-31, and `test_los_margin.py` and `test_clearance_sampling.py` were among them — the independent line-of-sight check behind the occlusion claim, and the computation behind every clearance number in §Measurements, neither of which had executed a single assertion since `0918df5` because they failed at the CALL in 0.09 s. Repaired by `d3a1426` + `8c948a7`, merged from `paper/journal-1` on 2026-09-01. **Suite is now 1 failed / 348 passed / 1 skipped, and the one red is the deliberate one.** Convert `pos0`/`vel` obstacles with `spacetime_bezier.geometry.obstacle_array_bundle`; a legacy obstacle with no window needs one, because the active window is now intrinsic to the control points.
 - **The dead Python triple is gone** — `327a28e` deleted `spacetime_bezier/constraints.py`, `debug_stepper.py`, `tests/unit/test_spacetime_constraints.py` and `BENCHMARKS.md` on 2026-08-20. The lesson they carried is worth keeping: those KOZ tests could not fail on G1, because every one used zero velocity and one asserted the time column was zero, enshrining the bug. **The Rust builder's coverage is `tests/unit/test_spacetime_koz_geometry.py`** (and `tests/unit/test_center_surface_geometry.py` since `46a15f7`); nothing else covers it.
 - **The keep-out zone and the shadow are ONE set at two stretch factors.** There is no occlusion
   builder and there are not two keep-out zones: the centreline generalises to a **center surface**,
@@ -201,7 +201,7 @@ registered rather than the first rung that certifies.
 Last full pass **2026-08-26, after the keep-out wall moved onto the clipped KOZ volume** — one
 run of every registered configuration at defaults: speed cap off, arrival time pinned,
 elastic-weight ladder on. **28 runs**, not the 22 this section used to claim — `original` 5,
-`curve` 4, `diverse` 5, `wall` 6, `fence3d` 4, `door3d` 2, `station_fence` 2. The old count
+`curve` 4, `diverse` 5, `wall` 6, `fence3d` 4, `door3d` 2, `loiter` 2. The old count
 predated three of those scenarios and was never corrected. A run that enables `v_max` /
 `time_weight` / `free_arrival_time` is a different problem and must be re-measured.
 **FIGURE-GRADE** is the gate, checked per run: converged AND certificate ≤ 1e-6 at the returned
@@ -216,7 +216,7 @@ occlusion certificate where a station exists.
 | `wall` | N10_seg16 | **+0.2058** | 9 | 3000 | **3 of 6.** N8_seg16 +0.2017 @3000, N10_seg24 +0.1484 @800. **N8_seg2/3/4 penetrate** — that is the 2026-08-24 densification (spacing 0.8 → 0.5, 13 → 21 circles), not this change; see §Known Issues below |
 | `fence3d` | N8_seg2 | **+0.1623** | 9 | 100 | **yes — all 4 configs**, first ladder rung. Measured under the name `wall3d`; the rename changed no parameter |
 | `door3d` | N8_seg4 | +0.9827 | 9 | 100 | **yes — both configs**, first ladder rung. Clearance is not the point: the evidence is that the curve **waits** |
-| `station_fence` | N8_seg8 | **+1.0770** | 17 | 10000 | **1 of 2 — re-measured 2026-08-31 under the center-surface builder, and the two configs traded places.** Clearance is slack by construction (occlusion subsumes keep-out); the binding number is the occlusion certificate **0.000**, with slack 1.4e-12. **N8_seg16 now fails**: 37 iterations, ladder stuck at 100, trust collapse without certifying, occlusion certificate **1.067e-02** and slack 1.06e-02 — it holds the larger clearance (+1.1429) while having lost the link. Under the retired builder this was reversed: N8_seg16 certified at 1e5 in 56 iterations (+1.5454) and N8_seg8 did not converge. **`best` is picked by clearance, not by figure-grade, so this scenario's `best` key still names the failing config** |
+| ~~`station_fence`~~ | — | — | — | — | **Removed 2026-09-01** (merged `8092a08`). It was the occlusion demo before `loiter`, every number it carried was measured under the builder `46a15f7` retired, and its test file asserted that retired design. `loiter` is the occlusion scenario now. |
 | `loiter` | N8_seg16 | **+36.8417** | 3 | 100 | **yes — both configs**, first ladder rung. **Measured 2026-08-30, not part of the pass above.** At defaults the arrival is pinned, so the scenario's own point does not show here; the demo is the priced run in the block below, and so is the finding |
 
 ### `loiter`, measured 2026-08-30 — the pass that found the gate blind to an unsound clip
@@ -314,21 +314,11 @@ is not, until a run sets the speed cap and time penalty.
 Two things were imported from `paper/journal-1` (`bb8b50b`, `43224b4`) and re-measured here rather
 than quoted.
 
-**`station_fence` is already covered — the new condition changes nothing for it.** All four
-configurations return `koz_unsound_clips == 0` at both clip settings, so the floor is not what
-decides this scene:
-
-| Run | Floor | Unsound | Clearance | `figure_grade` |
-|---|---|---|---|---|
-| N8_seg8 | off | 0 | +1.0770 | yes |
-| N8_seg8 | on | 0 | +0.8771 | yes |
-| N8_seg16 | off | 0 | +1.1429 | no — occlusion certificate 1.067e-02, slack 1.057e-02 |
-| N8_seg16 | on | 0 | +1.0338 | no — occlusion certificate 5.037e-02, slack 2.820e-02 |
-
-That is why the two `station_fence` controls in `test_frontend.py` and `test_occlusion_plane_drop.py`
-pin `sound_clip=False` where the upstream commit passed `True`: upstream's scene was `loiter`, which
-*does* return uncovered walls at the default clip. A control has to fail for the condition it is
-testing, and here the floor would only cost the scene 0.20 of clearance.
+**The `station_fence` measurements that were here are gone with the scenario.** They recorded that
+all four of its configurations returned `koz_unsound_clips == 0` at both clip settings, which is
+why its two controls pinned `sound_clip=False`. `8092a08` removed the scenario on 2026-09-01 and
+those controls now run against `loiter`, which *does* return uncovered walls at the default clip,
+so upstream's `sound_clip=True` is the correct pin there and is what the merge took.
 
 **`original` priced, trust-radius sweep** — `v_max` 5, `time_weight` 10, free arrival, N8_seg4:
 
@@ -355,11 +345,13 @@ No single parameter reproduces it. What survives is only the arithmetic — the 
 radius plus one trust step, so at trust 8.0 the floor is about 14 on a 10-unit scene and the clip
 has stopped localizing — and it does **not** follow that this costs convergence.
 
-**Not re-measured here:** the 28-configuration / 56-run pass that came with those commits
-(default clip leaves 26 of 28 carrying uncovered walls, 1 to 197 of them; the floor zeroes every
-one; figure-grade 2 of 28 → 23 of 28). That pass was taken on `paper/journal-1`, whose registry has
-had `station_fence` removed, so it is evidence for the change but not a description of this
-branch's registry. Its wording says "pairs"; the count is **per wall**.
+**Not re-measured here, but it now describes this registry:** the 28-configuration / 56-run pass
+that came with those commits — default clip leaves 26 of 28 carrying uncovered walls, 1 to 197 of
+them; the floor zeroes every one; figure-grade goes 2 of 28 → 23 of 28. When it was imported this
+branch still had `station_fence` and that pass did not, so it was cited as evidence only. Since the
+2026-09-01 merge the registries are identical — `original` 5, `curve` 4, `loiter` 2, `diverse` 5,
+`wall` 6, `fence3d` 4, `door3d` 2 = 28 — so it is now a description of this branch, though still
+one taken on another build. Re-measure before quoting it anywhere.
 
 ---
 
