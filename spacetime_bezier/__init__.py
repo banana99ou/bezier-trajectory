@@ -28,7 +28,6 @@ from .scenarios import (
     SCENARIO_MAP,
     scenario_diverse,
     scenario_original,
-    scenario_station_fence,
     scenario_wall,
     scenario_fence3d,
 )
@@ -52,7 +51,6 @@ __all__ = [
     "save_outputs",
     "scenario_diverse",
     "scenario_original",
-    "scenario_station_fence",
     "scenario_wall",
     "scenario_fence3d",
 ]

@@ -25,8 +25,10 @@ def _rust_cost(P, time_weight=0.0):
     spatial_dim = P.shape[1] - 1
     _, info = bezier_opt.optimize_spacetime_bezier(
         p_init=P,
-        obstacle_pos0=np.zeros((0, spatial_dim)),
-        obstacle_vel=np.zeros((0, spatial_dim)),
+        # No obstacles: the empty bundle shape `obstacle_array_bundle` returns,
+        # (n_obs, n_ctrl, spatial_dim + 1). The objective is what is under test,
+        # so the keep-out rows must contribute nothing.
+        obstacle_ctrl=np.zeros((0, 2, spatial_dim + 1)),
         obstacle_r=np.zeros((0,)),
         n_seg=4,
         max_iter=0,

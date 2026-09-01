@@ -137,8 +137,20 @@ def test_an_arrival_sitting_on_the_time_upper_bound_is_flagged():
     than by the scenario.
 
     FAILS IF `arrival_on_time_ub` stops tracking the returned arrival: raising
-    the scale to 3.0 moves the answer to 19.78 and the flag must go quiet, which
-    a flag keyed on `free_arrival_time` alone could not do.
+    the scale to 3.0 moves the answer off the bound and the flag must go quiet,
+    which a flag keyed on `free_arrival_time` alone could not do.
+
+    **The released arrival is checked by an impossibility, not by a threshold.**
+    It used to be asserted as `> 16.0`, chosen against a measured 19.78; the
+    interior optimum is 15.5637 today and the assertion started failing without
+    anything about the flag having changed. A number that moves when the keep-out
+    construction changes is not what this test is about. What cannot be true if
+    the bound is genuinely inactive is that moving the bound FURTHER AWAY changes
+    the answer -- so the run is repeated at scale 6.0 and the two must agree.
+    Measured 2026-08-31 across three time weights: scale 3.0 and 6.0 return
+    15.6008 / 15.5637 / 15.4145 at weights 0.25 / 1.0 / 4.0, identical between
+    the two scales to 1e-4, and monotone in the weight -- so the arrival is set
+    by the time penalty, which is the thing that is supposed to set it.
     """
     _, clamped = _solve(
         v_max=0.75,
@@ -161,8 +173,25 @@ def test_an_arrival_sitting_on_the_time_upper_bound_is_flagged():
         time_ub_scale=3.0,
     )
     assert float(released["time_ub_used"]) == pytest.approx(30.0, abs=1e-12)
-    assert float(released["arrival_time"]) > 15.0 + 1.0
     assert float(released["arrival_on_time_ub"]) == 0.0
+    arrival = float(released["arrival_time"])
+    # It left the bound it used to sit on, and it is nowhere near the new one --
+    # so "off the bound" is not a rounding artifact in either direction.
+    assert arrival > 15.0
+    assert arrival < 30.0 - 1.0
+
+    # The impossibility: an inactive bound cannot choose the answer. Doubling it
+    # again must leave the arrival where it was.
+    _, further = _solve(
+        v_max=0.75,
+        free_arrival_time=True,
+        time_weight=1.0,
+        scp_trust_radius=8.0,
+        time_ub_scale=6.0,
+    )
+    assert float(further["time_ub_used"]) == pytest.approx(60.0, abs=1e-12)
+    assert float(further["arrival_on_time_ub"]) == 0.0
+    assert float(further["arrival_time"]) == pytest.approx(arrival, abs=1e-4)
 
 
 def test_a_pinned_arrival_never_flags_the_upper_bound():

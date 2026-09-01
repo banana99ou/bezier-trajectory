@@ -261,90 +261,6 @@ def scenario_door3d() -> dict:
     }
 
 
-@_canonical
-def scenario_station_fence() -> dict:
-    """Item B12 -- keep line of sight to a fixed station past a moving fence.
-
-    Three spatial coordinates plus time, and the third spatial coordinate is
-    LOAD-BEARING rather than decorative: the vehicle climbs, and the only reason
-    it climbs is the occlusion constraint.
-
-    Geometry, and why each piece of it is where it is.
-
-    * The **station** sits off to the -y side at low altitude, roughly abeam the
-      mid-path. The vehicle flies +x at y = 5, so the fence sits between them.
-    * The **fence** is wide in x and low in z, and it never comes within a body
-      radius of the vehicle's corridor -- the gap in y is at least 1.5 against a
-      radius of 0.8. It is therefore not an obstacle the vehicle has to dodge:
-      the keep-out rows are present and are not expected to bind. That is the
-      point, not an oversight -- staying visible to the station already implies
-      staying out of the body, so occlusion subsumes collision for this body and
-      the keep-out machinery is demonstrated by the other scenarios.
-    * The fence's **x extent is finite** (3.0 to 7.0). At the start and end of
-      the horizon the vehicle is far enough along x that the sight line crosses
-      the fence's plane beyond its ends, so the pinned endpoints are visible and
-      the problem is feasible. In the middle the sight line crosses the fence
-      head on, and the only way through is over the top.
-    * The fence's path is **non-straight**: it descends in y and drifts in +x,
-      then reverses on both. That is expressed as a CHAIN of two straight pieces
-      on adjacent time windows whose caps overlap at the joint, which is the
-      construction idea/spacetime.md sec. "Occluder geometry" requires -- a capsule around
-      a curved centreline is not convex and would break the certificate, while
-      each straight piece is convex on its own.
-
-    The baseline that must be able to fail: with the occlusion rows removed the
-    fence obstructs nothing, so the solver returns an essentially straight
-    trajectory at the flight altitude and loses line of sight across most of the
-    horizon. Two runs, identical but for one constraint block. Both assertions
-    live in `tests/integration/test_station_fence_scenario.py`, not in this
-    docstring.
-    """
-    body_z = 0.1
-    radius = 0.8
-    # Piece 1, t in [0, 5.2]: centre path from (x, 3.6) at t=0 to (x+0.5, 2.0)
-    # at t=5. `pos0` is the position at t=0, which is what the solver extrapolates
-    # from, so the piece endpoints are written at t=0 and the window does the
-    # clipping.
-    piece_a = make_wall(
-        p1=[3.0, 3.6, body_z],
-        p2=[7.0, 3.6, body_z],
-        thickness=radius,
-        spacing=0.8,
-        color="#e67e22",
-        name_prefix="A",
-        vel=[0.1, -0.32, 0.0],
-        t_start=0.0,
-        t_end=5.2,
-    )
-    # Piece 2, t in [4.8, 10]: the reversal. Its position at t=5 matches piece
-    # one's, so `pos0` is that point walked back to t=0 along the new velocity.
-    # The windows OVERLAP on [4.8, 5.2] so the union covers the joint with no
-    # gap for the curve to slip through.
-    piece_b = make_wall(
-        p1=[4.0, 0.4, body_z],
-        p2=[8.0, 0.4, body_z],
-        thickness=radius,
-        spacing=0.8,
-        color="#d35400",
-        name_prefix="B",
-        vel=[-0.1, 0.32, 0.0],
-        t_start=4.8,
-        t_end=10.0,
-    )
-    return {
-        "name": "station_fence",
-        "title": "Line of Sight Past a Moving Fence",
-        "init_curve": {"mode": "straight"},
-        "obstacles": piece_a + piece_b,
-        "start": [0.5, 5.0, 0.5, 0.0],
-        "end": [9.5, 5.0, 0.5, 10.0],
-        # The only scenario carrying this key. Its absence everywhere else is
-        # what keeps every other scenario's problem bit-identical to pre-B12.
-        "stations": [[5.0, -2.0, 0.3]],
-        "T": 10.0,
-    }
-
-
 # (degree, segment count) pairs tried per scenario.
 #
 # Low segment counts were added 2026-08-18. The pre-2026-08-17 geometry used one
@@ -374,11 +290,6 @@ SCENARIO_ELASTIC_WEIGHT = {
     # (measured +0.0751, certificate 0.000, 19 iterations at N10_seg16). Lower
     # weights leave it penetrating by ~0.09 regardless of segment count.
     "wall": 100000.0,
-    # `station_fence` needs the top rung too, and for the same reason: below it
-    # the exact penalty is cheaper to pay than to satisfy, and the run returns a
-    # trajectory standing on occlusion slack. Measured at N8_seg8 -- occlusion
-    # certificate 0.61 at 100, 0.29 at 800, 0.50 at 3000, and 0.0 at 1e5.
-    "station_fence": 100000.0,
     # MEASURED 2026-08-30 at N8_seg8, priced run (free arrival, time_weight 10,
     # v_max 5), center-surface builder, `sound_clip=True` -- the configuration
     # the paper figure is drawn from. Every rung certifies and returns the SAME
@@ -519,7 +430,7 @@ def scenario_loiter() -> dict:
     * **One full lap over the horizon** (T = 80), so the shadow visits the
       corridor once and "wait for it to pass" is meaningful. A cubic cannot
       close a circle, so the lap is a CHAIN of four quarter-arc pieces on
-      contiguous time windows -- the station_fence pattern with curved pieces;
+      contiguous time windows, each piece a cubic arc;
       the quarter-circle constant k = 0.5522847498 overshoots the radius by
       0.03 percent, far below the body radius 6.
 
@@ -543,39 +454,11 @@ def scenario_loiter() -> dict:
     key: tick ``free_arrival_time`` with a ``time_weight > 0`` and a ``v_max``,
     or the solver refuses by design (a freed arrival that nothing prices is an
     artifact generator -- see ``optimize.py``). The paper figure runs it with
-    ``sound_clip=True`` -- the reach floor on the clip radius (idea/spacetime.md
-    statement 8), so the certificate speaks for the whole keep-out zone.
-    Measured to matter here: without it the N8_seg8 returned iterate has 24
-    (segment, obstacle) pairs whose wall covers only a clipped piece, and the
-    figure tool refuses to draw it.
-
-    **The paper run is N8, 48 segments, time_weight 40, trust radius 1.0 m**
-    (``tools/make_paper_figure.py --seg 48 --time-weight 40 --trust-radius 1.0
-    --sound-clip --free-arrival --v-max 5``): arrival 46.57 s, 16 iterations,
-    min sight margin +3.34 m, graft -1.69, max lateral deviation 0.55 m. It
-    replaced N8_seg8 / time_weight 10 / trust 5.0 (arrival 55.75 s) after a
-    76-run sweep on 2026-08-30 (scratch, not tracked) measured against the
-    true-shadow reachability bound on the corridor axis, 43.0 s, which the
-    figure tool now computes and records as ``axis_arrival_bound``:
-
-    * about 9 s of the old run's 12.75 s gap was the clip floor E + delta
-      through fat segments (E) and the trust reach (delta, and trust_max is
-      4*delta): seg 8 -> 16 -> 24 -> 48 at delta 5 gave 55.8 -> 51.4 -> 49.9
-      -> 49.0 s; delta 5 -> 1 at seg 24 gave 49.9 -> 48.0 s;
-    * about 3.3 s is the time thickening of the lifted zone at
-      ``SPACETIME_AXIS_SCALE`` = 1: a 4-D ball's constant-time slice is wider
-      than the body when the body moves, and the reachability bound against
-      THAT zone is 46.3 s. Every run with lateral deviation under 0.6 m lands
-      at 46.4-46.7 s -- the walls are within 0.4 s of tight against the zone
-      they model. A frozen modelling choice; it belongs in the limitations;
-    * past that, only sidestepping inside the corridor band buys time
-      (time_weight 90 at seg 96: 44.1 s with 2.0 m of lateral deviation and
-      the graft within 0.3 m of flipping), so the run above is the frontier
-      that keeps "timing is the only escape" unambiguous.
-
-    ``trust_radius`` below stays 5.0 for the DEFAULT runs the README table
-    reports; the paper run overrides it on the command line and the sidecar
-    records the value used.
+    ``time_weight=10.0``, ``v_max=5.0`` and ``sound_clip=True`` -- the reach
+    floor on the clip radius (PAPER_1 statement 8), so the certificate speaks
+    for the whole keep-out zone. Measured to matter here: without it the
+    returned iterate has 24 (segment, obstacle) pairs whose wall covers only a
+    clipped piece, and the figure tool refuses to draw it.
     """
     orbit_r = 30.0   # m, radius of the loiter circle
     body_z = 50.0    # m, altitude of the loiter circle
@@ -645,9 +528,13 @@ SCENARIO_MAP = {
     # only one that distinguishes the hull-projection plane from the tangent
     # plane. Everything else would pass with either.
     "curve":    (scenario_curve,    [(8, 4), (8, 8), (8, 16), (10, 8)]),
-    # The only scenario whose obstacle RETURNS, so its tube can be cut twice by
-    # one clipping ball. Four coordinates plus a station, like station_fence.
-    # Unmeasured: added to be looked at, not to certify.
+    # THE paper's demo scenario, and the only one with a station since
+    # `station_fence` was removed. Its obstacle RETURNS, so its tube can be cut
+    # twice by one clipping ball. Four coordinates: the viewer filters it out
+    # rather than draw z as if it were time. Short list on purpose -- the
+    # occlusion rows re-aim every iteration, so a run costs an order of
+    # magnitude more than a keep-out-only one. Measured 2026-08-30; see
+    # README sec. Measurements.
     "loiter":   (scenario_loiter,   [(8, 8), (8, 16)]),
     "diverse":  (scenario_diverse,  [(8, 4), (8, 8), (8, 16), (10, 4), (10, 16)]),
     "wall":     (scenario_wall,     [(8, 2), (8, 3), (8, 4), (8, 16), (10, 16), (10, 24)]),
@@ -660,10 +547,4 @@ SCENARIO_MAP = {
     # The waiting demo: static tall wall, opens at t=6.5. Configs measured
     # 2026-08-24; see README sec. Measurements.
     "door3d":   (scenario_door3d,   [(8, 4), (8, 8)]),
-    # Also four coordinates, so the viewer filters it out for the same reason.
-    # Short list on purpose: the occlusion rows re-aim every iteration, so the
-    # run is an order of magnitude longer than a keep-out-only one, and only
-    # these two configurations were measured to converge with the occlusion
-    # certificate at zero.
-    "station_fence": (scenario_station_fence, [(8, 8), (8, 16)]),
 }
