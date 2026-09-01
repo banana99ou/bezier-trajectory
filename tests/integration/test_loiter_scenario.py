@@ -56,6 +56,10 @@ from spacetime_bezier.geometry import (  # noqa: E402
     los_margin_at,
 )
 from spacetime_bezier.optimize import figure_grade_failures  # noqa: E402
+from spacetime_bezier.geometry import obstacle_array_bundle  # noqa: E402
+from orbital_docking.de_casteljau import segment_matrices_equal_params  # noqa: E402
+
+import bezier_opt  # noqa: E402
 
 
 def _make_paper_figure():
@@ -109,6 +113,40 @@ def runs():
     return out
 
 
+def _shadow_violation_at(runs, label: str) -> tuple[float, int]:
+    """Score one run's trajectory against the SHADOW ROWS, recomputed from scratch.
+
+    Returns ``(total violation, number of shadow rows)``.
+
+    This is the only way to grade the two halves on ONE scale. The baseline was
+    solved with ``stations=None``, so it never saw a shadow row and its own
+    reported certificate is 0.0 by construction; asking what its trajectory
+    WOULD score against the rows it never saw is what turns "the halves differ by
+    the occlusion rows" from a claim about the call site into a measurement on
+    the returned curves.
+    """
+    sc = runs["scenario"]
+    P = runs[label]["P"]
+    ctrl, radii = obstacle_array_bundle(sc["obstacles"], spatial_dim=runs["dim"] - 1)
+    res = bezier_opt.spacetime_koz_rows_exact(
+        p=P, obstacle_ctrl=ctrl, obstacle_r=radii, n_seg=N_SEG,
+        stations=np.asarray(sc["stations"], dtype=float),
+    )
+    normals = np.asarray(res[0], dtype=float).reshape(-1, P.shape[1])
+    lbs = np.asarray(res[1], dtype=float)
+    seg = np.asarray(res[2], dtype=int)
+    cp = np.asarray(res[3], dtype=int)
+    station_idx = np.asarray(res[6], dtype=int)
+    a_list = segment_matrices_equal_params(P.shape[0] - 1, N_SEG)
+    shadow = station_idx >= 0
+    total = 0.0
+    for i in np.flatnonzero(shadow):
+        Q = np.asarray(a_list[int(seg[i])], dtype=float) @ P
+        margin = float(normals[i] @ Q[int(cp[i])]) - float(lbs[i])
+        total += max(0.0, -margin)
+    return total, int(shadow.sum())
+
+
 def _graft(runs, path_from: str, schedule_from: str) -> float:
     """Minimum line-of-sight margin of one run's PATH on the other's SCHEDULE.
 
@@ -155,6 +193,31 @@ def test_the_pair_differs_by_the_occlusion_rows_and_nothing_else(runs):
     assert runs["baseline"]["margin"].min() < 0.0, (
         "the baseline's certificate reads 0.0 AND its true margin is non-negative "
         "-- then the false zero this file warns about is not demonstrable here"
+    )
+
+    # THE HALVES ACTUALLY DIFFER, graded on one scale. Added 2026-08-31 after a
+    # peer falsified the earlier version of this test by making BOTH halves
+    # baselines: every assertion above is satisfied by two baselines, because a
+    # baseline trivially has no shadow rows and trivially loses the link. Nothing
+    # looked at the constrained half at all, so the name claimed more than the
+    # body checked. Scoring both returned curves against the SAME recomputed
+    # shadow rows is what closes it, and it closes both doctorings at once: two
+    # baselines fail on the constrained line, two constrained runs fail on the
+    # baseline line.
+    base_violation, base_rows = _shadow_violation_at(runs, "baseline")
+    con_violation, con_rows = _shadow_violation_at(runs, "constrained")
+    assert base_rows > 0 and con_rows > 0, (
+        "the scene produced no shadow rows at all; there is no constraint here "
+        "for the two halves to differ by"
+    )
+    assert con_violation == pytest.approx(0.0, abs=1e-6), (
+        f"the CONSTRAINED half violates the shadow rows by {con_violation:.4f} -- "
+        "it was not solved with them, so this pair has two baselines in it"
+    )
+    assert base_violation > 1.0, (
+        f"the BASELINE half satisfies the shadow rows (violation {base_violation:.4e}) "
+        "-- it was solved with them, so this pair has two constrained runs in it, "
+        "and every comparison in this file is between a run and itself"
     )
 
 
