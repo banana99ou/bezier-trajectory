@@ -222,15 +222,29 @@ certificate that covers only the clipped piece wherever the segment came close t
 flag survives so this table stays reproducible; `sound_clip=False` is a measurement setting, not a
 way to run the solver.
 
-**One interaction, measured, that the flip exposed.** The reach is the segment's own radius plus one
-trust step, so the floor GROWS WITH THE TRUST RADIUS. On `original` (a 10-unit scene) with a speed
-cap and a priced free arrival: trust 2.0 takes 21 iterations without the floor and 22 with it, trust
-4.0 takes 13 either way, and **trust 8.0 goes from converging in 13 iterations to hitting the
-300-iteration cap** — its returned iterate is still certified at 2.36e-07, so that is a convergence
-declaration rather than a correctness failure, but the clip has stopped localizing anything: the
-floor is about 14 on a scene 10 across. A trust radius large relative to the scene and a sound clip
-are in tension by construction, which is exactly what the reachability lemma says and is worth
-stating in the paper rather than discovering twice.
+**One hard corner, and it is a corner rather than a tension — corrected 2026-08-31 after a peer
+failed to reproduce it.** The reach is the segment's own radius plus one trust step, so the floor
+does grow with the trust radius: on a 10-unit scene at trust 8.0 it is about 14, and the clip is no
+longer localizing anything. That is arithmetic. What does **not** follow, and what an earlier
+version of this paragraph claimed, is that the two are therefore "in tension by construction."
+
+The configuration where the floor costs convergence, stated in full because a number without its
+configuration is not evidence — `original`, N8_seg4, `v_max=1.0`, `time_weight=1.0`,
+`elastic_weight=1e5`, `time_ub_scale=6.0`, free arrival, `max_iter=300`:
+
+| trust | floor off | floor on |
+|---|---|---|
+| 2.0 | 21 iters, stationary | 22 iters, stationary |
+| 4.0 | 13 iters, trust collapse | 13 iters, trust collapse |
+| 8.0 | 13 iters, trust collapse | **300-iteration cap** (returned iterate still certified, 2.36e-07) |
+
+**No single parameter reproduces it.** Starting from a configuration that converges in 9 iterations
+at trust 8.0 with the floor on (`v_max=5.0`, `time_weight=10.0`, `elastic_weight=100`,
+`time_ub_scale=1.5` — the peer's) and moving one knob at a time to the values above: `v_max` 8
+iterations, `time_weight` 8, `elastic_weight` 14, `time_ub_scale` 9. Every one converges. Only all
+four together hit the cap. So this is a specific four-way corner, not a general property of a large
+trust radius, and the paper should not claim otherwise. Both configurations reproduce exactly on
+one build, so it is not a build difference either.
 
 **What the clipped-volume construction changed, measured against the same configurations built
 with the retired hull-of-band plane.** Where the obstacle is straight its tube is convex and the
