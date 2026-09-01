@@ -339,10 +339,21 @@ testing, and here the floor would only cost the scene 0.20 of clearance.
 | 8.0 | 12 unsound, 9 iters, **not figure-grade** | 0 unsound, 9 iters, figure-grade |
 
 The gate now refuses every default-clip run in that sweep and accepts every floored one, which is
-the imported change doing its job. **The floor costs no iterations here.** `paper/journal-1`
-reported the floor being in tension with a large trust radius (21→22, 13→13, and 13→the
-300-iteration cap at trust 8.0); that did not reproduce on this build at this configuration, so it
-is not recorded as a fact — if it is real it needs a configuration this sweep did not cover.
+the imported change doing its job. **The floor costs no iterations at this configuration.**
+
+**There is one configuration where it costs everything, and it is a corner, not a trend.** Through
+`_solve` in `test_speed_cap_diagnostics.py` — `original` N8_seg4, `v_max` 1.0, `time_weight` 1.0,
+`elastic_weight` 1e5, `time_ub_scale` 6.0, free arrival, `max_iter` 300 — the floor takes trust 8.0
+from 13 iterations to the 300 cap (trust 2.0 is 21 → 22, trust 4.0 is 13 → 13). Reproduced here
+exactly.
+
+It is tempting to read that as "a large trust radius and a sound clip are in tension," and that
+reading is wrong. Starting from the configuration above the table and moving **one knob at a time**
+toward it, at trust 8.0 with the floor on: baseline 9 iterations, `v_max` 1.0 → 8, `time_weight`
+1.0 → 8, `elastic_weight` 1e5 → 14, `time_ub_scale` 6.0 → 9, **all four together → the 300 cap.**
+No single parameter reproduces it. What survives is only the arithmetic — the reach is the segment
+radius plus one trust step, so at trust 8.0 the floor is about 14 on a 10-unit scene and the clip
+has stopped localizing — and it does **not** follow that this costs convergence.
 
 **Not re-measured here:** the 28-configuration / 56-run pass that came with those commits
 (default clip leaves 26 of 28 carrying uncovered walls, 1 to 197 of them; the floor zeroes every
