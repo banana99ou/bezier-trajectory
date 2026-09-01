@@ -49,6 +49,17 @@ coverage, and neither does the Python-vs-Rust objective oracle.
 `spacetime_bezier.geometry.obstacle_array_bundle`, and the suite is green or its remaining failures
 are each explained. → [`SOLVER.md`](SOLVER.md) §Established facts
 
+**The fix exists on another branch and has not been imported.** `paper/journal-1` carries
+`d3a1426` (tests: the dark files run again — 46 red to 3) and `8c948a7` (the last two reds are
+explained). They were reported to fix `test_los_margin.py` and `test_clearance_sampling.py` —
+the latter being how `min_clearance` is computed, so the source of every clearance number in
+§Measurements. Those files fail at the CALL in 0.09 s (`TypeError: unexpected keyword
+'obstacle_pos0'`), so no assertion in them has run since `0918df5`. Importing is a decision, not a
+formality: `d3a1426` also touches `tests/integration/test_returned_iterate_consistency.py`, where
+it *replaces the scene* because `loiter` cannot carry those two ordering tests, and that file was
+also touched by the `station_fence` removal this branch has not taken. Read that hunk before
+resolving.
+
 ### `repo.red-test` — one test is red by choice, and the choice is yours
 `tests/integration/test_figure_grade_gate.py::test_a_clearing_run_can_still_be_standing_on_slack`
 fails because `wall` was densified 2026-08-24 at your request, which turned its only specimen from

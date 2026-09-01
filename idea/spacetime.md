@@ -965,8 +965,10 @@ It costs conservatism precisely where the constraint is active, because the ball
 than the distance to the obstacle and more of the tube is clipped in. By the step-size argument in
 the prose, that conservatism is paid in iterations, not in correctness. **Which of the two is used
 is an open experimental question, not a settled one** — it is reachable in the code as the
-`sound_clip` flag, and the count of pairs failing the condition is exported per iteration as
-`unsound_clips` so the hole is a number rather than a caveat.
+`sound_clip` flag — **the default since 2026-09-01** — and the count of **walls** failing the
+condition (one per emitted plane, so a two-approach clip counts twice) is exported per iteration as
+`unsound_clips` so the hole is a number rather than a caveat. Since the same date the figure-grade
+gate refuses a run whose count is nonzero, so the hole can no longer be passed over in silence.
 
 ## The subproblem
 

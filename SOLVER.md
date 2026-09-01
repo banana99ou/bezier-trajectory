@@ -125,7 +125,8 @@ and `tests/integration/test_scvx_invariants.py` are where the evidence lives.
     wall against it; and clipping the BODY by proximity, then casting the cone from the shrunken
     body — the shadow depends on the whole occluder, so that destroys containment.
 - **`figure_grade` is converged AND certificate ≤ 1e-6 at the returned iterate AND clearance > 0
-  AND slack ≤ 1e-6.** The slack tolerance sits **inside an eight-order gap between the two
+  AND slack ≤ 1e-6 AND the occlusion certificate where a station exists AND — since `bb8b50b` —
+  `koz_unsound_clips` == 0.** The slack tolerance sits **inside an eight-order gap between the two
   populations** — 117× above the worst good residue, six orders below the smallest bad one — not on
   its edge. Each condition was tested to sink the gate alone. `tools/make_paper_figure.py` refuses
   to draw a run that fails it.
@@ -218,11 +219,13 @@ occlusion certificate where a station exists.
 | `station_fence` | N8_seg8 | **+1.0770** | 17 | 10000 | **1 of 2 — re-measured 2026-08-31 under the center-surface builder, and the two configs traded places.** Clearance is slack by construction (occlusion subsumes keep-out); the binding number is the occlusion certificate **0.000**, with slack 1.4e-12. **N8_seg16 now fails**: 37 iterations, ladder stuck at 100, trust collapse without certifying, occlusion certificate **1.067e-02** and slack 1.06e-02 — it holds the larger clearance (+1.1429) while having lost the link. Under the retired builder this was reversed: N8_seg16 certified at 1e5 in 56 iterations (+1.5454) and N8_seg8 did not converge. **`best` is picked by clearance, not by figure-grade, so this scenario's `best` key still names the failing config** |
 | `loiter` | N8_seg16 | **+36.8417** | 3 | 100 | **yes — both configs**, first ladder rung. **Measured 2026-08-30, not part of the pass above.** At defaults the arrival is pinned, so the scenario's own point does not show here; the demo is the priced run in the block below, and so is the finding |
 
-### `loiter`, measured 2026-08-30 — and the figure-grade gate does not see an unsound clip
+### `loiter`, measured 2026-08-30 — the pass that found the gate blind to an unsound clip
 
 `loiter` was not in the pass above; these six runs are its own, all on one build of the extension
 (checked: same mtime before and after). `sound_clip` floors the clip radius at the reach, `idea/spacetime.md`
-statement 8. `koz_unsound_clips` is statement 7 counted at the returned iterate: **walls** — one count per
+statement 8; **since `43224b4` it is the DEFAULT** (it was off when this pass ran, which is why
+the table has a with/without pair per row). `sound_clip=False` survives so this comparison stays
+reproducible — it is a measurement setting, not a way to run the solver. `koz_unsound_clips` is statement 7 counted at the returned iterate: **walls** — one count per
 emitted plane, per generator, so a two-approach clip counts twice — whose clip ball did not reach
 the segment radius plus the trust-box reach, so the wall was built against a clipped piece **the
 next iterate could leave**.
@@ -249,12 +252,17 @@ the two clearances agree exactly; the second pass exists only because the result
 N8_seg8 defaults, 0 with the floor, 0 at N8_seg16 either way, 24 priced at the default clip, 0
 priced with the floor. Two paths that share only the Rust core had to agree, and do.
 
-**The last two columns together are the finding.** `figure_grade` passes the priced default-clip
-run while 24 of its clipped volumes escape the ball their wall was built against.
-`figure_grade_failures` in `optimize.py` never reads `koz_unsound_clips` — the key is not even
-propagated into the result row — so **on this condition the figure-grade gate cannot fail.** Only
-`tools/make_paper_figure.py` refuses, and only for the figure. A run can be reported figure-grade
-in this table and still rest on a certificate that covers less than the obstacle.
+**The last two columns together were the finding, and it is now closed.** At the time of this pass
+`figure_grade` passed the priced default-clip run while 24 of its clipped volumes escaped the ball
+their wall was built against: `figure_grade_failures` did not read `koz_unsound_clips`, the key was
+not propagated into the result row, and **on that condition the gate could not fail.** Only
+`tools/make_paper_figure.py` refused, and only for the figure.
+
+Closed 2026-09-01 by importing `bb8b50b` and `43224b4` from `paper/journal-1`. The count is now
+propagated into the result row (NaN when the extension does not emit it, so a stale build refuses
+rather than grading as sound), the predicate reads it, and the frontend forwards it. **The
+`figure_grade` column in the table above is therefore the OLD gate's verdict** — the two rows with
+a nonzero count would not pass today.
 
 **The ladder settles at 100 at defaults, not at the registered 1e5.** The registered weight belongs
 to the priced problem; a defaults row quoting it would be quoting a rung this scenario never needs
@@ -298,6 +306,49 @@ best result entirely.
 Timing profiles at these defaults are objective artifacts (the smoothness term is blind to the
 time coordinate; control-point times can sit on the `min_dt` floor). Geometry is evidence; timing
 is not, until a run sets the speed cap and time penalty.
+
+---
+
+### The clip floor, measured 2026-09-01 on this build
+
+Two things were imported from `paper/journal-1` (`bb8b50b`, `43224b4`) and re-measured here rather
+than quoted.
+
+**`station_fence` is already covered — the new condition changes nothing for it.** All four
+configurations return `koz_unsound_clips == 0` at both clip settings, so the floor is not what
+decides this scene:
+
+| Run | Floor | Unsound | Clearance | `figure_grade` |
+|---|---|---|---|---|
+| N8_seg8 | off | 0 | +1.0770 | yes |
+| N8_seg8 | on | 0 | +0.8771 | yes |
+| N8_seg16 | off | 0 | +1.1429 | no — occlusion certificate 1.067e-02, slack 1.057e-02 |
+| N8_seg16 | on | 0 | +1.0338 | no — occlusion certificate 5.037e-02, slack 2.820e-02 |
+
+That is why the two `station_fence` controls in `test_frontend.py` and `test_occlusion_plane_drop.py`
+pin `sound_clip=False` where the upstream commit passed `True`: upstream's scene was `loiter`, which
+*does* return uncovered walls at the default clip. A control has to fail for the condition it is
+testing, and here the floor would only cost the scene 0.20 of clearance.
+
+**`original` priced, trust-radius sweep** — `v_max` 5, `time_weight` 10, free arrival, N8_seg4:
+
+| Trust radius | Floor off | Floor on |
+|---|---|---|
+| 2.0 | 9 unsound, 11 iters, **not figure-grade** | 0 unsound, 11 iters, figure-grade |
+| 4.0 | 12 unsound, 9 iters, **not figure-grade** | 0 unsound, 9 iters, figure-grade |
+| 8.0 | 12 unsound, 9 iters, **not figure-grade** | 0 unsound, 9 iters, figure-grade |
+
+The gate now refuses every default-clip run in that sweep and accepts every floored one, which is
+the imported change doing its job. **The floor costs no iterations here.** `paper/journal-1`
+reported the floor being in tension with a large trust radius (21→22, 13→13, and 13→the
+300-iteration cap at trust 8.0); that did not reproduce on this build at this configuration, so it
+is not recorded as a fact — if it is real it needs a configuration this sweep did not cover.
+
+**Not re-measured here:** the 28-configuration / 56-run pass that came with those commits
+(default clip leaves 26 of 28 carrying uncovered walls, 1 to 197 of them; the floor zeroes every
+one; figure-grade 2 of 28 → 23 of 28). That pass was taken on `paper/journal-1`, whose registry has
+had `station_fence` removed, so it is evidence for the change but not a description of this
+branch's registry. Its wording says "pairs"; the count is **per wall**.
 
 ---
 

@@ -198,13 +198,14 @@ def test_station_fence_drops_nothing_and_stays_figure_grade():
     out of range rather than generators whose wall failed -- because the paper's
     occlusion demo would stop being figure-grade.
     """
-    # `sound_clip=True`: figure-grade requires the certificate to cover the whole
-    # keep-out zone since 2026-08-31, and at the default clip this run returns
-    # pairs it does not cover. That is a different condition than the drop
-    # counter under test, and a control that fails for the wrong reason is not a
-    # control.
+    # `sound_clip=False` deliberately: the upstream commit passed the floor here
+    # because its scene was `loiter`, which returns uncovered walls at the
+    # default clip. `station_fence` does not -- measured 2026-09-01,
+    # koz_unsound_clips == 0 at both settings -- so the new gate condition is
+    # not what this control could trip on, and the floor would only move its
+    # clearance.
     out = optimize_scenario(
-        SCENARIO_MAP["station_fence"][0](), [(8, 8)], verbose=False, sound_clip=True
+        SCENARIO_MAP["station_fence"][0](), [(8, 8)], verbose=False, sound_clip=False
     )
     row = out["results"]["N8_seg8"]
     assert row["occlusion_planes_dropped"] == 0.0

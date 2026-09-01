@@ -179,11 +179,12 @@ def station_fence(server):
             "N": 8,
             "n_seg": 8,
             "elastic_weight": scenario_elastic_weight("station_fence"),
-            # Figure-grade requires the certificate to cover the whole keep-out
-            # zone since 2026-08-31, so a control that asserts figure-grade has
-            # to ask for the floor -- a control that fails for the wrong
-            # condition is not a control.
-            "sound_clip": True,
+            # NOT `sound_clip=True`, unlike the other figure-grade controls.
+            # Measured 2026-09-01 on this build: `station_fence` returns
+            # koz_unsound_clips == 0 at BOTH settings, N8_seg8 and N8_seg16, so
+            # the new gate condition cannot be what fails here and the floor
+            # would only cost the scene 0.20 of clearance (1.0770 -> 0.8771).
+            "sound_clip": False,
         },
     )
     assert status == 200, data
