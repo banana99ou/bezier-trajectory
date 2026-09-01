@@ -198,26 +198,75 @@ registered rather than the first rung that certifies.
 
 ## Measurements
 
-Last full pass **2026-08-26, after the keep-out wall moved onto the clipped KOZ volume** — one
-run of every registered configuration at defaults: speed cap off, arrival time pinned,
-elastic-weight ladder on. **28 runs**, not the 22 this section used to claim — `original` 5,
-`curve` 4, `diverse` 5, `wall` 6, `fence3d` 4, `door3d` 2, `loiter` 2. The old count
-predated three of those scenarios and was never corrected. A run that enables `v_max` /
-`time_weight` / `free_arrival_time` is a different problem and must be re-measured.
-**FIGURE-GRADE** is the gate, checked per run: converged AND certificate ≤ 1e-6 at the returned
-iterate AND clearance > 0 against the true obstacle trajectories AND total slack ≤ 1e-6 — plus the
-occlusion certificate where a station exists.
+Last full pass **2026-09-01**, every registered configuration run twice — once with the reach floor
+on, which is the default, and once with `sound_clip=False` as the comparison arm. **28
+configurations, 56 runs:** `original` 5, `curve` 4, `loiter` 2, `diverse` 5, `wall` 6, `fence3d` 4,
+`door3d` 2. Defaults otherwise: speed cap off, arrival pinned, elastic-weight ladder on. A run that
+enables `v_max` / `time_weight` / `free_arrival_time` is a different problem and must be re-measured.
 
-| Key | Best config | Clearance | Iters | Elastic weight | Figure-grade |
-|-----|-------------|-----------|-------|----------------|--------------|
-| `original` | N8_seg4 | **+0.6204** | 9 | 100 | **yes — all 5 configs** |
-| `curve` | N8_seg16 | **+0.1000** | 14 | 300 | **3 of 4.** N8_seg8 +0.0919 @800, N10_seg8 +0.1000 @1e5. **N8_seg4 does not converge** (certificate 0.44) — it did not converge before this change either (certificate 0.35 @1e4), so it is a standing failure, not a regression |
-| `diverse` | N8_seg4 | **+0.1136** | 9 | 800 (3000–10000 at 8–16 seg; N10_seg16 certifies at 3000) | **yes — all 5 configs** |
-| `wall` | N10_seg16 | **+0.2058** | 9 | 3000 | **3 of 6.** N8_seg16 +0.2017 @3000, N10_seg24 +0.1484 @800. **N8_seg2/3/4 penetrate** — that is the 2026-08-24 densification (spacing 0.8 → 0.5, 13 → 21 circles), not this change; see §Known Issues below |
-| `fence3d` | N8_seg2 | **+0.1623** | 9 | 100 | **yes — all 4 configs**, first ladder rung. Measured under the name `wall3d`; the rename changed no parameter |
-| `door3d` | N8_seg4 | +0.9827 | 9 | 100 | **yes — both configs**, first ladder rung. Clearance is not the point: the evidence is that the curve **waits** |
-| ~~`station_fence`~~ | — | — | — | — | **Removed 2026-09-01** (merged `8092a08`). It was the occlusion demo before `loiter`, every number it carried was measured under the builder `46a15f7` retired, and its test file asserted that retired design. `loiter` is the occlusion scenario now. |
-| `loiter` | N8_seg16 | **+36.8417** | 3 | 100 | **yes — both configs**, first ladder rung. **Measured 2026-08-30, not part of the pass above.** At defaults the arrival is pinned, so the scenario's own point does not show here; the demo is the priced run in the block below, and so is the finding |
+**FIGURE-GRADE** is the gate, checked per run: converged AND certificate ≤ 1e-6 at the returned
+iterate AND clearance > 0 against the true obstacle trajectories AND total slack ≤ 1e-6 AND the
+occlusion certificate where a station exists AND `koz_unsound_clips` == 0.
+
+**Provenance.** Taken on `paper/journal-1` at `d42db55`, extension built 2026-09-01T22:35:45, arm64
+Darwin, Python 3.14.6 — *not* on this branch's extension, which cannot be rebuilt here (PyO3 0.24.2
+against Python 3.14). **Three rows were re-measured on this branch's build and reproduce exactly**:
+`original` N8_seg4 (10 unsound off, +0.6204 both arms, 9 iterations), `loiter` N8_seg8 (2 unsound
+off, +35.3204 → +35.3767), `wall` N8_seg16 (113 unsound off, +0.2017 → +0.0556). Re-measure the
+rest before quoting a row this spot-check did not cover.
+
+The **Unsound walls** column is measured on the floor-OFF arm only. With the floor on it is zero for
+every configuration by construction, so a column of zeros would say nothing.
+
+| Scenario | Config | Unsound walls (floor OFF) | Clearance ON | Clearance OFF | Cert ON | Iters ON | Weight | Grade ON | Grade OFF |
+|---|---|---|---|---|---|---|---|---|---|
+| `original` | N4_seg4 | 4 | +0.6189 | +0.6189 | 0.00e+00 | 11 | 100 | **yes** | no |
+| `original` | N4_seg8 | 4 | +0.3058 | +0.3060 | 0.00e+00 | 8 | 100 | **yes** | no |
+| `original` | N6_seg8 | 10 | +0.3231 | +0.3231 | 0.00e+00 | 9 | 100 | **yes** | no |
+| `original` | N8_seg4 | 10 | +0.6204 | +0.6204 | 0.00e+00 | 9 | 100 | **yes** | no |
+| `original` | N8_seg8 | 10 | +0.3230 | +0.3230 | 8.80e-09 | 10 | 100 | **yes** | no |
+| `curve` | N8_seg4 | 3 | +0.1237 | +0.1000 | 1.04e+00 | 200 | 100 | no | no |
+| `curve` | N8_seg8 | 1 | +0.0947 | +0.1000 | 1.51e-09 | 54 | 800 | **yes** | no |
+| `curve` | N8_seg16 | 10 | +0.1000 | +0.1000 | 6.35e-06 | 200 | 10000 | no | no |
+| `curve` | N10_seg8 | 0 | +0.0976 | +0.1000 | 2.34e-08 | 54 | 3000 | **yes** | yes |
+| `loiter` | N8_seg8 | 2 | +35.3767 | +35.3204 | 0.00e+00 | 3 | 100 | **yes** | no |
+| `loiter` | N8_seg16 | 0 | +36.8459 | +36.8417 | 0.00e+00 | 3 | 100 | **yes** | yes |
+| `diverse` | N8_seg4 | 28 | +0.1136 | +0.1136 | 1.92e-10 | 9 | 800 | **yes** | no |
+| `diverse` | N8_seg8 | 32 | +0.0279 | +0.0279 | 3.84e-07 | 26 | 10000 | **yes** | no |
+| `diverse` | N8_seg16 | 29 | +0.0051 | +0.0051 | 1.21e-08 | 35 | 10000 | **yes** | no |
+| `diverse` | N10_seg4 | 25 | +0.1085 | +0.1085 | 8.91e-08 | 10 | 800 | **yes** | no |
+| `diverse` | N10_seg16 | 54 | +0.0074 | +0.0074 | 7.49e-08 | 34 | 3000 | **yes** | no |
+| `wall` | N8_seg2 | 22 | -0.1292 | -0.1292 | 4.84e+00 | 23 | 100 | no | no |
+| `wall` | N8_seg3 | 16 | -0.3002 | -0.2928 | 2.56e+00 | 16 | 100000 | no | no |
+| `wall` | N8_seg4 | 13 | -0.4098 | -0.4064 | 2.44e+00 | 20 | 100000 | no | no |
+| `wall` | N8_seg16 | 113 | +0.0556 | +0.2017 | 0.00e+00 | 14 | 3000 | **yes** | no |
+| `wall` | N10_seg16 | 128 | +0.2058 | +0.2058 | 0.00e+00 | 9 | 3000 | **yes** | no |
+| `wall` | N10_seg24 | 197 | +0.0673 | +0.1484 | 0.00e+00 | 21 | 800 | **yes** | no |
+| `fence3d` | N8_seg2 | 22 | +0.1623 | +0.1623 | 0.00e+00 | 9 | 100 | **yes** | no |
+| `fence3d` | N8_seg4 | 49 | +0.0342 | +0.0342 | 0.00e+00 | 13 | 100 | **yes** | no |
+| `fence3d` | N8_seg8 | 43 | +0.0087 | +0.0087 | 0.00e+00 | 10 | 100 | **yes** | no |
+| `fence3d` | N10_seg8 | 42 | +0.0088 | +0.0088 | 0.00e+00 | 10 | 100 | **yes** | no |
+| `door3d` | N8_seg4 | 36 | +0.9828 | +0.9827 | 0.00e+00 | 8 | 100 | **yes** | no |
+| `door3d` | N8_seg8 | 60 | +1.0044 | +1.0009 | 0.00e+00 | 9 | 100 | **yes** | no |
+
+**Figure-grade: 23 of 28 with the floor on, 2 of 28 with it off.** Three things have to travel with
+that, or the table misleads:
+
+1. **The "Grade OFF" column is not a quality judgement on those runs.** 26 of its 28 no's are the
+   uncovered-walls condition *alone* — the other five gate conditions pass. It measures the hole,
+   not the trajectories.
+2. **Four of the five that fail with the floor ON fail for reasons unrelated to the clip.** `wall`
+   N8_seg2/3/4 penetrate either way (−0.1292, −0.3002, −0.4098), which is the 2026-08-24
+   densification; `curve` N8_seg4 does not converge either way and was a standing failure before any
+   of this.
+3. **The fifth is the floor'"'"'s own cost, and it is named rather than dropped.** `curve` N8_seg16
+   certifies at 2.61e-11 with the floor off and 6.35e-06 with it on, hitting the 200-iteration cap.
+   On the one scenario whose tube is genuinely non-convex, a rigorous support ceiling is sometimes
+   paid in convergence. `wall` N8_seg16 and N10_seg24 pay in clearance instead: +0.2017 → +0.0556
+   and +0.1484 → +0.0673.
+
+Everything else is free — `original`, `diverse` and `fence3d` are identical to four decimals across
+all fourteen of their configurations, and `door3d` and `loiter` come out slightly better.
 
 ### `loiter`, measured 2026-08-30 — the pass that found the gate blind to an unsound clip
 
@@ -345,13 +394,8 @@ No single parameter reproduces it. What survives is only the arithmetic — the 
 radius plus one trust step, so at trust 8.0 the floor is about 14 on a 10-unit scene and the clip
 has stopped localizing — and it does **not** follow that this costs convergence.
 
-**Not re-measured here, but it now describes this registry:** the 28-configuration / 56-run pass
-that came with those commits — default clip leaves 26 of 28 carrying uncovered walls, 1 to 197 of
-them; the floor zeroes every one; figure-grade goes 2 of 28 → 23 of 28. When it was imported this
-branch still had `station_fence` and that pass did not, so it was cited as evidence only. Since the
-2026-09-01 merge the registries are identical — `original` 5, `curve` 4, `loiter` 2, `diverse` 5,
-`wall` 6, `fence3d` 4, `door3d` 2 = 28 — so it is now a description of this branch, though still
-one taken on another build. Re-measure before quoting it anywhere.
+**Superseded.** The 28-configuration pass that came with those commits is now §Measurements above,
+with its provenance and a three-row spot-check on this branch's own build.
 
 ---
 
@@ -432,3 +476,4 @@ Moved. Open solver items — the test drift that leaves `compute_los_margin` unc
 seeds, the missing KKT residual, and the unread SCvx / topology references — are in
 [`WORKSTREAM.md`](WORKSTREAM.md). This file records what is **established**; that one records what
 is **not done**.
+
