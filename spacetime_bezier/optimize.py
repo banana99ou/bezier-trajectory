@@ -183,8 +183,11 @@ def figure_grade_failures(row: dict) -> list[str]:
     # (7) holds, counted at the returned iterate as `koz_unsound_clips`. A
     # nonzero count means the wall was built against a clipped piece the NEXT
     # iterate could leave, so a certificate of 0.0 speaks for less than the
-    # obstacle. Measured on `loiter` 2026-08-30: the priced run passed this gate
-    # with 24 such pairs, because nothing here read the key -- it was not even
+    # obstacle. COUNTED PER WALL -- one wall per local approach of the generator
+    # to the segment, not one per (segment, obstacle) pair, so a pair with two
+    # approaches can contribute two. Measured on `loiter` 2026-08-30: the priced
+    # run passed this gate with 24 of them, because nothing here read the key --
+    # it was not even
     # propagated into the result row. Only `tools/make_paper_figure.py` refused,
     # and only for the figure.
     #

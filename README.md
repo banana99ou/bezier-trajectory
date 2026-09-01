@@ -192,15 +192,17 @@ counted it since the clip landed; `optimize_scenario` never put it in the result
 `figure_grade_failures` never read it, so **on this condition the gate could not fail.** Only
 `tools/make_paper_figure.py` refused, and only for the figure. Closed 2026-08-31.
 
+**The count is per WALL, not per (segment, obstacle) pair** — the builder emits one wall per local approach (each dip of the distance profile), and the increment sits inside that loop in `spacetime_constraints.rs`, so one pair with two approaches can contribute two.
+
 Measured across the registry at defaults, only **`curve` N10_seg8 and `loiter` N8_seg16** have zero
-uncovered pairs. Every other configuration has between 1 and **197** (`wall` N10_seg24). With the
+uncovered walls. Every other configuration has between 1 and **197** (`wall` N10_seg24). With the
 reach floor on, **every configuration goes to zero**, and figure-grade goes from **2 of 28 to 23 of
 28**. Of the five that still fail with the floor on, four were already failing for reasons that
 have nothing to do with the clip; the fifth is a regression the floor causes and it is named below.
 
 **The floor is free on most of the registry and not on all of it.** Clearance, default clip → floor:
 
-| Key | Configs | Uncovered at default | Cost of the floor | Figure-grade with floor |
+| Key | Configs | Uncovered walls at default | Cost of the floor | Figure-grade with floor |
 |---|---|---|---|---|
 | `original` | 5 | 4–10 | **none** — clearance identical to 4 dp on all five (best N8_seg4 **+0.6204** @100, 9 iters) | **5 of 5** |
 | `diverse` | 5 | 25–54 | **none** — identical on all five (best N8_seg4 **+0.1136** @800, 9 iters) | **5 of 5** |
