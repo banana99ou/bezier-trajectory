@@ -603,6 +603,47 @@ harmfulness) are believed sound and were each reproduced at the time, but the
 numbers are not currently reproducible from a clean checkout. Re-derive before
 citing any of them in the paper.
 
+11. **2026-09-01** — `n_lin` = 100 is justified, and it is NOT tied to `n_seg`.
+    The name `sample_count` made this look like a sampling parameter; it is not
+    (the integral is the exact Gram closed form). Swept on phase120, N=7,
+    n_seg=16, cache off, comparing `J_true` against n_lin=400:
+
+    | n_lin | J_true | rel. vs 400 | iters | time s |
+    |---:|---|---:|---:|---:|
+    | 5 | 2.263526266e-05 | 9.3e-5 | 9 | 0.090 |
+    | 10 | 2.263326003e-05 | 4.2e-6 | 8 | 0.083 |
+    | 25 | 2.263316816e-05 | 1.2e-7 | 8 | 0.087 |
+    | 50 | 2.263316564e-05 | 7.5e-9 | 8 | 0.093 |
+    | 100 | 2.263316548e-05 | 4.4e-10 | 8 | 0.104 |
+    | 200 | 2.263316547e-05 | <1e-10 | 8 | 0.126 |
+    | 400 | 2.263316547e-05 | — | 8 | 0.174 |
+
+    Converged by n_lin≈50; 100 sits inside the plateau with margin, and its
+    residual error is three orders BELOW the 1.8e-6 agreement between the Python
+    Gauss-Legendre `J_true` and the Rust Gram integral — so the linearization is
+    not the limiting approximation anywhere in the paper. Cost is linear in
+    n_lin (0.083 s → 0.174 s over 10 → 400), so the choice is not free, but 100
+    buys the plateau for ~25% over the cheapest converged value.
+
+    Reproduce:
+    ```
+    .venv/bin/python -c "
+    import sys; sys.path.insert(0,'.')
+    from tools.verify import harness_common as H
+    sc = H.make_scenario('phase120', N=7)
+    for nl in (5,10,25,50,100,200,400):
+        P, info = H.run_rust(sc, n_seg=16, n_lin_seg=nl)
+        print(nl, H.J_true(P, sc['T']), info['iterations'])"
+    ```
+
+    **Why the two partitions stay separate** (now stated in the paper, §3.2):
+    `n_seg` sets how conservative the Prop. 1 safety constraint is — a modelling
+    choice §5.2 measures. `n_lin` sets the accuracy of gravity inside the
+    objective. Tying them would change both while sweeping n_seg, mixing
+    linearization error into the very trade-off being reported. Still open, and
+    worth asking the professor: standard SCvx linearizes the dynamics on the
+    discretization mesh, so the decoupling is a deliberate deviation.
+
 ## 8. Paper terminology
 
 `~/.claude/skills/korean-prose/references/korean_writing_case_collection.md` §6
