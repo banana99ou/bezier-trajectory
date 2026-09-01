@@ -297,7 +297,7 @@ def add_earth_mesh(ax, radius=EARTH_RADIUS_KM, center=(0.0, 0.0, 0.0), color='#2
     Add Earth as a 3D mesh from assets/models/earth_nasa.glb when available.
     Falls back to wireframe sphere if model is missing or trimesh unavailable.
     """
-    data = _load_earth_mesh(radius_km=radius, center=center, run_id=run_id)
+    data = _load_earth_mesh(radius_km=radius, center=center)
     if data is None:
         print("[Earth mesh] Falling back to wireframe Earth in add_earth_mesh().")
         add_wire_sphere(ax, radius=radius, center=center, color=color, alpha=alpha, resolution=20)
