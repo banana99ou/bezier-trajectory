@@ -276,7 +276,7 @@ def velocity_endpoints(P, T):
 
 def run_rust(scenario, n_seg=16, max_iter=1000,
              tol=1e-8, scp_trust_radius=None, scp_prox_weight=0.0,
-             sample_count=100, enforce_prograde=False, **overrides):
+             n_lin_seg=100, enforce_prograde=False, **overrides):
     """Run the Rust SCvx solver on a scenario. Returns (P_opt, info).
 
     scp_trust_radius defaults to the scenario's own r0: it must exceed the
@@ -287,7 +287,7 @@ def run_rust(scenario, n_seg=16, max_iter=1000,
         scp_trust_radius = float(scenario.get("r0", 2000.0))
     kwargs = dict(
         n_seg=n_seg, r_e=scenario["r_e"], max_iter=max_iter, tol=tol,
-        v0=scenario["v0"], v1=scenario["v1"], sample_count=sample_count,
+        v0=scenario["v0"], v1=scenario["v1"], n_lin_seg=n_lin_seg,
         scp_prox_weight=scp_prox_weight,
         scp_trust_radius=scp_trust_radius, transfer_time=scenario["T"],
         enforce_prograde=enforce_prograde, verbose=False,

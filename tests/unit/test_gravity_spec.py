@@ -113,16 +113,16 @@ def test_accel_total_equals_two_body_plus_j2(rng):
 def test_build_ctrl_accel_quadratic_H_symmetric(T, P_init):
     """H from _build_ctrl_accel_quadratic is symmetric."""
     P_ref = np.asarray(P_init, dtype=float)
-    sample_count = 4
-    H, f, c_const, _ = _build_ctrl_accel_quadratic(P_ref, T=T, sample_count=sample_count)
+    n_lin_seg = 4
+    H, f, c_const, _ = _build_ctrl_accel_quadratic(P_ref, T=T, n_lin_seg=n_lin_seg)
     np.testing.assert_allclose(H, H.T, rtol=0, atol=1e-12)
 
 
 def test_build_ctrl_accel_quadratic_H_positive_semidefinite(T, P_init):
     """H from _build_ctrl_accel_quadratic is positive semidefinite."""
     P_ref = np.asarray(P_init, dtype=float)
-    sample_count = 4
-    H, f, c_const, _ = _build_ctrl_accel_quadratic(P_ref, T=T, sample_count=sample_count)
+    n_lin_seg = 4
+    H, f, c_const, _ = _build_ctrl_accel_quadratic(P_ref, T=T, n_lin_seg=n_lin_seg)
     evals = np.linalg.eigvalsh(H)
     assert np.all(evals >= -1e-10), f"min eigenvalue {evals.min()}"
 
@@ -130,8 +130,8 @@ def test_build_ctrl_accel_quadratic_H_positive_semidefinite(T, P_init):
 def test_build_ctrl_accel_quadratic_constant_term_non_negative(T, P_init):
     """Objective 0.5 x'Hx + f'x + c has c >= 0."""
     P_ref = np.asarray(P_init, dtype=float)
-    sample_count = 4
-    H, f, c_const, _ = _build_ctrl_accel_quadratic(P_ref, T=T, sample_count=sample_count)
+    n_lin_seg = 4
+    H, f, c_const, _ = _build_ctrl_accel_quadratic(P_ref, T=T, n_lin_seg=n_lin_seg)
     assert c_const >= -1e-12, f"constant term c = {c_const}"
 
 
@@ -143,8 +143,8 @@ def test_build_ctrl_accel_quadratic_small_P_ref(T):
         [6800.0, 200.0, 50.0],
         [6900.0, 0.0, 0.0],
     ], dtype=float)
-    sample_count = 2
-    H, f, c_const, _ = _build_ctrl_accel_quadratic(P_ref, T=T, sample_count=sample_count)
+    n_lin_seg = 2
+    H, f, c_const, _ = _build_ctrl_accel_quadratic(P_ref, T=T, n_lin_seg=n_lin_seg)
     np.testing.assert_allclose(H, H.T, rtol=0, atol=1e-12)
     evals = np.linalg.eigvalsh(H)
     assert np.all(evals >= -1e-10), f"min eigenvalue {evals.min()}"

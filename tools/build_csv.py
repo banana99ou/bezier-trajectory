@@ -72,7 +72,7 @@ def get_cache_path_120(N, n_seg, P_start, v0, P_end, v1):
     key = get_cache_key(
         P_init, n_seg,
         r_e=constants.KOZ_RADIUS,
-        max_iter=MAX_ITER, tol=TOL, sample_count=SAMPLE_COUNT,
+        max_iter=MAX_ITER, tol=TOL, n_lin_seg=SAMPLE_COUNT,
         v0=v0, v1=v1, a0=None, a1=None,
         scp_prox_weight=SCP_PROX_WEIGHT, scp_trust_radius=SCP_TRUST_RADIUS,
         enforce_prograde=ENFORCE_PROGRADE,

@@ -70,7 +70,7 @@ class BezierConfig:
     tol: float = 1e-8
     elastic_weight: float = 1e-2
     scp_trust_radius: float = 2000.0
-    sample_count: int = 100
+    n_lin_seg: int = 100
 
 
 @dataclass(frozen=True)
@@ -211,7 +211,7 @@ def bezier_stage(case: Case, bez: BezierConfig, n_points: int = 61):
             max_iter=bez.max_iter,
             tol=bez.tol,
             v0=v0, v1=vf,
-            sample_count=bez.sample_count,
+            n_lin_seg=bez.n_lin_seg,
             scp_trust_radius=bez.scp_trust_radius,
             elastic_weight=bez.elastic_weight,
             transfer_time=T,

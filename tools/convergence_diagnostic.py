@@ -79,7 +79,7 @@ def main():
             tol=1e-12,
             v0=v0,
             v1=v1,
-            sample_count=100,
+            n_lin_seg=100,
             scp_prox_weight=1e-6,
             scp_trust_radius=2000.0,
             transfer_time=TRANSFER_TIME,

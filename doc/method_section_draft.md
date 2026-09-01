@@ -238,7 +238,7 @@ $$
 
 where $\mathbf{g}$ is the orbital gravity model. In the implementation, $\mathbf{g}$ consists of a two-body term plus a J2 perturbation term. Rather than enforcing these dynamics exactly along the full continuous curve, the optimization uses an affine linearization of $\mathbf{g}$ at representative sub-arc positions.
 
-The objective linearization uses $n_{\mathrm{lin}}$ equal-parameter sub-arcs, distinct from the KOZ subdivision count $n_{\mathrm{seg}}$. In the code this count is passed as `sample_count`. Let $\hat S^{(j)}$ denote the corresponding segment matrices and define the centroid row
+The objective linearization uses $n_{\mathrm{lin}}$ equal-parameter sub-arcs, distinct from the KOZ subdivision count $n_{\mathrm{seg}}$. In the code this count is passed as `n_lin_seg`. Let $\hat S^{(j)}$ denote the corresponding segment matrices and define the centroid row
 
 $$
 \mathbf{w}^{(j)} = \frac{1}{N+1}\mathbf{1}^{\mathsf{T}} \hat S^{(j)}.

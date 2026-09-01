@@ -138,7 +138,7 @@ different matrices. Writing both as `S` implies a coupling that does not exist.
 | Symbol | Type | Meaning | Code |
 |---|---|---|---|
 | `\mathbf{g}(\mathbf{r})` | `R^3` | gravity: two-body + J2 | `_accel_total` |
-| `n_{\mathrm{lin}}` | int | gravity-linearization interval count | `sample_count` / `n_lin_seg` |
+| `n_{\mathrm{lin}}` | int | gravity-linearization interval count | `n_lin_seg` |
 | `\mathbf{r}_j^{(k)}` | `R^3` | reference position of interval `j` at iteration `k` | `r_ref` |
 | `\nabla\mathbf{g}_j^{(k)}` | `3×3` | gravity Jacobian at that reference point | `J_s` |
 | `\mathbf{c}_j^{(k)}` | `R^3` | affine offset of the gravity model | — |

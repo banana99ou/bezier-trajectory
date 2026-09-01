@@ -10,7 +10,7 @@ from pathlib import Path
 
 # Increment to invalidate old caches when the optimization formulation changes.
 # NOTE: the cache key does NOT hash the Rust binary; bump this after any solver rebuild.
-CACHE_VERSION = "16.0-freeze-knobs-removed"
+CACHE_VERSION = "17.0-n-lin-seg-rename"
 
 
 def get_cache_key(
@@ -19,7 +19,7 @@ def get_cache_key(
     r_e,
     max_iter,
     tol,
-    sample_count,
+    n_lin_seg,
     v0,
     v1,
     a0,
@@ -41,7 +41,7 @@ def get_cache_key(
         r_e: KOZ radius
         max_iter: Maximum iterations
         tol: Convergence tolerance
-        sample_count: Number of samples for cost evaluation
+        n_lin_seg: Number of samples for cost evaluation
         v0, v1: Velocity boundary conditions
         a0, a1: Acceleration boundary conditions
     
@@ -55,7 +55,7 @@ def get_cache_key(
         'r_e': float(r_e),
         'max_iter': max_iter,
         'tol': float(tol),
-        'sample_count': sample_count,
+        'n_lin_seg': n_lin_seg,
         'v0': v0.tobytes() if v0 is not None and isinstance(v0, np.ndarray) else str(v0),
         'v1': v1.tobytes() if v1 is not None and isinstance(v1, np.ndarray) else str(v1),
         'a0': a0.tobytes() if a0 is not None and isinstance(a0, np.ndarray) else str(a0),

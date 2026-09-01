@@ -210,7 +210,7 @@ def _jacobian_numeric(f, r0: np.ndarray, h: float = 1e-3) -> np.ndarray:
 def _build_ctrl_accel_quadratic(
     P_ref: np.ndarray,
     T: float,
-    sample_count: int,
+    n_lin_seg: int,
 ):
     """
     Build quadratic objective for control acceleration energy with gravity+J2
@@ -261,7 +261,7 @@ def _build_ctrl_accel_quadratic(
     # squared, integrated in closed form via the Bernstein Gram matrix G.
     from .bezier import get_G_matrix
 
-    n_lin_seg = max(1, int(sample_count))
+    n_lin_seg = max(1, int(n_lin_seg))
     A_seg_list = segment_matrices_equal_params(N, n_lin_seg)
     w_seg = 1.0 / float(n_lin_seg)  # dτ = du / n_seg on each subinterval
     x_ref = P_ref.reshape(-1)
@@ -296,7 +296,7 @@ def _build_ctrl_accel_quadratic(
     H = 2.0 * Q
     f = 2.0 * q
     diag = {
-        "sample_count": sample_count,
+        "n_lin_seg": n_lin_seg,
         "n_lin_seg": n_lin_seg,
         "T": float(T),
     }
@@ -364,7 +364,7 @@ def optimize_orbital_docking(
     v1=None,
     a0=None,
     a1=None,
-    sample_count=100,
+    n_lin_seg=100,
     scp_prox_weight: float = 0.0,
     scp_trust_radius: float = 0.0,
     enforce_prograde: bool = False,
@@ -394,7 +394,7 @@ def optimize_orbital_docking(
             primary stabilizer.
         v0, v1: Velocity boundary conditions
         a0, a1: Acceleration boundary conditions
-        sample_count: Number of samples for cost evaluation
+        n_lin_seg: Number of samples for cost evaluation
         elastic_weight: L1 penalty on KOZ slack variables (SCvx virtual control).
             When > 0, KOZ constraints are softened with slack variables so the QP
             is always feasible, and the same weight prices constraint violation in
@@ -425,7 +425,7 @@ def optimize_orbital_docking(
     # Check cache first (optional bypass for forced fresh computation)
     if use_cache and not ignore_existing_cache:
         cache_key = get_cache_key(
-            P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1,
+            P_init, n_seg, r_e, max_iter, tol, n_lin_seg, v0, v1, a0, a1,
             scp_prox_weight=scp_prox_weight,
             scp_trust_radius=scp_trust_radius,
             elastic_weight=elastic_weight,
@@ -462,7 +462,7 @@ def optimize_orbital_docking(
         v1=v1,
         a0=a0,
         a1=a1,
-        sample_count=sample_count,
+        n_lin_seg=n_lin_seg,
         scp_prox_weight=scp_prox_weight,
         scp_trust_radius=scp_trust_radius,
         enforce_prograde=enforce_prograde,
@@ -516,7 +516,7 @@ def optimize_orbital_docking(
     Hf, ff, cf, _ = _build_ctrl_accel_quadratic(
         P,
         T=T,
-        sample_count=sample_count,
+        n_lin_seg=n_lin_seg,
     )
     cost_no_const = 0.5 * float(x_final @ (Hf @ x_final)) + float(ff @ x_final)
     cost_true_energy = cost_no_const + float(cf)
@@ -581,7 +581,7 @@ def optimize_orbital_docking(
             "max_control_accel_ms2": max_control_accel_ms2,
             "mean_control_accel_ms2": mean_control_accel_ms2,
             "T_transfer_s": float(T),
-            "sample_count": int(sample_count),
+            "n_lin_seg": int(n_lin_seg),
             "scp_prox_weight": float(scp_prox_weight),
             "scp_trust_radius": float(scp_trust_radius),
             "elapsed_time": time.time() - t0,
@@ -597,7 +597,7 @@ def optimize_orbital_docking(
 
     if use_cache:
         cache_key = get_cache_key(
-            P_init, n_seg, r_e, max_iter, tol, sample_count, v0, v1, a0, a1,
+            P_init, n_seg, r_e, max_iter, tol, n_lin_seg, v0, v1, a0, a1,
             scp_prox_weight=scp_prox_weight,
             scp_trust_radius=scp_trust_radius,
             elastic_weight=elastic_weight,
@@ -634,7 +634,7 @@ def _optimize_one_segment_count(payload: dict):
         r_e=payload["r_e"],
         max_iter=payload["max_iter"],
         tol=payload["tol"],
-        sample_count=payload["sample_count"],
+        n_lin_seg=payload["n_lin_seg"],
         scp_prox_weight=payload.get("scp_prox_weight", 0.0),
         scp_trust_radius=payload.get("scp_trust_radius", 0.0),
         enforce_prograde=payload.get("enforce_prograde", False),
@@ -735,7 +735,7 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                 r_e=r_e,
                 max_iter=max_iter,
                 tol=tol,
-                sample_count=100,
+                n_lin_seg=100,
                 scp_prox_weight=scp_prox_weight,
                 scp_trust_radius=scp_trust_radius,
                 enforce_prograde=enforce_prograde,
@@ -776,7 +776,7 @@ def optimize_all_segment_counts(P_init, r_e=None, segment_counts=[2, 4, 8, 16, 3
                     "r_e": r_e,
                     "max_iter": max_iter,
                     "tol": tol,
-                    "sample_count": 100,
+                    "n_lin_seg": 100,
                     "scp_prox_weight": scp_prox_weight,
                     "scp_trust_radius": scp_trust_radius,
                     "enforce_prograde": enforce_prograde,

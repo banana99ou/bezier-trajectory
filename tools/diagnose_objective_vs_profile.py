@@ -172,7 +172,7 @@ def run_single(
     target_v1_physical: np.ndarray | None,
     max_iter: int,
     tol: float,
-    sample_count: int,
+    n_lin_seg: int,
     use_cache: bool,
     dense_samples: int,
     plot_samples: int,
@@ -186,7 +186,7 @@ def run_single(
         tol=tol,
         v0=v0_for_constraint,
         v1=v1_for_constraint,
-        sample_count=sample_count,
+        n_lin_seg=n_lin_seg,
         verbose=False,
         debug=False,
         use_cache=use_cache,
@@ -311,7 +311,7 @@ def main() -> None:
     )
     parser.add_argument("--max-iter", type=int, default=120, help="Max SCP iterations.")
     parser.add_argument("--tol", type=float, default=1e-3, help="Convergence tolerance.")
-    parser.add_argument("--sample-count", type=int, default=100, help="Linearization sample_count in optimizer.")
+    parser.add_argument("--sample-count", type=int, default=100, help="Linearization n_lin_seg in optimizer.")
     parser.add_argument("--dense-samples", type=int, default=1200, help="Dense samples for integral metrics.")
     parser.add_argument("--plot-samples", type=int, default=300, help="Samples that emulate plotted profile resolution.")
     parser.add_argument(
@@ -357,7 +357,7 @@ def main() -> None:
                 target_v1_physical=v1_phys,
                 max_iter=args.max_iter,
                 tol=args.tol,
-                sample_count=args.sample_count,
+                n_lin_seg=args.n_lin_seg,
                 use_cache=args.use_cache,
                 dense_samples=args.dense_samples,
                 plot_samples=args.plot_samples,
@@ -382,7 +382,7 @@ def main() -> None:
                 target_v1_physical=v1_phys,
                 max_iter=args.max_iter,
                 tol=args.tol,
-                sample_count=args.sample_count,
+                n_lin_seg=args.n_lin_seg,
                 use_cache=args.use_cache,
                 dense_samples=args.dense_samples,
                 plot_samples=args.plot_samples,
@@ -400,7 +400,7 @@ def main() -> None:
                 target_v1_physical=v1_phys,
                 max_iter=args.max_iter,
                 tol=args.tol,
-                sample_count=args.sample_count,
+                n_lin_seg=args.n_lin_seg,
                 use_cache=args.use_cache,
                 dense_samples=args.dense_samples,
                 plot_samples=args.plot_samples,
@@ -433,7 +433,7 @@ def main() -> None:
                 target_v1_physical=v1_phys,
                 max_iter=args.max_iter,
                 tol=args.tol,
-                sample_count=args.sample_count,
+                n_lin_seg=args.n_lin_seg,
                 use_cache=False,  # force fresh runs for sensitivity study
                 dense_samples=args.dense_samples,
                 plot_samples=args.plot_samples,

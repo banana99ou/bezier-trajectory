@@ -207,7 +207,7 @@ fn test_optimizer_golden_run() {
         200,    // max_iter -- converges at 115 here; headroom to catch a regression
         1e-8,   // tol -- locked value
         bl.scenario.t,
-        100,    // sample_count
+        100,    // n_lin_seg
         0.0,    // scp_prox_weight
         2000.0, // scp_trust_radius -- locked r0, must exceed the iter-1 BC repair
         None,

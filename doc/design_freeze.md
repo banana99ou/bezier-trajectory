@@ -93,7 +93,7 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
     J = ∫₀¹ ‖ a_geom(τ)/T² − (∇g_j r(τ) + c_j) ‖² dτ
 
 - Gravity = two-body + J2, affine per De Casteljau segment (∇g_j, c_j at the
-  segment centroid); `sample_count` = number of linearization segments.
+  segment centroid); `n_lin_seg` = number of linearization segments.
 - Computed in CLOSED FORM per segment via the degree-N Bernstein Gram matrix:
   residual control points f_k are linear in x, ∫ = Σ_{kl} G_{kl} f_k·f_l.
   No sampling anywhere in the objective.

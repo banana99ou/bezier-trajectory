@@ -70,7 +70,7 @@ def run(scenarios=H.ALL_SCENARIOS):
 
         # Stationarity of the SURROGATE the solver minimizes (gravity linearized at x*):
         #   grad_surrogate = H x + f. Projected onto the equality nullspace ~ 0 at a KKT point.
-        Hm, fm, _, _ = _build_ctrl_accel_quadratic(P, sc["T"], int(info.get("sample_count", 100) or 100))
+        Hm, fm, _, _ = _build_ctrl_accel_quadratic(P, sc["T"], int(info.get("n_lin_seg", 100) or 100))
         g_surr = Hm @ x + fm
         ratio_surr = _proj_ratio(A_eq, g_surr)
 

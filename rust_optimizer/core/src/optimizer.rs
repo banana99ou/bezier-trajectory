@@ -76,11 +76,11 @@ fn compute_segment_lin(
     np1: usize,
     dim: usize,
     _t: f64,
-    sample_count: usize,
+    n_lin_seg: usize,
     consts: &OrbitalConstants,
 ) -> Vec<SegmentGravLin> {
     let n = np1 - 1;
-    let n_lin_seg = sample_count.max(1);
+    let n_lin_seg = n_lin_seg.max(1);
     let a_seg_list = de_casteljau::segment_matrices_equal_params(n, n_lin_seg);
 
     let mut out = Vec::with_capacity(a_seg_list.len());
@@ -132,7 +132,7 @@ fn build_ctrl_accel_quadratic(
     np1: usize,
     dim: usize,
     t: f64,
-    sample_count: usize,
+    n_lin_seg: usize,
     consts: &OrbitalConstants,
     precomputed_lin: Option<&[SegmentGravLin]>,
 ) -> (Vec<f64>, Vec<f64>, f64) {
@@ -169,7 +169,7 @@ fn build_ctrl_accel_quadratic(
     let lin: &[SegmentGravLin] = match precomputed_lin {
         Some(p) => p,
         None => {
-            owned_lin = compute_segment_lin(p_ref, np1, dim, t, sample_count, consts);
+            owned_lin = compute_segment_lin(p_ref, np1, dim, t, n_lin_seg, consts);
             &owned_lin[..]
         }
     };
@@ -724,7 +724,7 @@ pub fn optimize_orbital_docking(
     max_iter: usize,
     tol: f64,
     transfer_time: f64,
-    sample_count: usize,
+    n_lin_seg: usize,
     scp_prox_weight: f64,
     scp_trust_radius: f64,
     v0: Option<&[f64]>,
@@ -887,7 +887,7 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
             )
         };
         koz_degenerate_max = koz_degenerate_max.max(koz_degen);
-        let lin_t = compute_segment_lin(&p, np1, dim, t, sample_count, &consts);
+        let lin_t = compute_segment_lin(&p, np1, dim, t, n_lin_seg, &consts);
         if it == 1 {
             lin_baseline = Some(lin_t.clone());
             jacobian_drift_history.push(vec![0.0; lin_t.len()]);
@@ -907,7 +907,7 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
             np1,
             dim,
             t,
-            sample_count,
+            n_lin_seg,
             &consts,
             Some(lin_for_qp_ref),
         );
@@ -1512,7 +1512,7 @@ quad_p,quad_c,gaperr_p,gaperr_c,cpviol_c,minrad_c,kozslack_min_p"
     // Compute final cost (always uses fresh linearization at the final p, so
     // both frozen and unfrozen runs report a self-consistent cost).
     let (hf, ff, cf) = build_ctrl_accel_quadratic(
-        &p, np1, dim, t, sample_count, &consts, None,
+        &p, np1, dim, t, n_lin_seg, &consts, None,
     );
     let mut cost_no_const = 0.0f64;
     for i in 0..nvars {
