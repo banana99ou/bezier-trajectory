@@ -115,8 +115,24 @@ receding horizon. Do not mix their claims.
 pip install -r requirements.txt
 
 # 2. Build the Rust optimizer (one-time, requires a Rust toolchain + maturin)
-cd rust_optimizer/pybind && PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 maturin develop --release
-cd ../..
+# PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 suppresses PyO3 0.24.2's "maximum supported
+# version 3.13" check and builds against the stable ABI. Without it the build fails.
+#
+# PIN THE INTERPRETER. There are several worktrees of this repo on disk, and maturin
+# resolves PYO3_PYTHON from the environment -- it will happily build against ANOTHER
+# worktree's venv, report success, and install an extension you did not build. That
+# failure is silent and it is the stale-extension class this repo has been burned by.
+J=$(git rev-parse --show-toplevel)
+cd "$J/rust_optimizer/pybind" && env VIRTUAL_ENV="$J/.venv" \
+    PYO3_PYTHON="$J/.venv/bin/python3" \
+    PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 \
+    PATH="$J/.venv/bin:$PATH" \
+    "$J/.venv/bin/maturin" develop --release
+cd "$J"
+
+# 2b. VERIFY the build landed in THIS worktree. This is the check, not the build --
+# if the path is not under your worktree, step 2 lied and you are running stale code.
+python3 -c "import bezier_opt; print(bezier_opt.__file__)"
 
 # 3. Launch THE frontend (config panel, solve button, in-place scene update)
 python3 -m spacetime_bezier
