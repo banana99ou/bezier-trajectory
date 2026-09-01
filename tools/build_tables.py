@@ -59,10 +59,10 @@ REPEATS = 15
 # problem, so it varies the GEOMETRY -- three Bezier degrees on one geometry
 # answered a different question, and the one T4 already owns.
 T2_SCENARIOS = (
-    ("phase70", "위상차 70 deg"),
-    ("phase120", "위상차 120 deg (기준)"),
-    ("phase135", "위상차 135 deg"),
-    ("phase170", "위상차 170 deg"),
+    ("phase70", "중심각 70 deg"),
+    ("phase120", "중심각 120 deg (기준)"),
+    ("phase135", "중심각 135 deg"),
+    ("phase170", "중심각 170 deg"),
     ("planechange", "궤도면 변경"),
 )
 T2_DEGREE = 7
@@ -188,7 +188,7 @@ def main():
         f"- 공통: $R_{{\\mathrm{{KOZ}}}}$ = {sc['r_e']:.0f} km · 허용오차 1e-8 · "
         f"$n_{{\\mathrm{{conv}}}}$ = 3 · $\\mu$ = 1e-2",
         f"- $\\Delta_0$는 기하마다 다르다. 반복 1회차의 경계조건 보정 거리는 기하의 "
-        f"성질이므로 상수로 둘 수 없다: 위상차 170 deg는 직선 초기 추정이 KOZ 내부 "
+        f"성질이므로 상수로 둘 수 없다: 중심각 170 deg는 직선 초기 추정이 KOZ 내부 "
         f"5420 km 지점에서 출발하여 2000 km 상자로는 보정되지 않는다. 각 행이 쓴 값은 "
         f"아래 진단표에 함께 적는다.",
         f"- 계산 시간: {REPEATS}회 실행의 최소값 · {platform.machine()} / "
