@@ -6,8 +6,9 @@ else has an owner, and [`README.md`](README.md) §Repo map routes to all of them
 ## Goal
 
 - **End goal** — develop these ideas and publish them.
-- **Now** — KSAS 2026년도 추계학술대회 준비(포스터), 그 다음 idea 1의 저널 투고. The journal draft
-  runs in the background in the `bezier-trajectory-journal` worktree, branch `paper/journal-1`.
+- **Now** — KSAS 2026년도 추계학술대회 **제출(마감 9/4)** → 포스터 → idea 1 저널 투고. The journal
+  draft runs in the background in the `bezier-trajectory-journal` worktree, branch `paper/journal-1`.
+- **What is open** — [`WORKSTREAM.md`](WORKSTREAM.md). Open items only; `git log` carries the rest.
 
 ## Traps
 

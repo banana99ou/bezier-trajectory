@@ -342,16 +342,7 @@ is not, until a run sets the speed cap and time penalty.
 
 ## Open work
 
-- **Procedural seeds (left / right / wait / hurry) and multi-start.** Demoted 2026-08-19: it was
-  justified by the `wall` scenario being infeasible, which turned out to be false. It may still buy
-  better local optima, and the passing homotopy class still comes from the initialization — which
-  is a stated limitation of every artifact rendering idea 1. It blocks nothing.
-- **No dual or KKT residual.** `converged` asserts feasibility plus no-further-progress, not
-  stationarity of the original problem. Stated in §Established facts; nothing is scheduled.
-- **SCvx ground truth is unread.** Trust region, exact penalty, and what convergence actually
-  requires — against which the loop in `spacetime_optimizer.rs` has never been checked. External
-  ground truth wins over any agent's assertion, and the disagreement gets recorded when it happens.
-- **Topology is unread.** H-signature and TEB — the literature on which passing class a plan lands
-  in. It bears on the initialization limitation above and on how idea 1 is positioned against TEB.
-  Safe-corridor ground truth, by contrast, *is* read:
-  [`doc/refs/safe_corridor_references.md`](doc/refs/safe_corridor_references.md).
+Moved. Open solver items — the test drift that leaves `compute_los_margin` uncovered, multi-start
+seeds, the missing KKT residual, and the unread SCvx / topology references — are in
+[`WORKSTREAM.md`](WORKSTREAM.md). This file records what is **established**; that one records what
+is **not done**.

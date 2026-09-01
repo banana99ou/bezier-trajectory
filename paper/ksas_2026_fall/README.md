@@ -84,35 +84,30 @@ avoidance mechanism.
 
 ---
 
-## State of the KSAS manuscript, 2026-08-21
+## State of the manuscript — read from `manuscript.md`, 2026-08-31
 
-Written: title block, 서론 (three paragraphs), 본론 2.1–2.5, 결론, five references. Two pages.
+The `.docx` was last modified 2026-08-31 17:08 and renders to **2 pages**. Verified present by
+reading the rendered view, not by recalling an earlier note:
 
-Open, each needing the author rather than an agent:
+- **Title block** — 볼록 분해 없는 시공간 궤적 최적화: 이동 장애물 회피와 가시선 유지 / 정현용1*,
+  이수원1, 국민대학교1, with the English title and 핵심어 line.
+- **서론** states the mission: UAM 기체가 지상국과 통신 링크를 유지하며 회랑을 비행하는 상황.
+  That closes the advisor's requirement for the *manuscript*; the **talk still needs it**.
+- **Figures** — Fig. 1 Mission scene (schematic), Fig. 2 Scene at t = 15.7 s and sight margin.
+- **Tables** — Table 1 scenario and solver parameters, Table 2 results of the two runs, filled.
+- **후 기** — BK21 4단계 (2120240815267).
+- **참고문헌** — two entries (Marcucci 2023, Osburn 2025). The venue allows up to five.
 
-- **후 기 is empty** — funding and acknowledgment text.
-- **The figure is not in the document.** It exists and is figure-grade —
-  `figures/paper1/occlusion_figure.png`, sidecar `occlusion_figure.json` recording LOS margin
-  +0.3379, clearance +1.1625, occlusion certificate 0.0, 124 iterations, git `950a5ec`. Placing it
-  will cost space the current two pages do not have.
-- **The mission motivation for the line-of-sight constraint is missing.** The advisor's review
-  requires it in both manuscript and talk; the constraint is currently presented only as something
-  convex-decomposition methods cannot express.
-- **Author names, affiliation and romanization are unverified guesses** made by an agent from
-  repository filenames. Confirm every one before submission.
-
-**Also open** — the mission motivation for the line-of-sight constraint. The advisor's review
-requires a statement of *which mission, and why* line-of-sight maintenance is needed in aerospace
-practice, in both manuscript and talk. The constraint is currently presented only as a
-methodological differentiator.
+Open items live in [`WORKSTREAM.md`](../../WORKSTREAM.md) under §Now — submission and payment,
+the 400자 초록 character count, and the poster. **Nothing here is submitted yet.**
 
 ---
 
-## 포스터 — the current piece of work
+## 포스터
 
 학술대회는 11/10(화)~13(금), 하이원리조트(강원 정선). 포스터는 원고와 같은 내용을 발표용으로
 다시 짜는 별도 산출물이며, 원고가 잘라낸 논증(지지 반공간 구성, 매 반복 재구성, 볼록성)을
-지면 여유가 있는 만큼 되살릴 수 있는 자리다. 저널판은 별도 worktree에서 병행한다 —
+지면 여유가 있는 만큼 되살릴 수 있는 자리다. 발표 자리이므로 **임무 동기를 말로 설명해야 한다** —
+지도교수 검토의견이 원고와 발표 양쪽에 요구한 항목이다. 포스터 파일은 만들어지면 원고 옆,
+이 디렉터리에 둔다. 저널판은 별도 worktree에서 병행한다 —
 [`idea/spacetime.md`](../../idea/spacetime.md) §Artifacts.
-
-Nothing is drafted yet. When it is, it lives in this directory beside the manuscript.

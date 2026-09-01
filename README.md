@@ -13,6 +13,7 @@ Drag obstacles, tweak parameters, watch the optimizer re-solve.
 | you want | read |
 |---|---|
 | the current goal, and the traps | [`CLAUDE.md`](CLAUDE.md) — 36 lines, loaded into every session |
+| **what is open right now** | [`WORKSTREAM.md`](WORKSTREAM.md) — open items only; a finished item is deleted |
 | **idea 1** — offline, known obstacle motion | [`idea/spacetime.md`](idea/spacetime.md) — claim, formulation, geometry, novelty, demo scenario |
 | **idea 2** — online, uncertain hazards (future) | [`idea/risk_field.md`](idea/risk_field.md) — risk field, prior art, open question |
 | **the code** — architecture, facts, measurements, known issues | [`SOLVER.md`](SOLVER.md) |
@@ -34,6 +35,7 @@ receding horizon. Do not mix their claims.
 
 ```
 ├── CLAUDE.md                  the current goal and the traps — read first, 36 lines
+├── WORKSTREAM.md              what is open — items only, ids you can open a session with
 ├── SOLVER.md                  the code: architecture, established facts, measurements, known issues
 ├── idea/
 │   ├── spacetime.md             idea 1 (offline, known motion) — claim, formulation, novelty, demo scenario
