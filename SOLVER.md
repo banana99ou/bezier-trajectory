@@ -355,6 +355,38 @@ one taken on another build. Re-measure before quoting it anywhere.
 
 ---
 
+### `loiter` is graded as a PAIR, and the pair test reaches into `tools/`
+
+`tests/integration/test_loiter_scenario.py` (merged `ccae73f`, 2026-09-01) carries the coverage the
+`station_fence` removal lost: two runs differing only in the occlusion rows, every assertion on the
+independent `compute_los_margin` rather than on the certificate under test, plus the schedule graft
+in both directions — constrained path on the baseline schedule −2.1086 (link lost), baseline path on
+the constrained schedule +10.6198 (link held). The path is interchangeable; the schedule is not.
+
+**It imports `solve_pair` out of `tools/make_paper_figure.py` by path, deliberately.** A test
+reaching into `tools/` is unusual and it is kept on purpose: the run the suite grades is then the
+same run the figure is drawn from, so a drift in the trust radius the tool forwards or the weight it
+takes from the registry fails in the suite instead of silently producing a figure nobody re-checked.
+Reimplementing the pair would cost 15 lines and lose that property.
+
+**One deliberate false zero is itself asserted.** The baseline solves with `stations=None`, so it
+builds no shadow rows, so `occlusion_violation_reference` returns **0.0 for a trajectory that spends
+1.56 s blocked**. The test asserts that false zero so nobody later "simplifies" the file by trusting
+the number the solver reports for a constraint it was never given.
+
+**Falsified in both directions, 2026-09-01.** Doctoring the pair so the two halves stop differing by
+the occlusion rows turns the file red, and which tests fire depends on which half is doctored:
+making the *baseline* constrained sinks three of four; making the *constrained* run a baseline sinks
+two of four (the link assertion, and the graft, which reports the schedules 0.0000 s apart).
+
+**Known gap, small:** `test_the_pair_differs_by_the_occlusion_rows_and_nothing_else` does **not**
+detect a pair whose halves fail to differ — with both halves solved as baselines it still passes,
+because every assertion in it is satisfied by two baselines. Its name claims more than it checks.
+The condition is caught by the neighbouring `test_the_constrained_run_holds_the_link`, so the file
+is sound; the name is the defect.
+
+---
+
 ## Known Issues
 
 - **ONE TEST IS RED, deliberately, and the decision is the user's.** `wall` was densified

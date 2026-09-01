@@ -38,27 +38,6 @@ the advisor's review requires in the talk as well as the manuscript.
 
 ## Blocking honesty, not the deadline
 
-### `demo.baseline-untested` — the paper's central claim is not tested, only drawn
-`station_fence` carried seven tests. The 2026-09-01 merge of `8092a08` moved four to `loiter`,
-correctly dropped one that asserted the retired straight-chain design, and **lost two**:
-
-- **baseline-must-fail.** Nothing runs `loiter` with the occlusion rows OFF and asserts it loses
-  the link. Only `tools/make_paper_figure.py` enforces it, and only while drawing the figure — so
-  the claim is gated at figure time and untested at suite time.
-- **the causal claim.** `station_fence` asserted the climb exists and only the occlusion rows cause
-  it. `loiter`'s analogue is that the run WAITS, verified by the schedule graft — fly the
-  constrained path on the baseline's schedule and the sight margin goes to −2.109. That graft lives
-  in the scenario docstring and in `make_paper_figure`, and in no test.
-
-Both are the demo claim every artifact rendering idea 1 rests on:
-[`idea/spacetime.md`](idea/spacetime.md) §Demo scenario says in as many words that if the baseline
-also keeps line of sight, the constraint was slack and the figure proves nothing. Nothing currently
-checks that.
-
-*Closes when:* `tests/integration/test_loiter_scenario.py` exists carrying the pair structure —
-two runs differing only in the occlusion rows, every assertion checked against both, plus the
-schedule graft. `bezier-trajectory-merge-f7` has offered to write it against the merged result.
-
 ### `repo.red-test` — one test is red by choice, and the choice is yours
 `tests/integration/test_figure_grade_gate.py::test_a_clearing_run_can_still_be_standing_on_slack`
 fails because `wall` was densified 2026-08-24 at your request, which turned its only specimen from
