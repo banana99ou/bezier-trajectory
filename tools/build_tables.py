@@ -77,7 +77,7 @@ _TAUS = np.linspace(0.0, 1.0, 20001)
 
 PRINCIPLED_STOPS = (1, 4)
 CERT_TOL = 1e-6                     # km, aggregate hull violation
-_STOP_NAME = {0: "반복 한도", 1: "merit 감소 연속", 2: "신뢰 구간 붕괴",
+_STOP_NAME = {0: "반복 한도", 1: "merit 감소 연속", 2: "신뢰영역 붕괴",
               3: "QP 실패", 4: "모형 정지점"}
 
 
