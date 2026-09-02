@@ -263,7 +263,7 @@ def build_figure(save=False):
 
     _box("init",
          r"Initialize control polygon $\mathbf{P}^{(0)}$  (straight line)",
-         r"trust region  $r_0$")
+         r"trust region  $\Delta_0$")
 
     _box("assemble",
          "Assemble reusable operators",
@@ -277,23 +277,23 @@ def build_figure(save=False):
 
     _box("build",
          "Relinearize gravity at representative points",
-         r"$\longrightarrow\; H^{(k)},\; \mathbf{f}^{(k)}$",
+         r"$\longrightarrow\; H^{(k)},\; \boldsymbol{\ell}^{(k)}$",
          fc=PAL["iter_box"], ec=PAL["iter_ec"])
 
     # the one accented element
     _box("solve",
-         r"Solve convex QP  (trust region $r_k$)",
-         r"$\longrightarrow\;$ trial $\hat{\mathbf{x}}$,  slack $\mathbf{s}$",
+         r"Solve convex QP  (trust region $\Delta_k$)",
+         r"$\longrightarrow\;$ trial $\hat{\mathbf{x}}$,  slack $\boldsymbol{\nu}$",
          fc=PAL["qp_box"], ec=PAL["qp_ec"], tx=PAL["qp_tx"], lw=2.0)
 
     _box("merit",
          "Evaluate penalized merit function",
-         r"$\rho_k = \Delta_{\mathrm{actual}} \,/\, \Delta_{\mathrm{predicted}}$",
+         r"$\rho_k$ = actual / predicted decrease of $\phi$",
          fc=PAL["iter_box"], ec=PAL["iter_ec"])
 
     _box("accept",
          r"Take $\hat{\mathbf{x}}$ as the new reference point",
-         r"enlarge $r$ if $\rho_k \approx 1$",
+         r"enlarge $\Delta_k$ if $\rho_k \approx 1$",
          fc=PAL["iter_box"], ec=PAL["iter_ec"])
 
     _box("ret", r"Return $\mathbf{P}^{*}$")
@@ -304,8 +304,8 @@ def build_figure(save=False):
 
     _diamond(ax, X_C, Y["converge"], DIA_WX, DIA_WY, PAL["white"], PAL["ink"])
     _text(ax, X_C, Y["converge"] + 0.17,
-          r"$|\Delta\phi| / |\phi| < \mathrm{tol}$   or   $r = r_{\min}$", FS_DIA)
-    _text(ax, X_C, Y["converge"] - 0.19, r"and  $h = 0$ ?", FS_DIA)
+          r"$|\Delta\phi| / |\phi| < \mathrm{tol}$  and  $h = 0$", FS_DIA)
+    _text(ax, X_C, Y["converge"] - 0.19, r"for $n_{\mathrm{conv}}$ consecutive iterations ?", FS_DIA)
 
     # ------------------------------------------------------------------
     # Forward arrows — every endpoint sits on a drawn edge
@@ -343,7 +343,7 @@ def build_figure(save=False):
                 (LOOP_X_INNER, Y["solve"]),
                 right("solve")], color=PAL["loop"], lw=1.2)
     ax.text(LOOP_X_INNER + 0.14, (Y["ratio"] + Y["solve"]) / 2,
-            r"reject $\hat{\mathbf{x}}$,  shrink $r$",
+            r"reject $\hat{\mathbf{x}}$,  shrink $\Delta_k$",
             fontsize=FS_EDGE, color=_darken(C_LOOP, 0.25),
             rotation=90, ha="left", va="center")
 
