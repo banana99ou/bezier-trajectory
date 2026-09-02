@@ -1,5 +1,22 @@
 # Paper revision action list (from professor feedback)
 
+> **SUPERSEDED 2026-09-01 — do not act on this file.**
+>
+> The statuses below are fiction. This list was built against
+> `doc/paper_draft_korean_PF.md` before the paper was rewritten against the code,
+> and the section numbers have shifted since: its item #1 ("fold §2 into §1")
+> refers to the professor's §2, 관련 연구 및 위치 설정, which is now inside §1 and
+> has been for weeks. Reading it cost one session a wrong instruction to fold the
+> control-point machinery into the introduction.
+>
+> Several items are moot because what they critique no longer exists (IRLS, the
+> Δv proxy, the §6.1 tolerance defense, the pipeline comparison). Several others
+> were done and are still marked TODO. The draft itself now carries zero
+> annotations, which is the real status.
+>
+> Kept for the record of what the professor asked for. Current state is in
+> `doc/session_handoff.md`.
+
 Source: `doc/paper_draft_korean_PF.md` — 83 inline `[[…]]` annotations + 4 `{…}` annotations in the abstract = **87 items total**.
 
 ## Legend

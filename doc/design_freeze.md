@@ -653,6 +653,21 @@ and are symlinked into every project — this repo no longer carries a copy. "me
 stays in ENGLISH (확대 목적함수 rejected — a single printed occurrence in an
 adjacent field is not precedent; that rule is now general).
 
+### 8.1 Term decisions specific to this paper (settled 2026-09-01)
+
+The 판정표 covers SCvx vocabulary in general. These are this paper's own choices,
+and the last two are DELIBERATE divergences from the near-final companion
+manuscript — do not "fix" them by matching it.
+
+| 쓴다 | 쓰지 않는다 | 왜 |
+|---|---|---|
+| 중심각 | 위상차 | 위상차는 같은 궤도 안에서 위상만 옮긴다는 뜻으로 읽힌다. 실제로 바뀌는 것은 출발점과 도착점이 지구 중심에서 이루는 각이다. Author, 2026-08-31. |
+| 신뢰영역 | 신뢰 구간 | Author override 2026-08-30, and the companion manuscript uses 신뢰영역. The `korean-prose` 판정표 said 신뢰 구간 until 2026-09-01. |
+| 무게중심 | 중심점 | Companion manuscript. Same object in both papers: 분할구간 제어점의 평균. |
+| 궤적 생성 | 궤적 초기화 | The method is not limited to initialization, and since the pipeline comparison was cut there is no experiment in this paper that demonstrates initialization. 초기화 survives only in related work and in the sentence saying the output can also be used as an initial guess. |
+| `\mu` | the companion paper's slack-penalty symbol (spelled out in notation.md §10) | **Divergence.** Its subscript is `s`, which here is the sub-arc index, and `w^{(s)}_i` is already the centroid weight. notation.md §10 owns the banned spellings; do not restate them elsewhere or the checker fires on the document that restates them. |
+| SCvx | SCP | **Divergence.** The companion paper says 순차 볼록 계획법(SCP). This solver is specifically canonical SCvx — penalized-merit ratio test, virtual control, trust region. SCP would be less precise, not more consistent. |
+
 ## 9. KOZ constraint — exact formulation (settled 2026-08-09)
 
 Settled during the ρ-test investigation. This is the FORMULATION of record and
@@ -755,3 +770,62 @@ R_KOZ at the converged iterate, phase120: 63.9 km (n_seg=8), 15.6 km (16),
 geometry (lateral reach L per segment ⇒ over-clearance ≈ L²/2R_KOZ). This is
 the real cost of the sufficient condition and belongs in the paper as a
 quantitative characterization, not a footnote.
+
+---
+
+## 10. Companion papers — what this paper is the base for (recorded 2026-09-01)
+
+This repository holds **paper 1**. Two sequels build on it, and they live in a
+different working tree: `../bezier-trajectory-merge/` (see its `README.md`,
+`idea/spacetime.md`, `idea/risk_field.md`, and `doc/notes/`).
+
+| | what it is | where |
+|---|---|---|
+| Sequel 1 | 시공간 리프팅 — time as an explicit Bézier coordinate, moving obstacles become static tubes, plus line-of-sight occlusion | KSAS 2026 추계 2-page manuscript, `paper/ksas_2026_fall/` |
+| Sequel 1-J | the journal version, where the supporting-half-space construction and per-iteration rebuild get developed | `bezier-trajectory-journal` worktree, branch `paper/journal-1` |
+| Sequel 2 | probabilistic KOZ / risk field — uncertain hazard motion, receding horizon | 연구노트 002 and 004; no artifact yet |
+
+**Both sequels inherit this paper's construction and neither re-derives it.**
+연구노트 002 §기존 SCP-QP 정식화와의 접속 keeps the KOZ row as `aᵀP_i ≤ b` on
+control points, keeps the 볼록 껍질 증명서, and keeps "분할구간과 집단의 쌍마다
+지지 반공간 하나". Sequel 1's second contribution is Proposition 1 applied to a
+curved tube. When they write 기존, they mean this paper.
+
+### Hazard: do not claim the space-time lift
+
+**The lift itself is published** — Osburn, Peterson & Salmon, arXiv:2508.10203,
+August 2025: moving obstacle → static tube in space-time, time as a Bézier
+coordinate with the hull argument in the lifted space, finite-height tubes, time
+monotonicity on control points. Sequel 1's own novelty section forbids claiming
+"time as a coordinate" for exactly this reason.
+
+So this paper's future-work line must not drift toward "시간을 좌표로 확장". It
+would step on published prior art *and* on our own sequel. Fixed transfer time is
+this paper's stated assumption; relaxing it is a different formulation, and it
+belongs to sequel 1.
+
+### What this paper uniquely owns
+
+Sequel 1 records as a frozen decision that **no quadratic acceleration energy
+exists** in the lifted space: with time as a coordinate, physical acceleration
+becomes a ratio of Béziers with a cubic denominator, so no matrix makes it a
+quadratic form. Its objective is a parameter-domain smoothness regularizer.
+
+The exact control-acceleration energy via the Bernstein Gram matrix therefore
+does **not** transfer to either sequel. §2.3 and §3.2 are the part of this paper
+that is not shared infrastructure.
+
+### Where references [15]–[19] came from
+
+`../bezier-trajectory-merge/doc/refs/safe_corridor_references.md` — a
+literature survey read from PDFs, with its own "could not read" list. It answers
+the questions Proposition 1 raises: the convex hull property, whether the
+certificate survives De Casteljau subdivision, and whether the literature puts
+one half-space per (sub-arc, obstacle) on all control points (it does,
+unanimously, across six papers). Assumption 3 of Proposition 1 is that
+convention.
+
+Inherit its caveats too: Zhang et al. (arXiv:2110.00065) venue unverified and
+its setting is not ours; Gao et al. ICRA 2018 could not be read; MADER is
+B-spline + MINVO, so cite it for the one-plane-per-interval structure but never
+call it a Bézier method.

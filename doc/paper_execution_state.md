@@ -1,5 +1,17 @@
 # Paper Execution State
 
+> **SUPERSEDED 2026-09-01 — do not act on this file.**
+>
+> Last updated 2026-04-17, and every configuration line in it is now wrong: the
+> objective is control-acceleration energy computed as an exact Gram integral, not
+> `dv`; the iteration limit is 1000, not 10000; the tolerance is 1e-8, not 1e-12;
+> the proximal weight is 0 on the trust path; `T6`/the downstream comparison is cut
+> from the paper. The metric lock names `dv_proxy_m_s`, which `CLAUDE.md` forbids.
+>
+> Kept for the record. The formulation of record is `doc/design_freeze.md` §0;
+> current numbers are `doc/results/paper_tables.md`; current state is
+> `doc/session_handoff.md`.
+
 This document is the mutable source of truth for the artifact-build phase. It exists to preserve shared context across parallel workstreams and to stop notation, metric, and scope drift.
 
 Last updated: 2026-04-17
