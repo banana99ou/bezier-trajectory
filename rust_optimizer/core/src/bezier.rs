@@ -1,4 +1,5 @@
 /// Bézier curve matrices and evaluation.
+use std::cell::RefCell;
 use std::f64;
 
 /// Binomial coefficient C(n, k).
@@ -61,7 +62,16 @@ pub fn get_g_matrix(n: usize) -> Vec<f64> {
 
 /// Multiply two row-major matrices: A (m x k) * B (k x n) -> C (m x n).
 pub fn matmul(a: &[f64], m: usize, k: usize, b: &[f64], n: usize) -> Vec<f64> {
-    let mut c = vec![0.0; m * n];
+    let mut c = Vec::new();
+    matmul_into(a, m, k, b, n, &mut c);
+    c
+}
+
+/// `matmul` into a reused buffer; identical arithmetic. `c` must not alias
+/// `a` or `b`.
+pub fn matmul_into(a: &[f64], m: usize, k: usize, b: &[f64], n: usize, c: &mut Vec<f64>) {
+    c.clear();
+    c.resize(m * n, 0.0);
     for i in 0..m {
         for j in 0..n {
             let mut sum = 0.0;
@@ -71,7 +81,6 @@ pub fn matmul(a: &[f64], m: usize, k: usize, b: &[f64], n: usize) -> Vec<f64> {
             c[i * n + j] = sum;
         }
     }
-    c
 }
 
 /// Transpose a row-major matrix (m x n) -> (n x m).
@@ -112,12 +121,20 @@ pub fn get_g_tilde(n: usize) -> Option<Vec<f64>> {
     Some(matmul(&tmp, sz, sz, &eded, sz))
 }
 
-/// Bernstein basis weights for degree N at tau. Returns vec of length N+1.
-pub fn bernstein_basis(n: usize, tau: f64) -> Vec<f64> {
-    let mut b = vec![0.0; n + 1];
+/// Bernstein basis weights for degree N at tau, into a reused buffer. The
+/// arithmetic is identical to `bernstein_basis`; only the allocation differs.
+pub fn bernstein_basis_into(n: usize, tau: f64, b: &mut Vec<f64>) {
+    b.clear();
+    b.resize(n + 1, 0.0);
     for i in 0..=n {
         b[i] = binom(n, i) * tau.powi(i as i32) * (1.0 - tau).powi((n - i) as i32);
     }
+}
+
+/// Bernstein basis weights for degree N at tau. Returns vec of length N+1.
+pub fn bernstein_basis(n: usize, tau: f64) -> Vec<f64> {
+    let mut b = Vec::new();
+    bernstein_basis_into(n, tau, &mut b);
     b
 }
 
@@ -143,17 +160,36 @@ pub fn bernstein_derivative_weights(n: usize, tau: f64) -> Vec<f64> {
     w
 }
 
+thread_local! {
+    /// Scratch for the basis weights of `evaluate` / `evaluate_into`. The
+    /// evaluation loops of the KOZ geometry call these hundreds of times per
+    /// wall; the buffer turns each call's two heap allocations into zero
+    /// (evaluate_into) or one (evaluate). Safe: nothing below re-enters.
+    static BASIS_SCRATCH: RefCell<Vec<f64>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Evaluate a Bézier curve at tau into a reused buffer. Bit-identical to
+/// `evaluate`: same basis, same accumulation order, no allocation.
+pub fn evaluate_into(control_points: &[f64], np1: usize, dim: usize, tau: f64, out: &mut Vec<f64>) {
+    let n = np1 - 1;
+    out.clear();
+    out.resize(dim, 0.0);
+    BASIS_SCRATCH.with(|cell| {
+        let basis = &mut *cell.borrow_mut();
+        bernstein_basis_into(n, tau, basis);
+        for i in 0..np1 {
+            for d in 0..dim {
+                out[d] += basis[i] * control_points[i * dim + d];
+            }
+        }
+    });
+}
+
 /// Evaluate a Bézier curve at tau.
 /// control_points: (N+1) x dim, row-major. Returns vec of length dim.
 pub fn evaluate(control_points: &[f64], np1: usize, dim: usize, tau: f64) -> Vec<f64> {
-    let n = np1 - 1;
-    let basis = bernstein_basis(n, tau);
-    let mut out = vec![0.0; dim];
-    for i in 0..np1 {
-        for d in 0..dim {
-            out[d] += basis[i] * control_points[i * dim + d];
-        }
-    }
+    let mut out = Vec::new();
+    evaluate_into(control_points, np1, dim, tau, &mut out);
     out
 }
 

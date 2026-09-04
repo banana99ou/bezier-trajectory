@@ -1,27 +1,46 @@
 /// De Casteljau subdivision for Bézier curve segmentation.
+use std::cell::RefCell;
 
-/// Compute subdivision coefficients for a single basis vector.
-/// Returns (left, right) each of length N+1.
-fn split_1d(n: usize, tau: f64, basis_index: usize) -> (Vec<f64>, Vec<f64>) {
-    let mut w = vec![0.0; n + 1];
+/// Compute subdivision coefficients for a single basis vector, into reused
+/// buffers. The in-place forward sweep computes, per level, exactly the values
+/// the old per-level allocation computed -- `w[j] = (1-tau)*w[j] + tau*w[j+1]`
+/// ascending reads only not-yet-overwritten entries -- so the results are
+/// bit-identical; only the allocations are gone.
+fn split_1d_into(
+    n: usize,
+    tau: f64,
+    basis_index: usize,
+    w: &mut Vec<f64>,
+    left: &mut Vec<f64>,
+    right: &mut Vec<f64>,
+) {
+    w.clear();
+    w.resize(n + 1, 0.0);
     w[basis_index] = 1.0;
-    let mut left = Vec::with_capacity(n + 1);
-    let mut right = Vec::with_capacity(n + 1);
+    left.clear();
+    right.clear();
     left.push(w[0]);
     right.push(w[n]);
 
-    let mut ww = w;
+    let mut len = n + 1;
     for _ in 1..=n {
-        let mut new_w = vec![0.0; ww.len() - 1];
-        for j in 0..new_w.len() {
-            new_w[j] = (1.0 - tau) * ww[j] + tau * ww[j + 1];
+        for j in 0..len - 1 {
+            w[j] = (1.0 - tau) * w[j] + tau * w[j + 1];
         }
-        left.push(new_w[0]);
-        right.push(new_w[new_w.len() - 1]);
-        ww = new_w;
+        len -= 1;
+        left.push(w[0]);
+        right.push(w[len - 1]);
     }
     right.reverse();
-    (left, right)
+}
+
+thread_local! {
+    /// Scratch for `split_matrices`: the basis vector and the two coefficient
+    /// columns of `split_1d_into`. `component_support` subdivides 32 pieces per
+    /// wall, each piece two split calls -- this buffer removes the roughly
+    /// n-squared small allocations each of those used to make.
+    static SPLIT_SCRATCH: RefCell<(Vec<f64>, Vec<f64>, Vec<f64>)> =
+        const { RefCell::new((Vec::new(), Vec::new(), Vec::new())) };
 }
 
 /// Compute subdivision matrices S_left and S_right (each (N+1) x (N+1), row-major).
@@ -29,13 +48,16 @@ pub fn split_matrices(n: usize, tau: f64) -> (Vec<f64>, Vec<f64>) {
     let sz = n + 1;
     let mut s_left = vec![0.0; sz * sz];
     let mut s_right = vec![0.0; sz * sz];
-    for j in 0..sz {
-        let (l, r) = split_1d(n, tau, j);
-        for i in 0..sz {
-            s_left[i * sz + j] = l[i];
-            s_right[i * sz + j] = r[i];
+    SPLIT_SCRATCH.with(|cell| {
+        let (w, l, r) = &mut *cell.borrow_mut();
+        for j in 0..sz {
+            split_1d_into(n, tau, j, w, l, r);
+            for i in 0..sz {
+                s_left[i * sz + j] = l[i];
+                s_right[i * sz + j] = r[i];
+            }
         }
-    }
+    });
     (s_left, s_right)
 }
 
@@ -84,6 +106,16 @@ pub fn segment_matrices_equal_params(n: usize, n_seg: usize) -> Vec<Vec<f64>> {
 /// Composed from two splits: restrict to `[alpha, 1]` first, then take the left
 /// part at the position `beta` occupies in the restricted parameter.
 pub fn subdivide_between(n: usize, alpha: f64, beta: f64) -> Vec<f64> {
+    let mut out = Vec::new();
+    subdivide_between_into(n, alpha, beta, &mut out);
+    out
+}
+
+/// `subdivide_between` into a reused buffer; identical branches and
+/// arithmetic. The two intermediate split matrices are still built fresh --
+/// what this removes is the per-call result allocation in loops that subdivide
+/// dozens of pieces per wall.
+pub fn subdivide_between_into(n: usize, alpha: f64, beta: f64, out: &mut Vec<f64>) {
     let sz = n + 1;
     let (a, b) = if beta >= alpha { (alpha, beta) } else { (beta, alpha) };
     let a = a.clamp(0.0, 1.0);
@@ -91,11 +123,12 @@ pub fn subdivide_between(n: usize, alpha: f64, beta: f64) -> Vec<f64> {
 
     // Whole domain: nothing to do, and the general path would divide by zero.
     if a <= 0.0 && b >= 1.0 {
-        let mut eye = vec![0.0; sz * sz];
+        out.clear();
+        out.resize(sz * sz, 0.0);
         for i in 0..sz {
-            eye[i * sz + i] = 1.0;
+            out[i * sz + i] = 1.0;
         }
-        return eye;
+        return;
     }
 
     let (_, s_right) = split_matrices(n, a);
@@ -104,15 +137,16 @@ pub fn subdivide_between(n: usize, alpha: f64, beta: f64) -> Vec<f64> {
     if denom <= 1e-15 {
         // Degenerate interval at the very end of the domain: every control point
         // collapses onto the endpoint, which is the correct (single-point) hull.
-        let mut m = vec![0.0; sz * sz];
+        out.clear();
+        out.resize(sz * sz, 0.0);
         for i in 0..sz {
-            m[i * sz + n] = 1.0;
+            out[i * sz + n] = 1.0;
         }
-        return m;
+        return;
     }
     let b_local = ((b - a) / denom).clamp(0.0, 1.0);
     let (s_left, _) = split_matrices(n, b_local);
-    crate::bezier::matmul(&s_left, sz, sz, &s_right, sz)
+    crate::bezier::matmul_into(&s_left, sz, sz, &s_right, sz, out);
 }
 
 #[cfg(test)]
