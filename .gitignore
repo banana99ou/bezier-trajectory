@@ -27,6 +27,23 @@ paper/**/*.pdf
 !paper/**/template/*.pdf
 paper/**/*.docx.tmp
 
+# xelatex build droppings from tools/render_poster.py. poster.pdf itself is
+# already covered by paper/**/*.pdf above -- it is a render, not a source.
+paper/**/*.aux
+paper/**/*.log
+paper/**/*.out
+paper/**/a0header.ps
+
+# the poster's camera-picking viewer is generated and vendors plotly (6 MB):
+# regenerate with paper/ksas_2026_fall/poster/lift_viewer.py
+paper/**/lift_viewer.html
+
+# poster previews and the view-picking viewer: both are regenerated on demand
+# (make_poster_figures.py --png, lift_viewer.py) and the viewer vendors plotly.
+paper/**/poster/*.png
+paper/**/poster/lift_viewer.html
+paper/**/a0header.ps
+
 # scratch handoffs between sessions — not a record, use the repo for that
 tmp/
 tmp.md
