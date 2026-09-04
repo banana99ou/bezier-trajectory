@@ -71,7 +71,7 @@ from .geometry import (
 from .objective import build_initial_guess
 from .optimize import (
     DEFAULT_TRUST_RADIUS,
-    ELASTIC_WEIGHT_LADDER,
+    DEFAULT_INITIAL_ELASTIC_WEIGHT,
     _STOP_REASONS,
     figure_grade_failures,
     optimize_spacetime,
@@ -513,7 +513,7 @@ def scenario_catalog() -> dict:
     return {
         "scenarios": catalog,
         "solve_defaults": dict(SOLVE_DEFAULTS),
-        "elastic_weight_ladder": [float(w) for w in ELASTIC_WEIGHT_LADDER],
+        "initial_elastic_weight": float(DEFAULT_INITIAL_ELASTIC_WEIGHT),
     }
 
 
@@ -546,13 +546,14 @@ def reload_scenarios() -> dict:
 
 
 def _run_ladder(scenario: dict, N: int, n_seg: int, params: dict):
-    """``optimize_scenario``'s loop for one configuration, keeping the raw info.
+    """``optimize_scenario``'s solve for one configuration, keeping the raw info.
 
-    Deliberately the same shape as ``optimize.optimize_scenario``: same rungs
-    (``ELASTIC_WEIGHT_LADDER``), same stopping test (converged AND keep-out
-    certificate AND occlusion certificate AND positive clearance), same ranking
-    that keeps the BEST rung rather than the last -- escalating past a weight
-    that already cleared can make things worse, measured on `wall` N8_seg2.
+    Deliberately the same shape as ``optimize.optimize_scenario``: ONE solve,
+    with the elastic weight escalated in-loop by the solver (SNOPT elastic
+    mode; see ``optimize.DEFAULT_INITIAL_ELASTIC_WEIGHT``). The name is kept so
+    every caller and cache key stays put; the "rungs" return is now a single
+    entry describing the run's weight trajectory, which is what the header
+    table renders.
 
     It is written out here instead of calling ``optimize_scenario`` for one
     reason: that function returns a summary row and drops ``info``, and the
@@ -561,70 +562,58 @@ def _run_ladder(scenario: dict, N: int, n_seg: int, params: dict):
     not be that pair. ``tests/integration/test_frontend.py`` pins the two paths
     together on `original` -- identical control points, or this drifted.
     """
-    ladder = (
-        tuple(ELASTIC_WEIGHT_LADDER)
+    initial_weight = (
+        DEFAULT_INITIAL_ELASTIC_WEIGHT
         if params["elastic_weight"] is None
-        else (float(params["elastic_weight"]),)
+        else float(params["elastic_weight"])
     )
     obstacles = scenario["obstacles"]
     dim = len(scenario["start"])
     stations = scenario.get("stations")
 
-    best_rank = None
-    P_opt = info_opt = clearance = None
-    used_weight = ladder[0]
-    rungs = []
-    for weight in ladder:
-        P_try, info_try = optimize_spacetime(
-            N=N,
-            dim=dim,
-            p_start=scenario["start"],
-            p_end=scenario["end"],
-            obstacles=obstacles,
-            n_seg=n_seg,
-            max_iter=params["max_iter"],
-            tol=params["tol"],
-            scp_prox_weight=params["scp_prox_weight"],
-            scp_trust_radius=params["trust_radius"],
-            elastic_weight=weight,
-            min_dt=params["min_dt"],
-            sound_clip=params["sound_clip"],
-            v_max=params["v_max"],
-            time_weight=params["time_weight"],
-            free_arrival_time=params["free_arrival_time"],
-            stations=stations,
-            coord_bounds=scenario.get("coord_bounds"),
-            verbose=False,
-            init_curve=scenario.get("init_curve"),
-        )
-        clearance_try = compute_min_clearance(P_try, obstacles, dim=dim, n_eval=3000)
-        cert_try = float(info_try.get("koz_violation_reference", float("nan")))
-        occ_try = float(info_try.get("occlusion_violation_reference", 0.0))
-        cleared_try = (
-            bool(info_try.get("converged", 0.0))
-            and cert_try <= 1e-6
-            and occ_try <= 1e-6
-            and clearance_try > 0.0
-        )
-        rungs.append({
-            "elastic_weight": float(weight),
-            "clearance": float(clearance_try),
-            "certificate": cert_try,
-            "occlusion": occ_try,
-            "cleared": cleared_try,
-        })
-        rank_try = (cleared_try, clearance_try > 0.0, clearance_try)
-        if best_rank is None or rank_try > best_rank:
-            best_rank = rank_try
-            P_opt, info_opt, clearance, used_weight = (
-                P_try,
-                info_try,
-                clearance_try,
-                weight,
-            )
-        if cleared_try:
-            break
-    return P_opt, info_opt, float(used_weight), float(clearance), rungs
+    P_opt, info_opt = optimize_spacetime(
+        N=N,
+        dim=dim,
+        p_start=scenario["start"],
+        p_end=scenario["end"],
+        obstacles=obstacles,
+        n_seg=n_seg,
+        max_iter=params["max_iter"],
+        tol=params["tol"],
+        scp_prox_weight=params["scp_prox_weight"],
+        scp_trust_radius=params["trust_radius"],
+        elastic_weight=initial_weight,
+        min_dt=params["min_dt"],
+        sound_clip=params["sound_clip"],
+        v_max=params["v_max"],
+        time_weight=params["time_weight"],
+        free_arrival_time=params["free_arrival_time"],
+        stations=stations,
+        coord_bounds=scenario.get("coord_bounds"),
+        verbose=False,
+        init_curve=scenario.get("init_curve"),
+    )
+    clearance = compute_min_clearance(P_opt, obstacles, dim=dim, n_eval=3000)
+    cert = float(info_opt.get("koz_violation_reference", float("nan")))
+    occ = float(info_opt.get("occlusion_violation_reference", 0.0))
+    cleared = (
+        bool(info_opt.get("converged", 0.0))
+        and cert <= 1e-6
+        and occ <= 1e-6
+        and clearance > 0.0
+    )
+    used_weight = float(info_opt.get("final_elastic_weight", initial_weight))
+    rungs = [{
+        "elastic_weight": used_weight,
+        "initial_elastic_weight": float(initial_weight),
+        "weight_raises": int(info_opt.get("weight_raises", 0)),
+        "max_koz_dual": float(info_opt.get("max_koz_dual", float("nan"))),
+        "clearance": float(clearance),
+        "certificate": cert,
+        "occlusion": occ,
+        "cleared": cleared,
+    }]
+    return P_opt, info_opt, used_weight, float(clearance), rungs
 
 
 def _gate_row(info: dict, clearance: float, has_stations: bool) -> dict:
@@ -1123,7 +1112,8 @@ def solve_from_payload(payload: dict) -> dict:
         },
         "resolved": {
             "elastic_weight": float(used_weight),
-            "ladder_walked": params["elastic_weight"] is None,
+            "initial_elastic_weight": float(rungs[0]["initial_elastic_weight"]),
+            "weight_raises": int(rungs[0]["weight_raises"]),
             "rungs": rungs,
         },
         "scenario": {

@@ -493,7 +493,6 @@ struct SpacetimeScpContext {
     spatial_dim: usize,
     stations: Vec<f64>,
     n_stations: usize,
-    elastic_weight: f64,
     tol: f64,
     /// Trust radius and streak counters live here, not in Python. A stepper that
     /// re-derived them per call would be running a different algorithm from the
@@ -568,7 +567,7 @@ impl SpacetimeScpContext {
         );
 
         let _ = scp_prox_weight; // the trust region does this job; see scp_step
-        let state = spacetime_optimizer::ScpState::new(&p_flat, scp_trust_radius);
+        let state = spacetime_optimizer::ScpState::new(&p_flat, scp_trust_radius, elastic_weight);
         let (station_vec, n_stations) = station_arrays(stations, spatial_dim)?;
 
         Ok(Self {
@@ -580,7 +579,6 @@ impl SpacetimeScpContext {
             spatial_dim,
             stations: station_vec,
             n_stations,
-            elastic_weight,
             tol,
             state,
         })
@@ -633,7 +631,6 @@ impl SpacetimeScpContext {
             &self.precomputed,
             &obstacles,
             &station_data,
-            self.elastic_weight,
             self.tol,
         );
         let outcome = iter_out.outcome;
@@ -702,6 +699,9 @@ impl SpacetimeScpContext {
         info.set_item("state_converged", self.state.converged)?;
         info.set_item("stop_reason", self.state.stop)?;
         info.set_item("running", self.state.running())?;
+        info.set_item("elastic_weight", self.state.weight)?;
+        info.set_item("weight_raises", self.state.weight_raises)?;
+        info.set_item("max_koz_dual", result.max_koz_dual)?;
         info.set_item("accept_count", self.state.accept_count)?;
         info.set_item("reject_count", self.state.reject_count)?;
         // Best FEASIBLE iterate seen, tracked by the solver. Exposed so a stepping

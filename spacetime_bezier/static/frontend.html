@@ -114,7 +114,7 @@
       <div><label class="f">n_seg</label><input id="n_seg" type="number" min="1" step="1"></div>
     </div>
     <label class="f">elastic_weight <span id="ewHint" class="muted"></span></label>
-    <input id="elastic_weight" type="text" placeholder="blank = walk the ladder">
+    <input id="elastic_weight" type="text" placeholder="blank = escalate from default">
     <div class="row">
       <div><label class="f">v_max (blank = off)</label><input id="v_max" type="text" placeholder="off"></div>
       <div><label class="f">time_weight</label><input id="time_weight" type="text" placeholder="0"></div>
@@ -1276,7 +1276,7 @@ function drawBanner() {
 function drawHeader() {
   const p = RES.provenance, v = RES.verdict, r = RES.request;
   $("hRun").innerHTML = `<b>${RES.scenario.name}</b> <code>N=${r.N} n_seg=${r.n_seg} ` +
-    `w=${fmt(RES.resolved.elastic_weight, 6)}${RES.resolved.ladder_walked ? " (ladder)" : ""} ` +
+    `w=${fmt(RES.resolved.elastic_weight, 6)}${RES.resolved.weight_raises ? ` (${RES.resolved.weight_raises} raises)` : ""} ` +
     `trust=${r.trust_radius} max_iter=${r.max_iter} tol=${r.tol}` +
     (r.v_max !== null ? ` v_max=${r.v_max}` : "") +
     (r.time_weight ? ` time_weight=${r.time_weight}` : "") +
@@ -1354,7 +1354,7 @@ function drawDiagnostics() {
   method's blind spots. A clearance disagreement is a finding; a certificate agreement proves
   plumbing, not geometry.</p>
 
-  <h4>Elastic-weight ladder</h4>
+  <h4>Elastic weight (escalated in-loop)</h4>
   <table class="pairtable"><tr><th>weight</th><th>clearance</th><th>certificate</th>
     <th>occlusion</th><th>cleared</th></tr>` +
     RES.resolved.rungs.map(r =>
@@ -1466,9 +1466,10 @@ async function doSolve() {
 async function doReplay() {
   if (!RES) { $("replayStatus").textContent = "solve first"; return; }
   const req = collectRequest();
-  // The weight the SOLVE resolved to, not the blank field: the replay pins one
-  // weight and the solve may have walked the ladder.
-  req.elastic_weight = RES.resolved.elastic_weight;
+  // The STARTING weight of the original run, not the final one: escalation is
+  // deterministic in-loop, so pinning the same start reproduces the run, while
+  // pinning the final weight would solve a different (cold high-weight) problem.
+  req.elastic_weight = RES.resolved.initial_elastic_weight;
   $("loadReplay").disabled = true;
   $("replayStatus").innerHTML = `<span class="spin"></span>re-solving with the trace on…`;
   try {
@@ -1580,7 +1581,7 @@ async function boot() {
   $("trust_radius").value = d.trust_radius;
   $("max_iter").value = d.max_iter;
   $("tol").value = d.tol;
-  $("elastic_weight").placeholder = `blank = ladder (${CAT.elastic_weight_ladder[0]} → ${CAT.elastic_weight_ladder.at(-1)})`;
+  $("elastic_weight").placeholder = `blank = start at ${CAT.initial_elastic_weight}, escalate in-loop`;
   applyScenario();
 
   sel.addEventListener("change", applyScenario);

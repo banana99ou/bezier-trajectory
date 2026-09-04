@@ -335,7 +335,8 @@ def test_solve_original_is_figure_grade_with_no_reasons(original):
     assert verdict["converged"] is True
     assert verdict["stop_label"] == "stationary"
     assert original["resolved"]["elastic_weight"] == 100.0
-    assert original["resolved"]["ladder_walked"] is True
+    assert original["resolved"]["initial_elastic_weight"] == 100.0
+    assert original["resolved"]["weight_raises"] == 0
     assert original["resolved"]["rungs"][0]["cleared"] is True
 
 

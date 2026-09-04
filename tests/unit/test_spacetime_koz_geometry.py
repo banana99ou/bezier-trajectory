@@ -431,14 +431,19 @@ def test_wall_scenario_waits_for_the_wall():
 
 
 def test_wall_penetrates_below_its_penalty_threshold():
-    """The companion fact: at the old fixed weight of 100, `wall` really does
-    penetrate.
+    """The companion fact: weight 100 is below `wall`'s exact-penalty threshold.
 
     This is why the scenario was misread as infeasible for months, and it is
-    what makes the weight a modelling decision rather than a tuning knob.
+    what makes the weight a property of the scenario rather than a tuning knob.
+    Under the in-loop escalation (2026-08-31) the observable changed but the
+    fact did not: a run STARTING at 100 must be forced to raise -- the
+    escalation fires precisely because the weight-100 subproblem optimum keeps
+    slack -- and having raised, it clears.
 
-    FAILS IF: weight 100 already solves `wall`, which would mean the threshold
-    story above is wrong and the fix is something else.
+    FAILS IF: the run finishes at weight 100 with positive clearance, which
+    would mean 100 was never below the threshold and the threshold story is
+    wrong; or the raised run no longer clears, which would mean escalation
+    broke a certified configuration.
     """
     from spacetime_bezier.scenarios import SCENARIO_MAP
 
@@ -451,9 +456,12 @@ def test_wall_penetrates_below_its_penalty_threshold():
         elastic_weight=100.0,
         init_curve=sc.get("init_curve"),
     )
-    assert info["min_clearance"] < 0.0, (
-        "weight 100 now clears `wall`; the penalty-threshold explanation for the "
-        "old infeasibility record needs revisiting"
+    assert info["weight_raises"] >= 1.0 and info["final_elastic_weight"] > 100.0, (
+        "no raise fired from a start of 100; weight 100 now suffices for `wall` "
+        "and the penalty-threshold explanation needs revisiting"
+    )
+    assert info["min_clearance"] > 0.0, (
+        "the escalated run no longer clears `wall`"
     )
 
 

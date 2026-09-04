@@ -309,6 +309,34 @@ pub(crate) fn solve_qp_with_socs(
     m: usize,
     socs: &[SocBlock],
 ) -> Option<Vec<f64>> {
+    solve_qp_with_socs_duals(h, f, constraints_a, constraints_lb, constraints_ub, n, m, socs)
+        .map(|(x, _)| x)
+}
+
+/// As `solve_qp_with_socs`, additionally returning the dual multiplier of each
+/// caller row's LOWER bound: entry `i` is the Lagrange multiplier of
+/// `a_i · x >= lb_i` (nonnegative by Clarabel's cone convention), the multiplier
+/// of the equality when `lb_i == ub_i`, and NaN when the row has no finite
+/// lower bound. Upper-bound duals are not returned because no caller reads
+/// them.
+///
+/// Why the duals matter at all: the elastic keep-out rows are a one-norm
+/// penalty, and one-norm penalties are exact once the weight exceeds the
+/// largest multiplier (Han & Mangasarian 1979). Complementarity caps every
+/// relaxed row's multiplier at the weight, with equality exactly when its slack
+/// is active — so "largest keep-out dual strictly below the weight" is the
+/// exactness certificate the SCP loop exports, and it must agree with "all
+/// slacks zero" or one of the two computations is wrong.
+pub(crate) fn solve_qp_with_socs_duals(
+    h: &[f64],         // (n, n) row-major
+    f: &[f64],         // (n,)
+    constraints_a: &[f64], // (m, n) row-major
+    constraints_lb: &[f64], // (m,)
+    constraints_ub: &[f64], // (m,)
+    n: usize,
+    m: usize,
+    socs: &[SocBlock],
+) -> Option<(Vec<f64>, Vec<f64>)> {
     use clarabel::algebra::CscMatrix;
     use clarabel::solver::{DefaultSettingsBuilder, DefaultSolver, IPSolver, SolverStatus};
     let debug_run_id = format!("qp-n{}_m{}", n, m);
@@ -415,6 +443,9 @@ pub(crate) fn solve_qp_with_socs(
     let mut cones2: Vec<clarabel::solver::SupportedConeT<f64>> = Vec::new();
     let mut n_eq2 = 0usize;
     let mut n_ineq2 = 0usize;
+    // Where each caller row's lower-bound dual lands in Clarabel's z vector.
+    // Filled alongside the packing so the mapping cannot drift from it.
+    let mut lower_dual_index: Vec<Option<usize>> = vec![None; m];
 
     // Equalities first
     for row in 0..m {
@@ -426,6 +457,7 @@ pub(crate) fn solve_qp_with_socs(
                     sparse_row.push((col, val));
                 }
             }
+            lower_dual_index[row] = Some(a_rows2.len());
             a_rows2.push(sparse_row);
             b_vals2.push(constraints_lb[row]);
             n_eq2 += 1;
@@ -446,6 +478,7 @@ pub(crate) fn solve_qp_with_socs(
                         sparse_row.push((col, -val)); // negate for Ax >= lb
                     }
                 }
+                lower_dual_index[row] = Some(a_rows2.len());
                 a_rows2.push(sparse_row);
                 b_vals2.push(-constraints_lb[row]);
                 n_ineq2 += 1;
@@ -565,7 +598,12 @@ pub(crate) fn solve_qp_with_socs(
 
     match solver.solution.status {
         SolverStatus::Solved | SolverStatus::AlmostSolved => {
-            Some(solver.solution.x.clone())
+            let z = &solver.solution.z;
+            let duals: Vec<f64> = lower_dual_index
+                .iter()
+                .map(|idx| idx.map(|i| z[i]).unwrap_or(f64::NAN))
+                .collect();
+            Some((solver.solution.x.clone(), duals))
         }
         _ => None,
     }

@@ -28,10 +28,13 @@ bezier_opt = pytest.importorskip("bezier_opt")
 def test_the_fallback_fires_and_does_not_report_convergence():
     """The one configuration measured to trigger the fallback.
 
-    `diverse` N8_seg4 at w=100 with max_iter=40: the loop's final iterate
-    penetrates, the best feasible iterate seen is returned instead, and the
-    certificate at the returned point (2.264) differs from the loop's final
-    reference (1.616) -- two different trajectories.
+    `diverse` N8_seg4 starting at w=100 with max_iter=15: the loop's final
+    iterate penetrates, the best feasible iterate seen is returned instead, and
+    the certificate at the returned point differs from the loop's final
+    reference -- two different trajectories. (Was max_iter=40 at a FIXED weight
+    100; the in-loop weight escalation now converges that run outright --
+    measured 2026-08-31: figure-grade in 40 iterations, one raise -- so the cap
+    is tightened to stop before the escalation can rescue it.)
 
     WHAT THIS DOES AND DOES NOT PROVE. Here the loop had not converged anyway
     (stop_reason is the iteration cap), so the pairing was already consistent.
@@ -50,7 +53,7 @@ def test_the_fallback_fires_and_does_not_report_convergence():
         p_end=sc["end"],
         obstacles=sc["obstacles"],
         n_seg=4,
-        max_iter=40,
+        max_iter=15,
         tol=1e-6,
         scp_trust_radius=0.5,
         min_dt=0.1,
@@ -265,7 +268,7 @@ def test_a_run_without_stations_keeps_the_old_ordering():
     """No station means no line of sight to lose, so nothing may change.
 
     FAILS IF the certificate condition is applied unconditionally: `diverse`
-    N8_seg4 at w=100 would stop returning its best feasible iterate, because that
+    N8_seg4 from w=100 would stop returning its best feasible iterate, because that
     iterate carries a keep-out violation of 2.264 and would no longer qualify.
     """
     sc = SCENARIO_MAP["diverse"][0]()
@@ -276,7 +279,7 @@ def test_a_run_without_stations_keeps_the_old_ordering():
         p_end=sc["end"],
         obstacles=sc["obstacles"],
         n_seg=4,
-        max_iter=40,
+        max_iter=15,
         tol=1e-6,
         scp_trust_radius=0.5,
         min_dt=0.1,

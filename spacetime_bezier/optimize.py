@@ -45,7 +45,15 @@ DEFAULT_ELASTIC_WEIGHT = 100.0
 #
 # The weight that succeeded is recorded per config as `elastic_weight`, so a
 # number in the table can always be traced to the penalty that produced it.
-ELASTIC_WEIGHT_LADDER = (100.0, 300.0, 800.0, 3000.0, 1e4, 1e5)
+#
+# The LADDER OF COLD RESTARTS IS GONE (2026-08-31). The solver now escalates the
+# weight in-loop — SNOPT's elastic mode (Gill, Murray & Saunders 2005): when the
+# elastic subproblem is stationary and slack remains, the weight is multiplied
+# by 10 and the SAME iterate continues, instead of the run being thrown away and
+# re-grown from the seed. Python passes only the STARTING weight; the weight the
+# run ended at comes back as ``info["final_elastic_weight"]``, with
+# ``info["weight_raises"]`` and the exactness margin ``info["max_koz_dual"]``.
+DEFAULT_INITIAL_ELASTIC_WEIGHT = 100.0
 
 try:
     import bezier_opt as _bezier_opt_rs
@@ -686,13 +694,13 @@ def optimize_scenario(
 ) -> dict:
     """Run optimization for all requested degree/segment-count pairs.
 
-    ``elastic_weight=None`` (the default) walks ``ELASTIC_WEIGHT_LADDER`` and
-    keeps the first run that is converged, certified and clearing. Passing a
-    float pins the weight and disables continuation, which is what the
-    reproducibility tests want.
+    ``elastic_weight`` is the STARTING penalty weight
+    (``DEFAULT_INITIAL_ELASTIC_WEIGHT`` when None); the solver escalates it
+    in-loop when the elastic subproblem stalls with slack — see the note at
+    ``DEFAULT_INITIAL_ELASTIC_WEIGHT``. There is no restart ladder any more.
     """
-    ladder = (
-        tuple(ELASTIC_WEIGHT_LADDER) if elastic_weight is None else (float(elastic_weight),)
+    initial_weight = (
+        DEFAULT_INITIAL_ELASTIC_WEIGHT if elastic_weight is None else float(elastic_weight)
     )
     obstacles = scenario["obstacles"]
     p_start = scenario["start"]
@@ -721,70 +729,48 @@ def optimize_scenario(
             print(f"[{scenario['name']}] degree={N}, segments={n_seg}")
             print(f"{'=' * 60}")
 
-        # Keep the best run seen, not merely the last one tried. Escalating past
-        # a weight that already cleared can make things worse -- `wall` N8_seg2
-        # clears at +0.1035 with w=800 and penetrates at -0.1474 with w=1e5 --
-        # so a ladder that returned its final rung would report the worse answer
-        # for every config that never certifies.
-        best_rank = None
-        P_opt = opt_info = clearance = None
-        used_weight = ladder[0]
-        for candidate_weight in ladder:
-            P_try, info_try = optimize_spacetime(
-                N=N,
-                dim=len(p_start),
-                p_start=p_start,
-                p_end=p_end,
-                obstacles=obstacles,
-                n_seg=n_seg,
-                max_iter=max_iter,
-                tol=tol,
-                scp_prox_weight=scp_prox_weight,
-                scp_trust_radius=trust_radius,
-                elastic_weight=candidate_weight,
-                min_dt=min_dt,
-                v_max=v_max,
-                time_weight=time_weight,
-                free_arrival_time=free_arrival_time,
-                sound_clip=sound_clip,
-                stations=stations,
-                coord_bounds=coord_bounds,
-                verbose=verbose,
-                init_curve=init_curve,
+        # ONE solve. The weight escalation that the ladder of cold restarts
+        # used to do from out here now happens inside the SCP loop (SNOPT
+        # elastic mode; see DEFAULT_INITIAL_ELASTIC_WEIGHT), and the measured
+        # trap that motivated "keep the best rung, not the last" -- `wall`
+        # N8_seg2 clearing at w=800 while a COLD solve at w=1e5 penetrates --
+        # is a statement about restarting from the seed at a high weight,
+        # which the in-loop rule never does: it raises mid-run and keeps the
+        # near-feasible iterate.
+        P_opt, opt_info = optimize_spacetime(
+            N=N,
+            dim=len(p_start),
+            p_start=p_start,
+            p_end=p_end,
+            obstacles=obstacles,
+            n_seg=n_seg,
+            max_iter=max_iter,
+            tol=tol,
+            scp_prox_weight=scp_prox_weight,
+            scp_trust_radius=trust_radius,
+            elastic_weight=initial_weight,
+            min_dt=min_dt,
+            v_max=v_max,
+            time_weight=time_weight,
+            free_arrival_time=free_arrival_time,
+            sound_clip=sound_clip,
+            stations=stations,
+            coord_bounds=coord_bounds,
+            verbose=verbose,
+            init_curve=init_curve,
+        )
+        clearance = compute_min_clearance(
+            P_opt, obstacles, dim=len(p_start), n_eval=3000
+        )
+        used_weight = float(opt_info.get("final_elastic_weight", initial_weight))
+        if verbose:
+            print(
+                f"  w={initial_weight:g} -> {used_weight:g} "
+                f"({int(opt_info.get('weight_raises', 0))} raises): "
+                f"clearance={clearance:.4f}, "
+                f"certificate={float(opt_info.get('koz_violation_reference', float('nan'))):.4g}, "
+                f"occlusion={float(opt_info.get('occlusion_violation_reference', 0.0)):.4g}"
             )
-            clearance_try = compute_min_clearance(
-                P_try, obstacles, dim=len(p_start), n_eval=3000
-            )
-            cert_try = float(info_try.get("koz_violation_reference", float("nan")))
-            # The ladder must not stop on a run that has lost line of sight, so
-            # the occlusion certificate joins the keep-out one in the stopping
-            # test. Zero when there is no station.
-            occ_try = float(info_try.get("occlusion_violation_reference", 0.0))
-            cleared_try = (
-                bool(info_try.get("converged", 0.0))
-                and cert_try <= 1e-6
-                and occ_try <= 1e-6
-                and clearance_try > 0.0
-            )
-            # Same ordering the scenario-level `_rank` uses to pick `best`.
-            rank_try = (
-                cleared_try,
-                clearance_try > 0.0,
-                clearance_try,
-            )
-            if best_rank is None or rank_try > best_rank:
-                best_rank = rank_try
-                P_opt, opt_info, clearance, used_weight = (
-                    P_try,
-                    info_try,
-                    clearance_try,
-                    candidate_weight,
-                )
-            if verbose:
-                print(f"  w={candidate_weight:g}: clearance={clearance_try:.4f}, "
-                      f"certificate={cert_try:.4g}, occlusion={occ_try:.4g}")
-            if cleared_try:
-                break
 
         backend_used = opt_info["backend"]
         if verbose:
@@ -835,6 +821,13 @@ def optimize_scenario(
             # recorded measurement downstream read.
             "trust_radius": float(trust_radius),
             "elastic_weight": float(used_weight),
+            "initial_elastic_weight": float(initial_weight),
+            "weight_raises": int(opt_info.get("weight_raises", 0)),
+            # The exactness margin's other half: complementarity pins a relaxed
+            # row's multiplier at the weight exactly when its slack is active,
+            # so (max_koz_dual < elastic_weight) and (total_slack ~ 0) are one
+            # claim computed two independent ways.
+            "max_koz_dual": float(opt_info.get("max_koz_dual", float("nan"))),
             "speed_cap_violation": float(opt_info.get("speed_cap_violation", 0.0)),
             "arrival_time": float(opt_info.get("arrival_time", float("nan"))),
             # Not a gate condition -- see the Rust export. It flags an arrival

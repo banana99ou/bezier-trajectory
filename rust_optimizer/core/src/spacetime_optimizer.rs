@@ -1,7 +1,7 @@
 use crate::bezier;
 use crate::constraints::LinearConstraint;
 use crate::de_casteljau;
-use crate::optimizer::{solve_qp_with_socs, OptResult, SocBlock};
+use crate::optimizer::{solve_qp_with_socs, solve_qp_with_socs_duals, OptResult, SocBlock};
 use crate::spacetime_constraints::{
     self, KozRowData, SpacetimeObstacleData, StationData,
 };
@@ -21,6 +21,36 @@ const ETA_ACCEPT: f64 = 0.1;
 /// single quiet iteration is not evidence when the half-spaces re-aim between
 /// iterations.
 const CONV_STREAK_REQUIRED: usize = 3;
+
+/// Elastic-weight escalation, SNOPT's elastic mode verbatim (Gill, Murray &
+/// Saunders, "SNOPT: An SQP Algorithm for Large-Scale Constrained
+/// Optimization", SIAM Review 47(1), 2005: when the elastic problem is solved
+/// to optimality and elastic variables remain nonzero, increase the penalty
+/// weight by a fixed factor and continue). Exactness of the one-norm penalty at
+/// a finite weight is Han & Mangasarian (1979). This replaced the Python-side
+/// ladder of cold restarts: same escalation, but the iterate is KEPT — the
+/// near-feasible trajectory continues under the raised weight instead of being
+/// thrown away and re-grown from the seed.
+const ELASTIC_WEIGHT_FACTOR: f64 = 10.0;
+/// Ceiling on escalation — the retired ladder's top rung. At the cap the loop
+/// stops raising and delivers its normal verdict; a run that cannot certify at
+/// the cap fails loudly exactly as it did before.
+const ELASTIC_WEIGHT_CAP: f64 = 1e5;
+/// The raise TRIGGER is a progress test on infeasibility, not a merit-flatness
+/// streak — the augmented-Lagrangian penalty update (Nocedal & Wright Alg.
+/// 17.4; LANCELOT / ALGENCAN practice): raise only when the exact violation has
+/// failed to shrink by `ELASTIC_PROGRESS_FACTOR` for `ELASTIC_STALL_WINDOW`
+/// consecutive iterations. A merit-flatness trigger was tried first and
+/// MEASURED WRONG (2026-08-31, `wall` N8_seg2): a run that certifies at weight
+/// 800 after a long grind shows transiently flat merits on the way, the streak
+/// fired mid-grind, and the raised weight wrecked a run that was winning —
+/// pinned 800 went from +0.1035 clearance (no escalation) to -0.26 (escalated).
+/// Progress in violation separates the two: the grind improves every few
+/// iterations, a stalled penalized optimum improves never.
+const ELASTIC_STALL_WINDOW: usize = 10;
+/// "Sufficient decrease" for the progress test: an iteration counts as progress
+/// only if it beats the best violation seen at this weight by one percent.
+const ELASTIC_PROGRESS_FACTOR: f64 = 0.99;
 
 /// Quadratic form of the PARAMETER-DOMAIN smoothness regularizer on the spatial
 /// control points.
@@ -443,6 +473,13 @@ pub struct ScpStepResult {
     pub vlin_p: f64,
     /// Linearized KOZ violation at the candidate, against the reference's rows.
     pub vlin_c: f64,
+    /// Largest dual multiplier over the elastic keep-out rows of this
+    /// subproblem, from Clarabel. Complementarity caps it at the elastic weight,
+    /// with equality exactly when some slack is active — so it must agree with
+    /// `total_slack` (nonzero slack iff dual at the weight), and the exactness
+    /// margin `weight - max_koz_dual` is a measured number rather than a hope.
+    /// NaN when the subproblem was solved on the hard path or failed.
+    pub max_koz_dual: f64,
     /// Violation of the non-KOZ rows at the reference. Must be ~0 for the
     /// predicted reduction to be meaningful.
     pub hard_viol_p: f64,
@@ -525,6 +562,7 @@ fn failed_step(
         l_c: f64::NAN,
         vlin_p: f64::NAN,
         vlin_c: f64::NAN,
+        max_koz_dual: f64::NAN,
         hard_viol_p: f64::NAN,
     }
 }
@@ -674,6 +712,7 @@ pub fn scp_step(
     // negative predicted reduction is then not a model defect but a bookkeeping
     // error that is indistinguishable from one.
     let (x_new, iter_total_slack, iter_max_slack, koz_slack_per_row, solver_status);
+    let iter_max_koz_dual: f64;
 
     //
     // The "unconditionally elastic" rule has one exception: with no KOZ rows there
@@ -705,6 +744,7 @@ pub fn scp_step(
         iter_max_slack = 0.0;
         koz_slack_per_row = vec![0.0; n_koz];
         solver_status = "Solved".to_string();
+        iter_max_koz_dual = f64::NAN;
     } else if elastic_available {
         let nvars_ext = nvars + n_koz;
         let ext_nrows = total_rows + n_koz;
@@ -754,15 +794,23 @@ pub fn scp_step(
             .map(|b| b.widened(nvars, n_koz))
             .collect();
 
-        match solve_qp_with_socs(
+        match solve_qp_with_socs_duals(
             &h_ext, &f_ext, &a_ext, &lb_ext, &ub_ext, nvars_ext, ext_nrows, &socs_ext,
         ) {
-            Some(x_full) => {
+            Some((x_full, row_duals)) => {
                 x_new = x_full[..nvars].to_vec();
                 koz_slack_per_row = x_full[nvars..].to_vec();
                 iter_total_slack = koz_slack_per_row.iter().sum::<f64>();
                 iter_max_slack = koz_slack_per_row.iter().cloned().fold(0.0f64, f64::max);
                 solver_status = "Elastic".to_string();
+                // The multiplier of each relaxed keep-out row. NaN-free by
+                // construction: every KOZ row has a finite lower bound, so each
+                // has a lower dual.
+                iter_max_koz_dual = row_duals
+                    [koz_row_start..koz_row_start + n_koz]
+                    .iter()
+                    .cloned()
+                    .fold(0.0f64, f64::max);
             }
             None => return failed_step(p_current, pre, obstacles),
         }
@@ -866,6 +914,7 @@ pub fn scp_step(
         koz_slack_per_row,
         occlusion_slack_per_row,
         occlusion_planes_dropped,
+        max_koz_dual: iter_max_koz_dual,
         is_candidate: true,
         l_p,
         l_c,
@@ -926,6 +975,27 @@ pub struct ScpState {
     pub trust: f64,
     pub trust_min: f64,
     pub trust_max: f64,
+    /// The trust radius the run started with. A weight raise resets `trust` to
+    /// this, for the same reason each retired ladder rung started fresh: the
+    /// collapsed radius was a verdict on the OLD merit landscape.
+    pub trust_init: f64,
+    /// Current elastic weight — state of the algorithm, not a constant of the
+    /// run. Raised in place by the SNOPT elastic-mode rule; see
+    /// `ELASTIC_WEIGHT_FACTOR`.
+    pub weight: f64,
+    /// How many times the weight was raised. Exported; a run that needed no
+    /// raise solved the problem the ladder's first rung used to solve.
+    pub weight_raises: u32,
+    /// Best (smallest) exact violation seen at the CURRENT weight. Reset to
+    /// infinity on every raise: each weight level proves progress on its own.
+    pub best_infeas: f64,
+    /// Iterations since the violation last improved on `best_infeas` by the
+    /// sufficient-decrease factor. Reaching `ELASTIC_STALL_WINDOW` while the
+    /// violation stands is the raise trigger.
+    pub stall_count: usize,
+    /// Largest keep-out dual of the most recent subproblem. Complementarity
+    /// pins it to `weight` exactly when slack is active.
+    pub last_max_koz_dual: f64,
     pub iteration: u32,
     pub conv_streak: usize,
     pub stat_streak: usize,
@@ -959,7 +1029,7 @@ pub struct ScpState {
 }
 
 impl ScpState {
-    pub fn new(p_init: &[f64], trust_radius: f64) -> Self {
+    pub fn new(p_init: &[f64], trust_radius: f64, elastic_weight: f64) -> Self {
         let trust = if trust_radius > 0.0 {
             trust_radius
         } else {
@@ -970,6 +1040,12 @@ impl ScpState {
             trust,
             trust_min: trust * 1e-3,
             trust_max: trust * 4.0,
+            trust_init: trust,
+            weight: elastic_weight,
+            weight_raises: 0,
+            best_infeas: f64::INFINITY,
+            stall_count: 0,
+            last_max_koz_dual: f64::NAN,
             iteration: 0,
             conv_streak: 0,
             stat_streak: 0,
@@ -1029,12 +1105,15 @@ pub fn scp_iterate(
     pre: &ScpPrecomputed,
     obstacles: &SpacetimeObstacleData<'_>,
     stations: &StationData<'_>,
-    elastic_weight: f64,
     tol: f64,
 ) -> ScpIteration {
     let nvars = pre.np1 * pre.dim;
     state.iteration += 1;
     let trust_before = state.trust;
+    // The weight is loop state. Every quantity graded this iteration — merits,
+    // ratio, streaks — uses the weight the subproblem was solved with; a raise
+    // takes effect on the NEXT subproblem.
+    let elastic_weight = state.weight;
 
     let step = scp_step(
         &state.p,
@@ -1074,6 +1153,7 @@ pub fn scp_iterate(
     state.last_delta = step.delta;
     state.last_total_slack = step.total_slack;
     state.last_max_slack = step.max_slack;
+    state.last_max_koz_dual = step.max_koz_dual;
 
     // Convex merit  L(x) = J(x) + w · (violation of the rows the QP was given)
     // True merit    T(x) = J(x) + w · (violation of rows REBUILT at x)
@@ -1197,11 +1277,42 @@ pub fn scp_iterate(
         outcome = if pred < pred_floor { "reject_null" } else { "reject" };
         state.trust *= 0.5;
         if state.trust < state.trust_min && state.running() {
-            // The ratio test stopped accepting anything. Convergence only if the
-            // reference is actually certified; otherwise a genuine failure, and it
-            // must not be dressed up as one.
-            state.converged = vtrue_p <= 1e-6 && step.hard_viol_p <= 1e-9;
-            state.stop = stop_reason::TRUST_COLLAPSE;
+            if vtrue_p > 1e-6 && weight_raisable(state) {
+                // The ratio test stopped accepting anything at a violating
+                // reference: the elastic problem at THIS weight is finished and
+                // slack remains. That is SNOPT's raise condition, not a failure
+                // — raise and continue from the same iterate.
+                raise_weight(state);
+            } else {
+                // Convergence only if the reference is actually certified;
+                // otherwise a genuine failure, and it must not be dressed up as
+                // one.
+                state.converged = vtrue_p <= 1e-6 && step.hard_viol_p <= 1e-9;
+                state.stop = stop_reason::TRUST_COLLAPSE;
+            }
+        }
+    }
+
+    // The raise trigger: the penalty-method progress test (see
+    // ELASTIC_STALL_WINDOW). The success stops above both require the
+    // certificate, so a weight too low to be exact can never trip them; before
+    // this trigger existed such a run burned straight to the iteration cap.
+    // The violation graded is the one belonging to the CURRENT reference —
+    // the candidate's when the step was accepted, the standing reference's
+    // when it was rejected.
+    if state.running() {
+        let v_now = if accepted { vtrue_c } else { vtrue_p };
+        if v_now <= 1e-6 {
+            // Feasible where it matters: nothing to escalate for.
+            state.stall_count = 0;
+        } else if v_now < ELASTIC_PROGRESS_FACTOR * state.best_infeas {
+            state.best_infeas = v_now;
+            state.stall_count = 0;
+        } else {
+            state.stall_count += 1;
+            if state.stall_count >= ELASTIC_STALL_WINDOW && weight_raisable(state) {
+                raise_weight(state);
+            }
         }
     }
 
@@ -1216,6 +1327,26 @@ pub fn scp_iterate(
         trust_before,
         trust_after: state.trust,
     }
+}
+
+/// Whether the elastic weight may still be raised: elastic mode is on and the
+/// cap is not yet reached. At the cap the loop delivers its normal verdict.
+fn weight_raisable(state: &ScpState) -> bool {
+    state.weight > 0.0 && state.weight < ELASTIC_WEIGHT_CAP
+}
+
+/// One SNOPT elastic-mode escalation: multiply the weight, keep the iterate,
+/// restart the trust radius and every streak. The iterate is the point of the
+/// whole construction — the retired ladder threw it away and re-grew it from
+/// the seed, which is where 97 percent of a laddered run's wall-clock went.
+fn raise_weight(state: &mut ScpState) {
+    state.weight = (state.weight * ELASTIC_WEIGHT_FACTOR).min(ELASTIC_WEIGHT_CAP);
+    state.weight_raises += 1;
+    state.trust = state.trust_init;
+    state.conv_streak = 0;
+    state.stat_streak = 0;
+    state.best_infeas = f64::INFINITY;
+    state.stall_count = 0;
 }
 
 /// Track the best FEASIBLE iterate seen. Kept separate from the current iterate:
@@ -1276,7 +1407,7 @@ pub fn optimize_spacetime(
         p_init, np1, dim, n_seg, min_dt, coord_lb, coord_ub, time_lb, time_ub, v_max,
         time_weight, free_arrival_time, sound_clip,
     );
-    let mut state = ScpState::new(p_init, scp_trust_radius);
+    let mut state = ScpState::new(p_init, scp_trust_radius, elastic_weight);
     // `best` deliberately does NOT start at the initial guess. Seeding it there
     // lets the fallback return the solver's own input when every iterate it
     // produced is worse — reporting a result the optimizer did not compute. It
@@ -1296,7 +1427,7 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
 
     while state.running() && (state.iteration as usize) < max_iter {
         let r = scp_iterate(
-            &mut state, &pre, obstacles, stations, elastic_weight, tol,
+            &mut state, &pre, obstacles, stations, tol,
         );
         if trace {
             let cols = [
@@ -1450,6 +1581,15 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
         "returned_best_iterate".to_string(),
         if returned_best { 1.0 } else { 0.0 },
     );
+    // The weight the run ENDED at, how it got there, and the exactness margin.
+    // `max_koz_dual` is the last subproblem's largest keep-out multiplier;
+    // complementarity pins it to the weight exactly when slack is active, so
+    // "final weight strictly above final max dual" and "all slacks zero" are the
+    // same claim computed two independent ways — the invariant test holds them
+    // together.
+    info.insert("final_elastic_weight".to_string(), state.weight);
+    info.insert("weight_raises".to_string(), state.weight_raises as f64);
+    info.insert("max_koz_dual".to_string(), state.last_max_koz_dual);
     info.insert("accept_count".to_string(), state.accept_count as f64);
     info.insert("reject_count".to_string(), state.reject_count as f64);
     info.insert("null_step_count".to_string(), state.null_step_count as f64);

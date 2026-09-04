@@ -274,9 +274,10 @@ def scenario_door3d() -> dict:
 # diverse +0.0045 (feasible) against -0.40 at every count that was listed.
 # Elastic (exact-penalty) weight the live sandbox uses per scenario.
 #
-# The batch path walks ELASTIC_WEIGHT_LADDER in optimize.py and reports which
-# weight certified; the sandbox re-solves on every slider move and cannot afford
-# a ladder, so it starts from the weight that is known to certify that scenario.
+# The batch path starts at DEFAULT_INITIAL_ELASTIC_WEIGHT and the solver
+# escalates in-loop (SNOPT elastic mode, see optimize.py), reporting the weight
+# it ended at; the sandbox re-solves on every slider move and cannot afford the
+# escalation iterations, so it starts from the weight known to certify.
 # These are measured, not guessed -- see the sweep recorded in CLAUDE.md.
 #
 # `wall` and `diverse` were recorded as infeasible for months. They are not:
