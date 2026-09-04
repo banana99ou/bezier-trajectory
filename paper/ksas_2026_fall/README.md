@@ -18,10 +18,13 @@ Files here: `manuscript.docx` (source of truth) → `manuscript.md` + `manuscrip
 
 | | 한국항공우주학회 추계 |
 |---|---|
-| 논문 제출 마감 | **2026-09-04(금)** |
+| 논문 제출 마감 | 2026-09-04(금) — **제출 완료 2026-09-03** |
 | 분량 | 2페이지 + 별도 400자 초록 |
 | 학술대회 | 11/10(화)~13(금) |
 | 장소 | 하이원리조트 (강원 정선) |
+
+**제출은 끝났다.** 원고와 400자 초록을 모두 제출 웹페이지에 넣었다. 아래 마감·분량·초록 규칙은
+이제 저널판과 포스터가 참조하는 기록이며, 여기서 열려 있는 것은 포스터뿐이다.
 
 **400자 초록은 원고가 아니라 제출 웹페이지에 입력한다.** 별도 산출물이고 마감은 같다. 제출에는
 회비 납부와 사전등록 결제 완료가 전제이며, 결제 기한은 사전등록 마감이 아니라 논문 마감 전이다.
@@ -84,9 +87,9 @@ avoidance mechanism.
 
 ---
 
-## State of the manuscript — read from `manuscript.md`, 2026-08-31
+## State of the manuscript — 제출본, read from `manuscript.md`
 
-The `.docx` was last modified 2026-08-31 17:08 and renders to **2 pages**. Verified present by
+The `.docx` was last modified **2026-09-02 22:21** and renders to **2 pages**. Verified present by
 reading the rendered view, not by recalling an earlier note:
 
 - **Title block** — 볼록 분해 없는 시공간 궤적 최적화: 이동 장애물 회피와 가시선 유지 / 정현용1*,
@@ -96,10 +99,12 @@ reading the rendered view, not by recalling an earlier note:
 - **Figures** — Fig. 1 Mission scene (schematic), Fig. 2 Scene at t = 15.7 s and sight margin.
 - **Tables** — Table 1 scenario and solver parameters, Table 2 results of the two runs, filled.
 - **후 기** — BK21 4단계 (2120240815267).
-- **참고문헌** — two entries (Marcucci 2023, Osburn 2025). The venue allows up to five.
+- **참고문헌** — three entries (Marcucci 2023, Osburn 2025, Jeong & Lee 2025). The venue allows up to five.
 
-Open items live in [`WORKSTREAM.md`](../../WORKSTREAM.md) under §Now — submission and payment,
-the 400자 초록 character count, and the poster. **Nothing here is submitted yet.**
+**이 원고가 2026-09-03에 제출되었다.** 제출 이후 `manuscript.docx`를 고치면 제출본과 어긋난다 —
+고쳐야 할 것이 나오면 저널판([`paper/journal_1/`](../journal_1/))에서 고친다.
+
+[`WORKSTREAM.md`](../../WORKSTREAM.md) §Now에 남은 항목은 포스터 하나다.
 
 ---
 
@@ -107,7 +112,14 @@ the 400자 초록 character count, and the poster. **Nothing here is submitted y
 
 학술대회는 11/10(화)~13(금), 하이원리조트(강원 정선). 포스터는 원고와 같은 내용을 발표용으로
 다시 짜는 별도 산출물이며, 원고가 잘라낸 논증(지지 반공간 구성, 매 반복 재구성, 볼록성)을
-지면 여유가 있는 만큼 되살릴 수 있는 자리다. 발표 자리이므로 **임무 동기를 말로 설명해야 한다** —
-지도교수 검토의견이 원고와 발표 양쪽에 요구한 항목이다. 포스터 파일은 만들어지면 원고 옆,
-이 디렉터리에 둔다. 저널판은 별도 worktree에서 병행한다 —
-[`idea/spacetime.md`](../../idea/spacetime.md) §Artifacts.
+되살리는 자리다. 발표 자리이므로 **임무 동기를 말로 설명해야 한다** — 지도교수 검토의견이 원고와
+발표 양쪽에 요구한 항목이다.
+
+**초안이 있다 — [`poster/`](poster/), 2026-09-03.** A0 세로, LaTeX(`tikzposter` + `xetexko`),
+`python3 tools/render_poster.py`로 빌드한다. 결과 숫자는 손으로 적지 않고
+`figures/paper1/occlusion_figure.json`에서 주입되며, 사이드카가 figure-grade가 아니거나 데모가
+데모이기를 그만두면 빌드가 거부된다. 그 게이트가 실제로 실패할 수 있다는 증명은
+`tests/unit/test_poster_gate.py`에 있다. 규칙과 남은 일(인쇄 규격 확인)은
+[`poster/README.md`](poster/README.md).
+
+저널판은 별도 worktree에서 병행한다 — [`idea/spacetime.md`](../../idea/spacetime.md) §Artifacts.

@@ -9,30 +9,30 @@ derivations here; no status anywhere else.
 
 ---
 
-## Now — 한국항공우주학회 2026 추계, 제출 마감 **2026-09-04(금)**
+## Now — 한국항공우주학회 2026 추계, **제출 완료 2026-09-03**. 남은 것은 포스터.
 
 Full venue rules, schedule and manuscript state:
 [`paper/ksas_2026_fall/README.md`](paper/ksas_2026_fall/README.md).
 
-### `ksas.submit` — 제출과 결제
-The manuscript is written and the 400자 초록 is drafted; neither has been submitted. **Submitting
-requires paid membership and completed 사전등록 결제, and that payment is due before the paper
-deadline, not before the 사전등록 deadline.** A late oral request is demoted to poster, so
-submitting early is what buys the oral slot.
-*Closes when:* the paper is submitted on the web page, the 400자 초록 is typed into the form, and
-the registration payment has cleared. Needs the author, not an agent.
+### ~~`ksas.submit` — 제출과 결제~~
+**제출 완료 2026-09-03**, 마감 하루 전. 원고와 400자 초록을 제출 웹페이지에 넣었다. 회비 납부와
+사전등록 결제 완료는 제출의 전제 조건이다 — **결제가 아직 안 끝났다면 이 항목은 닫힌 것이 아니다.**
 
-### `ksas.abstract-count` — 초록 글자수
-`abstract_400.md` is 400 characters plus its newline. That is exactly on the limit, so how the
-submission form counts — spaces, punctuation, the trailing newline — decides whether it fits.
-*Closes when:* the count rule is confirmed against the form and the text fits with margin.
+### ~~`ksas.abstract-count` — 초록 글자수~~
+제출 폼이 `abstract_400.md`를 받았으므로 세는 방식과 무관하게 들어갔다. 400자 정확히라는 여유
+없음은 그대로이니, 저널판에서 초록을 다시 쓸 때 이 사실을 되풀이하지 말 것.
 
 ### `ksas.poster` — 포스터
-Nothing drafted. 학술대회는 11/10(화)~13(금), 하이원리조트(강원 정선). The poster is where the
-argument the two-page manuscript cut can come back — supporting half-space construction,
-per-iteration reconstruction, the convexity discussion.
-*Closes when:* a poster exists in `paper/ksas_2026_fall/` and states the mission motivation, which
-the advisor's review requires in the talk as well as the manuscript.
+**초안 존재, 2026-09-03.** `paper/ksas_2026_fall/poster/` — A0 세로, 한글, 블록 11개.
+`python3 tools/render_poster.py`로 빌드하고, 결과 숫자는 전부 `occlusion_figure.json`에서 주입된다.
+원고가 잘라낸 세 논증(지지 반공간 구성, 매 반복 재구성, 볼록성)과 임무 동기가 모두 들어갔다.
+학술대회는 11/10(화)~13(금), 하이원리조트(강원 정선).
+인쇄 규격은 A0 세로로 확정 — 2026 추계 안내는 아직 없지만 2025 추계·2026 춘계가 같은 문장으로
+"보드판 95cm×238cm, A0 사이즈 부착가능"을 명시한다(`paper/ksas_2026_fall/template/PROVENANCE.md`
+§포스터 규격). 학회 포스터 템플릿은 없다.
+*Closes when:* **(a)** 발표자가 내용을 읽고 승인한다, **(b)** 10월 중순 프로그램 안내가 뜨면 세션
+일시·장소를 확인한다.
+→ [`paper/ksas_2026_fall/poster/README.md`](paper/ksas_2026_fall/poster/README.md)
 
 ---
 
