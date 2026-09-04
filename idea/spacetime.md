@@ -12,7 +12,7 @@ wins" rule. That device is what let ten contradictions accumulate by 2026-08-21.
 **Artifacts rendering this idea.** Each one owns its own venue rules, schedule, figures and state:
 
 - [`paper/ksas_2026_fall/README.md`](../paper/ksas_2026_fall/README.md) — 한국항공우주학회 2026년도 추계학술대회 발표논문 (2 pages), and its poster
-- the journal version — in progress in the `bezier-trajectory-journal` worktree, branch `paper/journal-1`
+- [`paper/journal_1/README.md`](../paper/journal_1/README.md) — the English journal version, in progress
 
 **What every artifact has to contain, whatever its length.** These recur per rendering, so they are
 listed here once rather than re-derived per venue:

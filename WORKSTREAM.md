@@ -49,7 +49,8 @@ a synthetic specimen. **Do not close it by weakening the test.** → [`SOLVER.md
 
 ## Next — idea 1 저널
 
-Runs in parallel in the `bezier-trajectory-journal` worktree, branch `paper/journal-1`.
+Runs here in [`paper/journal_1/`](paper/journal_1/). The `bezier-trajectory-journal` worktree was
+retired 2026-09-04; branch `paper/journal-1` holds no commit that this branch does not.
 
 ### `journal.scope` — what the six pages carry that two could not
 The arguments explicitly deferred to the journal: supporting half-space construction, per-iteration
