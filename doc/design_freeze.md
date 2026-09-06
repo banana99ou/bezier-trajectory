@@ -644,6 +644,66 @@ citing any of them in the paper.
     worth asking the professor: standard SCvx linearizes the dynamics on the
     discretization mesh, so the decoupling is a deliberate deviation.
 
+12. **2026-09-06 — `T = 1500 s` is the load-bearing parameter of the results,
+    and the solver has an undisclosed operating envelope in `T`.** Prompted by
+    the reviewer worklist's physical-plausibility item (mean control 4.6–21
+    m/s² against local gravity 9.1 m/s²), the transfer time was swept on
+    phase120 and phase170, N=7, n_seg=16, cache off, everything else as in
+    table 2. "Natural" T is the time free-fall needs to cover the required
+    central angle (100.8° per 1500 s at these radii).
+
+    | scenario | T (s) | r0 (km) | min r (km) | margin (km) | τ* | mean u (m/s²) | stop |
+    |---|---:|---:|---:|---:|---:|---:|---|
+    | phase120 | 1500 | 2000 | 6486.6 | 15.61 | 0.469 | 4.65 | 4 (converged) |
+    | phase120 | 1786 (natural) | 2381 | 6607.9 | 136.87 | 0.243 | — | 4 (converged) |
+    | phase120 | 2725 | 3633 | 3346.2 | −3124.8 | — | — | **3 (QP failed)**, bc err 0.86 |
+    | phase120 | 2725 | 10900 | 6616.0 | 145.00 | 0.000 | — | 4 (converged) |
+    | phase120 | 5000 | 6667, 20000 | 6477.9 | 6.86 | 0.497 | 7.98 | **3 (QP failed)** |
+    | phase170 | 1500 | 4000 | 6502.9 | 31.89 | 0.259 | 21.2 | 4 (converged) |
+    | phase170 | 2530 (natural) | 6747 | 6582.4 | 111.44 | 0.344 | 0.15 | 4 (converged) |
+    | phase170 | 2530 | 20240 | 6582.4 | 111.44 | 0.344 | 0.15 | **3 (QP failed)** |
+    | phase170 | 2725 | 7267, 21800 | 6616.0 | 145.00 | 0.000 | 0.43 | **3 (QP failed)** |
+    | phase170 | 5000 | 13333, 40000 | 6574–6616 | 103–145 | — | 10.0 | **3 (QP failed)** |
+
+    Two findings, one of them a defect.
+
+    **(a) At the natural transfer time the KOZ does not bind — even at 170°.**
+    The minimum-control curve rides between the departure and arrival radii,
+    110–140 km above the KOZ; the 170° case needs 0.15 m/s², a plausible
+    spacecraft. So the binding constraint and the implausible thrust are one
+    fact: with a sphere centred on the Earth, the constraint is active only
+    when T forces the curve to cut inward. This is the correct experimental
+    design for the paper's claims (every claim needs the constraint active;
+    the 70° row shows what an inactive constraint measures, which is nothing)
+    and is now stated as such in §4.1. `constants.py` records that T was
+    chosen so the velocity handles stay on the order of the endpoint
+    separation — a solver-initialisation convenience, which (b) confirms.
+
+    **(b) Past T ≈ 2500 s the solver fails with stop reason 3 — QP failure,
+    not trust collapse** (checked against the enumeration at `optimizer.rs`
+    ~L816). Raising r0 rescues phase120/2725 only; phase170 fails at every
+    radius tried. Not investigated further; hypothesis (unproven): the
+    velocity-BC rows scale with T while the position rows do not, and the
+    straight-line start is then far outside any box the first iteration can
+    close. **Defect fixed the same day:** `optimization.py`'s termination map
+    never checked stop reason 3, so a QP failure whose last iterate was
+    feasible fell through to `"converged_delta_below_tol"` — every failed
+    long-T run above was reported as converged. Now `"qp_failed"`. No reported
+    run is affected (all fourteen stop on reason 1 or 4). Sibling of the
+    reviewer's item on trust collapse being reported as convergence.
+
+    Reproduce:
+    ```
+    .venv/bin/python -c "
+    import sys, numpy as np; sys.path.insert(0,'.')
+    from tools.verify import harness_common as H
+    taus=np.linspace(0,1,2001)
+    for name,T,r0 in [('phase120',1786,2381),('phase170',2530,6747),('phase170',2725,7267)]:
+        sc=dict(H.make_scenario(name,N=7)); sc['T']=float(T); sc['r0']=float(r0)
+        P,info=H.run_rust(sc,n_seg=16); rn=np.linalg.norm(H.positions(P,taus),axis=1)
+        print(name,T,round(rn.min()-6471.0,2),info['scvx_stop_reason'],info['termination_reason'])"
+    ```
+
 ## 8. Paper terminology
 
 `~/.claude/skills/korean-prose/references/korean_writing_case_collection.md` §6

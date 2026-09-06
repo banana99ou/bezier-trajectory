@@ -488,8 +488,15 @@ def optimize_orbital_docking(
     rust_feasible = float(info.get("feasible", 0.0)) >= 0.5
     final_trust = float(info.get("final_trust_radius", 0.0))
     trust_active = float(scp_trust_radius) > 0.0
+    stop_reason = float(info.get("scvx_stop_reason", -1.0))
     if it >= int(max_iter):
         termination_reason = "stopped_max_iter"
+    elif stop_reason == 3.0:
+        # The QP solver returned no solution and the SCvx loop broke out. This
+        # must be checked before anything else: the last iterate can be
+        # feasible with an uncollapsed trust region, and until this branch
+        # existed such a run fell through to "converged_delta_below_tol".
+        termination_reason = "qp_failed"
     elif scvx_converged:
         termination_reason = "converged_scvx"
     elif trust_active and final_trust < 1e-2:  # trust_min in the Rust SCvx loop
