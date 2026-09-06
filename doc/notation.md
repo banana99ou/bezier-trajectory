@@ -138,6 +138,9 @@ different matrices. Writing both as `S` implies a coupling that does not exist.
 | Symbol | Type | Meaning | Code |
 |---|---|---|---|
 | `\mathbf{g}(\mathbf{r})` | `R^3` | gravity: two-body + J2 | `_accel_total` |
+| `\mathrm{GM}` | km³/s² | Earth gravitational parameter, `3.986004418e5` | `EARTH_MU_SCALED` |
+| `R_\oplus` | km | Earth radius, `6371` — **not** `R_{\mathrm{KOZ}}` | `EARTH_RADIUS_KM` |
+| `J_2` | — | second zonal harmonic, `1.08262668e-3` | `EARTH_J2` |
 | `n_{\mathrm{lin}}` | int | gravity-linearization interval count | `n_lin_seg` |
 | `\mathbf{r}_j^{(k)}` | `R^3` | reference position of interval `j` at iteration `k` | `r_ref` |
 | `\nabla\mathbf{g}_j^{(k)}` | `3×3` | gravity Jacobian at that reference point | `J_s` |
@@ -154,8 +157,11 @@ different matrices. Writing both as `S` implies a coupling that does not exist.
 
 `\nabla\mathbf{g}` spells out the gravity Jacobian rather than reusing `J`,
 which already denotes the objective (and, as `J^{(k)}` vs `J_j^{(k)}`, differed
-from the Jacobian by a single subscript). `J2` remains the perturbation name;
-it is never a standalone symbol.
+from the Jacobian by a single subscript). `J_2` is the zonal harmonic coefficient and is the one admitted exception to
+the `J`-is-the-objective rule: a bare numeric subscript with no argument and no
+iteration index cannot be read as `J(\mathbf{x})` or `J^{(k)}`, and every
+aerospace reader expects that spelling. `\mathrm{GM}` rather than `\mu` for the
+gravitational parameter, because `\mu` is the exact-penalty weight (§8).
 
 ## 8. SCvx algorithm
 
@@ -177,9 +183,9 @@ it is never a standalone symbol.
 | `n_{\mathrm{conv}}` | int | consecutive iterations required to declare convergence | — |
 
 Warrants for the letter choices, per the freeze's "textbook-with-citation"
-rule: `\boldsymbol{\nu}` for virtual control follows Malyuta et al. [7]; `\mu`
+rule: `\boldsymbol{\nu}` for virtual control follows Malyuta et al. [5]; `\mu`
 for the penalty weight and `\Delta_k` for the trust-region radius follow
-Nocedal & Wright [14], already cited in the paper.
+Nocedal & Wright [9], already cited in the paper.
 
 ## 9. Experiment and results symbols
 
