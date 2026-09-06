@@ -5,39 +5,33 @@
 
 **초록**
 
-본 논문에서는 구형 Keep-Out Zone(KOZ)을 연속적으로 회피하는 Bézier 기반 궤적 생성 기법을 제안한다. 곡선 분할을 통해 구형 KOZ에 대한 비볼록 부등식 제약 조건을 선형화하고, 이를 제어점 공간에서의 선형 연산으로 표현함으로써 궤적 생성 문제를 일련의 볼록 최적화 문제로 정식화한다. 생성된 궤적은 그 자체로 제약을 만족하며, 후속 고충실도 최적화에 초기값으로도 활용할 수 있다.
+본 논문에서는 구형 Keep-Out Zone(KOZ)을 연속적으로 회피하는 Bézier 기반 궤적 생성 기법을 제안한다. 곡선 분할을 통해 구형 KOZ에 대한 비볼록 부등식 제약 조건을 선형화하고, 이를 제어점 공간에서의 선형 연산으로 표현함으로써 궤적 생성 문제를 일련의 볼록 최적화 문제로 정식화한다. 생성된 궤적은 곡선 전 구간에서 제약을 만족한다.
 
-제안 기법을 단순화된 궤도전이 문제에 적용하여, 곡선의 분할 수와 차수가 해의 보수성 및 계산 비용에 미치는 영향을 분석한다.
+제안 기법을 단순화된 궤도전이 문제에 적용하여, 곡선의 분할 수와 차수가 해의 보수성 및 계산 비용에 미치는 영향을 분석한다. 시험한 다섯 가지 전이 기하 모두에서 실현 가능한 궤적을 1초 미만의 계산 시간으로 얻었으며, 보수성은 분할 수의 제곱에 반비례하여 줄어들어 사전 예측과 일치한다.
 
 ---
 
 ## 1. 서론
 
-제약이 있는 궤적 최적화 문제는 항공우주, 로봇공학, 자율 시스템 등 여러 분야에서 반복적으로 등장한다. 이때 중요한 요구 조건 가운데 하나는 궤적이 특정 금지 영역을 경로 전체에 걸쳐 지속적으로 회피해야 한다는 것이다. 그러나 일반적인 direct transcription 또는 direct collocation 방식 [3, 4]에서는 제약식이 주로 이산화된 노드에서만 부과되므로, 그 노드들에서 제약을 만족하더라도 노드 사이 구간에서 제약이 위반되는 노드 간 제약 위반(inter-sample constraint violation) [8]이 발생할 수 있다. 본 논문에서는 이산화된 노드만이 아니라 궤적 전 구간에서 제약이 성립하는 성질을 연속시간 제약 만족(continuous-time constraint satisfaction) [9]이라 부르며, 금지 영역 회피를 이러한 의미에서 보장하는 표현과 제약 방식이 필요하다.
-
-또 다른 실용적 문제는 초기값의 품질이다. 많은 후속 solver는 초기값에 민감하며, 초기값이 좋지 않으면 제약을 만족하지 않는 해로 수렴하거나 반복 횟수가 크게 증가하거나 품질이 낮은 국소해에 머무를 수 있다. 이런 점에서 후속 고충실도 최적화에 앞서 매끄럽고 제약을 만족하는 초기 궤적을 생성하는 절차는 그 자체로 의미가 있다 [1, 2].
+제약이 있는 궤적 최적화 문제는 항공우주, 로봇공학, 자율 시스템 등 여러 분야에서 반복적으로 등장한다. 이때 중요한 요구 조건 가운데 하나는 궤적이 특정 금지 영역을 경로 전체에 걸쳐 지속적으로 회피해야 한다는 것이다. 그러나 일반적인 direct transcription 또는 direct collocation 방식 [1, 2]에서는 제약식이 주로 이산화된 노드에서만 부과되므로, 그 노드들에서 제약을 만족하더라도 노드 사이 구간에서 제약이 위반되는 노드 간 제약 위반(inter-sample constraint violation) [6]이 발생할 수 있다. 본 논문에서는 이산화된 노드만이 아니라 궤적 전 구간에서 제약이 성립하는 성질을 연속시간 제약 만족(continuous-time constraint satisfaction) [7]이라 부르며, 금지 영역 회피를 이러한 의미에서 보장하는 표현과 제약 방식이 필요하다.
 
 본 논문은 이러한 문제를 해결하기 위해 Bézier 곡선을 이용한 궤적 생성 기법을 제안한다. 제안 기법의 핵심은 모든 계산을 제어점 공간에서 수행한다는 점이다. 곡선의 미분, 분할, 경계조건, KOZ 제약이 모두 제어점에 대한 선형 연산으로 정리되므로, 계산 구조가 비교적 단순하고 해석도 명확하다. 특히 구형 KOZ에 대해서는 각 분할구간에 supporting half-space(지지 반공간)을 부여하고, 그 반공간 안에 제어점이 놓이도록 함으로써 KOZ 제약의 연속시간 만족을 보수적으로 보장한다.
 
-본 논문의 기여는 다음과 같이 정리할 수 있다. 첫째, Bézier 매개변수화를 기반으로 제어점 공간에서 직접 작동하는 궤적 생성 정식화를 제시하여 제약 구성과 계산 구조를 단순화한다. 둘째, De Casteljau 분할과 지지 반공간을 이용하여 구형 KOZ 제약을 연속시간에서 만족하도록 하는 보수적 제약 구성 방식을 제안하고, 이를 표준적인 SCvx 틀 [6, 7]에 결합하여 각 반복에서 볼록 QP 하나를 푸는 알고리즘으로 정리한다. 셋째, 단순화된 궤도전이 문제에서 분할 수와 Bézier 차수에 대한 비교 실험을 수행하여 계산 비용과 성능의 관계를 분석한다.
+본 논문의 기여는 다음과 같이 정리할 수 있다. 첫째, 모든 계산이 제어점 공간에서 이루어지는 궤적 생성 정식화를 제시한다. 제어 가속도의 크기를 제곱하여 적분한 목적함수는 Bernstein Gram 행렬을 통해 닫힌 형태로 정확히 계산되며, 목적함수 어디에도 이산화나 표본점 근사가 들어가지 않는다. 이는 계산상의 편의가 아니라, 곡선의 미분과 적분이 제어점에 대한 선형·이차 연산으로 옮겨지는 제어점 공간 정식화의 구조적 성질이다(2.3절, 3.2절). 둘째, De Casteljau 분할과 지지 반공간을 이용하여 구형 KOZ 제약을 연속시간에서 만족하도록 하는 보수적 제약 구성을 제안하고, 그 보수성을 사전에 정량화한다. 곡선이 KOZ 경계로부터 필요 이상으로 떨어지는 정도가 분할구간 폭의 제곱에 비례하고 따라서 분할 수의 제곱에 반비례한다는 예측을 접평면 논증으로 세우고(3.1절), 이 예측을 분할 수를 바꾼 비교 실험의 측정값으로 확인한다(5.2절). 셋째, 이 제약 구성을 표준적인 SCvx 틀 [4, 5]에 결합하여 각 반복에서 볼록 QP 하나를 푸는 알고리즘으로 정리한다. 이때 지지 반공간의 법선이 제어점에 따라 회전하는 효과를 제약 선형화에 일관되게 반영하므로, 예측 감소량에 대한 실제 감소량의 비는 중력 선형화와 법선 회전이라는 실제 근사 오차만을 잰다(3.3절).
 
-관련 연구는 크게 세 갈래로 나눌 수 있다. 첫째는 direct transcription 및 direct collocation 계열의 궤적 최적화 방법, 둘째는 장애물 회피를 위한 볼록화 및 보수적 근사 기법, 셋째는 후속 최적화를 위한 초기화와 warm start 생성 방법이다.
+관련 연구는 크게 두 갈래로 나눌 수 있다. 첫째는 direct transcription 및 direct collocation 계열의 궤적 최적화 방법이고, 둘째는 장애물 회피를 위한 볼록화 및 보수적 근사 기법이다.
 
-Direct transcription과 direct collocation은 제약이 있는 궤적 최적화에서 가장 널리 쓰이는 방법이다 [3, 4]. 이들 방법은 궤적을 여러 노드에서의 상태와 입력 변수로 이산화하고, 동역학을 등식 제약으로 부과한 뒤, 대규모 비선형 계획 문제를 푼다. 다양한 문제에 적용 가능하고 solver 생태계도 잘 갖추어져 있다는 장점이 있다.
+Direct transcription과 direct collocation은 제약이 있는 궤적 최적화에서 가장 널리 쓰이는 방법이다 [1, 2]. 이들 방법은 궤적을 여러 노드에서의 상태와 입력 변수로 이산화하고, 동역학을 등식 제약으로 부과한 뒤, 대규모 비선형 계획 문제를 푼다. 다양한 문제에 적용 가능하고 solver 생태계도 잘 갖추어져 있다는 장점이 있다.
 
-다만 점별 이산화에 기반한 이러한 정식화에서는 제약의 연속시간 만족을 직접 다루기 어렵고, 초기값의 품질 또한 수렴 거동에 큰 영향을 줄 수 있다. 본 논문은 이러한 측면에서 제어점 공간 정식화와 KOZ 제약의 연속시간 만족을 보장하는 보수적 제약 구성을 제시한다. Direct collocation은 제안 기법이 연계될 수 있는 대표적인 비교 대상이다.
+다만 점별 이산화에 기반한 이러한 정식화에서는 제약의 연속시간 만족을 직접 다루기 어렵다. 본 논문은 이러한 측면에서 제어점 공간 정식화와 KOZ 제약의 연속시간 만족을 보장하는 보수적 제약 구성을 제시한다. Direct collocation은 제안 기법의 대표적인 비교 대상이다.
 
-연속적인 장애물 회피에서는 이산화된 노드에서의 제약 만족만으로는 노드 간 제약 위반을 배제하기 어렵다. 이를 다루기 위한 여러 접근 가운데 일부는 특정 부류의 문제에 대해 무손실 볼록화를 사용하고 [5], 또 다른 일부는 순차 볼록화로 비볼록 제약을 반복적으로 선형화한다 [6, 7].
+연속적인 장애물 회피에서는 이산화된 노드에서의 제약 만족만으로는 노드 간 제약 위반을 배제하기 어렵다. 이를 다루기 위한 여러 접근 가운데 일부는 특정 부류의 문제에 대해 무손실 볼록화를 사용하고 [3], 또 다른 일부는 순차 볼록화로 비볼록 제약을 반복적으로 선형화한다 [4, 5].
 
-장애물 바깥의 자유 공간은 볼록이 아니며, 좌표 변환으로 볼록하게 만들 수도 없다. 장애물을 둘러싸는 경로는 한 점으로 줄어들지 않는 반면 볼록 집합은 축약 가능하고, 위상동형사상은 이 성질을 보존하기 때문이다 [12]. 장애물을 왼쪽으로 지나는 경로와 오른쪽으로 지나는 경로가 서로 다른 계획이라는 사실이 곧 이 비볼록성이며, 볼록화는 그 둘의 평균 또한 해라고 말하게 된다. 따라서 볼록 최적화로 회피를 다루는 방법은 두 갈래뿐이다. 하나는 자유 공간을 볼록한 영역들로 덮고 어느 영역을 지날지를 고르는 것으로, 볼록 영역 생성 [13]과 그 위의 볼록 집합 그래프 [14]가 여기에 속한다. 다른 하나는 장애물마다 어느 쪽으로 지날지를 정해 자유 공간을 볼록한 한 조각으로 자르는 것으로, 지지 반공간 제약이 여기에 속한다. 본 논문은 두 번째 갈래를 따른다.
+장애물 바깥의 자유 공간은 볼록이 아니며, 좌표 변환으로 볼록하게 만들 수도 없다. 장애물을 둘러싸는 경로는 한 점으로 줄어들지 않는 반면 볼록 집합은 축약 가능하고, 위상동형사상은 이 성질을 보존하기 때문이다 [10]. 장애물을 왼쪽으로 지나는 경로와 오른쪽으로 지나는 경로가 서로 다른 계획이라는 사실이 곧 이 비볼록성이며, 볼록화는 그 둘의 평균 또한 해라고 말하게 된다. 따라서 볼록 최적화로 회피를 다루는 방법은 두 갈래뿐이다. 하나는 자유 공간을 볼록한 영역들로 덮고 어느 영역을 지날지를 고르는 것으로, 볼록 영역 생성 [11]과 그 위의 볼록 집합 그래프 [12]가 여기에 속한다. 다른 하나는 장애물마다 어느 쪽으로 지날지를 정해 자유 공간을 볼록한 한 조각으로 자르는 것으로, 지지 반공간 제약이 여기에 속한다. 본 논문은 두 번째 갈래를 따른다.
 
-두 번째 갈래에서 곡선 전체의 안전을 유한 개의 제어점 조건으로 옮기는 장치는 볼록 껍질 성질이며 [15], 안전 회랑 계열의 문헌은 이를 같은 방식으로 사용한다. 즉 (분할구간, 장애물) 쌍마다 반공간을 하나 세우고 그 하나를 해당 분할구간의 모든 제어점에 부과한다 [16, 17, 18]. 제어점마다 다른 평면을 부과하면 반공간들의 합집합이 볼록이 아니므로 볼록 껍질에 대해 아무것도 말할 수 없고, 남는 것은 곡선을 유한 개의 매개변수에서 표본한 것과 같은 강도의 조건뿐이다. 이 구분은 본 논문 명제 1의 가정 3에 해당한다.
+Bézier 곡선을 비롯한 Bernstein 다항식 표현은 궤적을 유한 개의 제어점으로 매개화하며, 곡선의 미분과 경계조건이 제어점에 대한 선형 연산으로 정리되기 때문에 궤적 생성 문제에 널리 쓰여 왔다 [13, 14]. 두 번째 갈래에서 곡선 전체의 안전을 유한 개의 제어점 조건으로 옮기는 장치는 볼록 껍질 성질이며 [13], 안전 회랑 계열의 문헌은 이를 같은 방식으로 사용한다. 즉 (분할구간, 장애물) 쌍마다 반공간을 하나 세우고 그 하나를 해당 분할구간의 모든 제어점에 부과한다 [15, 16, 17]. 제어점마다 다른 평면을 부과하면 반공간들의 합집합이 볼록이 아니므로 볼록 껍질에 대해 아무것도 말할 수 없고, 남는 것은 곡선을 유한 개의 매개변수에서 표본한 것과 같은 강도의 조건뿐이다. 이 구분은 본 논문 명제 1의 가정 3에 해당한다.
 
 본 논문은 순차 볼록화의 틀을 사용하되, 점별 상태 제약을 부과하는 대신 Bézier 분할구간의 제어점에 제약을 가하는 형태로 적용한다. 구체적으로는 각 분할구간에 대해 구형 KOZ의 지지 반공간을 구성하고, 제어점이 그 반공간 안에 위치하도록 한다. 이 방식은 회피를 보수적으로 보장하며, 볼록 껍질 성질을 이용하여 분할구간 전체가 KOZ 바깥에 놓임을 보일 수 있다는 장점이 있다.
-
-초기값의 품질이 비선형 궤적 최적화의 수렴 거동에 큰 영향을 준다는 점은 잘 알려져 있다. 실제로는 직선 보간, 경험 기반 형상 설계, 단순 모델 해, 데이터베이스 기반 초기화 등 다양한 방식이 사용된다 [1, 2]. 그러나 단순한 초기화 방법은 노드 간 제약 위반을 배제하지 못하는 경우가 많다.
-
-본 논문의 제안 기법은 이러한 초기화 방법들과도 연결될 수 있다. 즉, 비교적 저차원인 제어점 공간에서 매끄럽고 제약을 만족하는 궤적을 먼저 만든 다음, 이를 후속 solver에 초기값으로 제공하는 방식이다 [1, 2]. 이 접근 방식은 초기화 문제의 차원을 작게 유지하면서도, 구형 KOZ 제약의 연속시간 만족을 명시적으로 다룰 수 있다는 장점이 있다.
 
 본 논문의 이후 구성은 다음과 같다. 2절에서는 궤적의 제어점 공간 표현과 표기법을 정리하고, 3절에서는 제안 기법의 수학적 구성과 알고리즘을 설명한다. 4절에서는 실험 설정을 기술하고, 5절에서는 수치 결과를 제시한다. 6절에서는 한계와 함께 결론을 맺는다.
 
@@ -164,7 +158,7 @@ $$
 
 궤적 $\mathbf{r}(\tau)$가 KOZ 제약을 연속시간에서 만족한다는 것은, 모든 $\tau \in [0,1]$에 대해 $\mathbf{r}(\tau) \notin \operatorname{int}\mathcal{K}$, 즉 $\|\mathbf{r}(\tau)-\mathbf{c}_{\mathrm{KOZ}}\|_2 \ge R_{\mathrm{KOZ}}$가 성립함을 뜻한다. 이는 유한개의 노드에서만 회피를 요구하는 점별 제약 만족보다 강한 조건이다. 본 논문에서는 전이 시간 $T$가 고정되어 물리 시간 $t$와 매개변수 $\tau$가 일대일로 대응하므로, $\tau$ 전 구간에서의 만족은 곧 연속시간 만족과 같다. 제안 기법은 이 비볼록 조건을 직접 부과하는 대신, 이를 함의하는 볼록 충분조건(명제 1)을 부과한다.
 
-제안 기법에서는 곡선을 $n_{\mathrm{seg}}$개의 분할구간으로 등분하기 위해 De Casteljau 분할 행렬 $S^{(s)}$를 사용한다. De Casteljau 분할 행렬의 각 행은 음이 아니고 합이 1이므로 분할구간의 제어점은 원래 제어점의 볼록 결합이며, 따라서 분할구간의 볼록 껍질은 원래 볼록 껍질 안에 들어간다 [15]. 분할이 증명서를 약화시키지 않는다는 뜻이고, 분할을 거듭할수록 껍질이 곡선에 가까워진다는 성질은 Bézier 곡선의 거리 계산과 충돌 판정에서 널리 쓰인다 [15]. 그러면 $s$번째 분할구간의 제어점은
+제안 기법에서는 곡선을 $n_{\mathrm{seg}}$개의 분할구간으로 등분하기 위해 De Casteljau 분할 행렬 $S^{(s)}$를 사용한다. De Casteljau 분할 행렬의 각 행은 음이 아니고 합이 1이므로 분할구간의 제어점은 원래 제어점의 볼록 결합이며, 따라서 분할구간의 볼록 껍질은 원래 볼록 껍질 안에 들어간다 [13]. 분할이 증명서를 약화시키지 않는다는 뜻이고, 분할을 거듭할수록 껍질이 곡선에 가까워진다는 성질은 Bézier 곡선의 거리 계산과 충돌 판정에서 널리 쓰인다 [13]. 그러면 $s$번째 분할구간의 제어점은
 
 $$
 P^{(s)} = S^{(s)}P
@@ -212,7 +206,7 @@ $$
 > 3. 동일한 지지 반공간 $\mathcal{H}^{(s)}$이 해당 분할구간의 모든 제어점에 부과된다.
 > 4. 법선 구성 시 $\mathbf{c}^{(s)} \neq \mathbf{c}_{\mathrm{KOZ}}$이다.
 
-> **증명.** Bézier 곡선은 제어점의 볼록 껍질 안에 놓인다 [15]. 구의 지지 반공간은 구의 내부를 배제하면서 경계에 접한다. 따라서 모든 제어점이 $\mathcal{H}^{(s)}$ 안에 있으면 볼록 껍질 전체도 $\mathcal{H}^{(s)}$ 안에 있고, 곡선도 $\mathcal{H}^{(s)} \cap \mathcal{K}^c$ 안에 놓인다. ($\square$)
+> **증명.** Bézier 곡선은 제어점의 볼록 껍질 안에 놓인다 [13]. 구의 지지 반공간은 구의 내부를 배제하면서 경계에 접한다. 따라서 모든 제어점이 $\mathcal{H}^{(s)}$ 안에 있으면 볼록 껍질 전체도 $\mathcal{H}^{(s)}$ 안에 있고, 곡선도 $\mathcal{H}^{(s)} \cap \mathcal{K}^c$ 안에 놓인다. ($\square$)
 
 각 $\mathbf{q}^{(s)}_m$는 원래 제어점의 선형결합이므로, 법선 $\mathbf{n}^{(s)}$을 하나의 방향으로 고정해 두면 위 부등식은 결정 변수 $\mathbf{x}$에 대해 선형이다. 그러나 법선 자체가 무게중심 $\mathbf{c}^{(s)}$을 통해 $\mathbf{x}$에 의존한다. 명제 1의 조건을 $\mathbf{x}$의 함수로 적으면
 
@@ -272,7 +266,7 @@ $$
 
 ### 3.3 볼록 하위 문제와 SCvx 알고리즘
 
-3.1절의 지지 반공간과 3.2절의 중력 선형화는 모두 기준 제어점 근방에서만 유효한 국소 근사이므로, 제안 기법은 두 근사를 매 반복마다 다시 구성하면서 볼록 하위 문제를 푸는 신뢰영역(trust region) 기반 순차 볼록화, 즉 SCvx [6, 7]의 틀을 따른다. 이 절에서는 하위 문제를 정의하고 그 해를 새로운 기준점으로 간주하는 조건을 밝힌 뒤, 전체 절차를 Algorithm 1로 정리한다.
+3.1절의 지지 반공간과 3.2절의 중력 선형화는 모두 기준 제어점 근방에서만 유효한 국소 근사이므로, 제안 기법은 두 근사를 매 반복마다 다시 구성하면서 볼록 하위 문제를 푸는 신뢰영역(trust region) 기반 순차 볼록화, 즉 SCvx [4, 5]의 틀을 따른다. 이 절에서는 하위 문제를 정의하고 그 해를 새로운 기준점으로 간주하는 조건을 밝힌 뒤, 전체 절차를 Algorithm 1로 정리한다.
 
 SCvx 반복 $k$의 하위 문제는 다음의 볼록 QP이다.
 
@@ -308,9 +302,9 @@ $$
 
 으로 부과한다. 둘째 항을 빼고 법선을 기준점 값으로 고정하면 하위 문제의 최적해는 다음 반복에서 다시 구성한 반공간을 만족하지 않는 점이 되며, 아래의 비 $\rho_k$가 그 불일치를 실제 개선으로 잘못 읽는다.
 
-여유 변수(slack variable) $\boldsymbol{\nu}$는 선형화된 KOZ 제약의 실현 가능성을 보완해주는 항으로, SCvx의 virtual control [6, 7]에 해당한다. 기준점이 KOZ 안쪽에 놓이는 초기 단계에서는 선형화된 제약이 그 자체로 실현 불가능할 수 있으므로, 여유 변수로 이를 흡수하되 페널티 계수 $\mu$를 두어 수렴한 해에서는 $\boldsymbol{\nu} = \mathbf{0}$이 되도록 한다. $\mu$의 선택 기준은 4.1절에 제시한다. 신뢰영역 제약 $\|\mathbf{x} - \mathbf{x}^{(k)}\|_\infty \le \Delta_k$은 선형화가 유효한 범위 밖으로 벗어나는 해를 막으며, 신뢰영역의 크기 $\Delta_k$는 아래의 기준과 연동하여 반복마다 조절된다.
+여유 변수(slack variable) $\boldsymbol{\nu}$는 선형화된 KOZ 제약의 실현 가능성을 보완해주는 항으로, SCvx의 virtual control [4, 5]에 해당한다. 기준점이 KOZ 안쪽에 놓이는 초기 단계에서는 선형화된 제약이 그 자체로 실현 불가능할 수 있으므로, 여유 변수로 이를 흡수하되 페널티 계수 $\mu$를 두어 수렴한 해에서는 $\boldsymbol{\nu} = \mathbf{0}$이 되도록 한다. $\mu$의 선택 기준은 4.1절에 제시한다. 신뢰영역 제약 $\|\mathbf{x} - \mathbf{x}^{(k)}\|_\infty \le \Delta_k$은 선형화가 유효한 범위 밖으로 벗어나는 해를 막으며, 신뢰영역의 크기 $\Delta_k$는 아래의 기준과 연동하여 반복마다 조절된다.
 
-하위 문제의 해 $\hat{\mathbf{x}}$를 새로운 기준점으로 삼을지는, 목적함수와 제약 조건 위반을 결합한 merit function으로 평가한다 [6, 7].
+하위 문제의 해 $\hat{\mathbf{x}}$를 새로운 기준점으로 삼을지는, 목적함수와 제약 조건 위반을 결합한 merit function으로 평가한다 [4, 5].
 
 $$
 \phi(\mathbf{x}) = J(\mathbf{x}) + \mu\,h(\mathbf{x})
@@ -372,7 +366,7 @@ $$
 
 최적화에는 Rust로 구현한 QP solver를 사용하였다. SCvx 반복은 직선 보간으로 만든 초기 제어점에서 시작하며, 신뢰영역의 초기 크기는 표 1의 값을 사용하고 $\rho_k$에 따라 2배로 늘리거나 절반으로 줄인다. 기준값은 $\eta = 0.1$, merit function의 상대 변화와 예측 감소량에 공통으로 적용하는 수렴 허용오차는 $10^{-8}$, 연속 만족 횟수는 $n_{\mathrm{conv}} = 3$, 신뢰영역 크기의 하한은 $10^{-2}$ km, 반복 한도는 1000회로 두었다.
 
-페널티 계수는 $\mu = 10^{-2}$로 두었다. L1 페널티 항이 정확한 페널티(exact penalty)로 작동하여 수렴한 해에서 여유 변수가 0이 되려면, 계수가 해당 제약의 쌍대변수 크기를 넘어야 한다 [10, 11]. 본 문제에서 KOZ 제약 쌍대변수의 크기는 약 $1.5\times10^{-7}$ 수준으로 측정되었으므로, $\mu = 10^{-2}$는 이 조건을 약 $10^5$배의 여유를 두고 만족한다. 동시에 이 값은 목적함수의 규모를 압도하지 않으므로 $\rho_k$가 목적 개선에 둔감해지지 않는다.
+페널티 계수는 $\mu = 10^{-2}$로 두었다. L1 페널티 항이 정확한 페널티(exact penalty)로 작동하여 수렴한 해에서 여유 변수가 0이 되려면, 계수가 해당 제약의 쌍대변수 크기를 넘어야 한다 [8, 9]. 본 문제에서 KOZ 제약 쌍대변수의 크기는 약 $1.5\times10^{-7}$ 수준으로 측정되었으므로, $\mu = 10^{-2}$는 이 조건을 약 $10^5$배의 여유를 두고 만족한다. 동시에 이 값은 목적함수의 규모를 압도하지 않으므로 $\rho_k$가 목적 개선에 둔감해지지 않는다.
 
 신뢰영역의 초기 크기를 기하마다 다르게 둔 것은 조정이 아니라 문제의 성질이다. 반복 1회차에서 직선 초기 궤적이 경계조건을 만족하도록 옮겨야 하는 거리가 기하마다 다르고, 중심각 170 deg에서는 직선 초기 궤적이 KOZ 안쪽 깊은 곳을 지나므로 2000 km 상자 안에서는 이 보정이 끝나지 않는다. 이 값을 넘긴 뒤에는 크기를 더 키워도 해가 달라지지 않는다.
 
@@ -481,46 +475,44 @@ $$
 
 단순화된 궤도전이 문제에 대한 실험 결과, 제안 기법은 대표 차수 설정에서 실현 가능한 궤적을 생성할 수 있었다(다만 분할이 지나치게 거칠면 충분조건을 만족하는 영역이 좁아져 실현 불가능한 해가 나타날 수 있다). 분할 수 실험에서는 충분히 분할된 영역에서 안전 여유와 제어 비용이 분할 수에 대해 단조 감소하여, 분할 수 증가가 보수성을 실질적으로 줄임을 확인하였다. 차수 실험에서는 제어 비용이 차수에 대해 단조 감소하지만 계산 시간은 단조 증가하여 표현력-계산비용 상충 관계가 관찰되었다.
 
-결론적으로, 제안 기법은 제어점 공간에서 연속시간 KOZ 제약을 구성하고 이를 SCvx 기반 최적화와 결합하는 하나의 정식화를 제공한다. 볼록 껍질 조건은 충분조건일 뿐 필요조건이 아니므로 보수성이 따르며, 분할 수를 늘리는 것은 그 보수성을 줄이는 방법이다. 같은 문제를 반정정 계획법의 비용을 치르고 필요충분조건으로 다루는 대안도 있다 [19]. 다만 본 논문의 연속시간 제약 만족 보장은 구형 KOZ와 고정 전이 시간 설정에 한정되고, 실험적 근거도 단일 시연 문제의 몇 가지 전이 기하에 기반한다는 한계가 있다. 향후 과제로는 타원 궤도에서의 Bézier 실현 가능성 확장(예: 여러 호(arc)로 분할한 Bézier 곡선)과, 여러 문제 설정으로의 실험 확대 및 시간 최적화 확장을 고려할 수 있다.
+결론적으로, 제안 기법은 제어점 공간에서 연속시간 KOZ 제약을 구성하고 이를 SCvx 기반 최적화와 결합하는 하나의 정식화를 제공한다. 볼록 껍질 조건은 충분조건일 뿐 필요조건이 아니므로 보수성이 따르며, 분할 수를 늘리는 것은 그 보수성을 줄이는 방법이다. 같은 문제를 반정정 계획법의 비용을 치르고 필요충분조건으로 다루는 대안도 있다 [18]. 다만 본 논문의 연속시간 제약 만족 보장은 구형 KOZ와 고정 전이 시간 설정에 한정되고, 실험적 근거도 단일 시연 문제의 몇 가지 전이 기하에 기반한다는 한계가 있다. 또한 제안 기법은 제어 가속도의 크기에 상한을 부과하지 않고, 제어 비용 목적함수 아래에서 궤적의 형태를 정한다. 향후 과제로는 타원 궤도에서의 Bézier 실현 가능성 확장(예: 여러 호(arc)로 분할한 Bézier 곡선)과, 여러 문제 설정으로의 실험 확대 및 시간 최적화 확장을 고려할 수 있다.
 
 ---
 
 ## 참고문헌
 
-[1] Lee, S., and Kim, Y., "Optimal Output Trajectory Shaping Using Bézier Curves," *Journal of Guidance, Control, and Dynamics*, Vol. 44, No. 5, 2021, pp. 1027–1035. doi:10.2514/1.G005887
+[1] Betts, J. T., "Survey of Numerical Methods for Trajectory Optimization," *Journal of Guidance, Control, and Dynamics*, Vol. 21, No. 2, 1998, pp. 193–207. doi:10.2514/2.4231
 
-[2] Lee, S., "A Shape-based Approach Suited for Short-Duration Orbit Transfer Trajectory Design," *11th European Conference for AeroSpace Sciences (EUCASS)*, Rome, Italy, July 2025.
+[2] Hargraves, C. R., and Paris, S. W., "Direct Trajectory Optimization Using Nonlinear Programming and Collocation," *Journal of Guidance, Control, and Dynamics*, Vol. 10, No. 4, 1987, pp. 338–342. doi:10.2514/3.20223
 
-[3] Betts, J. T., "Survey of Numerical Methods for Trajectory Optimization," *Journal of Guidance, Control, and Dynamics*, Vol. 21, No. 2, 1998, pp. 193–207. doi:10.2514/2.4231
+[3] Açıkmeşe, B., Carson, J. M., and Blackmore, L., "Lossless Convexification of Nonconvex Control Bound and Pointing Constraints of the Soft Landing Optimal Control Problem," *IEEE Transactions on Control Systems Technology*, Vol. 21, No. 6, 2013, pp. 2104–2113. doi:10.1109/TCST.2012.2237346
 
-[4] Hargraves, C. R., and Paris, S. W., "Direct Trajectory Optimization Using Nonlinear Programming and Collocation," *Journal of Guidance, Control, and Dynamics*, Vol. 10, No. 4, 1987, pp. 338–342. doi:10.2514/3.20223
+[4] Mao, Y., Dueri, D., Szmuk, M., and Açıkmeşe, B., "Successive Convexification of Non-Convex Optimal Control Problems with State Constraints," *IFAC-PapersOnLine*, Vol. 50, No. 1, 2017, pp. 4063–4069. doi:10.1016/j.ifacol.2017.08.789
 
-[5] Açıkmeşe, B., Carson, J. M., and Blackmore, L., "Lossless Convexification of Nonconvex Control Bound and Pointing Constraints of the Soft Landing Optimal Control Problem," *IEEE Transactions on Control Systems Technology*, Vol. 21, No. 6, 2013, pp. 2104–2113. doi:10.1109/TCST.2012.2237346
+[5] Malyuta, D., Reynolds, T. P., Szmuk, M., Lew, T., Bonalli, R., Pavone, M., and Açıkmeşe, B., "Convex Optimization for Trajectory Generation: A Tutorial on Generating Dynamically Feasible Trajectories Reliably and Efficiently," *IEEE Control Systems Magazine*, Vol. 42, No. 5, 2022, pp. 40–113. doi:10.1109/MCS.2022.3187542
 
-[6] Mao, Y., Dueri, D., Szmuk, M., and Açıkmeşe, B., "Successive Convexification of Non-Convex Optimal Control Problems with State Constraints," *IFAC-PapersOnLine*, Vol. 50, No. 1, 2017, pp. 4063–4069. doi:10.1016/j.ifacol.2017.08.789
+[6] Dueri, D., Mao, Y., Mian, Z., Ding, J., and Açıkmeşe, B., "Trajectory Optimization with Inter-Sample Obstacle Avoidance via Successive Convexification," *2017 IEEE 56th Annual Conference on Decision and Control (CDC)*, Melbourne, Australia, 2017, pp. 1150–1156. doi:10.1109/CDC.2017.8263811
 
-[7] Malyuta, D., Reynolds, T. P., Szmuk, M., Lew, T., Bonalli, R., Pavone, M., and Açıkmeşe, B., "Convex Optimization for Trajectory Generation: A Tutorial on Generating Dynamically Feasible Trajectories Reliably and Efficiently," *IEEE Control Systems Magazine*, Vol. 42, No. 5, 2022, pp. 40–113. doi:10.1109/MCS.2022.3187542
+[7] Elango, P., Luo, D., Kamath, A. G., Uzun, S., Kim, T., and Açıkmeşe, B., "Successive Convexification for Trajectory Optimization with Continuous-Time Constraint Satisfaction," arXiv:2404.16826, 2024. doi:10.48550/arXiv.2404.16826
 
-[8] Dueri, D., Mao, Y., Mian, Z., Ding, J., and Açıkmeşe, B., "Trajectory Optimization with Inter-Sample Obstacle Avoidance via Successive Convexification," *2017 IEEE 56th Annual Conference on Decision and Control (CDC)*, Melbourne, Australia, 2017, pp. 1150–1156. doi:10.1109/CDC.2017.8263811
+[8] Han, S. P., and Mangasarian, O. L., "Exact Penalty Functions in Nonlinear Programming," *Mathematical Programming*, Vol. 17, No. 1, 1979, pp. 251–269. doi:10.1007/BF01588250
 
-[9] Elango, P., Luo, D., Kamath, A. G., Uzun, S., Kim, T., and Açıkmeşe, B., "Successive Convexification for Trajectory Optimization with Continuous-Time Constraint Satisfaction," arXiv:2404.16826, 2024. doi:10.48550/arXiv.2404.16826
+[9] Nocedal, J., and Wright, S. J., *Numerical Optimization*, 2nd ed., Springer, New York, 2006, Theorem 17.3. doi:10.1007/978-0-387-40065-5
 
-[10] Han, S. P., and Mangasarian, O. L., "Exact Penalty Functions in Nonlinear Programming," *Mathematical Programming*, Vol. 17, No. 1, 1979, pp. 251–269. doi:10.1007/BF01588250
+[10] Rimon, E., and Koditschek, D. E., "The Construction of Analytic Diffeomorphisms for Exact Robot Navigation on Star Worlds," *Transactions of the American Mathematical Society*, Vol. 327, No. 1, 1991, pp. 71–116.
 
-[11] Nocedal, J., and Wright, S. J., *Numerical Optimization*, 2nd ed., Springer, New York, 2006, Theorem 17.3. doi:10.1007/978-0-387-40065-5
+[11] Deits, R., and Tedrake, R., "Computing Large Convex Regions of Obstacle-Free Space Through Semidefinite Programming," *Algorithmic Foundations of Robotics XI (WAFR)*, Springer, 2015, pp. 109–124.
 
-[12] Rimon, E., and Koditschek, D. E., "The Construction of Analytic Diffeomorphisms for Exact Robot Navigation on Star Worlds," *Transactions of the American Mathematical Society*, Vol. 327, No. 1, 1991, pp. 71–116.
+[12] Marcucci, T., Petersen, M., von Wrangel, D., and Tedrake, R., "Motion Planning around Obstacles with Convex Optimization," *Science Robotics*, Vol. 8, No. 84, 2023.
 
-[13] Deits, R., and Tedrake, R., "Computing Large Convex Regions of Obstacle-Free Space Through Semidefinite Programming," *Algorithmic Foundations of Robotics XI (WAFR)*, Springer, 2015, pp. 109–124.
+[13] Kielas-Jensen, C., and Cichella, V., "Bernstein Polynomial-Based Transcription Method for Solving Optimal Trajectory Generation Problems," arXiv:2010.09992, 2020.
 
-[14] Marcucci, T., Petersen, M., von Wrangel, D., and Tedrake, R., "Motion Planning around Obstacles with Convex Optimization," *Science Robotics*, Vol. 8, No. 84, 2023.
+[14] Lee, S., and Kim, Y., "Optimal Output Trajectory Shaping Using Bézier Curves," *Journal of Guidance, Control, and Dynamics*, Vol. 44, No. 5, 2021, pp. 1027–1035. doi:10.2514/1.G005887
 
-[15] Kielas-Jensen, C., and Cichella, V., "Bernstein Polynomial-Based Transcription Method for Solving Optimal Trajectory Generation Problems," arXiv:2010.09992, 2020.
+[15] Preiss, J. A., Hönig, W., Ayanian, N., and Sukhatme, G. S., "Downwash-Aware Trajectory Planning for Large Quadrotor Teams," *2017 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)*, 2017, pp. 250–257.
 
-[16] Preiss, J. A., Hönig, W., Ayanian, N., and Sukhatme, G. S., "Downwash-Aware Trajectory Planning for Large Quadrotor Teams," *2017 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)*, 2017, pp. 250–257.
+[16] Tordesillas, J., and How, J. P., "MADER: Trajectory Planner in Multiagent and Dynamic Environments," *IEEE Transactions on Robotics*, Vol. 38, No. 1, 2022, pp. 463–476.
 
-[17] Tordesillas, J., and How, J. P., "MADER: Trajectory Planner in Multiagent and Dynamic Environments," *IEEE Transactions on Robotics*, Vol. 38, No. 1, 2022, pp. 463–476.
+[17] Gao, F., Wang, L., Zhou, B., Han, L., Pan, J., and Shen, S., "Teach-Repeat-Replan: A Complete and Robust System for Aggressive Flight in Complex Environments," *IEEE Transactions on Robotics*, Vol. 36, No. 5, 2020, pp. 1526–1545.
 
-[18] Gao, F., Wang, L., Zhou, B., Han, L., Pan, J., and Shen, S., "Teach-Repeat-Replan: A Complete and Robust System for Aggressive Flight in Complex Environments," *IEEE Transactions on Robotics*, Vol. 36, No. 5, 2020, pp. 1526–1545.
-
-[19] Deits, R., and Tedrake, R., "Efficient Mixed-Integer Planning for UAVs in Cluttered Environments," *2015 IEEE International Conference on Robotics and Automation (ICRA)*, 2015, pp. 42–49.
+[18] Deits, R., and Tedrake, R., "Efficient Mixed-Integer Planning for UAVs in Cluttered Environments," *2015 IEEE International Conference on Robotics and Automation (ICRA)*, 2015, pp. 42–49.
