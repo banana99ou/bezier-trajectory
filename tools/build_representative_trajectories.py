@@ -111,23 +111,32 @@ def main():
             ax.scatter(*q[k], color=color, s=80, marker="x",
                        linewidths=2.2, zorder=7)
     set_axes_equal_around(ax, center=(0, 0, 0), radius=span * 1.02, pad=0.02)
-    ax.view_init(elev=90, azim=-90)
+    ax.view_init(elev=80, azim=-90)
     beautify_3d_axes(ax, show_ticks=True, show_grid=True)
     ax.set_xlabel("출발점 방향 (km)", fontsize=9, labelpad=4)
     ax.set_ylabel("궤도면 내 수직 방향 (km)", fontsize=9, labelpad=4)
-    ax.set_zticks([])          # the view is straight down this axis
-    ax.set_title("(A) 출발 궤도면에 수직인 방향에서 본 전이 궤적", fontsize=11, pad=4)
+    ax.set_title("(A) 출발 궤도면 위쪽에서 본 전이 궤적", fontsize=11, pad=4)
 
     # (B) the out-of-plane component, which (A) cannot show: the four coplanar
     # geometries stay at zero and only the plane change leaves the plane.
     ax2 = fig.add_subplot(1, 2, 2)
     for label, color, sc, pts, k, margin, binds, info in solved:
-        q = pts @ basis.T
-        ax2.plot(taus, q[:, 2], color=color, lw=2.2, label=label)
-    ax2.axhline(0.0, color="0.6", lw=0.8, ls="--", zorder=0)
+        clear_km = np.linalg.norm(pts, axis=1) - r_koz
+        ax2.plot(taus, clear_km, color=color, lw=2.2, label=label)
+        ax2.scatter(taus[k], clear_km[k], color=color, zorder=6,
+                    s=80 if binds else 54,
+                    marker="x" if binds else "o",
+                    linewidths=2.2 if binds else 0.5,
+                    edgecolors="none" if binds else "black")
+    ax2.set_yscale("log")
+    ax2.axhline(0.0, color="#C0392B", lw=1.0, ls="--", zorder=0)
     ax2.set_xlabel(r"곡선 매개변수 $\tau$", fontsize=9)
-    ax2.set_ylabel("출발 궤도면으로부터의 거리 (km)", fontsize=9)
-    ax2.set_title("(B) 궤도면을 벗어난 정도", fontsize=11, pad=4)
+    ax2.set_ylabel("KOZ 표면으로부터의 거리 (km)", fontsize=9)
+    ax2.set_title("(B) KOZ 표면으로부터의 여유", fontsize=11, pad=4)
+    ax2.set_yticks([20, 50, 100, 200, 400])
+    ax2.get_yaxis().set_major_formatter(
+        matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:g}"))
+    ax2.get_yaxis().set_minor_formatter(matplotlib.ticker.NullFormatter())
     ax2.grid(alpha=0.25)
     ax2.tick_params(labelsize=8)
     for side in ("top", "right"):
