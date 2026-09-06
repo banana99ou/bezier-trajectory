@@ -106,7 +106,7 @@ fn compute_segment_lin(
         }
 
         let g_ref = gravity::accel_total(&r_ref, consts.mu, consts.r_e_km, consts.j2);
-        let j_i = gravity::jacobian_numeric(&r_ref, consts.mu, consts.r_e_km, consts.j2, 1e-3);
+        let j_i = gravity::jacobian_analytic(&r_ref, consts.mu, consts.r_e_km, consts.j2);
 
         let mut c_i = [0.0f64; 3];
         for row in 0..3 {

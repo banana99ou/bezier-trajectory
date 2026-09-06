@@ -10,7 +10,7 @@ from pathlib import Path
 
 # Increment to invalidate old caches when the optimization formulation changes.
 # NOTE: the cache key does NOT hash the Rust binary; bump this after any solver rebuild.
-CACHE_VERSION = "17.0-n-lin-seg-rename"
+CACHE_VERSION = "18.0-analytic-gravity-jacobian"
 
 
 def get_cache_key(
