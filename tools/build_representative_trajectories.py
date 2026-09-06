@@ -97,6 +97,13 @@ def main():
 
     # (A) looking down the departure-orbit normal: the routes around the sphere.
     ax = fig.add_subplot(1, 2, 1, projection="3d")
+    # mplot3d ignores the zorder we pass to 3D artists and sorts by each
+    # artist's AVERAGE depth instead. A trajectory is one artist, so it gets an
+    # all-or-nothing verdict against the sphere's quads and can vanish behind a
+    # body it never enters -- every curve here sits at 6616 km or more, outside
+    # the 6371 km surface. Turning the automatic sort off makes zorder mean what
+    # it says.
+    ax.computed_zorder = False
     _sphere(ax, EARTH_RADIUS_KM, "#AEC6CF", 0.95)
     _sphere(ax, r_koz, "#C0392B", 0.30, lw=0.4, wire=True)
     for label, color, sc, pts, k, margin, binds, info in solved:
@@ -111,7 +118,7 @@ def main():
             ax.scatter(*q[k], color=color, s=80, marker="x",
                        linewidths=2.2, zorder=7)
     set_axes_equal_around(ax, center=(0, 0, 0), radius=span * 1.02, pad=0.02)
-    ax.view_init(elev=80, azim=-90)
+    ax.view_init(elev=80, azim=0)
     beautify_3d_axes(ax, show_ticks=True, show_grid=True)
     ax.set_xlabel("출발점 방향 (km)", fontsize=9, labelpad=4)
     ax.set_ylabel("궤도면 내 수직 방향 (km)", fontsize=9, labelpad=4)
