@@ -6,6 +6,7 @@ use crate::spacetime_constraints::{
     self, KozRowData, SpacetimeObstacleData, StationData,
 };
 use std::collections::HashMap;
+use std::collections::VecDeque;
 
 /// Trust radius used when a caller supplies none.
 ///
@@ -22,34 +23,95 @@ const ETA_ACCEPT: f64 = 0.1;
 /// iterations.
 const CONV_STREAK_REQUIRED: usize = 3;
 
-/// Elastic-weight escalation, SNOPT's elastic mode verbatim (Gill, Murray &
-/// Saunders, "SNOPT: An SQP Algorithm for Large-Scale Constrained
-/// Optimization", SIAM Review 47(1), 2005: when the elastic problem is solved
-/// to optimality and elastic variables remain nonzero, increase the penalty
-/// weight by a fixed factor and continue). Exactness of the one-norm penalty at
-/// a finite weight is Han & Mangasarian (1979). This replaced the Python-side
-/// ladder of cold restarts: same escalation, but the iterate is KEPT — the
-/// near-feasible trajectory continues under the raised weight instead of being
-/// thrown away and re-grown from the seed.
+/// Elastic-weight escalation. The escalate-and-continue RULE is SNOPT's
+/// elastic mode (Gill, Murray & Saunders, "SNOPT: An SQP Algorithm for
+/// Large-Scale Constrained Optimization", SIAM Review 47(1), 2005, §6.5
+/// steps 6-7: if the convergence tests hold for the elastic problem NP(gamma)
+/// and gamma has not reached its maximum, increase gamma and repeat from the
+/// same iterate; otherwise declare the problem infeasible). The SCHEDULE is an
+/// adaptation, not SNOPT's: SNOPT enters
+/// elastic mode conditionally (QP infeasible, or multipliers grow past a
+/// threshold) and then uses gamma_1 = gamma_0 * ||g(x)||, gamma_l =
+/// 10^(l(l-1)/2) * gamma_1 — successive ratios 10, 100, 1000, base scaled by
+/// the objective-gradient norm (their eq. 2.10). This loop is unconditionally
+/// elastic from iteration 1 with a fixed base and a fixed x10 per raise. An
+/// earlier version of this comment said "verbatim"; that was wrong (retracted
+/// 2026-09-06). A later version cited "SIAM J. Optim. 12(4), 2002, §5.5 Steps
+/// 5-6"; the section, step and equation numbers above are the ones verified
+/// against the SIAM Review reprint on 2026-09-08 (entry conditions at its
+/// steps 3 and 5, schedule at its eq. 2.10, gamma_0 = 1e4 there); the 2002
+/// original's numbering was not checked. Exactness of
+/// the one-norm penalty at a finite weight is Han & Mangasarian (1979). This
+/// replaced the Python-side ladder of cold restarts: same escalation, but the
+/// iterate is KEPT — the near-feasible trajectory continues under the raised
+/// weight instead of being thrown away and re-grown from the seed.
 const ELASTIC_WEIGHT_FACTOR: f64 = 10.0;
 /// Ceiling on escalation — the retired ladder's top rung. At the cap the loop
 /// stops raising and delivers its normal verdict; a run that cannot certify at
 /// the cap fails loudly exactly as it did before.
 const ELASTIC_WEIGHT_CAP: f64 = 1e5;
 /// The raise TRIGGER is a progress test on infeasibility, not a merit-flatness
-/// streak — the augmented-Lagrangian penalty update (Nocedal & Wright Alg.
-/// 17.4; LANCELOT / ALGENCAN practice): raise only when the exact violation has
-/// failed to shrink by `ELASTIC_PROGRESS_FACTOR` for `ELASTIC_STALL_WINDOW`
-/// consecutive iterations. A merit-flatness trigger was tried first and
-/// MEASURED WRONG (2026-08-31, `wall` N8_seg2): a run that certifies at weight
-/// 800 after a long grind shows transiently flat merits on the way, the streak
-/// fired mid-grind, and the raised weight wrecked a run that was winning —
-/// pinned 800 went from +0.1035 clearance (no escalation) to -0.26 (escalated).
-/// Progress in violation separates the two: the grind improves every few
-/// iterations, a stalled penalized optimum improves never.
+/// streak: raise only when the exact violation has failed to shrink by
+/// `ELASTIC_PROGRESS_FACTOR` against the minimum violation of the last
+/// `ELASTIC_PROGRESS_WINDOW` iterations, for `ELASTIC_STALL_WINDOW`
+/// consecutive infeasible iterations. This is a stall heuristic in the spirit
+/// of penalty / augmented-Lagrangian updates ("increase the penalty when the
+/// constraint violation is not decreasing sufficiently"); no published
+/// algorithm is claimed for its exact form. An earlier version of this comment
+/// cited Nocedal & Wright Algorithm 17.4 (LANCELOT–Method of Multipliers) for
+/// it; that citation was wrong and is retracted (2026-09-06): Alg. 17.4 tests
+/// ||c(x)|| against an absolute decreasing forcing tolerance eta_k once per
+/// outer iteration and carries multiplier estimates — this loop has neither a
+/// forcing sequence nor multiplier updates.
+///
+/// Two earlier trigger forms were tried and MEASURED WRONG:
+/// - A merit-flatness streak (2026-08-31, `wall` N8_seg2): a run that
+///   certifies at weight 800 after a long grind shows transiently flat merits
+///   on the way, the streak fired mid-grind, and the raised weight wrecked a
+///   run that was winning — pinned 800 went from +0.1035 clearance (no
+///   escalation) to -0.26 (escalated). Progress in violation separates the
+///   two: the grind improves every few iterations, a stalled penalized
+///   optimum improves never.
+/// - A NEVER-EXPIRING minimum (shipped f5a0ac1, caught 2026-09-06, `curve`
+///   N8_seg16): the progress reference was the best violation seen at any
+///   point in the weight level, so one lucky low iterate (4.5e-3 at iteration
+///   5) poisoned the test for the rest of the level — ten "stalls" were
+///   counted while the violation fell 26% then 24% per accepted step, and the
+///   raise fired on a run that was descending fast. The reference is now the
+///   minimum over a rolling window, so a lucky iterate expires.
 const ELASTIC_STALL_WINDOW: usize = 10;
+/// How long the progress reference remembers: the reference is the minimum
+/// violation of the last `ELASTIC_PROGRESS_WINDOW` iterations. STRICTLY less
+/// than `ELASTIC_STALL_WINDOW`, and that inequality is the fix, not a tuning
+/// choice: a single lucky iterate sits in the reference window for exactly
+/// `ELASTIC_PROGRESS_WINDOW` verdicts, so with a window as long as the stall
+/// requirement it can supply every one of the consecutive stalls the raise
+/// needs — measured on `curve` N8_seg16 (2026-09-06): with both at 10, the
+/// iteration-5 dip fed stalls 1..10 and the raise fired at iteration 15, the
+/// exact misfire the window was meant to remove, one iteration before the dip
+/// would have expired. At half the stall requirement, at least
+/// `ELASTIC_STALL_WINDOW - ELASTIC_PROGRESS_WINDOW` of the required stalls
+/// must fail against the genuinely recent minimum; on the same trace
+/// iterations 14 and 15 then grade as progress (0.0939 < 0.99 x 0.1173,
+/// 0.0717 < 0.99 x 0.0939) and no raise fires while the violation is falling.
+const ELASTIC_PROGRESS_WINDOW: usize = 5;
+/// The cycle-proof BACKSTOP. The windowed test above cannot see a limit cycle
+/// whose period exceeds `ELASTIC_PROGRESS_WINDOW`: the cycle's own minimum
+/// rolls out of the window exactly when it recurs, and the recurrence grades
+/// as progress every period. Measured on `curve` N8_seg4 (2026-09-06): an
+/// exact 6-iteration cycle at weight 100, every iterate infeasible (violation
+/// 1.03..33.9, slack >= 1.03 bought by every accepted subproblem — the
+/// weight-100 optimum keeps slack, which IS the raise condition), and the
+/// windowed test alone let it burn 200 iterations with no raise. A cycle never
+/// sets a NEW best, so the second tier compares against the level's running
+/// minimum — the reference that cannot alias — and is given twice the
+/// patience, because that reference never expires and a lucky dip therefore
+/// poisons it for the whole level: the longest dip-to-new-best transient
+/// measured is 12 iterations (`curve` N8_seg16, iteration 5 to 17), and 20
+/// clears it with margin. Either tier reaching its count raises the weight.
+const ELASTIC_LEVEL_STALL_WINDOW: usize = 20;
 /// "Sufficient decrease" for the progress test: an iteration counts as progress
-/// only if it beats the best violation seen at this weight by one percent.
+/// only if it beats the reference minimum violation by one percent.
 const ELASTIC_PROGRESS_FACTOR: f64 = 0.99;
 
 /// Quadratic form of the PARAMETER-DOMAIN smoothness regularizer on the spatial
@@ -986,15 +1048,46 @@ pub struct ScpState {
     /// How many times the weight was raised. Exported; a run that needed no
     /// raise solved the problem the ladder's first rung used to solve.
     pub weight_raises: u32,
-    /// Best (smallest) exact violation seen at the CURRENT weight. Reset to
-    /// infinity on every raise: each weight level proves progress on its own.
-    pub best_infeas: f64,
-    /// Iterations since the violation last improved on `best_infeas` by the
-    /// sufficient-decrease factor. Reaching `ELASTIC_STALL_WINDOW` while the
-    /// violation stands is the raise trigger.
+    /// Whether escalation is allowed at all. `false` HOLDS the caller's weight
+    /// for the whole run — no raise from any trigger. Default `true`. This
+    /// exists because "held at weight w" is a statement several measured facts
+    /// depend on (e.g. `wall` penetrates at a held 100 — the exact-penalty
+    /// threshold story), and after the in-loop escalation landed there was no
+    /// way to hold any weight below the cap: a pinned weight silently no
+    /// longer pinned.
+    pub escalate: bool,
+    /// The graded exact violations of the last `ELASTIC_PROGRESS_WINDOW`
+    /// iterations at the CURRENT weight, feasible dips included. The progress
+    /// reference is the MINIMUM over this window, so a lucky low iterate stops
+    /// poisoning the test once it rolls out — and it rolls out strictly before
+    /// it alone can fill the stall counter (see `ELASTIC_PROGRESS_WINDOW`).
+    /// Cleared on every raise: each weight level proves progress on its own.
+    pub infeas_window: VecDeque<f64>,
+    /// Consecutive INFEASIBLE iterations that failed to improve on the
+    /// windowed minimum by the sufficient-decrease factor. Reaching
+    /// `ELASTIC_STALL_WINDOW` is the raise trigger. Feasible iterations FREEZE
+    /// this counter rather than resetting it — see the trigger block.
     pub stall_count: usize,
-    /// Largest keep-out dual of the most recent subproblem. Complementarity
-    /// pins it to `weight` exactly when slack is active.
+    /// Smallest violation seen at the CURRENT weight, feasible dips included.
+    /// The second-tier reference (see `ELASTIC_LEVEL_STALL_WINDOW`): it never
+    /// expires within the level, which is what makes it cycle-proof. Reset to
+    /// infinity on every raise.
+    pub level_min_infeas: f64,
+    /// Consecutive INFEASIBLE iterations that failed to set a new level best
+    /// by the sufficient-decrease factor. Reaching `ELASTIC_LEVEL_STALL_WINDOW`
+    /// is the second-tier raise trigger. Frozen on feasible iterations like
+    /// `stall_count`.
+    pub level_stall_count: usize,
+    /// Largest keep-out dual of the most recent subproblem — valid ONLY as a
+    /// pair with `weight`. Complementarity pins it to the weight the subproblem
+    /// was solved at exactly when slack is active, so `raise_weight` sets it to
+    /// NaN: after a raise, `weight` names a subproblem nobody has solved yet
+    /// and the recorded dual belongs to the old one. Exporting both unchanged
+    /// let a consumer compute an "exactness margin" between two different
+    /// subproblems — measured 2026-09-06 (`wall` N8_seg2, start 100,
+    /// max_iter=17): weight 1000 against dual 100, a claimed margin of 900,
+    /// while the run carried 4.837 of slack. The next solved subproblem
+    /// overwrites the NaN with a dual that does match `weight`.
     pub last_max_koz_dual: f64,
     pub iteration: u32,
     pub conv_streak: usize,
@@ -1029,7 +1122,12 @@ pub struct ScpState {
 }
 
 impl ScpState {
-    pub fn new(p_init: &[f64], trust_radius: f64, elastic_weight: f64) -> Self {
+    pub fn new(
+        p_init: &[f64],
+        trust_radius: f64,
+        elastic_weight: f64,
+        escalate_weight: bool,
+    ) -> Self {
         let trust = if trust_radius > 0.0 {
             trust_radius
         } else {
@@ -1043,8 +1141,11 @@ impl ScpState {
             trust_init: trust,
             weight: elastic_weight,
             weight_raises: 0,
-            best_infeas: f64::INFINITY,
+            escalate: escalate_weight,
+            infeas_window: VecDeque::new(),
             stall_count: 0,
+            level_min_infeas: f64::INFINITY,
+            level_stall_count: 0,
             last_max_koz_dual: f64::NAN,
             iteration: 0,
             conv_streak: 0,
@@ -1302,17 +1403,77 @@ pub fn scp_iterate(
     // when it was rejected.
     if state.running() {
         let v_now = if accepted { vtrue_c } else { vtrue_p };
+        let windowed_min = state
+            .infeas_window
+            .iter()
+            .fold(f64::INFINITY, |acc, &v| acc.min(v));
         if v_now <= 1e-6 {
-            // Feasible where it matters: nothing to escalate for.
-            state.stall_count = 0;
-        } else if v_now < ELASTIC_PROGRESS_FACTOR * state.best_infeas {
-            state.best_infeas = v_now;
-            state.stall_count = 0;
+            // Feasible where it matters: never raise AT a feasible iterate, so
+            // a genuinely feasible reference can never escalate. The counter is
+            // FROZEN, not reset — the shipped reset (`stall_count = 0` here)
+            // blinded the trigger to a limit cycle: `curve` N8_seg16 entered an
+            // exact 5-iteration cycle (control points repeating to 4 decimals)
+            // whose one feasible dip per period wiped the counter every pass,
+            // and the run burned to max_iter with no raise (2026-09-06). The
+            // dip's near-zero violation still enters the window and the level
+            // minimum below, which is what makes the cycle visible: every
+            // infeasible cycle iterate then fails tier one against it while the
+            // dip is inside the window (periods up to ELASTIC_PROGRESS_WINDOW),
+            // and fails tier two against it for the rest of the level, whatever
+            // the period.
         } else {
-            state.stall_count += 1;
-            if state.stall_count >= ELASTIC_STALL_WINDOW && weight_raisable(state) {
+            // Tier one: progress against the RECENT past (windowed minimum).
+            if v_now < ELASTIC_PROGRESS_FACTOR * windowed_min {
+                state.stall_count = 0;
+            } else {
+                state.stall_count += 1;
+            }
+            // Tier two: a NEW level best. A limit cycle of any period never
+            // sets one, so this tier cannot alias; it is given the longer
+            // patience because its reference never expires.
+            if v_now < ELASTIC_PROGRESS_FACTOR * state.level_min_infeas {
+                state.level_stall_count = 0;
+            } else {
+                state.level_stall_count += 1;
+            }
+            let stalled = state.stall_count >= ELASTIC_STALL_WINDOW
+                || state.level_stall_count >= ELASTIC_LEVEL_STALL_WINDOW;
+            if stalled && weight_raisable(state) {
                 raise_weight(state);
             }
+            // A proven stall with the weight at its ceiling (or held) does NOT
+            // stop the loop: the stall test is evidence that THIS WEIGHT LEVEL
+            // is finished, which is a reason to raise; at the cap there is
+            // nothing to raise to, and the loop's own stops (ratio test, trust
+            // collapse, iteration cap) carry a certificate where a stall stop
+            // would not. A stall stop WAS shipped briefly (2026-09-07) and
+            // removed the same day. The evidence for the removal is mixed and
+            // is recorded as such, because an earlier version of this comment
+            // quoted a number the shipped trigger does not reproduce:
+            // - `curve` N8_seg4: stopped at iteration 135 with certificate
+            //   0.602; running on ends by trust collapse at 172 with 0.578
+            //   (measured 2026-09-08 on the shipped trigger; the 1.19e-06 the
+            //   earlier comment quoted predates the progress window's final
+            //   form and is not reproducible now).
+            // - `curve` N8_seg16: stopped at 82 with 2.87e-03; running on
+            //   reaches the iteration cap inside a limit cycle and returns
+            //   1.015 -- no iterate is feasible, so the best-iterate fallback
+            //   has nothing to return and the last iterate is whatever phase
+            //   of the cycle the cap lands on.
+            // Neither run is figure-grade either way. The decision stands on
+            // the first argument, not on the numbers.
+        }
+        // The level minimum takes feasible dips too: once the level has touched
+        // feasibility, no infeasible iterate is a new best.
+        state.level_min_infeas = state.level_min_infeas.min(v_now);
+        // Recorded AFTER the verdict: the window holds the violations of
+        // previous iterations, never the one being graded. The violation is a
+        // property of the iterate alone (the weight never enters it), so the
+        // push survives a raise and seeds the new level with the violation the
+        // carried iterate arrived with.
+        state.infeas_window.push_back(v_now);
+        if state.infeas_window.len() > ELASTIC_PROGRESS_WINDOW {
+            state.infeas_window.pop_front();
         }
     }
 
@@ -1329,10 +1490,12 @@ pub fn scp_iterate(
     }
 }
 
-/// Whether the elastic weight may still be raised: elastic mode is on and the
-/// cap is not yet reached. At the cap the loop delivers its normal verdict.
+/// Whether the elastic weight may still be raised: escalation is enabled,
+/// elastic mode is on, and the cap is not yet reached. At the cap the loop
+/// delivers its normal verdict; with escalation held off it does so at the
+/// caller's own weight.
 fn weight_raisable(state: &ScpState) -> bool {
-    state.weight > 0.0 && state.weight < ELASTIC_WEIGHT_CAP
+    state.escalate && state.weight > 0.0 && state.weight < ELASTIC_WEIGHT_CAP
 }
 
 /// One SNOPT elastic-mode escalation: multiply the weight, keep the iterate,
@@ -1345,8 +1508,16 @@ fn raise_weight(state: &mut ScpState) {
     state.trust = state.trust_init;
     state.conv_streak = 0;
     state.stat_streak = 0;
-    state.best_infeas = f64::INFINITY;
+    state.infeas_window.clear();
     state.stall_count = 0;
+    state.level_min_infeas = f64::INFINITY;
+    state.level_stall_count = 0;
+    // The recorded dual belongs to the subproblem solved at the OLD weight.
+    // Keeping it beside the raised weight lets a consumer compute an exactness
+    // margin between two different subproblems (see `last_max_koz_dual`); NaN
+    // fails every comparison, which is the correct answer until the next
+    // subproblem is solved at the new weight.
+    state.last_max_koz_dual = f64::NAN;
 }
 
 /// Track the best FEASIBLE iterate seen. Kept separate from the current iterate:
@@ -1400,6 +1571,7 @@ pub fn optimize_spacetime(
     v_max: f64,
     time_weight: f64,
     free_arrival_time: bool,
+    escalate_weight: bool,
 ) -> OptResult {
     let _ = scp_prox_weight; // see scp_step: the trust region does this job
     let nvars = np1 * dim;
@@ -1407,7 +1579,7 @@ pub fn optimize_spacetime(
         p_init, np1, dim, n_seg, min_dt, coord_lb, coord_ub, time_lb, time_ub, v_max,
         time_weight, free_arrival_time, sound_clip,
     );
-    let mut state = ScpState::new(p_init, scp_trust_radius, elastic_weight);
+    let mut state = ScpState::new(p_init, scp_trust_radius, elastic_weight, escalate_weight);
     // `best` deliberately does NOT start at the initial guess. Seeding it there
     // lets the fallback return the solver's own input when every iterate it
     // produced is worse — reporting a result the optimizer did not compute. It
@@ -1585,8 +1757,12 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     // `max_koz_dual` is the last subproblem's largest keep-out multiplier;
     // complementarity pins it to the weight exactly when slack is active, so
     // "final weight strictly above final max dual" and "all slacks zero" are the
-    // same claim computed two independent ways — the invariant test holds them
-    // together.
+    // same claim computed two independent ways — the invariant test
+    // (tests/integration/test_scvx_invariants.py::TestElasticComplementarity)
+    // holds them together. The pair is honest by construction: `raise_weight`
+    // sets the dual to NaN, so when a raise fired after the last solved
+    // subproblem the export refuses the margin instead of fabricating one
+    // (weight post-raise against a dual computed pre-raise).
     info.insert("final_elastic_weight".to_string(), state.weight);
     info.insert("weight_raises".to_string(), state.weight_raises as f64);
     info.insert("max_koz_dual".to_string(), state.last_max_koz_dual);

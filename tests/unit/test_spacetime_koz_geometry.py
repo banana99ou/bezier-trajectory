@@ -435,32 +435,63 @@ def test_wall_penetrates_below_its_penalty_threshold():
 
     This is why the scenario was misread as infeasible for months, and it is
     what makes the weight a property of the scenario rather than a tuning knob.
-    Under the in-loop escalation (2026-08-31) the observable changed but the
-    fact did not: a run STARTING at 100 must be forced to raise -- the
-    escalation fires precisely because the weight-100 subproblem optimum keeps
-    slack -- and having raised, it clears.
+    The fact is a statement about a HELD weight, and it is tested as one: with
+    escalation off, the weight-100 run must end penetrating, standing on
+    keep-out slack, with its largest dual pinned at 100 (complementarity: the
+    penalty is not exact there). The escalating default from the same start
+    is the control -- it raises and clears -- so the two runs together say
+    "100 is below the threshold, and the threshold is reachable above it".
 
-    FAILS IF: the run finishes at weight 100 with positive clearance, which
-    would mean 100 was never below the threshold and the threshold story is
-    wrong; or the raised run no longer clears, which would mean escalation
-    broke a certified configuration.
+    History: the in-loop escalation (f5a0ac1) rewrote this test to assert only
+    "a raise fired and the final weight exceeds 100", which is one condition
+    written twice and a weak proxy -- a raise can fire while the violation is
+    still dropping, so a raise does not imply 100 is below the threshold. The
+    held-weight assertion was restored 2026-09-06 with the
+    `escalate_elastic_weight=False` hold, which did not exist before then: a
+    pinned weight silently no longer pinned.
+
+    FAILS IF: the held run at 100 clears (100 was never below the threshold
+    and the threshold story is wrong); or it clears without slack or with a
+    dual below 100 (the penalty would be exact at 100 after all); or the hold
+    does not hold (a raise fires, or the final weight is not 100); or the
+    escalating control from the same start no longer clears (escalation broke
+    a certified configuration).
     """
     from spacetime_bezier.scenarios import SCENARIO_MAP
 
     fn, _ = SCENARIO_MAP["wall"]
     sc = fn()
-    _, info = optimize_spacetime(
+    common = dict(
         N=10, dim=3, p_start=sc["start"], p_end=sc["end"],
         obstacles=sc["obstacles"], n_seg=16, max_iter=200, tol=1e-6,
         scp_trust_radius=0.5, min_dt=0.1, verbose=False,
-        elastic_weight=100.0,
-        init_curve=sc.get("init_curve"),
+        elastic_weight=100.0, init_curve=sc.get("init_curve"),
     )
-    assert info["weight_raises"] >= 1.0 and info["final_elastic_weight"] > 100.0, (
-        "no raise fired from a start of 100; weight 100 now suffices for `wall` "
-        "and the penalty-threshold explanation needs revisiting"
+
+    _, held = optimize_spacetime(escalate_elastic_weight=False, **common)
+    assert held["weight_raises"] == 0.0 and held["final_elastic_weight"] == 100.0, (
+        f"the hold did not hold: {int(held['weight_raises'])} raises, ended at "
+        f"{held['final_elastic_weight']:g}"
     )
-    assert info["min_clearance"] > 0.0, (
+    assert held["min_clearance"] < 0.0, (
+        f"held at weight 100, `wall` clears by {held['min_clearance']:.4f}; 100 "
+        "is not below the threshold and the penalty-threshold explanation needs "
+        "revisiting"
+    )
+    assert held["total_koz_slack"] > 1e-6, (
+        "held at 100 the run penetrates yet the last subproblem bought no slack; "
+        "the penetration is not the penalty's doing"
+    )
+    assert abs(held["max_koz_dual"] - 100.0) <= 1e-4, (
+        f"held at 100 with slack active, the largest dual is {held['max_koz_dual']:.6g}, "
+        "not pinned at the weight -- complementarity does not describe this run"
+    )
+
+    _, escalated = optimize_spacetime(**common)
+    assert escalated["weight_raises"] >= 1.0 and escalated["final_elastic_weight"] > 100.0, (
+        "the escalating control never raised from 100"
+    )
+    assert escalated["min_clearance"] > 0.0, (
         "the escalated run no longer clears `wall`"
     )
 

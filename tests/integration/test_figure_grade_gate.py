@@ -26,6 +26,11 @@ noticing:
      ``speed_cap_violation``     -- and, as a seventh field on the same footing,
                                     the returned curve satisfies the hard
                                     slant-limit cones.
+     ``elastic_weight``          -- and an eighth, a REPORTING condition
+                                    (2026-09-06): the weight the run resolved
+                                    to is known. Absent passes; present and NaN
+                                    fails, so a stale extension cannot pass by
+                                    quoting its starting weight.
 
 Each is flipped on its own against an otherwise-passing row, and each alone must
 sink the gate. A gate whose conditions cannot be shown to bind separately is a
@@ -64,6 +69,7 @@ def _passing_row() -> dict:
         "total_slack": 1e-14,
         "speed_cap_violation": 0.0,
         "koz_unsound_clips": 0.0,
+        "elastic_weight": 100.0,
     }
 
 
@@ -83,6 +89,11 @@ _CONDITIONS = [
     # Rust core since the clip landed, never propagated into the result row,
     # never read by the predicate. Added as a gate condition 2026-08-31.
     ("koz_unsound_clips", 2.0, "does not cover"),
+    # The weight the run resolved to -- a REPORTING condition, not a quality
+    # one. NaN is what a stale extension produces once the row stops defaulting
+    # to the starting weight (2026-09-06); a build that cannot say what weight
+    # it ended at cannot be figure-grade, the same polarity as the clip count.
+    ("elastic_weight", float("nan"), "not reported"),
 ]
 
 
@@ -156,15 +167,19 @@ def test_a_missing_converged_flag_is_not_figure_grade():
 
 
 @pytest.mark.parametrize(
-    "field", ["occlusion_violation", "occlusion_planes_dropped", "speed_cap_violation"]
+    "field",
+    ["occlusion_violation", "occlusion_planes_dropped", "speed_cap_violation", "elastic_weight"],
 )
 def test_a_missing_optional_field_defaults_to_passing(field):
-    """The three optional conditions default to 0.0, deliberately.
+    """The optional conditions default to passing, deliberately.
 
     A run with no station has no occlusion rows and nothing to drop; a run with
     no cap has no cones. 0.0 is the TRUE value in both cases, not an assumption.
-    FAILS IF one of them is switched to the NaN default -- every pre-B12,
-    capless scenario in the table would stop being figure-grade.
+    The resolved weight is optional for the other reason: hand-built rows and
+    callers that predate the key have no weight to report, and only a row that
+    CLAIMS a weight and gives NaN is a stale build. FAILS IF one of them is
+    switched to the NaN default -- every pre-B12, capless scenario in the table
+    would stop being figure-grade.
     """
     row = _passing_row()
     del row[field]
@@ -250,18 +265,49 @@ def test_an_unsolvable_scenario_is_not_figure_grade():
 
 
 def test_a_penetrating_run_below_the_penalty_threshold_is_not_figure_grade():
-    """`wall` at elastic_weight=100 is the historical case.
+    """`wall` N8_seg2 from a start of 100 is the historical case.
 
     Below the scenario's exact-penalty threshold a penetrating curve is genuinely
-    the cheaper answer, so the solver returns one. It is not figure-grade, and it
-    is the run that used to be quoted as "wall renders a trajectory 0.112 inside
-    an obstacle". Its slack is 2.29 -- six orders above the gate.
+    the cheaper answer, so the solver returns one; this is the run that used to
+    be quoted as "wall renders a trajectory 0.112 inside an obstacle". Since the
+    in-loop escalation (f5a0ac1) the 100 is only a START: the run raises three
+    times to the 1e5 cap and still penetrates (-0.0978 with 4.50 of slack,
+    measured 2026-09-08), so what this test shows now is that escalation to the
+    cap does not rescue it either. The HELD weight-100 statement lives in
+    `tests/unit/test_spacetime_koz_geometry.py::test_wall_penetrates_below_its_penalty_threshold`.
     """
     out = optimize_scenario(scenario_wall(), [(8, 2)], elastic_weight=100.0, verbose=False)
     row = out["results"]["N8_seg2"]
     assert row["min_clearance"] < 0.0
     assert row["figure_grade"] is False
     assert row["total_slack"] > FIGURE_GRADE_SLACK_TOL * 1e5
+
+
+def test_a_row_is_traceable_to_the_start_weight_it_reports():
+    """The row's weight trajectory must be one the in-loop schedule can produce.
+
+    `elastic_weight` is the weight the run ENDED at, `initial_elastic_weight`
+    the start `optimize_scenario` was asked for, and `weight_raises` the number
+    of x10 steps between them -- so `final == min(initial * 10**raises, cap)`
+    on every row, or the row describes a run other than the one requested.
+    That happened 2026-09-07/08: a retry-from-other-starts fallback (removed)
+    reported a run started at 1e4 under `initial_elastic_weight` 100 with
+    `weight_raises` 1, on 8 of 56 battery rows. `wall` N8_seg2 raises three
+    times to the cap, so the identity is exercised on a run that moved.
+
+    FAILS IF any mechanism reports a run under a start weight it did not start
+    from, or the raise count and the final weight stop agreeing.
+    """
+    out = optimize_scenario(scenario_wall(), [(8, 2)], elastic_weight=100.0, verbose=False)
+    row = out["results"]["N8_seg2"]
+    assert row["weight_raises"] >= 1, "no raise fired; the identity is not exercised"
+    # 1e5 is ELASTIC_WEIGHT_CAP in spacetime_optimizer.rs.
+    expected = min(row["initial_elastic_weight"] * 10.0 ** row["weight_raises"], 1e5)
+    assert row["elastic_weight"] == expected, (
+        f"row reports start {row['initial_elastic_weight']:g}, {row['weight_raises']} "
+        f"raises, final {row['elastic_weight']:g}: not a trajectory the x10 schedule "
+        "from that start produces"
+    )
 
 
 def test_a_clearing_run_can_still_be_standing_on_slack():

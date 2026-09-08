@@ -71,11 +71,18 @@ limitations section needs: how often the clip's hole actually fires.
 ### `solver.multistart` — procedural seeds (left / right / wait / hurry) + multi-start
 Demoted 2026-08-19: it was justified by `wall` being infeasible, which was false. It may still buy
 better local optima, and the passing homotopy class still comes from the initialization — a stated
-limitation of every artifact rendering idea 1.
+limitation of every artifact rendering idea 1. A multi-start over the penalty weight alone — cold
+starts at 1e3 / 1e4 / 1e5 on every config the default run failed, keep the best — was tried
+2026-09-07 and removed 2026-09-08: it changed no verdict (23 of 28 either way) and it reported the
+retried run under the requested start weight. If multi-start returns, it returns over seeds, and
+the row names the start it came from. → [`SOLVER.md`](SOLVER.md) §Decided against
 
-### `solver.kkt` — no dual or KKT residual
-`converged` asserts feasibility plus no-further-progress, not stationarity of the original problem.
-Nothing is scheduled; the item exists so the gap is not mistaken for a guarantee.
+### `solver.kkt` — duals are extracted, but `converged` tests no KKT residual
+Since 2026-08-31 Clarabel's dual vector is read (`solve_qp_with_socs_duals`); it drives the
+exactness margin (`max_koz_dual` vs the weight, tested both ways in
+`tests/integration/test_scvx_invariants.py::TestElasticComplementarity`). `converged` still asserts
+feasibility plus no-further-progress, not stationarity of the original problem. Nothing is
+scheduled; the item exists so the gap is not mistaken for a guarantee.
 
 ---
 
