@@ -96,32 +96,60 @@ carried by a test that fails when it goes stale** — `tests/unit/test_spacetime
 and `tests/integration/test_scvx_invariants.py` are where the evidence lives.
 
 - **The merge-base `e849ff7` contains no Rust.** Both lineages wrote `rust_optimizer/` from scratch, so `git merge main` is an add/add conflict on every file. Bringing solver work over from `main` is a **file-level port**, never a merge or a rebase.
-- `bezier.rs` and `de_casteljau.rs` are **byte-identical** between `main` and this branch.
+- `bezier.rs` and `de_casteljau.rs` were **byte-identical** between `main` and this branch until
+  `8dc5a4b` (2026-09-04) rewrote their kernels allocation-free on this branch; results are
+  bit-identical (28-config golden battery, IEEE-754 hex), the text is not. A port from `main` now
+  has to carry the kernel rewrite forward, not overwrite it.
 - **The SCP loop has a real ratio test.** Since `9b9c3d3` there is a merit function, a predicted reduction, and a rho governing accept/reject and the trust update. Since 2026-08-31 Clarabel's **duals are extracted** (they drive the elastic-weight rule and the exactness margin), but `converged` still tests no KKT residual: it asserts feasibility plus no-further-progress — *not* stationarity of the original problem.
 - **G1 — FIXED 2026-08-17.** The keep-out normal's time component now falls out of the tube's slanted centreline instead of being written as zero.
 - **G2 — FIXED 2026-08-17, and the key widened 2026-08-26 (twice).** One plane per **(segment, obstacle, local approach)** — the band cut at every interior local maximum of the centreline's distance to the segment centroid — aimed at the segment centroid, plus a rotation term in the subproblem. It was one plane per (segment, obstacle) until the wall moved onto the clipped volume, then one per connected component until the same day's second correction: a bend that WRAPS the centroid is one component, and its single wall is non-separating by theorem (panel B2 measured it at margin −1.154 on a clear segment; the cut gives two walls at +0.529/−0.162). The wire name `component_idx` survives and now indexes approaches. Grouping rows without the index folds two genuinely different walls together. The dense subdivision matrix was never part of this defect — sparsifying it would *break* the guarantee.
 - **The keep-out wall is the SUPPORT of the clipped KOZ volume, not a hull projection.** Since `0a8bc9e`+ the plane is built against `K_m ∩ B(c, r_clip)` itself: normal from the component's own nearest centreline point, offset a rigorous De Casteljau ceiling on that component's support. **The retired route — select a parameter interval, hull the subdivided centreline, project the centroid, push out by `r_m` — is an OUTER approximation**, measured 1.13–2.23 past the clip radius on all six `curve` pairs, and it can never yield more than one wall. Do not reintroduce it. `r_clip = clamp(d, r_m, r_clip_max)`; the floor binds exactly when the centroid is inside the keep-out zone.
 - **`wall` and `diverse` are FEASIBLE.** Corrected 2026-08-19. Both clear and certify once the elastic penalty weight exceeds the scenario's exact-penalty threshold; the weight was pinned at 100 inside the Rust binding and unreachable from Python. Below threshold, a penetrating curve is genuinely the cheaper answer — the solver was right about the wrong problem.
 - **The elastic weight escalates IN-LOOP; the Python ladder of cold restarts is gone** (2026-08-31,
-  branch `solver/dual-elastic-weight`). SNOPT's elastic mode (Gill, Murray & Saunders 2005) with the
-  penalty-update progress test of the augmented-Lagrangian literature (Nocedal & Wright Alg. 17.4):
-  when the exact violation fails to shrink 1% for 10 consecutive iterations — or the trust radius
-  collapses while violating — the weight is multiplied by 10 (cap 1e5, the old top rung) and the SAME
-  iterate continues with the trust radius reset. Clarabel's dual vector is now read
-  (`solve_qp_with_socs_duals`): `info["max_koz_dual"]` vs `info["final_elastic_weight"]` is the
-  measured exactness margin (Han & Mangasarian 1979), and complementarity — slack active iff the
-  largest keep-out dual sits AT the weight — is verified from both sides in the validation battery.
-  Measured old→new on the committed extension: `wall` (8,16) 20.5 s → 2.7 s, `diverse` (8,4)
-  0.94 s → 0.43 s, both at IDENTICAL clearance; configs that never needed the ladder are unchanged.
-  A merit-flatness raise trigger was tried first and measured wrong — it fired mid-grind and wrecked
-  runs that were winning; only the violation-progress test separates a slow grind from a stalled
-  penalized optimum. Two stale beliefs died on the way: `wall` N8_seg2 does NOT clear at weight 800
+  branch `solver/dual-elastic-weight`; trigger repaired 2026-09-06). The escalate-and-continue RULE
+  is SNOPT's elastic mode (Gill, Murray & Saunders, SIAM Review 47(1), 2005 reprint, §6.5 steps
+  6–7 and eq. 2.10 — verified against the reprint 2026-09-08; the 2002 SIAM J. Optim. original's
+  numbering is unchecked);
+  the SCHEDULE — unconditionally elastic, x10 per raise from a fixed start, cap 1e5 (the old top
+  rung) — is this code's adaptation, not SNOPT's (theirs scales the base by the objective-gradient
+  norm and accelerates 10x, 100x, 1000x). The raise TRIGGER is a stall heuristic on the exact
+  violation with no published algorithm claimed for its form (an earlier claim of Nocedal & Wright
+  Alg. 17.4 was wrong — that is LANCELOT's forcing-tolerance test with multiplier updates — and is
+  retracted in the code): two tiers, either of which raises — no 1% improvement on the minimum of
+  the last 5 iterations for 10 consecutive infeasible iterations, or no new 1%-better level best for
+  20; feasible iterations freeze both counters rather than resetting them; the trust radius
+  collapsing while violating raises too. A stall the weight cannot escape (cap reached, or held
+  with `escalate_elastic_weight=False`) does NOT stop the loop — a stall stop was shipped and
+  removed on 2026-09-07; the loop runs on to its own stops (trust collapse or the iteration cap),
+  and the evidence for the removal is mixed and recorded in the trigger comment in
+  `spacetime_optimizer.rs`. On a raise the SAME iterate continues with the trust radius reset. Clarabel's dual vector is read (`solve_qp_with_socs_duals`):
+  `info["max_koz_dual"]` vs `info["final_elastic_weight"]` is the measured exactness margin (Han &
+  Mangasarian 1979), paired honestly (NaN when a raise fired after the last solved subproblem), and
+  complementarity — slack active iff the largest keep-out dual sits AT the weight — is tested from
+  both sides in `tests/integration/test_scvx_invariants.py::TestElasticComplementarity` (4 active-
+  slack runs, 4 zero-slack runs, and per-iteration through the stepper). Measured old→new on the
+  committed extension: `wall` (8,16) 20.5 s → 2.7 s, `diverse` (8,4) 0.94 s → 0.43 s, both at
+  IDENTICAL clearance; configs that never needed the ladder are unchanged.
+  Three trigger forms were measured wrong on the way: a merit-flatness streak fired mid-grind and
+  wrecked runs that were winning; a never-expiring running minimum (shipped in `f5a0ac1`) let one
+  lucky iterate count ten "stalls" on a descending run, and its feasible-iterate reset blinded it to
+  a limit cycle (`curve` N8_seg16, 158 iterations burned); a 5-iteration windowed minimum alone
+  aliased on a 6-iteration cycle (`curve` N8_seg4, 200 iterations burned at weight 100). The
+  windowed minimum plus the level-best backstop is what survived measurement. Removing the ladder
+  had regressed `curve` N8_seg8 and N10_seg8 out of figure grade (over-escalation to the cap,
+  certificates 5.1e-6 and 1.5e-6); the repaired trigger returns both (8.8e-9 at 1e5 after 3 raises,
+  1.2e-9 at 1e4 after 2). `curve` N8_seg4 and N8_seg16 were red under the ladder and are red now;
+  the escalated N8_seg4 run lands in a slack-0.58 basin at the cap, and NO start weight certifies
+  it (measured 2026-09-08: held at 1e4, 1.3e-05; escalating from 1e3 / 1e4 / 1e5, 1.95e-05 /
+  2.09e-06 / 1.97e-05 — a previous version of this line said it certifies from a cold start at
+  1e4, which was wrong) — the basin, not the weight, see `solver.multistart`.
+  Two stale beliefs died on the way: `wall` N8_seg2 does NOT clear at weight 800
   at this HEAD (the +0.1035 comment predates the current geometry; every rung fails, old and new,
   and the new best-effort −0.098 beats the old −0.129), and `diverse` N8_seg4 from weight 100 now
   converges figure-grade instead of relying on the best-iterate fallback (its fallback tests pin
   `max_iter=15` to stop before the rescue).
 - **The certificate is evaluated at the RETURNED iterate.** Fixed 2026-08-19; it used to report the loop's final *reference* point, which is a different trajectory whenever the best-iterate fallback fires.
-- **`obstacle_pos0` / `obstacle_vel` are not parameters of anything — and the drift they caused is CLOSED.** `0918df5` moved the Rust API to lifted control points and did not update the tests. 75 of 338 were red at that commit; 52 were still red as late as `e9d953f` on 2026-08-31, and `test_los_margin.py` and `test_clearance_sampling.py` were among them — the independent line-of-sight check behind the occlusion claim, and the computation behind every clearance number in §Measurements, neither of which had executed a single assertion since `0918df5` because they failed at the CALL in 0.09 s. Repaired by `d3a1426` + `8c948a7`, merged from `paper/journal-1` on 2026-09-01. **Suite is now 1 failed / 348 passed / 1 skipped, and the one red is the deliberate one.** Convert `pos0`/`vel` obstacles with `spacetime_bezier.geometry.obstacle_array_bundle`; a legacy obstacle with no window needs one, because the active window is now intrinsic to the control points.
+- **`obstacle_pos0` / `obstacle_vel` are not parameters of anything — and the drift they caused is CLOSED.** `0918df5` moved the Rust API to lifted control points and did not update the tests. 75 of 338 were red at that commit; 52 were still red as late as `e9d953f` on 2026-08-31, and `test_los_margin.py` and `test_clearance_sampling.py` were among them — the independent line-of-sight check behind the occlusion claim, and the computation behind every clearance number in §Measurements, neither of which had executed a single assertion since `0918df5` because they failed at the CALL in 0.09 s. Repaired by `d3a1426` + `8c948a7`, merged from `paper/journal-1` on 2026-09-01. **Suite is now 1 failed / 364 passed / 1 skipped (2026-09-08; 363 on 2026-09-06 before the start-weight provenance guard, 352 before the escalation-trigger repair added eleven), and the one red is the deliberate one.** Convert `pos0`/`vel` obstacles with `spacetime_bezier.geometry.obstacle_array_bundle`; a legacy obstacle with no window needs one, because the active window is now intrinsic to the control points.
 - **The dead Python triple is gone** — `327a28e` deleted `spacetime_bezier/constraints.py`, `debug_stepper.py`, `tests/unit/test_spacetime_constraints.py` and `BENCHMARKS.md` on 2026-08-20. The lesson they carried is worth keeping: those KOZ tests could not fail on G1, because every one used zero velocity and one asserted the time column was zero, enshrining the bug. **The Rust builder's coverage is `tests/unit/test_spacetime_koz_geometry.py`** (and `tests/unit/test_center_surface_geometry.py` since `46a15f7`); nothing else covers it.
 - **The keep-out zone and the shadow are ONE set at two stretch factors.** There is no occlusion
   builder and there are not two keep-out zones: the centreline generalises to a **center surface**,
@@ -164,7 +192,19 @@ and `tests/integration/test_scvx_invariants.py` are where the evidence lives.
 - `git merge` or rebase of `main` (no shared Rust ancestor; see above)
 - MIQP / big-M binary side variables — Clarabel has no integer support, and it kills the real-time story
 - Purging `orbital_docking` before the deadline — zero paper value, and the SCvx machinery being ported lives in the shared `optimizer.rs`
-- A profiling pass — 200-iteration runs are a G2 symptom, not a performance problem
+- A SECOND profiling pass. One was done (`8dc5a4b`, 2026-09-04: allocator profile, allocation-free
+  Bezier/De Casteljau kernels, results bit-identical); what remains of a 200-iteration run is a
+  limit cycle at the weight cap (`curve` N8_seg16), not a performance problem
+- A retry-from-other-start-weights fallback in `optimize_scenario` — tried 2026-09-07, removed
+  2026-09-08. Cold starts at 1e3 / 1e4 / 1e5 on every config the default run failed, keep the best:
+  it changed no verdict (23 of 28 either way), it moved the floor-OFF `Unsound walls` count onto a
+  different trajectory from the floor-ON arm's (`curve` N10_seg8: 0 → 2), and the row reported the
+  retried run under the requested start weight (8 of 56 rows read "start 100, one raise, ended at
+  1e5"). The one fact worth keeping: escalation is a homotopy in the weight and its path depends on
+  the start — no single start dominates (`curve` N8_seg4 best-effort certificate 0.578 from 100,
+  2.09e-06 from 1e4, neither a certificate; `wall` N8_seg3/4 −0.306 / −0.481 from 100, −0.300 /
+  −0.410 cold at 1e5). That is `solver.multistart`, and it belongs to seeds, not to a hidden ladder.
+  `test_a_row_is_traceable_to_the_start_weight_it_reports` is the guard.
 - Porting `main`'s full 5-pillar verification harness — the `figure_grade` gate buys the honesty that's needed
 
 ---
@@ -179,7 +219,7 @@ carry a warning or are easy to mistake:
 - `spacetime_bezier/viewer.py` -- superseded by `frontend.py` 2026-08-21, no longer an entrypoint. Nothing stored, the solve
   path is just the solve, and the client only draws -- verdict fields are computed server-side from the
   solver's own numbers. Serves `static/viewer.html`; shares port 8767 so it cannot run beside the sandbox
-- `spacetime_bezier/optimize.py` -- public API, the elastic-weight ladder, `optimize_scenario`
+- `spacetime_bezier/optimize.py` -- public API (`escalate_elastic_weight=False` holds a weight), the `figure_grade` gate, `optimize_scenario` (one solve per config from the starting weight; the ladder is gone)
 - `rust_optimizer/core/src/spacetime_generator.rs` -- **the set itself**: `Generator`, the centreline read through a station as a point light source. `station: None` is the plain lifted tube. The module docstring carries the derivation and why the widening radius is required rather than cosmetic
 - `rust_optimizer/core/src/spacetime_obstacle.rs` -- the wall built on that set: `clip_band`, `component_support`, `clip_geometry`, `rotation_correction`
 - `rust_optimizer/core/src/spacetime_constraints.rs` -- row assembly and bookkeeping, `SPACETIME_AXIS_SCALE`; both fixed defects lived here, and the retired occlusion builder did too until `46a15f7`
@@ -216,75 +256,106 @@ registered rather than the first rung that certifies.
 
 ## Measurements
 
-Last full pass **2026-09-01**, every registered configuration run twice — once with the reach floor
+Last full pass **2026-09-08**, every registered configuration run twice — once with the reach floor
 on, which is the default, and once with `sound_clip=False` as the comparison arm. **28
 configurations, 56 runs:** `original` 5, `curve` 4, `loiter` 2, `diverse` 5, `wall` 6, `fence3d` 4,
-`door3d` 2. Defaults otherwise: speed cap off, arrival pinned, elastic-weight ladder on. A run that
-enables `v_max` / `time_weight` / `free_arrival_time` is a different problem and must be re-measured.
+`door3d` 2. Defaults otherwise: speed cap off, arrival pinned, elastic weight starting at 100 and
+escalating in-loop (x10 per raise, cap 1e5). A run that enables `v_max` / `time_weight` /
+`free_arrival_time` is a different problem and must be re-measured.
 
 **FIGURE-GRADE** is the gate, checked per run: converged AND certificate ≤ 1e-6 at the returned
 iterate AND clearance > 0 against the true obstacle trajectories AND total slack ≤ 1e-6 AND the
-occlusion certificate where a station exists AND `koz_unsound_clips` == 0.
+occlusion certificate where a station exists AND `koz_unsound_clips` == 0 AND the resolved weight
+reported.
 
-**Provenance.** Taken on `paper/journal-1` at `d42db55`, extension built 2026-09-01T22:35:45, arm64
-Darwin, Python 3.14.6 — *not* on this branch's extension, which cannot be rebuilt here (PyO3 0.24.2
-against Python 3.14). **Three rows were re-measured on this branch's build and reproduce exactly**:
-`original` N8_seg4 (10 unsound off, +0.6204 both arms, 9 iterations), `loiter` N8_seg8 (2 unsound
-off, +35.3204 → +35.3767), `wall` N8_seg16 (113 unsound off, +0.2017 → +0.0556). Re-measure the
-rest before quoting a row this spot-check did not cover.
+**Provenance.** Taken on this branch (`solver/dual-elastic-weight`, `8dc5a4b` plus the
+escalation-trigger repair and the stall-stop removal that carry this table), extension built
+2026-09-08T19:18:23 into this worktree's venv, arm64 Darwin, Python 3.14.6 (PyO3 0.24 built with
+`PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1`, ABI-only). One escalating solve per configuration from a
+start of 100 and no retry from other starts (the 2026-09-07 fallback is removed, §Decided against);
+every row satisfies `Weight == 100 × 10^Raises`, which
+`test_a_row_is_traceable_to_the_start_weight_it_reports` asserts on a raising row. Against the
+2026-09-06 pass (same trigger, stall stop still in) 25 rows are unchanged at the table's precision;
+`curve` N8_seg4 and N8_seg16 run on past the stall (135 → 172 iterations by trust collapse, 82 →
+200 by the iteration cap) and `curve` N10_seg8's floor-OFF arm moves +0.1000 → +0.0956.
+The 2026-09-01 pass (`paper/journal-1` at `d42db55`, ladder era) is superseded: its
+`Weight` column held ladder rungs (800, 3000) the in-loop schedule cannot produce, and its `Iters`
+counted one rung, where iterations now accumulate across raises. **Every configuration that never
+raises is bit-identical to that pass's re-measured rows** (`original` N8_seg4, `loiter` N8_seg8);
+`wall` N8_seg16 moved +0.0556 → +0.0575 under the repaired trigger.
 
 The **Unsound walls** column is measured on the floor-OFF arm only. With the floor on it is zero for
-every configuration by construction, so a column of zeros would say nothing.
+every configuration by construction, so a column of zeros would say nothing. **Weight** is the
+weight the run ENDED at, **Raises** how many x10 steps it took to get there from 100, and **Stop**
+is the loop's own reason (`stationary` and `merit_streak` are the success claims; `trust_collapse`
+is success only if certified, which the Grade column settles).
 
-| Scenario | Config | Unsound walls (floor OFF) | Clearance ON | Clearance OFF | Cert ON | Iters ON | Weight | Grade ON | Grade OFF |
-|---|---|---|---|---|---|---|---|---|---|
-| `original` | N4_seg4 | 4 | +0.6189 | +0.6189 | 0.00e+00 | 11 | 100 | **yes** | no |
-| `original` | N4_seg8 | 4 | +0.3058 | +0.3060 | 0.00e+00 | 8 | 100 | **yes** | no |
-| `original` | N6_seg8 | 10 | +0.3231 | +0.3231 | 0.00e+00 | 9 | 100 | **yes** | no |
-| `original` | N8_seg4 | 10 | +0.6204 | +0.6204 | 0.00e+00 | 9 | 100 | **yes** | no |
-| `original` | N8_seg8 | 10 | +0.3230 | +0.3230 | 8.80e-09 | 10 | 100 | **yes** | no |
-| `curve` | N8_seg4 | 3 | +0.1237 | +0.1000 | 1.04e+00 | 200 | 100 | no | no |
-| `curve` | N8_seg8 | 1 | +0.0947 | +0.1000 | 1.51e-09 | 54 | 800 | **yes** | no |
-| `curve` | N8_seg16 | 10 | +0.1000 | +0.1000 | 6.35e-06 | 200 | 10000 | no | no |
-| `curve` | N10_seg8 | 0 | +0.0976 | +0.1000 | 2.34e-08 | 54 | 3000 | **yes** | yes |
-| `loiter` | N8_seg8 | 2 | +35.3767 | +35.3204 | 0.00e+00 | 3 | 100 | **yes** | no |
-| `loiter` | N8_seg16 | 0 | +36.8459 | +36.8417 | 0.00e+00 | 3 | 100 | **yes** | yes |
-| `diverse` | N8_seg4 | 28 | +0.1136 | +0.1136 | 1.92e-10 | 9 | 800 | **yes** | no |
-| `diverse` | N8_seg8 | 32 | +0.0279 | +0.0279 | 3.84e-07 | 26 | 10000 | **yes** | no |
-| `diverse` | N8_seg16 | 29 | +0.0051 | +0.0051 | 1.21e-08 | 35 | 10000 | **yes** | no |
-| `diverse` | N10_seg4 | 25 | +0.1085 | +0.1085 | 8.91e-08 | 10 | 800 | **yes** | no |
-| `diverse` | N10_seg16 | 54 | +0.0074 | +0.0074 | 7.49e-08 | 34 | 3000 | **yes** | no |
-| `wall` | N8_seg2 | 22 | -0.1292 | -0.1292 | 4.84e+00 | 23 | 100 | no | no |
-| `wall` | N8_seg3 | 16 | -0.3002 | -0.2928 | 2.56e+00 | 16 | 100000 | no | no |
-| `wall` | N8_seg4 | 13 | -0.4098 | -0.4064 | 2.44e+00 | 20 | 100000 | no | no |
-| `wall` | N8_seg16 | 113 | +0.0556 | +0.2017 | 0.00e+00 | 14 | 3000 | **yes** | no |
-| `wall` | N10_seg16 | 128 | +0.2058 | +0.2058 | 0.00e+00 | 9 | 3000 | **yes** | no |
-| `wall` | N10_seg24 | 197 | +0.0673 | +0.1484 | 0.00e+00 | 21 | 800 | **yes** | no |
-| `fence3d` | N8_seg2 | 22 | +0.1623 | +0.1623 | 0.00e+00 | 9 | 100 | **yes** | no |
-| `fence3d` | N8_seg4 | 49 | +0.0342 | +0.0342 | 0.00e+00 | 13 | 100 | **yes** | no |
-| `fence3d` | N8_seg8 | 43 | +0.0087 | +0.0087 | 0.00e+00 | 10 | 100 | **yes** | no |
-| `fence3d` | N10_seg8 | 42 | +0.0088 | +0.0088 | 0.00e+00 | 10 | 100 | **yes** | no |
-| `door3d` | N8_seg4 | 36 | +0.9828 | +0.9827 | 0.00e+00 | 8 | 100 | **yes** | no |
-| `door3d` | N8_seg8 | 60 | +1.0044 | +1.0009 | 0.00e+00 | 9 | 100 | **yes** | no |
+| Scenario | Config | Unsound walls (floor OFF) | Clearance ON | Clearance OFF | Cert ON | Iters ON | Raises | Weight | Stop | Grade ON | Grade OFF |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `original` | N4_seg4 | 4 | +0.6189 | +0.6189 | 0.00e+00 | 11 | 0 | 100 | stationary | **yes** | no |
+| `original` | N4_seg8 | 4 | +0.3058 | +0.3060 | 0.00e+00 | 8 | 0 | 100 | stationary | **yes** | no |
+| `original` | N6_seg8 | 10 | +0.3231 | +0.3231 | 0.00e+00 | 9 | 0 | 100 | stationary | **yes** | no |
+| `original` | N8_seg4 | 10 | +0.6204 | +0.6204 | 0.00e+00 | 9 | 0 | 100 | stationary | **yes** | no |
+| `original` | N8_seg8 | 10 | +0.3230 | +0.3230 | 8.80e-09 | 10 | 0 | 100 | stationary | **yes** | no |
+| `curve` | N8_seg4 | 1 | +0.1000 | +0.1000 | 5.78e-01 | 172 | 3 | 100000 | trust_collapse | no | no |
+| `curve` | N8_seg8 | 3 | +0.0999 | +0.0894 | 8.85e-09 | 111 | 3 | 100000 | trust_collapse | **yes** | no |
+| `curve` | N8_seg16 | 2 | +0.1000 | +0.1000 | 1.02e+00 | 200 | 3 | 100000 | iteration_cap | no | no |
+| `curve` | N10_seg8 | 0 | +0.0989 | +0.0956 | 1.16e-09 | 88 | 2 | 10000 | trust_collapse | **yes** | no |
+| `loiter` | N8_seg8 | 2 | +35.3767 | +35.3204 | 0.00e+00 | 3 | 0 | 100 | stationary | **yes** | no |
+| `loiter` | N8_seg16 | 0 | +36.8459 | +36.8417 | 0.00e+00 | 3 | 0 | 100 | stationary | **yes** | yes |
+| `diverse` | N8_seg4 | 25 | +0.1136 | +0.1136 | 1.21e-10 | 39 | 1 | 1000 | stationary | **yes** | no |
+| `diverse` | N8_seg8 | 32 | +0.0279 | +0.0279 | 1.15e-07 | 60 | 2 | 10000 | stationary | **yes** | no |
+| `diverse` | N8_seg16 | 29 | +0.0051 | +0.0051 | 3.02e-08 | 58 | 2 | 10000 | stationary | **yes** | no |
+| `diverse` | N10_seg4 | 28 | +0.1085 | +0.1085 | 5.25e-08 | 31 | 1 | 1000 | stationary | **yes** | no |
+| `diverse` | N10_seg16 | 11 | +0.0074 | +0.0074 | 7.59e-08 | 47 | 2 | 10000 | stationary | **yes** | no |
+| `wall` | N8_seg2 | 22 | -0.0978 | -0.0978 | 4.50e+00 | 48 | 3 | 100000 | trust_collapse | no | no |
+| `wall` | N8_seg3 | 17 | -0.3056 | -0.3083 | 2.66e+00 | 44 | 3 | 100000 | trust_collapse | no | no |
+| `wall` | N8_seg4 | 14 | -0.4808 | -0.4784 | 2.88e+00 | 43 | 3 | 100000 | trust_collapse | no | no |
+| `wall` | N8_seg16 | 130 | +0.0575 | +0.0556 | 5.90e-11 | 55 | 2 | 10000 | merit_streak | **yes** | no |
+| `wall` | N10_seg16 | 130 | +0.2018 | +0.2018 | 0.00e+00 | 41 | 2 | 10000 | stationary | **yes** | no |
+| `wall` | N10_seg24 | 202 | +0.0667 | +0.0667 | 0.00e+00 | 41 | 2 | 10000 | stationary | **yes** | no |
+| `fence3d` | N8_seg2 | 22 | +0.1623 | +0.1623 | 0.00e+00 | 9 | 0 | 100 | stationary | **yes** | no |
+| `fence3d` | N8_seg4 | 49 | +0.0342 | +0.0342 | 0.00e+00 | 13 | 0 | 100 | stationary | **yes** | no |
+| `fence3d` | N8_seg8 | 43 | +0.0087 | +0.0087 | 0.00e+00 | 10 | 0 | 100 | stationary | **yes** | no |
+| `fence3d` | N10_seg8 | 42 | +0.0088 | +0.0088 | 0.00e+00 | 10 | 0 | 100 | stationary | **yes** | no |
+| `door3d` | N8_seg4 | 36 | +0.9828 | +0.9827 | 0.00e+00 | 8 | 0 | 100 | stationary | **yes** | no |
+| `door3d` | N8_seg8 | 60 | +1.0044 | +1.0009 | 0.00e+00 | 9 | 0 | 100 | stationary | **yes** | no |
 
-**Figure-grade: 23 of 28 with the floor on, 2 of 28 with it off.** Three things have to travel with
+**Figure-grade: 23 of 28 with the floor on, 1 of 28 with it off.** Three things have to travel with
 that, or the table misleads:
 
-1. **The "Grade OFF" column is not a quality judgement on those runs.** 26 of its 28 no's are the
-   uncovered-walls condition *alone* — the other five gate conditions pass. It measures the hole,
-   not the trajectories.
+1. **The "Grade OFF" column is not a quality judgement on those runs.** 22 of its 27 no's are the
+   uncovered-walls condition *alone* — every other gate condition passes (measured 2026-09-06 by
+   reading `figure_grade_reasons` per run; re-read 2026-09-08, still 22). It measures the hole,
+   not the trajectories. The other five no's are `curve` N8_seg4 and `wall` N8_seg2/3/4 — four of
+   the five that fail with the floor on — plus `curve` N10_seg8's floor-OFF arm, which runs to the
+   iteration cap unconverged while its floor-ON arm is figure-grade. `curve` N8_seg16's floor-OFF
+   arm is one of the 22: converged at 1000, two uncovered walls.
 2. **Four of the five that fail with the floor ON fail for reasons unrelated to the clip.** `wall`
-   N8_seg2/3/4 penetrate either way (−0.1292, −0.3002, −0.4098), which is the 2026-08-24
-   densification; `curve` N8_seg4 does not converge either way and was a standing failure before any
-   of this.
-3. **The fifth is the floor'"'"'s own cost, and it is named rather than dropped.** `curve` N8_seg16
-   certifies at 2.61e-11 with the floor off and 6.35e-06 with it on, hitting the 200-iteration cap.
-   On the one scenario whose tube is genuinely non-convex, a rigorous support ceiling is sometimes
-   paid in convergence. `wall` N8_seg16 and N10_seg24 pay in clearance instead: +0.2017 → +0.0556
-   and +0.1484 → +0.0673.
+   N8_seg2/3/4 penetrate either way (−0.0978, −0.3056, −0.4808; the 2026-09-01 pass had −0.1292,
+   −0.3002, −0.4098 from the ladder's cold restarts), which is the 2026-08-24 densification; `curve`
+   N8_seg4 does not converge either way and was a standing failure before any of this — it now
+   escalates to the cap and ends by trust collapse at 172 iterations holding 0.58 of slack, and no
+   start weight certifies it (held at 1e4, 1.3e-05; escalating from 1e3 / 1e4 / 1e5, 1.95e-05 /
+   2.09e-06 / 1.97e-05, measured 2026-09-08), so what it lacks is the basin, not the weight
+   (`WORKSTREAM.md` `solver.multistart`).
+3. **The fifth is the floor's own cost, and it is named rather than dropped.** `curve` N8_seg16
+   certifies at 2.39e-12 with the floor off (converged at 1000 after one raise, though not
+   figure-grade there either: 2 uncovered walls) and with it on escalates to the weight cap and
+   runs to the iteration cap inside an exact 5-iteration limit cycle, returning a certificate of
+   1.02. The stall stop that used to catch this cycle at iteration 82 with 2.87e-03 was removed on
+   2026-09-07 (trigger comment in `spacetime_optimizer.rs`); no iterate of the cycle is feasible,
+   so the best-iterate fallback has nothing to keep and the returned iterate is whatever phase of
+   the cycle the cap lands on. On the one scenario whose tube is genuinely non-convex, a rigorous
+   support ceiling is sometimes paid in convergence.
+   The clearance cost the 2026-09-01 pass recorded on `wall` N8_seg16 and N10_seg24 is gone at this
+   pass: +0.0575 ON against +0.0556 OFF, and +0.0667 both arms.
 
-Everything else is free — `original`, `diverse` and `fence3d` are identical to four decimals across
-all fourteen of their configurations, and `door3d` and `loiter` come out slightly better.
+Everything else is free — `original`, `diverse` and `fence3d` are identical to three decimals across
+all fourteen of their configurations, and `door3d` and `loiter` come out slightly better with the
+floor on. `curve` N8_seg8 and N10_seg8, which the ladder certified and which `f5a0ac1`'s
+never-expiring stall reference had over-escalated out of figure grade (certificates 5.1e-6 and
+1.5e-6 at the cap), are figure-grade again under the repaired trigger.
 
 ### `loiter`, measured 2026-08-30 — the pass that found the gate blind to an unsound clip
 
@@ -340,7 +411,8 @@ with the retired hull-of-band plane.** Where the obstacle is straight its tube i
 two constructions agree on the plane, so `original`, `fence3d` and `door3d` move only in the last
 digits. Where it curves they differ, and the difference is iterations rather than answers: `curve`
 N8_seg8 went from 11 iterations to 39 and from +0.0894 to +0.0919 of clearance, and `curve`
-N10_seg8 now needs the ladder's top rung (1e5) where it used to certify at 800. That is the
+N10_seg8 then needed the ladder's top rung (1e5) where it used to certify at 800 (ladder era; with
+the in-loop escalation it certifies at 1e4 after two raises, 2026-09-06). That is the
 conservatism of a rigorous support ceiling being paid in step size, which is what sequential convex
 programming pays it in. Nothing that certified before stopped certifying.
 
@@ -365,8 +437,9 @@ in-crate tests in `spacetime_obstacle.rs`, but by no scenario in this repository
 The elastic weight is part of the result, not a tuning knob: above the exact-penalty threshold the
 penalized and constrained problems share a solution, below it they do not, and the threshold
 depends on the optimal multipliers so it differs per scenario and per segment count.
-`optimize_scenario` escalates through `ELASTIC_WEIGHT_LADDER` and records the weight that
-certified. Segment count reversed direction when one-plane-per-segment landed — `original` reaches
+The solver escalates it in-loop from the starting weight (x10 per raise, cap 1e5; see
+`ELASTIC_STALL_WINDOW` in `spacetime_optimizer.rs`) and `optimize_scenario` records the weight the
+run ended at. Segment count reversed direction when one-plane-per-segment landed — `original` reaches
 +0.620 at 4 segments against +0.323 at 8 — so old config lists that start at 8 segments miss the
 best result entirely.
 

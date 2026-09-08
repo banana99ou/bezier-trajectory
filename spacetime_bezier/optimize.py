@@ -31,8 +31,11 @@ DEFAULT_TRUST_RADIUS = 0.5
 # live in scenarios.py; see SCENARIO_MAP.
 DEFAULT_ELASTIC_WEIGHT = 100.0
 
-# Penalty continuation ladder. `optimize_scenario` walks this in order and stops
-# at the first weight whose run is converged AND certified AND clearing.
+# The STARTING elastic weight. The solver escalates it in-loop; Python passes
+# only this start, and the weight the run ended at comes back as
+# ``info["final_elastic_weight"]`` with ``info["weight_raises"]`` and the
+# exactness margin ``info["max_koz_dual"]`` (paired honestly: NaN when a raise
+# fired after the last solved subproblem).
 #
 # Escalating an exact penalty until the constraint violation vanishes is the
 # standard remedy when the threshold is unknown, and the threshold here IS
@@ -40,19 +43,21 @@ DEFAULT_ELASTIC_WEIGHT = 100.0
 # per segment count. Fixing one weight instead is what made `wall` and `diverse`
 # look infeasible: at 100 a penetrating curve is simply cheaper than a clear one,
 # so the solver correctly returned a penetrating curve for the problem it was
-# actually given. Measured thresholds: `diverse` certifies from 800 (N8_seg4,
-# 4 segments) to 10000 (8 and 16 segments); `original` certifies at 100.
+# actually given. Measured thresholds (ladder era): `diverse` certifies from
+# 800 (N8_seg4, 4 segments) to 10000 (8 and 16 segments); `original` certifies
+# at 100.
 #
-# The weight that succeeded is recorded per config as `elastic_weight`, so a
+# The weight the run ended at is recorded per config as `elastic_weight`, so a
 # number in the table can always be traced to the penalty that produced it.
 #
-# The LADDER OF COLD RESTARTS IS GONE (2026-08-31). The solver now escalates the
-# weight in-loop — SNOPT's elastic mode (Gill, Murray & Saunders 2005): when the
-# elastic subproblem is stationary and slack remains, the weight is multiplied
-# by 10 and the SAME iterate continues, instead of the run being thrown away and
-# re-grown from the seed. Python passes only the STARTING weight; the weight the
-# run ended at comes back as ``info["final_elastic_weight"]``, with
-# ``info["weight_raises"]`` and the exactness margin ``info["max_koz_dual"]``.
+# History: until 2026-08-31 `optimize_scenario` walked a LADDER of cold
+# restarts (``ELASTIC_WEIGHT_LADDER``, now deleted) and kept the best rung. The
+# in-loop rule is SNOPT's elastic mode (Gill, Murray & Saunders, SIAM
+# Review 47(1), 2005, sec. 6.5 steps 6-7 -- the escalate-and-continue rule; the x10
+# schedule from a fixed start is this code's adaptation, not SNOPT's): when the
+# elastic subproblem stalls with slack remaining, the weight is multiplied by
+# 10 and the SAME iterate continues, instead of the run being thrown away and
+# re-grown from the seed. ``escalate_elastic_weight=False`` holds the start.
 DEFAULT_INITIAL_ELASTIC_WEIGHT = 100.0
 
 try:
@@ -226,6 +231,18 @@ def figure_grade_failures(row: dict) -> list[str]:
     speed_cap = float(row.get("speed_cap_violation", 0.0))
     if not speed_cap <= FIGURE_GRADE_CERTIFICATE_TOL:
         reasons.append(f"speed cap violated by {speed_cap:.3e}")
+    # THE WEIGHT THE RUN RESOLVED TO. Not a quality condition -- any weight can
+    # be figure-grade -- but a row that does not know its weight came from an
+    # extension that does not emit `final_elastic_weight`, and every
+    # weight-dependent claim in the row (raises, the exactness margin) is then
+    # unfounded. Absent defaults to passing, for hand-built rows and callers
+    # that predate the key. PRESENT AND NaN FAILS, the `koz_unsound_clips`
+    # polarity: a stale build must refuse, not quote its STARTING weight as the
+    # answer -- which is what `.get("final_elastic_weight", initial_weight)`
+    # did until 2026-09-06, reporting "weight 100, zero raises" as if measured.
+    weight = float(row.get("elastic_weight", 0.0))
+    if not math.isfinite(weight):
+        reasons.append("elastic weight not reported (stale extension?)")
     return reasons
 
 
@@ -403,6 +420,7 @@ def _optimize_spacetime_rust(
     scp_prox_weight: float = 0.5,
     scp_trust_radius: float = DEFAULT_TRUST_RADIUS,
     elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,
+    escalate_elastic_weight: bool = True,
     min_dt: float = 0.1,
     coord_lb: float = -20.0,
     coord_ub: float = 20.0,
@@ -429,6 +447,12 @@ def _optimize_spacetime_rust(
     they sit outside the elastic slack range, so the penalty can never buy its
     way through a workspace wall. An altitude band is
     ``coord_bounds=[(-12, 12), (-12, 12), (0, 6)]``.
+
+    ``escalate_elastic_weight=False`` HOLDS ``elastic_weight`` for the whole
+    run: the in-loop escalation never fires, from any trigger. The default is
+    the escalating path. The hold exists because "held at weight w" is a
+    statement several measured facts are about (`wall` penetrates at a held
+    100), and once escalation landed a pinned weight silently no longer pinned.
     """
     if _bezier_opt_rs is None or not hasattr(_bezier_opt_rs, "optimize_spacetime_bezier"):
         raise RuntimeError("Rust space-time optimizer is not available in bezier_opt.")
@@ -487,6 +511,7 @@ def _optimize_spacetime_rust(
         scp_prox_weight=scp_prox_weight,
         scp_trust_radius=scp_trust_radius,
         elastic_weight=elastic_weight,
+        escalate_elastic_weight=bool(escalate_elastic_weight),
         min_dt=min_dt,
         coord_lb=coord_lb,
         coord_ub=coord_ub,
@@ -568,6 +593,7 @@ def optimize_spacetime_from_control_points(
     scp_prox_weight: float = 0.5,
     scp_trust_radius: float = DEFAULT_TRUST_RADIUS,
     elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,
+    escalate_elastic_weight: bool = True,
     min_dt: float = 0.1,
     coord_lb: float = -20.0,
     coord_ub: float = 20.0,
@@ -599,6 +625,7 @@ def optimize_spacetime_from_control_points(
         scp_prox_weight=scp_prox_weight,
         scp_trust_radius=scp_trust_radius,
         elastic_weight=elastic_weight,
+        escalate_elastic_weight=escalate_elastic_weight,
         min_dt=min_dt,
         coord_lb=coord_lb,
         coord_ub=coord_ub,
@@ -626,6 +653,7 @@ def optimize_spacetime(
     scp_prox_weight: float = 0.5,
     scp_trust_radius: float = DEFAULT_TRUST_RADIUS,
     elastic_weight: float = DEFAULT_ELASTIC_WEIGHT,
+    escalate_elastic_weight: bool = True,
     min_dt: float = 0.1,
     coord_lb: float = -20.0,
     coord_ub: float = 20.0,
@@ -662,6 +690,7 @@ def optimize_spacetime(
         scp_prox_weight=scp_prox_weight,
         scp_trust_radius=scp_trust_radius,
         elastic_weight=elastic_weight,
+        escalate_elastic_weight=escalate_elastic_weight,
         min_dt=min_dt,
         coord_lb=coord_lb,
         coord_ub=coord_ub,
@@ -736,7 +765,13 @@ def optimize_scenario(
         # N8_seg2 clearing at w=800 while a COLD solve at w=1e5 penetrates --
         # is a statement about restarting from the seed at a high weight,
         # which the in-loop rule never does: it raises mid-run and keeps the
-        # near-feasible iterate.
+        # near-feasible iterate. ONE solve also means no retry from other
+        # start weights: a keep-the-best fallback over cold starts at
+        # 1e3/1e4/1e5 was tried 2026-09-07 and removed 2026-09-08 -- it changed
+        # no verdict and it reported the retried run under THIS start weight
+        # (SOLVER.md sec. Decided against). The row below is the run that was
+        # asked for, and `elastic_weight == initial_elastic_weight * 10**raises`
+        # is asserted in tests/integration/test_figure_grade_gate.py.
         P_opt, opt_info = optimize_spacetime(
             N=N,
             dim=len(p_start),
@@ -762,7 +797,12 @@ def optimize_scenario(
         clearance = compute_min_clearance(
             P_opt, obstacles, dim=len(p_start), n_eval=3000
         )
-        used_weight = float(opt_info.get("final_elastic_weight", initial_weight))
+        # PRESENT AND NaN FAILS -- the same polarity as `koz_unsound_clips`: an
+        # extension that does not emit the final weight must not be read as
+        # "weight 100, zero raises". A stale build defaulting to the start
+        # would quote a weight the run never resolved to, so absence is NaN,
+        # which fails every figure-grade comparison downstream.
+        used_weight = float(opt_info.get("final_elastic_weight", float("nan")))
         if verbose:
             print(
                 f"  w={initial_weight:g} -> {used_weight:g} "
@@ -822,7 +862,11 @@ def optimize_scenario(
             "trust_radius": float(trust_radius),
             "elastic_weight": float(used_weight),
             "initial_elastic_weight": float(initial_weight),
-            "weight_raises": int(opt_info.get("weight_raises", 0)),
+            # -1 = not reported, the `stop_reason` sentinel: an int field cannot
+            # carry NaN, and 0 would read as "no raise was needed".
+            "weight_raises": (
+                int(opt_info["weight_raises"]) if "weight_raises" in opt_info else -1
+            ),
             # The exactness margin's other half: complementarity pins a relaxed
             # row's multiplier at the weight exactly when its slack is active,
             # so (max_koz_dual < elastic_weight) and (total_slack ~ 0) are one

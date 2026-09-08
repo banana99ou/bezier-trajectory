@@ -752,12 +752,17 @@ fn component_support(
     };
 
     let mut best = f64::NEG_INFINITY;
+    // Reused across all pieces: the subdivision matrix and the subdivided
+    // control points. Same values every iteration as the fresh-allocation
+    // form; only the allocations are hoisted out of the SUPPORT_PIECES loop.
+    let mut sub_matrix: Vec<f64> = Vec::new();
+    let mut sub: Vec<f64> = Vec::new();
     for iv in intervals {
         for i in 0..SUPPORT_PIECES {
             let lo = iv.0 + (iv.1 - iv.0) * (i as f64) / (SUPPORT_PIECES as f64);
             let hi = iv.0 + (iv.1 - iv.0) * ((i + 1) as f64) / (SUPPORT_PIECES as f64);
-            let sub_matrix = de_casteljau::subdivide_between(gen.degree(), lo, hi);
-            let sub = bezier::matmul(&sub_matrix, n_ctrl, n_ctrl, gen.ctrl, dim);
+            de_casteljau::subdivide_between_into(gen.degree(), lo, hi, &mut sub_matrix);
+            bezier::matmul_into(&sub_matrix, n_ctrl, n_ctrl, gen.ctrl, dim, &mut sub);
 
             for (u_lo, u_hi) in u_cells.iter().copied() {
                 let cell_radius = gen.radius(u_hi);

@@ -1549,7 +1549,12 @@ function applyScenario() {
   });
   p.selectedIndex = 0;
   applyPreset();
-  $("ewHint").textContent = `(registered: ${sc.registered_elastic_weight})`;
+  // Two numbers with one relationship: the box is the STARTING weight (blank =
+  // 100), from which the solver escalates x10 in-loop; the registered value is
+  // the weight this scenario's priced figure was pinned at, and is what a blank
+  // replay starts from -- it is not where a default solve ends up.
+  $("ewHint").textContent =
+    `(registered start for this scenario: ${sc.registered_elastic_weight}; the solver escalates x10 in-loop from whatever start is given)`;
   // A trust radius is a length, so the scene owns it: `loiter` is 200 m across
   // and will not certify at the 0.5 default. Selecting a scenario therefore
   // overwrites the box, the same way it overwrites the config preset.

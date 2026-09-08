@@ -7,9 +7,10 @@ is a separate recorded decision); this one takes the entrypoint.
 Four rules from CLAUDE.md sec. Architecture govern every function below, and each
 one is a constraint on what may be computed WHERE:
 
-* **One canonical execution model.** ``/api/solve`` runs the same ladder over the
-  same ``optimize_spacetime`` call with the same defaults ``optimize_scenario``
-  uses, so a number on the page is a number the batch path would report.
+* **One canonical execution model.** ``/api/solve`` runs the same single
+  ``optimize_spacetime`` call, from the same starting weight with the same
+  in-loop escalation and the same defaults ``optimize_scenario`` uses, so a
+  number on the page is a number the batch path would report.
   ``/api/replay`` drives ``bezier_opt.SpacetimeScpContext`` through
   ``tools/trace_viewer.py``'s child script -- imported, not copied, so the
   parameter list cannot drift -- and returns that script's own drift check.
@@ -602,11 +603,17 @@ def _run_ladder(scenario: dict, N: int, n_seg: int, params: dict):
         and occ <= 1e-6
         and clearance > 0.0
     )
-    used_weight = float(info_opt.get("final_elastic_weight", initial_weight))
+    # PRESENT AND NaN FAILS, the `koz_unsound_clips` polarity: a stale extension
+    # that does not emit the resolved weight must show NaN, not the start
+    # dressed up as "resolved to 100 with zero raises".
+    used_weight = float(info_opt.get("final_elastic_weight", float("nan")))
     rungs = [{
         "elastic_weight": used_weight,
         "initial_elastic_weight": float(initial_weight),
-        "weight_raises": int(info_opt.get("weight_raises", 0)),
+        # -1 = not reported (the `stop_reason` sentinel), never 0 = "no raise".
+        "weight_raises": (
+            int(info_opt["weight_raises"]) if "weight_raises" in info_opt else -1
+        ),
         "max_koz_dual": float(info_opt.get("max_koz_dual", float("nan"))),
         "clearance": float(clearance),
         "certificate": cert,
@@ -1311,10 +1318,13 @@ def replay_from_payload(payload: dict) -> dict:
     so the STTRACE row for iteration *k* and the frame for iteration *k* are the
     same iteration of the same run.
 
-    The elastic weight must be the one the SOLVE resolved to, not ``None``: the
-    child pins a single weight and the solve may have walked a ladder, so
-    replaying with the request's blank weight would replay the ladder's first
-    rung and call it the run.
+    The elastic weight must be the one the SOLVE STARTED from, not ``None`` and
+    not the weight it resolved to: escalation is deterministic in-loop, so the
+    same start reproduces the run frame for frame, while pinning the final
+    weight would solve a different (cold, high-weight) problem and call it the
+    run. The client sends ``resolved.initial_elastic_weight`` for exactly this
+    reason (`static/frontend.html`, `doReplay`). A blank weight pins the
+    scenario's registered weight, which is a third run again.
     """
     if not isinstance(payload, dict):
         raise RequestError("request body must be a JSON object")
@@ -1414,10 +1424,12 @@ def replay_from_payload(payload: dict) -> dict:
         )
     if request["elastic_weight"] is None:
         warnings.append(
-            "no elastic_weight was sent, so the replay pinned the scenario's "
+            "no elastic_weight was sent, so the replay started from the scenario's "
             f"registered weight ({scenario_elastic_weight(name):g}). If the solve "
-            "walked the ladder and stopped on a different rung, this replay is a "
-            "different run -- send the weight the solve resolved to."
+            "started from a different weight this replay is a different run -- "
+            "send the weight the solve STARTED from (the in-loop escalation is "
+            "deterministic, so the same start reproduces the run; the resolved "
+            "weight would start a different, cold high-weight run)."
         )
 
     # Trust radius per frame comes from the trace's own `trust_after` column, so

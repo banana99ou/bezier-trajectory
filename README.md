@@ -67,7 +67,8 @@ receding horizon. Do not mix their claims.
 │   │   ├── spacetime_constraints.rs one row builder over the generators; boundary, time
 │   │   │                            monotonicity, trust box
 │   │   ├── optimizer.rs             shared solve_qp() (Clarabel) + orbital docking optimizer
-│   │   ├── bezier.rs                D/E/G matrices, byte-identical to main branch
+│   │   ├── bezier.rs                D/E/G matrices (allocation-free kernels since 8dc5a4b; no
+│   │   │                            longer byte-identical to main, results bit-identical)
 │   │   ├── de_casteljau.rs          subdivision matrices
 │   │   ├── constraints.rs           orbital-docking constraints (legacy path)
 │   │   └── gravity.rs               legacy

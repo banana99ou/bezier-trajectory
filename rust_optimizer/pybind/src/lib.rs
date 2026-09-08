@@ -247,6 +247,7 @@ fn resolve_coord_bounds(
     time_lb = 0.0,
     time_ub = 15.0,
     elastic_weight = 100.0,
+    escalate_elastic_weight = true,
     sound_clip = true,
     v_max = None,
     time_weight = 0.0,
@@ -274,6 +275,12 @@ fn optimize_spacetime_bezier<'py>(
     time_lb: f64,
     time_ub: f64,
     elastic_weight: f64,
+    // `false` HOLDS `elastic_weight` for the whole run — the in-loop SNOPT-style
+    // escalation never fires. Default `true` (the escalating path is THE path).
+    // Exists so "held at weight w" is expressible again: several measured facts
+    // are statements about a held weight (`wall` penetrates at a held 100), and
+    // after the escalation landed a pinned weight silently no longer pinned.
+    escalate_elastic_weight: bool,
     // idea/spacetime.md statement (8): clamp the clip radius from below so statement (7)
     // holds unconditionally and the construction is sound by construction, at the
     // cost of conservatism where the row binds. Off by default; idea/spacetime.md calls the
@@ -341,6 +348,7 @@ fn optimize_spacetime_bezier<'py>(
         v_max.unwrap_or(f64::NAN),
         time_weight,
         free_arrival_time,
+        escalate_elastic_weight,
     );
 
     let p_opt = PyArray2::from_vec2(py, &{
@@ -518,6 +526,7 @@ impl SpacetimeScpContext {
         scp_prox_weight = 0.5,
         scp_trust_radius = 0.0,
         elastic_weight = 100.0,
+        escalate_elastic_weight = true,
         tol = 1e-6,
         sound_clip = true,
         v_max = None,
@@ -540,6 +549,10 @@ impl SpacetimeScpContext {
         scp_prox_weight: f64,
         scp_trust_radius: f64,
         elastic_weight: f64,
+        // `false` holds `elastic_weight` for the whole run; see the batch
+        // entrypoint. Same default so a debug session steps the same algorithm
+        // a batch run executes.
+        escalate_elastic_weight: bool,
         tol: f64,
         sound_clip: bool,
         v_max: Option<f64>,
@@ -567,7 +580,12 @@ impl SpacetimeScpContext {
         );
 
         let _ = scp_prox_weight; // the trust region does this job; see scp_step
-        let state = spacetime_optimizer::ScpState::new(&p_flat, scp_trust_radius, elastic_weight);
+        let state = spacetime_optimizer::ScpState::new(
+            &p_flat,
+            scp_trust_radius,
+            elastic_weight,
+            escalate_elastic_weight,
+        );
         let (station_vec, n_stations) = station_arrays(stations, spatial_dim)?;
 
         Ok(Self {
@@ -701,7 +719,14 @@ impl SpacetimeScpContext {
         info.set_item("running", self.state.running())?;
         info.set_item("elastic_weight", self.state.weight)?;
         info.set_item("weight_raises", self.state.weight_raises)?;
-        info.set_item("max_koz_dual", result.max_koz_dual)?;
+        // Read from the STATE, not from `result`: `elastic_weight` above is the
+        // state's post-raise weight, and `result.max_koz_dual` belongs to the
+        // subproblem solved at the pre-raise weight. On a raise iteration those
+        // are different subproblems, and exporting them side by side let the
+        // frontend show an exactness margin that does not exist (dual/weight ==
+        // 0.1 exactly, every raise iteration). `raise_weight` invalidates the
+        // state's dual to NaN, so this pair is honest on every iteration.
+        info.set_item("max_koz_dual", self.state.last_max_koz_dual)?;
         info.set_item("accept_count", self.state.accept_count)?;
         info.set_item("reject_count", self.state.reject_count)?;
         // Best FEASIBLE iterate seen, tracked by the solver. Exposed so a stepping
