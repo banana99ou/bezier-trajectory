@@ -704,6 +704,42 @@ citing any of them in the paper.
         print(name,T,round(rn.min()-6471.0,2),info['scvx_stop_reason'],info['termination_reason'])"
     ```
 
+13. **2026-09-07 — the four binding scenarios confirm the §3.1 conservatism law
+    on a second axis, and two §4.1 claims were wrong.** Fresh runs, cache off,
+    N=7. With L_seg the chord of the sub-arc holding the closest approach,
+    margin / (L_seg²/8R_KOZ) is 1.02 / 0.97 / 0.96 / 0.96 across n_seg = 8…64 on
+    phase120 and 0.97 / 0.97 / 0.98 / 0.98 on phase120 / 135 / 170 / planechange
+    at n_seg=16 (L_seg 914 / 1032 / 1295 / 979 km). Same constant on both axes,
+    so the scenarios are a second test of the mechanism, not breadth; the paper
+    now carries a 예측 여유 column (build_tables.py) and §5.1 says so. phase70 is
+    the control: τ* = 0, ratio 15, and its solution moves ≤ 2e-11 km across
+    n_seg ∈ {8,16,32} (not bitwise — the paper no longer says "모든 자리").
+
+    **Wrong claim 1 — "phase135 needs Δ₀ > 2000 km".** At N=7 it converges from
+    2000 km (stop 4, 11 iters, margin 19.935, cost 9.062797, same printed digits
+    as at 4000). The mechanism is NOT KOZ depth (KOZ rows carry slack) but the
+    iteration-1 velocity-BC repair |p₀ + (T/N)v₀ − p₁| : 993 / 1660 / 1905 /
+    2416 / 1835 km for phase70 / 120 / 135 / 170 / planechange at N=7, so only
+    phase170 leaves a 2000 km box; at N=6 phase135 needs 2222 km, which is why
+    the harness default stays 4000 for the pillar run. The paper rows use
+    `PAPER_R0` (phase135 → 2000). Doubling Δ₀ on every scenario leaves the
+    printed digits unchanged (max control-point motion 5e-3 km on phase170).
+    The harness comment's "5420 km inside" for phase170 is the control-polygon
+    depth; the curve's is 5888 km.
+
+    **Wrong claim 2 — "the 70 deg minimum-cost path stays near the departure
+    orbit".** It bulges outward to ~600 km clearance (Fig. 4B); only its closest
+    point is the departure point. Fixed in §4.1.
+
+    **Ambiguity fixed** — "n_lin 100→400 changes the objective by < 1e-9" is
+    true for J_true (4.5e-10 / 4.8e-10) and false for the linearized J⁽ᵏ⁾
+    (1.3e-4). The paper now names J. "planechange costs more than the coplanar
+    transfer at the same angle" was true (7.644 vs 6.285 on an ad-hoc planar
+    125.81 deg run) but unsupported by any paper row; sentence removed.
+
+    Reproduce: `scratchpad/verify_claims.py` of the 2026-09-07 session, or
+    `python3 tools/build_tables.py` for the columns.
+
 ## 8. Paper terminology
 
 `~/.claude/skills/korean-prose/references/korean_writing_case_collection.md` §6
