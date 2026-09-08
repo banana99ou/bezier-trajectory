@@ -30,7 +30,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from tools.verify import harness_common as H
-from tools.build_tables import T2_SCENARIOS, T2_DEGREE, T2_NSEG
+from tools.build_tables import T3_SCENARIOS, T3_DEGREE, T3_NSEG
 from orbital_docking.visualization import (
     set_axes_equal_around,
     beautify_3d_axes,
@@ -38,6 +38,15 @@ from orbital_docking.visualization import (
 )
 
 OUT = ROOT / "figures" / "representative_trajectories.png"
+
+# Figure text is English; the Korean scenario labels in T3_SCENARIOS feed the tables.
+EN_LABEL = {
+    "phase70": "central angle 70 deg",
+    "phase120": "central angle 120 deg (baseline)",
+    "phase135": "central angle 135 deg",
+    "phase170": "central angle 170 deg",
+    "planechange": "plane change",
+}
 SAMPLES = 400
 
 # One hue per geometry, ordered as table 2 orders them -- the same assignment
@@ -77,9 +86,10 @@ def main():
     # One solve per geometry, cache off, through the harness the table uses.
     solved = []
     r_koz = None
-    for (name, label), color in zip(T2_SCENARIOS, COLORS):
-        sc = H.make_scenario(name, N=T2_DEGREE)
-        P, info = H.run_rust(sc, n_seg=T2_NSEG)
+    for (name, _label_ko), color in zip(T3_SCENARIOS, COLORS):
+        label = EN_LABEL[name]
+        sc = H.make_scenario(name, N=T3_DEGREE)
+        P, info = H.run_rust(sc, n_seg=T3_NSEG)
         pts = H.positions(P, taus)
         k = int(np.argmin(np.linalg.norm(pts, axis=1)))
         margin = float(info["min_radius"]) - sc["r_e"]
@@ -109,7 +119,7 @@ def main():
     for label, color, sc, pts, k, margin, binds, info in solved:
         q = pts @ basis.T
         ax.plot(q[:, 0], q[:, 1], q[:, 2], color=color, lw=2.4,
-                label=f"{label} · 여유 {margin:.2f} km", zorder=5)
+                label=f"{label} · margin {margin:.2f} km", zorder=5)
         ax.scatter(*q[0], color=color, s=42, marker="o",
                    edgecolors="black", linewidths=0.5, zorder=6)
         ax.scatter(*q[-1], color=color, s=54, marker="^",
@@ -120,9 +130,9 @@ def main():
     set_axes_equal_around(ax, center=(0, 0, 0), radius=span * 1.02, pad=0.02)
     ax.view_init(elev=80, azim=0)
     beautify_3d_axes(ax, show_ticks=True, show_grid=True)
-    ax.set_xlabel("출발점 방향 (km)", fontsize=9, labelpad=4)
-    ax.set_ylabel("궤도면 내 수직 방향 (km)", fontsize=9, labelpad=4)
-    ax.set_title("(A) 출발 궤도면 위쪽에서 본 전이 궤적", fontsize=11, pad=4)
+    ax.set_xlabel("Departure direction (km)", fontsize=9, labelpad=4)
+    ax.set_ylabel("In-plane normal direction (km)", fontsize=9, labelpad=4)
+    ax.set_title("(A) Trajectories viewed from above the departure orbit plane", fontsize=11, pad=4)
 
     # (B) the out-of-plane component, which (A) cannot show: the four coplanar
     # geometries stay at zero and only the plane change leaves the plane.
@@ -137,9 +147,9 @@ def main():
                     edgecolors="none" if binds else "black")
     ax2.set_yscale("log")
     ax2.axhline(0.0, color="#C0392B", lw=1.0, ls="--", zorder=0)
-    ax2.set_xlabel(r"곡선 매개변수 $\tau$", fontsize=9)
-    ax2.set_ylabel("KOZ 표면으로부터의 거리 (km)", fontsize=9)
-    ax2.set_title("(B) KOZ 표면으로부터의 여유", fontsize=11, pad=4)
+    ax2.set_xlabel(r"Curve parameter $\tau$", fontsize=9)
+    ax2.set_ylabel("Distance from KOZ surface (km)", fontsize=9)
+    ax2.set_title("(B) Clearance from the KOZ surface", fontsize=11, pad=4)
     ax2.set_yticks([20, 50, 100, 200, 400])
     ax2.get_yaxis().set_major_formatter(
         matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:g}"))
@@ -153,8 +163,8 @@ def main():
     fig.legend(handles, labels_, loc="lower center", ncol=3, fontsize=9,
                frameon=False, bbox_to_anchor=(0.5, 0.0))
     fig.suptitle(
-        f"표 2의 다섯 전이 기하 (N = {T2_DEGREE}, $n_{{seg}}$ = {T2_NSEG}) · "
-        f"KOZ 반지름 {r_koz:.0f} km · ○ 출발 · △ 도착 · × 최근접점",
+        f"Five transfer scenarios (N = {T3_DEGREE}, $n_{{seg}}$ = {T3_NSEG}) · "
+        f"KOZ radius {r_koz:.0f} km · ○ departure · △ arrival · × closest approach",
         fontsize=12, y=0.97)
     fig.subplots_adjust(left=0.02, right=0.97, top=0.88, bottom=0.16, wspace=0.12)
 

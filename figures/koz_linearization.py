@@ -281,7 +281,7 @@ def build_figure(save=False):
                                  mutation_scale=10, shrinkA=0, shrinkB=0,
                                  zorder=5))
     rl = C_KOZ + u * (R_KOZ * 0.62) + np.array([0.62, 0.30])
-    ax.text(*rl, r"$r_e$", fontsize=FS_SYM_SM, color=C_KOZ_EDGE,
+    ax.text(*rl, r"$R_{\mathrm{KOZ}}$", fontsize=FS_SYM_SM, color=C_KOZ_EDGE,
             ha="center", va="center", zorder=6)
 
     ax.plot(*C_KOZ, "o", color=C_KOZ_EDGE, ms=4.0, zorder=6)
@@ -323,7 +323,7 @@ def build_figure(save=False):
                                  color=C_KOZ_EDGE, lw=1.1, mutation_scale=8,
                                  shrinkA=0, shrinkB=0, zorder=3))
     rl = C_KOZ + n_hat * 0.55 - tang * 0.45
-    ax.text(*rl, r"$r_e$", fontsize=FS_SYM_SM, color=C_KOZ_EDGE,
+    ax.text(*rl, r"$R_{\mathrm{KOZ}}$", fontsize=FS_SYM_SM, color=C_KOZ_EDGE,
             ha="center", va="center", zorder=6)
     ax.plot(*C_KOZ, "o", color=C_KOZ_EDGE, ms=4.0, zorder=6)
     ax.text(C_KOZ[0] + 0.18, C_KOZ[1] + 0.16, r"$\mathbf{c}_{\mathrm{KOZ}}$",
