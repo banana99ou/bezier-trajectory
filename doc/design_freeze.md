@@ -215,7 +215,7 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
 
 | parameter | value | principle |
 |---|---|---|
-| μ (`elastic_weight`) | 1e-2 | exact-penalty rule: above the KOZ dual scale, far below objective-swamping — μ=1e4 measurably degraded optima 4–5× via penalty noise in ρ (evidence #2). **‖λ_KOZ‖_∞ MEASURED: max 1.895e-7 across five scenarios (2026-08-11, with the corrected KOZ rows; the 2026-08-09 figure of 1.5e-7 came from the frozen-normal rows now known to be wrong), so μ=1e-2 clears it by 5 orders.** Previously recorded as "estimated ~1e-6" and never measured. |
+| μ (`elastic_weight`) | 1e-2 | exact-penalty rule: above the KOZ dual scale, far below objective-swamping — μ=1e4 measurably degraded optima 4–5× via penalty noise in ρ (evidence #2). **‖λ_KOZ‖_∞ MEASURED: max 1.895e-7 across five scenarios (2026-08-11, with the corrected KOZ rows; the 2026-08-09 figure of 1.5e-7 came from the frozen-normal rows now known to be wrong), so μ=1e-2 clears it by a factor of ≈5×10⁴ (4.7 orders, not 5).** Previously recorded as "estimated ~1e-6" and never measured. |
 | r₀ (`scp_trust_radius`) | 2000 km | must exceed the iteration-1 BC-repair distance (~1650 km in the demo); r₀ ≤ 1000 fails at iteration 1 (known open item) |
 | η | 0.1 | textbook SCvx acceptance threshold [Mao et al.] |
 | grow / shrink | ×2 @ ρ>0.9 / ×0.5 | textbook trust-region schedule |

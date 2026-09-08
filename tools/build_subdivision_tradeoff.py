@@ -4,11 +4,11 @@ Subdivision-count trade-off figure for N = 7 (paper 그림 5).
 
 Plots the three quantities the caption names -- safety margin, control cost and
 runtime -- against the subdivision count, read from the SAME committed CSV that
-fills 표 3. Reading `doc/results/paper_tables.csv` rather than the solver cache is
+fills 표 4. Reading `doc/results/paper_tables.csv` rather than the solver cache is
 the point of this script: the previous version loaded `cache/opt_*.pkl` written
 before the canonical-SCvx change, so it plotted runtimes three orders of
 magnitude away from the table printed beside it, and it plotted
-`cost_true_energy * T * 1e6` labelled as an energy integral where 표 3 reports
+`cost_true_energy * T * 1e6` labelled as an energy integral where 표 4 reports
 mean control acceleration in m/s^2. Both are fixed by reading the CSV.
 
 Usage:
@@ -28,7 +28,7 @@ import numpy as np
 from matplotlib.collections import LineCollection
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 
-from tools.paper_tables_csv import T3_SIGNATURE, block, endpoint_attained
+from tools.paper_tables_csv import T4_SIGNATURE, block, endpoint_attained
 
 # Tableau Colorblind 10, the palette the concept figures use.
 C_INK, C_DATA, C_FLAG, C_GRID = "#333333", "#006BA4", "#C85200", "#CFCFCF"
@@ -54,7 +54,7 @@ PANELS = [
 
 
 def main():
-    rows = block(T3_SIGNATURE, "그림 5 (subdivision sweep, N=7)")
+    rows = block(T4_SIGNATURE, "그림 5 (subdivision sweep, N=7)")
     segs = np.array([r["n_seg"] for r in rows])
     certified = np.array([r["certified"] for r in rows])
     endpoint = np.array(endpoint_attained(rows))

@@ -9,7 +9,7 @@ exactly what happened to the results figures before this module existed.
 The CSV carries no table identifier: `build_tables.py:172` writes `rows = t2 + t3
 + t4` as one flat list, and the same (degree, n_seg) configuration appears in more
 than one block. Blocks are therefore located by their (degree, n_seg) signature
-rather than by position, so a T2 prefix appearing later cannot silently shift
+rather than by position, so a T3 prefix appearing later cannot silently shift
 which rows a figure picks up. If a signature stops matching, that is a real
 change in the tables and the figure should fail rather than plot the wrong rows.
 """
@@ -22,9 +22,9 @@ from pathlib import Path
 CSV_PATH = Path(__file__).resolve().parents[1] / "doc" / "results" / "paper_tables.csv"
 
 # Section 4.2, first experiment: subdivision sweep at N = 7.
-T3_SIGNATURE = [(7, n) for n in (2, 4, 8, 16, 32, 64)]
+T4_SIGNATURE = [(7, n) for n in (2, 4, 8, 16, 32, 64)]
 # Section 4.2, second experiment: degree sweep at n_seg = 16.
-T4_SIGNATURE = [(6, 16), (7, 16), (8, 16)]
+T5_SIGNATURE = [(6, 16), (7, 16), (8, 16)]
 
 _FLOAT = ("margin_km", "ctrl_cost_ms2", "objective", "runtime_s",
           "hull_violation_km")

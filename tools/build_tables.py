@@ -1,5 +1,5 @@
 """
-Generate the paper's result tables T2/T3/T4 from the solver, with provenance.
+Generate the paper's result tables T3/T4/T5 from the solver, with provenance.
 
 Every number is read from the solver's `info` dict on a fresh cache-off run --
 nothing is re-derived here, and nothing is read from the cache. Output goes to
@@ -52,26 +52,26 @@ from tools.verify import harness_common as H
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = REPO_ROOT / "doc" / "results"
-SCENARIO = "phase120"               # the baseline geometry for T3 and T4
+SCENARIO = "phase120"               # the baseline geometry for T4 and T5
 REPEATS = 15
 
-# T2 asks whether the method produces feasible trajectories on the target
+# T3 asks whether the method produces feasible trajectories on the target
 # problem, so it varies the GEOMETRY -- three Bezier degrees on one geometry
-# answered a different question, and the one T4 already owns.
-T2_SCENARIOS = (
+# answered a different question, and the one T5 already owns.
+T3_SCENARIOS = (
     ("phase70", "중심각 70 deg"),
     ("phase120", "중심각 120 deg (기준)"),
     ("phase135", "중심각 135 deg"),
     ("phase170", "중심각 170 deg"),
     ("planechange", "궤도면 변경"),
 )
-T2_DEGREE = 7
-T2_NSEG = 16
-
-T3_SEGS = (2, 4, 8, 16, 32, 64)     # section 4.2, first experiment (N = 7)
-T24_DEGREES = (6, 7, 8)             # section 4.2, second experiment (n_seg = 16)
-T24_NSEG = 16
 T3_DEGREE = 7
+T3_NSEG = 16
+
+T4_SEGS = (2, 4, 8, 16, 32, 64)     # section 4.2, first experiment (N = 7)
+T35_DEGREES = (6, 7, 8)             # section 4.2, second experiment (n_seg = 16)
+T35_NSEG = 16
+T4_DEGREE = 7
 
 _TAUS = np.linspace(0.0, 1.0, 20001)
 
@@ -162,10 +162,10 @@ def _rows_t4(rs):
 
 
 def main():
-    labels = dict(T2_SCENARIOS)
-    t2 = [measure(T2_DEGREE, T2_NSEG, scenario=s) for s, _ in T2_SCENARIOS]
-    t3 = [measure(T3_DEGREE, n) for n in T3_SEGS]
-    t4 = [measure(d, T24_NSEG) for d in T24_DEGREES]
+    labels = dict(T3_SCENARIOS)
+    t2 = [measure(T3_DEGREE, T3_NSEG, scenario=s) for s, _ in T3_SCENARIOS]
+    t3 = [measure(T4_DEGREE, n) for n in T4_SEGS]
+    t4 = [measure(d, T35_NSEG) for d in T35_DEGREES]
     # phase120/N=7/n_seg=16 is the same configuration in all three tables; it is
     # solved once per table rather than shared, so agreement between the three
     # rows is a reproducibility check rather than a copy.
@@ -176,18 +176,18 @@ def main():
     sc = H.make_scenario(SCENARIO)
 
     md = [
-        "# 논문 결과 표 (T2 / T3 / T4) — 생성 결과", "",
+        "# 논문 결과 표 (T3 / T4 / T5) — 생성 결과", "",
         "이 파일은 `tools/build_tables.py`가 생성한다. 손으로 고치지 말 것.",
         "표의 모든 수치는 solver가 반환한 값을 그대로 옮긴 것이며, 이 파일에서 다시",
         "계산하는 양은 없다.", "",
         "## 생성 출처", "",
         f"- commit: `{sha}`{'  **(uncommitted changes present)**' if dirty else ''}",
-        f"- 표 2: 기하 {len(T2_SCENARIOS)}종 · 차수 {T2_DEGREE} · "
-        f"$n_{{\\mathrm{{seg}}}}$ = {T2_NSEG}",
-        f"- 표 3·표 4: `{SCENARIO}` 기하 고정 · $T$ = {sc['T']:.0f} s",
+        f"- 표 3: 시나리오 {len(T3_SCENARIOS)}종 · 차수 {T3_DEGREE} · "
+        f"$n_{{\\mathrm{{seg}}}}$ = {T3_NSEG}",
+        f"- 표 4·표 5: `{SCENARIO}` 시나리오 고정 · $T$ = {sc['T']:.0f} s",
         f"- 공통: $R_{{\\mathrm{{KOZ}}}}$ = {sc['r_e']:.0f} km · 허용오차 1e-8 · "
         f"$n_{{\\mathrm{{conv}}}}$ = 3 · $\\mu$ = 1e-2",
-        f"- $\\Delta_0$는 기하마다 다르다. 반복 1회차의 경계조건 보정 거리는 기하의 "
+        f"- $\\Delta_0$는 시나리오마다 다르다. 반복 1회차의 경계조건 보정 거리는 시나리오의 "
         f"성질이므로 상수로 둘 수 없다: 중심각 170 deg는 직선 초기 추정이 KOZ 내부 "
         f"5420 km 지점에서 출발하여 2000 km 상자로는 보정되지 않는다. 각 행이 쓴 값은 "
         f"아래 진단표에 함께 적는다.",
@@ -203,18 +203,18 @@ def main():
         "- † 최소 반지름이 곡선 내부가 아니라 끝점에서 발생한 경우. 이때 안전 여유는 "
         "KOZ 제약이 만들어낸 여유가 아니라 출발 궤도의 고도이므로, 제약이 작동한 "
         "행과 같은 뜻으로 읽어서는 안 된다. 가정이 아니라 조밀 표본으로 측정한다.", "",
-        f"## 표 2 [T2]. 기하에 따른 결과 요약 "
-        f"($N={T2_DEGREE}$, $n_{{\\mathrm{{seg}}}}={T2_NSEG}$)", "",
+        f"## 표 3 [T3]. 시나리오별 결과 요약 "
+        f"($N={T3_DEGREE}$, $n_{{\\mathrm{{seg}}}}={T3_NSEG}$)", "",
         "| 시나리오 | 성공 여부 | 안전 여유 (km) | 제어 비용 (m/s²) | 계산 시간 (s) | "
         "반복 횟수 |",
         "|:--|---:|---:|---:|---:|---:|",
         *_rows_t2(t2, labels), "",
-        f"## 표 3 [T3]. 분할 수에 대한 비교 실험 결과 ($N={T3_DEGREE}$)", "",
+        f"## 표 4 [T4]. 분할 수에 대한 비교 실험 결과 (중심각 120 deg, $N={T4_DEGREE}$)", "",
         "| $n_{\\mathrm{seg}}$ | 성공 여부 | 안전 여유 (km) | 제어 비용 (m/s²) | "
         "계산 시간 (s) | 반복 횟수 |",
         "|---:|---:|---:|---:|---:|---:|",
         *_rows_t3(t3), "",
-        f"## 표 4 [T4]. 차수에 대한 비교 실험 결과 ($n_{{\\mathrm{{seg}}}}={T24_NSEG}$)", "",
+        f"## 표 5 [T5]. 차수에 대한 비교 실험 결과 (중심각 120 deg, $n_{{\\mathrm{{seg}}}}={T35_NSEG}$)", "",
         "| 차수 | 제어점 수 | $n_{\\mathrm{seg}}$ | 성공 여부 | 안전 여유 (km) | "
         "제어 비용 (m/s²) | 계산 시간 (s) |",
         "|---:|---:|---:|---:|---:|---:|---:|",
