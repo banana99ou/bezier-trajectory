@@ -30,7 +30,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from tools.verify import harness_common as H
-from tools.build_tables import T3_SCENARIOS, T3_DEGREE, T3_NSEG
+from tools.build_tables import T2_SCENARIOS, T2_DEGREE, T2_NSEG, PAPER_R0
 from orbital_docking.visualization import (
     set_axes_equal_around,
     beautify_3d_axes,
@@ -39,7 +39,7 @@ from orbital_docking.visualization import (
 
 OUT = ROOT / "figures" / "representative_trajectories.png"
 
-# Figure text is English; the Korean scenario labels in T3_SCENARIOS feed the tables.
+# Figure text is English; the Korean scenario labels in T2_SCENARIOS feed the tables.
 EN_LABEL = {
     "phase70": "central angle 70 deg",
     "phase120": "central angle 120 deg (baseline)",
@@ -86,10 +86,11 @@ def main():
     # One solve per geometry, cache off, through the harness the table uses.
     solved = []
     r_koz = None
-    for (name, _label_ko), color in zip(T3_SCENARIOS, COLORS):
+    for (name, _label_ko), color in zip(T2_SCENARIOS, COLORS):
         label = EN_LABEL[name]
-        sc = H.make_scenario(name, N=T3_DEGREE)
-        P, info = H.run_rust(sc, n_seg=T3_NSEG)
+        sc = H.make_scenario(name, N=T2_DEGREE)
+        P, info = H.run_rust(sc, n_seg=T2_NSEG,
+                             scp_trust_radius=PAPER_R0.get(name, sc["r0"]))
         pts = H.positions(P, taus)
         k = int(np.argmin(np.linalg.norm(pts, axis=1)))
         margin = float(info["min_radius"]) - sc["r_e"]
@@ -163,7 +164,7 @@ def main():
     fig.legend(handles, labels_, loc="lower center", ncol=3, fontsize=9,
                frameon=False, bbox_to_anchor=(0.5, 0.0))
     fig.suptitle(
-        f"Five transfer scenarios (N = {T3_DEGREE}, $n_{{seg}}$ = {T3_NSEG}) · "
+        f"Five transfer scenarios (N = {T2_DEGREE}, $n_{{seg}}$ = {T2_NSEG}) · "
         f"KOZ radius {r_koz:.0f} km · ○ departure · △ arrival · × closest approach",
         fontsize=12, y=0.97)
     fig.subplots_adjust(left=0.02, right=0.97, top=0.88, bottom=0.16, wspace=0.12)

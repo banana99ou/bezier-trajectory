@@ -3,13 +3,13 @@
 Degree trade-off figure at n_seg = 16 (paper 그림 6).
 
 Plots control cost and runtime against the Bezier degree, read from the SAME
-committed CSV that fills 표 5.
+committed CSV that fills 표 4.
 
 The previous version disagreed with its own caption. The caption says
 "$N=6,7,8$ 차수에 대한 제어 비용(좌)과 계산 시간(우)의 추세" and section 5.3 says
 "제어 비용은 차수에 대해 단조 감소하고 계산 시간은 단조 증가한다" -- a trend
 against DEGREE. The figure instead drew three curves against n_seg, from a
-pre-canonical-SCvx cache, using `cost_true_energy * T * 1e6` where 표 5 reports
+pre-canonical-SCvx cache, using `cost_true_energy * T * 1e6` where 표 4 reports
 mean control acceleration in m/s^2. Reading the CSV fixes the source, the
 quantity, and the independent variable at once.
 
@@ -28,7 +28,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from tools.paper_tables_csv import T5_SIGNATURE, block
+from tools.paper_tables_csv import T4_SIGNATURE, block
 
 # Tableau Colorblind 10, the palette the concept figures use.
 C_INK, C_COST, C_TIME, C_GRID = "#333333", "#006BA4", "#C85200", "#CFCFCF"
@@ -40,7 +40,7 @@ PANELS = [
 
 
 def main():
-    rows = block(T5_SIGNATURE, "그림 6 (degree sweep, n_seg=16)")
+    rows = block(T4_SIGNATURE, "그림 6 (degree sweep, n_seg=16)")
     degrees = np.array([r["degree"] for r in rows])
     n_ctrl = np.array([r["n_ctrl"] for r in rows])
     n_seg = rows[0]["n_seg"]

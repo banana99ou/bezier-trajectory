@@ -32,7 +32,7 @@ sys.path.insert(0, str(ROOT))
 import plotly.graph_objects as go
 
 from tools.verify import harness_common as H
-from tools.build_tables import T3_SCENARIOS, T3_DEGREE, T3_NSEG
+from tools.build_tables import T2_SCENARIOS, T2_DEGREE, T2_NSEG, PAPER_R0
 from orbital_docking.visualization import (
     _plotly_earth_trace,
     _plotly_wire_sphere_traces,
@@ -54,9 +54,10 @@ def main(open_browser=True):
     span = 0.0
     rows = []
 
-    for (name, label), color in zip(T3_SCENARIOS, COLORS):
-        sc = H.make_scenario(name, N=T3_DEGREE)
-        P, info = H.run_rust(sc, n_seg=T3_NSEG)
+    for (name, label), color in zip(T2_SCENARIOS, COLORS):
+        sc = H.make_scenario(name, N=T2_DEGREE)
+        P, info = H.run_rust(sc, n_seg=T2_NSEG,
+                             scp_trust_radius=PAPER_R0.get(name, sc["r0"]))
         pts = H.positions(P, taus)
         r = np.linalg.norm(pts, axis=1)
         k = int(np.argmin(r))
@@ -99,12 +100,12 @@ def main(open_browser=True):
         rows.append((label, margin, binds, taus[k], int(info["iterations"]),
                      float(info["mean_control_accel_ms2"])))
 
-    sc0 = H.make_scenario(T3_SCENARIOS[0][0], N=T3_DEGREE)
+    sc0 = H.make_scenario(T2_SCENARIOS[0][0], N=T2_DEGREE)
     for t in _plotly_wire_sphere_traces(sc0["r_e"], "#C0392B", "KOZ"):
         fig.add_trace(t)
 
     fig.update_layout(
-        title=(f"표 3의 다섯 전이 기하 (N={T3_DEGREE}, n_seg={T3_NSEG}) · "
+        title=(f"표 2의 다섯 전이 기하 (N={T2_DEGREE}, n_seg={T2_NSEG}) · "
                f"KOZ 반지름 {sc0['r_e']:.0f} km · × 표시는 최근접점"),
         template="plotly_white",
         legend={"itemsizing": "constant"},
