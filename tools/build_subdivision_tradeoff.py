@@ -1,15 +1,11 @@
 #!/usr/bin/env python3
-"""
-Subdivision-count trade-off figure for N = 7 (paper 그림 5).
+"""Build Figure 5 from the committed measurements used in Table 3.
 
-Plots the three quantities the caption names -- safety margin, control cost and
-runtime -- against the subdivision count, read from the SAME committed CSV that
-fills 표 3. Reading `doc/results/paper_tables.csv` rather than the solver cache is
-the point of this script: the previous version loaded `cache/opt_*.pkl` written
-before the canonical-SCvx change, so it plotted runtimes three orders of
-magnitude away from the table printed beside it, and it plotted
-`cost_true_energy * T * 1e6` labelled as an energy integral where 표 3 reports
-mean control acceleration in m/s^2. Both are fixed by reading the CSV.
+Compare measured and estimated minimum clearances, control cost, and runtime for
+n_seg = 8, 16, 32, 64 at N = 7. These configurations are certified and attain
+their closest approach to the obstacle between the endpoints. Table 3 retains
+the complete sweep, including the uncertified and endpoint cases at n_seg = 2
+and 4.
 
 Usage:
     python tools/build_subdivision_tradeoff.py
@@ -25,111 +21,94 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.collections import LineCollection
-from matplotlib.colors import LinearSegmentedColormap, Normalize
+from matplotlib.ticker import NullLocator, ScalarFormatter
 
-from tools.paper_tables_csv import T3_SIGNATURE, block, endpoint_attained
+from tools.paper_tables_csv import T3_SIGNATURE, block
 
-# Tableau Colorblind 10, the palette the concept figures use.
-C_INK, C_DATA, C_FLAG, C_GRID = "#333333", "#006BA4", "#C85200", "#CFCFCF"
-
-# Light-to-dark ramp anchored on C_DATA: the line's own colour carries the
-# direction of the sweep, so the trend reads before the axis labels do.
-CMAP = LinearSegmentedColormap.from_list(
-    "seg", ["#A6CEE3", "#4B97C6", C_DATA, "#003F62"])
-
-# Hand-placed label offsets in points, one per n_seg, per panel. Automatic
-# placement put every label on the line; these keep each clear of it.
+C_INK, C_DATA, C_PRED, C_GRID = "#333333", "#006BA4", "#444444", "#DDDDDD"
+PLOT_SEGS = (8, 16, 32, 64)
+PANELS = (
+    ("margin_km", "Minimum clearance (km)", "(a) Minimum clearance", ".2f"),
+    ("ctrl_cost_ms2", "Control cost (m/s$^2$)", "(b) Control cost", ".3f"),
+    ("runtime_s", "Runtime (s)", "(c) Runtime", ".3f"),
+)
+# Keep labels away from the line approaching or leaving each measurement.
 LABEL_OFFSETS = {
-    "margin_km":     [(2, 13), (2, 13), (14, 7), (14, 7), (14, 7), (2, 13)],
-    "ctrl_cost_ms2": [(2, 13), (14, 6), (0, -17), (0, -17), (0, -17), (0, -17)],
-    "runtime_s":     [(2, 13), (-2, -17), (0, -17), (-14, -6), (-14, 2), (2, 13)],
+    ("margin_km", 16): (9, 7, "left"),
+    ("margin_km", 32): (9, 7, "left"),
+    ("ctrl_cost_ms2", 16): (9, 7, "left"),
+    ("runtime_s", 32): (-9, 8, "right"),
 }
-
-PANELS = [
-    ("margin_km",     "Safety margin (km)",     "Safety margin", True),
-    ("ctrl_cost_ms2", "Control cost (m/s$^2$)", "Control cost",  True),
-    ("runtime_s",     "Runtime (s)",            "Runtime",       True),
-]
 
 
 def main():
-    rows = block(T3_SIGNATURE, "그림 5 (subdivision sweep, N=7)")
+    all_rows = block(T3_SIGNATURE, "그림 5 (subdivision sweep, N=7)")
+    rows = [r for r in all_rows if r["n_seg"] in PLOT_SEGS]
+    if tuple(r["n_seg"] for r in rows) != PLOT_SEGS:
+        raise ValueError(f"Figure 5 requires subdivision counts {PLOT_SEGS}")
+    if not all(r["certified"] and 0.0 < float(r["tau_star"]) < 1.0
+               for r in rows):
+        raise ValueError("Figure 5 requires certified runs with interior minima")
+
     segs = np.array([r["n_seg"] for r in rows])
-    certified = np.array([r["certified"] for r in rows])
-    endpoint = np.array(endpoint_attained(rows))
+    predicted = np.array([float(r["pred_margin_km"]) for r in rows])
+    fig, axes = plt.subplots(1, 3, figsize=(12.0, 3.8), constrained_layout=True)
 
-    fig, axes = plt.subplots(1, 3, figsize=(14.0, 4.3), constrained_layout=True)
-
-    for ax, (key, ylabel, title, logy) in zip(axes, PANELS):
+    for ax, (key, ylabel, title, fmt) in zip(axes, PANELS):
         y = np.array([r[key] for r in rows])
-        # Gradient polyline: each segment coloured by where it sits in the sweep.
-        pts = np.column_stack([segs, y]).reshape(-1, 1, 2)
-        lc = LineCollection(np.concatenate([pts[:-1], pts[1:]], axis=1),
-                            cmap=CMAP, norm=Normalize(0, len(segs) - 2),
-                            linewidths=2.4, zorder=3)
-        lc.set_array(np.arange(len(segs) - 1))
-        ax.add_collection(lc)
-        # Certified runs are filled; the uncertified one is hollow, so the
-        # reader can see at a glance which points the guarantee covers.
-        ax.scatter(segs[certified], y[certified], c=np.arange(len(segs))[certified],
-                   cmap=CMAP, norm=Normalize(0, len(segs) - 1), s=52, zorder=4)
-        ax.plot(segs[~certified], y[~certified], "o", mfc="white", mec=C_FLAG,
-                mew=1.8, ms=8, zorder=5)
+        ax.plot(segs, y, color=C_DATA, linewidth=2.0, marker="o",
+                markersize=5.5, label="Measured", zorder=3)
 
-        # Print each measured value beside its marker: the log axes make the
-        # trend legible but not the magnitude, and the text quotes these numbers.
-        fmt = {"margin_km": "{:.2f}", "ctrl_cost_ms2": "{:.3f}",
-               "runtime_s": "{:.3f}"}[key]
-        for xs, ys, off in zip(segs, y, LABEL_OFFSETS[key]):
-            ax.annotate(fmt.format(ys), (xs, ys), textcoords="offset points",
-                        xytext=off, ha="center", fontsize=8, color=C_INK,
-                        zorder=8)
+        if key == "margin_km":
+            # Different line styles preserve the comparison in grayscale.
+            ax.plot(segs, predicted, color=C_PRED, linewidth=1.4,
+                    linestyle=(0, (5, 3)), label="Estimated", zorder=4)
+            ax.set_yscale("log")
+            ax.set_yticks([1, 4, 16, 64])
+            ax.yaxis.set_major_formatter(ScalarFormatter())
+            ax.yaxis.set_minor_locator(NullLocator())
+            ax.set_ylim(0.65, 115)
+            ax.legend(loc="upper right", frameon=False, fontsize=10,
+                      handlelength=2.8)
+        elif key == "ctrl_cost_ms2":
+            ax.set_ylim(4.54, 4.94)
+            ax.set_yticks([4.6, 4.7, 4.8, 4.9])
+        else:
+            ax.set_ylim(0.075, 0.245)
+            ax.set_yticks([0.08, 0.12, 0.16, 0.20, 0.24])
+
+        for xs, ys in zip(segs, y):
+            dx, dy, align = LABEL_OFFSETS.get((key, int(xs)), (0, 9, "center"))
+            ax.annotate(format(ys, fmt), (xs, ys), textcoords="offset points",
+                        xytext=(dx, dy), ha=align, va="bottom", fontsize=9,
+                        color=C_INK, zorder=5)
 
         ax.set_xscale("log", base=2)
         ax.set_xticks(segs)
         ax.set_xticklabels([str(int(s)) for s in segs])
-        ax.set_xmargin(0.12)
-        ax.set_xlabel("Subdivision count $n_{\\mathrm{seg}}$", fontsize=10)
-        ax.set_ylabel(ylabel, fontsize=10)
-        ax.set_title(title, fontsize=11, color=C_INK, pad=8)
-        if logy:
-            ax.set_yscale("log")
-            ax.set_ymargin(0.18)
-        ax.grid(True, which="both", color=C_GRID, lw=0.6, alpha=0.8)
+        ax.set_xlim(segs[0] / 1.3, segs[-1] * 1.3)
+        ax.set_xlabel("Subdivision count $n_{\\mathrm{seg}}$", fontsize=11)
+        ax.set_ylabel(ylabel, fontsize=11)
+        ax.set_title(title, fontsize=12, color=C_INK, pad=10)
+        ax.grid(True, which="major", color=C_GRID, linewidth=0.7)
         ax.set_axisbelow(True)
-        for sp in ax.spines.values():
-            sp.set_color("#cccccc")
-        ax.tick_params(labelsize=9, colors="#666666")
-
-        if key == "margin_km" and endpoint.any():
-            # Where the minimum radius sits at an endpoint the margin measures
-            # the departure orbit, not the method -- see section 5.2.
-            ax.plot(segs[endpoint], y[endpoint], "x", color=C_FLAG, ms=9,
-                    mew=1.8, zorder=6)
-            ax.text(0.04, 0.10,
-                    "\u00d7  minimum at an endpoint:\n"
-                    "    departure altitude, not clearance",
-                    transform=ax.transAxes, fontsize=8, color=C_FLAG,
-                    ha="left", va="center")
-
-    n_unc = int((~certified).sum())
-    if n_unc:
-        bad = ", ".join(f"$n_{{\\mathrm{{seg}}}}={int(s)}$" for s in segs[~certified])
-        fig.text(0.005, -0.02,
-                 f"hollow marker: Proposition 1 certificate not attained ({bad})",
-                 fontsize=8.5, color=C_FLAG, ha="left", va="top")
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("bottom", "left"):
+            ax.spines[side].set_color("#999999")
+        ax.tick_params(labelsize=10, colors=C_INK)
 
     out = ROOT / "figures" / "subdivision_tradeoff_N7.png"
-    fig.savefig(out, dpi=200, bbox_inches="tight", facecolor="white")
+    fig.savefig(out, dpi=300, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
-    print(f"rows read from doc/results/paper_tables.csv ({len(rows)}):")
+    print(f"Figure 5: {len(rows)} of {len(all_rows)} Table 3 configurations")
     for r in rows:
-        print(f"  n_seg={r['n_seg']:2d}  certified={str(r['certified']):5s}  "
-              f"margin={r['margin_km']:8.2f} km  cost={r['ctrl_cost_ms2']:8.3f} "
-              f"m/s^2  runtime={r['runtime_s']:.3f} s")
-    print(f"\nSaved -> {out}  ({out.stat().st_size / 1024:.0f} KB)")
+        print(f"  n_seg={r['n_seg']:2d}  measured={r['margin_km']:.2f} km  "
+              f"estimated={float(r['pred_margin_km']):.2f} km  "
+              f"cost={r['ctrl_cost_ms2']:.3f} m/s^2  "
+              f"runtime={r['runtime_s']:.3f} s")
+    print(f"Saved -> {out}")
 
 
 if __name__ == "__main__":

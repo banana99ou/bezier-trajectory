@@ -123,7 +123,7 @@ different matrices. Writing both as `S` implies a coupling that does not exist.
 | `\gamma^{(s)}_m(\mathbf{x})` | km | clearance of control point `m` of sub-arc `s` | — |
 | `w^{(s)}_i` | scalar | centroid weight, `\frac{1}{N+1}\sum_m S^{(s)}_{mi}` | — |
 | `h(\mathbf{x})` | km | total half-space violation (feasibility measure) | — |
-| `L_{\mathrm{seg}}` | km | lateral reach of a sub-arc along the support plane | — |
+| `L_{\mathrm{seg}}` | km | chord length between the two endpoints of a sub-arc | — |
 
 > **`R_{\mathrm{KOZ}}`, not `r_e`.** In `orbital_docking/optimization.py` the
 > identifier `r_e` means the **KOZ radius** (6471 km) everywhere except inside

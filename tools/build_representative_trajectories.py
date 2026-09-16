@@ -102,8 +102,8 @@ def main():
         pts = H.positions(P, taus)
         k = int(np.argmin(np.linalg.norm(pts, axis=1)))
         margin = float(info["min_radius"]) - sc["r_e"]
-        # A closest approach at either end is the departure/arrival orbit's own
-        # altitude, not clearance the method produced -- do not mark it.
+        # Endpoint clearance is set by the boundary positions; reserve the
+        # closest-approach cross for an interior point.
         binds = 0 < k < len(taus) - 1
         r_koz = float(sc["r_e"])
         solved.append((label, color, sc, pts, k, margin, binds, info))
@@ -129,7 +129,7 @@ def main():
         q = pts @ basis.T
         ax.plot(q[:, 0], q[:, 1], q[:, 2], color=color, lw=2.4,
                 linestyle=LINESTYLES[label],
-                label=f"{label} · margin {margin:.2f} km", zorder=5)
+                label=f"{label} · {margin:.2f} km", zorder=5)
         ax.scatter(*q[0], color=color, s=42, marker="o",
                    edgecolors="black", linewidths=0.5, zorder=6)
         ax.scatter(*q[-1], color=color, s=54, marker="^",
@@ -144,8 +144,7 @@ def main():
     ax.set_ylabel("In-plane normal direction (km)", fontsize=9, labelpad=4)
     ax.set_title("(A) Trajectories viewed from above the departure orbit plane", fontsize=11, pad=4)
 
-    # (B) the out-of-plane component, which (A) cannot show: the four coplanar
-    # geometries stay at zero and only the plane change leaves the plane.
+    # (B) distance to the obstacle surface along each trajectory.
     ax2 = fig.add_subplot(1, 2, 2)
     for label, color, sc, pts, k, margin, binds, info in solved:
         clear_km = np.linalg.norm(pts, axis=1) - r_koz
@@ -159,8 +158,8 @@ def main():
     ax2.set_yscale("log")
     ax2.axhline(0.0, color="#C0392B", lw=1.0, ls="--", zorder=0)
     ax2.set_xlabel(r"Curve parameter $\tau$", fontsize=9)
-    ax2.set_ylabel("Distance from KOZ surface (km)", fontsize=9)
-    ax2.set_title("(B) Clearance from the KOZ surface", fontsize=11, pad=4)
+    ax2.set_ylabel("Clearance (km)", fontsize=9)
+    ax2.set_title("(B) Clearance from the obstacle surface", fontsize=11, pad=4)
     ax2.set_yticks([20, 50, 100, 200, 400])
     ax2.get_yaxis().set_major_formatter(
         matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:g}"))
@@ -172,6 +171,7 @@ def main():
 
     handles, labels_ = fig.axes[0].get_legend_handles_labels()
     fig.legend(handles, labels_, loc="lower center", ncol=3, fontsize=9,
+               title="Minimum clearance", title_fontsize=9,
                frameon=False, handlelength=4.5, bbox_to_anchor=(0.5, 0.0))
     fig.suptitle(
         f"Five transfer scenarios (N = {T2_DEGREE}, $n_{{seg}}$ = {T2_NSEG}) · "
@@ -184,10 +184,10 @@ def main():
                 facecolor="white")
     plt.close(fig)
 
-    print(f"{'geometry':<22} {'margin km':>10} {'KOZ binds':>10} "
+    print(f"{'geometry':<22} {'clearance km':>12} {'KOZ binds':>10} "
           f"{'tau*':>7} {'iters':>6} {'cost m/s^2':>11}")
     for label, color, sc, pts, k, margin, binds, info in solved:
-        print(f"{label:<22} {margin:>10.2f} {str(binds):>10} "
+        print(f"{label:<22} {margin:>12.2f} {str(binds):>10} "
               f"{taus[k]:>7.4f} {int(info['iterations']):>6} "
               f"{float(info['mean_control_accel_ms2']):>11.3f}")
     print(f"\nSaved -> {OUT}  ({OUT.stat().st_size / 1024:.0f} KB)")
