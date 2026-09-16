@@ -1,0 +1,35 @@
+{
+  "commit": "d17fd7896a11725467f79494ea5a04c6f0ab7be3",
+  "dirty": "M doc/paper_draft_korean_rev2.md\n M experiments/downstream/pipeline.py\n?? open",
+  "python": "3.11.9",
+  "platform": "macOS-26.4-arm64-arm-64bit",
+  "scenarios": [
+    "phase70",
+    "phase120",
+    "phase135",
+    "phase170",
+    "planechange"
+  ],
+  "degrees": [
+    6,
+    7,
+    8
+  ],
+  "segments": [
+    2,
+    4,
+    8,
+    16,
+    32,
+    64
+  ],
+  "repeats": 15,
+  "cache": false,
+  "max_iter": 1000,
+  "tol": 1e-08,
+  "n_lin_seg": 100,
+  "trust_radius": "harness scenario defaults",
+  "started": "2026-09-16T15:44:21+0900",
+  "elapsed_s": 864.360100030899,
+  "finished": "2026-09-16T15:58:46+0900"
+}

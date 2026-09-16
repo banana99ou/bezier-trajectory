@@ -1,0 +1,9 @@
+{
+  "module_path": "/Users/hyeon-yongjeong/code/bezier-trajectory/.venv/lib/python3.11/site-packages/bezier_opt/__init__.py",
+  "binaries": [
+    {
+      "path": "/Users/hyeon-yongjeong/code/bezier-trajectory/.venv/lib/python3.11/site-packages/bezier_opt/bezier_opt.cpython-311-darwin.so",
+      "sha256": "3d5cac76464e8ba0edba5d4bd195f5b0fb675dd9252df652a9108fa7e2a69a93"
+    }
+  ]
+}
