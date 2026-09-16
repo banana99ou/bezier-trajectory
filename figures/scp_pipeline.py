@@ -11,9 +11,8 @@ a smaller trust region, while an accepted trial advances the iteration.
 
 Layout rules (keep these when editing):
   * consecutive elements are separated by GAP inside a region, and by the
-    tighter GAP_CROSS where a background-region edge falls between them:
-    the region outline and its label add visual bulk, so a smaller box gap
-    is what actually reads as even;
+    GAP_CROSS where a background-region edge falls between them:
+    the region outline and its label require room above their first box;
   * font size is fixed per element class (FS_BOX, FS_SUB, FS_DIA, FS_EDGE);
   * arrows start and end exactly on the drawn edge of a box or diamond,
     with the head outside the target, never underneath it.
@@ -39,11 +38,11 @@ PAD = 0.12            # FancyBboxPatch inflates the drawn shape by this much
 BOX_HH = BOX_H / 2 + PAD          # half-height of the *drawn* box
 BOX_HW = BOX_W / 2 + PAD          # half-width  of the *drawn* box
 
-DIA_WX = 2.30
+DIA_WX = 2.90
 DIA_WY = 0.80
 
-GAP = 0.75            # gap between two elements inside the same region
-GAP_CROSS = 0.55      # gap across a region edge, which supplies its own bulk
+GAP = 0.28            # gap between two elements inside the same region
+GAP_CROSS = 0.50      # room for the region heading across a background edge
 
 # Element order, top to bottom: (key, shape, enclosing background region)
 SEQUENCE = [
@@ -65,7 +64,7 @@ def _half_height(shape):
 
 
 def _gap(region_a, region_b):
-    """Tighter gap wherever a region edge already fills the space."""
+    """Allow enough room for the heading at each background-region edge."""
     return GAP if region_a == region_b else GAP_CROSS
 
 
@@ -86,8 +85,8 @@ Y = _stack_positions()
 SHAPE = {key: shape for key, shape, _ in SEQUENCE}
 
 # Two loop-back paths: inner = rejected trial, outer = next iteration
-LOOP_X_INNER = BOX_HW + 1.05
-LOOP_X_OUTER = LOOP_X_INNER + 1.30
+LOOP_X_INNER = BOX_HW + 0.70
+LOOP_X_OUTER = LOOP_X_INNER + 0.72
 
 # Background-region bounds. The top margin holds the italic region label.
 # These are the *drawn* bounds: _region() subtracts its own corner padding so
@@ -107,11 +106,11 @@ assert LOOP_Y[1] < BLUE_Y[0], "Loop region must sit below the blue region"
 # Type scale — one size per class of element
 # ---------------------------------------------------------------------------
 
-FS_BOX = 10.0     # primary line inside a box
-FS_SUB = 8.5      # secondary line inside a box
-FS_DIA = 8.5      # text inside a decision diamond
-FS_EDGE = 8.5     # branch labels and loop annotations
-FS_REGION = 8.5   # italic region labels
+FS_BOX = 11.0     # primary line inside a box
+FS_SUB = 10.0      # secondary line inside a box
+FS_DIA = 10.0      # text inside a decision diamond
+FS_EDGE = 10.0     # branch labels and loop annotations
+FS_REGION = 10.0   # italic region labels
 
 # ---------------------------------------------------------------------------
 # Palette — Tableau Color Blind 10, blue + neutral grey subset.
@@ -217,11 +216,11 @@ def build_figure(save=False):
     plt.rcParams["mathtext.fontset"] = "dejavusans"
     plt.rcParams["mathtext.default"] = "regular"
 
-    fig, ax = plt.subplots(figsize=(7.5, 14.0), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(7.5, 10.4), constrained_layout=True)
     fig.set_facecolor("white")
     ax.set_facecolor("white")
     ax.set_aspect("equal")
-    ax.set_xlim(-3.95, LOOP_X_OUTER + 1.10)
+    ax.set_xlim(-3.60, LOOP_X_OUTER + 0.65)
     ax.set_ylim(Y["ret"] - BOX_HH - 0.45, Y["init"] + BOX_HH + 0.45)
     ax.axis("off")
 

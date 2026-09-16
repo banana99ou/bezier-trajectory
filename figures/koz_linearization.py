@@ -243,6 +243,10 @@ def label_ctrl_polygon(ax, pts, anchor, offset, color):
 # Figure
 # ---------------------------------------------------------------------------
 
+# Repository plotting defaults make all math upright. Match the manuscript's
+# LaTeX convention locally: italic scalar/index symbols, explicit bold vectors,
+# upright descriptive KOZ subscripts, and calligraphic sets.
+@plt.rc_context({"mathtext.fontset": "cm", "mathtext.default": "it"})
 def build_figure(save=False):
     g = build_geometry()
     segs, segs_fix, viol = g["segs"], g["segs_fix"], g["viol"]

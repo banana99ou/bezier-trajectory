@@ -51,7 +51,15 @@ SAMPLES = 400
 
 # One hue per geometry, ordered as table 2 orders them -- the same assignment
 # tools/build_scenario_trajectories.py uses for the interactive version.
-COLORS = ["#2ECC71", "#3498DB", "#F39C12", "#E74C3C", "#9B59B6"]
+COLORS = ["#178344", "#2471A3", "#A9660A", "#C0392B", "#76448A"]
+# Keep scenarios identifiable in grayscale in both panels and the shared legend.
+LINESTYLES = {
+    EN_LABEL["phase70"]: "-",
+    EN_LABEL["phase120"]: (0, (6, 2.5)),
+    EN_LABEL["phase135"]: (0, (1, 2)),
+    EN_LABEL["phase170"]: (0, (6, 2, 1, 2)),
+    EN_LABEL["planechange"]: (0, (6, 2, 1, 2, 1, 2)),
+}
 
 
 def _orbit_frame(sc):
@@ -120,6 +128,7 @@ def main():
     for label, color, sc, pts, k, margin, binds, info in solved:
         q = pts @ basis.T
         ax.plot(q[:, 0], q[:, 1], q[:, 2], color=color, lw=2.4,
+                linestyle=LINESTYLES[label],
                 label=f"{label} · margin {margin:.2f} km", zorder=5)
         ax.scatter(*q[0], color=color, s=42, marker="o",
                    edgecolors="black", linewidths=0.5, zorder=6)
@@ -140,7 +149,8 @@ def main():
     ax2 = fig.add_subplot(1, 2, 2)
     for label, color, sc, pts, k, margin, binds, info in solved:
         clear_km = np.linalg.norm(pts, axis=1) - r_koz
-        ax2.plot(taus, clear_km, color=color, lw=2.2, label=label)
+        ax2.plot(taus, clear_km, color=color, lw=2.2,
+                 linestyle=LINESTYLES[label], label=label)
         ax2.scatter(taus[k], clear_km[k], color=color, zorder=6,
                     s=80 if binds else 54,
                     marker="x" if binds else "o",
@@ -162,7 +172,7 @@ def main():
 
     handles, labels_ = fig.axes[0].get_legend_handles_labels()
     fig.legend(handles, labels_, loc="lower center", ncol=3, fontsize=9,
-               frameon=False, bbox_to_anchor=(0.5, 0.0))
+               frameon=False, handlelength=4.5, bbox_to_anchor=(0.5, 0.0))
     fig.suptitle(
         f"Five transfer scenarios (N = {T2_DEGREE}, $n_{{seg}}$ = {T2_NSEG}) · "
         f"KOZ radius {r_koz:.0f} km · ○ departure · △ arrival · × closest approach",
