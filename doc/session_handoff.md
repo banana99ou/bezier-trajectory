@@ -62,8 +62,9 @@ The related-work draft and the terminology pull, in
 - **`experiments/downstream/` has never been run.** The DCM comparison was
   redesigned from first principles (`doc/dcm_downstream_experiment_design.md`,
   2×2 factorial, pre-declared cases, independent grader) and the runner was
-  committed in `831297d`, but no session has executed it. The old T6 numbers and
-  `doc/dcm_downstream_pack.md` are stale — produced by the April solver.
+  committed in `831297d`, but no session has executed it. The old T6 numbers
+  were produced by the April solver and are stale; their pack
+  (`doc/dcm_downstream_pack.md`) was deleted 2026-09-17 and lives in git history.
 - **The pipeline comparison is cut from the paper** (`e60f6e8`). Cleanly: the
   abstract, intro and conclusion no longer promise it. Expect the professor to
   ask where it went. The honest answer is that the old comparison reported only
@@ -75,8 +76,9 @@ The related-work draft and the terminology pull, in
   hypotheses by the redesign doc.
 - **The professor's §2 instruction is already satisfied.** His §2 was
   관련 연구 및 위치 설정 and it is now inside §1. Today's §2 is the control-point
-  machinery, which he never asked to fold. `doc/paper_revision_action_list.md`
-  does not know this — it is superseded, see below.
+  machinery, which he never asked to fold. (The old
+  `doc/paper_revision_action_list.md`, which did not know this, was deleted
+  2026-09-17 — see below.)
 
 ## Before this goes to the professor
 
@@ -90,13 +92,18 @@ The related-work draft and the terminology pull, in
    its own justification. Standard SCvx linearizes dynamics on the discretization
    mesh. Draft question in design_freeze §7 entry 11.
 
-## Superseded documents — do not act on them
+## Superseded documents — deleted 2026-09-17
 
-- `doc/paper_revision_action_list.md` — statuses are fiction; written before the
-  paper was rewritten against the code. Several items are moot (IRLS, Δv proxy)
-  and several are already done.
-- `doc/paper_execution_state.md` — 2026-04-17. dv objective, 10000 iterations,
-  T6. Every configuration line in it is wrong.
+The April–July paper scaffolding (25 files: per-section drafts, evidence
+packs, the `paper_writing_system` process, `paper_execution_state.md`,
+`paper_revision_action_list.md`, `figure_table_per_claim_plan.md`,
+`dcm_experiment_session_summary.md`, `paper_draft_korean.md`) was
+deleted wholesale. Every number in it came from the IRLS / Δv-proxy objective
+at the 10000-iteration cap — timeouts, not results — and its structure
+described the cut pipeline section. Recover any of it with
+`git log --all -- doc/<name>`. The two things it uniquely held were carried
+into `doc/design_freeze.md`: the `enforce_prograde` status (§6) and the
+framing prohibitions (§8.2).
 
 ## Operational gotchas
 

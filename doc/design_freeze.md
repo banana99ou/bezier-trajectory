@@ -251,6 +251,16 @@ Singular, hard-coded — the exact integral of control-acceleration energy:
   2026-08-10: they passed the `objective_mode` argument removed in `1581e54`,
   so they raised on use, and they probed `scvx_freeze`, itself since deleted.
   History in git.
+- `enforce_prograde` / `prograde_n_samples`: legacy knob, OFF in the paper
+  configuration (`tools/verify/harness_common.py` defaults it to `False` and
+  `tools/build_tables.py` inherits that). Still live end to end — Python
+  signature, cache key, pybind signature, and the sampled angular-momentum
+  rows in `optimizer.rs`; `tools/build_csv.py` still sets it `True`. The only
+  written reason it is off, carried here on 2026-09-17 from the deleted April
+  `experimental_setup_draft.md`: an earlier implementation had a bug that
+  caused premature SCP termination when the constraint was active, so it was
+  disabled for every reported run. Never re-examined since. The paper does
+  not mention it.
 
 ## 7. Evidence log (what killed what)
 
@@ -763,6 +773,23 @@ manuscript — do not "fix" them by matching it.
 | 궤적 생성 | 궤적 초기화 | The method is not limited to initialization, and since the pipeline comparison was cut there is no experiment in this paper that demonstrates initialization. 초기화 survives only in related work and in the sentence saying the output can also be used as an initial guess. |
 | `\mu` | the companion paper's slack-penalty symbol (spelled out in notation.md §10) | **Divergence.** Its subscript is `s`, which here is the sub-arc index, and `w^{(s)}_i` is already the centroid weight. notation.md §10 owns the banned spellings; do not restate them elsewhere or the checker fires on the document that restates them. |
 | SCvx | SCP | **Divergence.** The companion paper says 순차 볼록 계획법(SCP). This solver is specifically canonical SCvx — penalized-merit ratio test, virtual control, trust region. SCP would be less precise, not more consistent. |
+
+### 8.2 Framing prohibitions (carried 2026-09-17 from the deleted April `paper_claim_scope_nonclaims.md`)
+
+Phrasings that are red flags unless backed by new evidence:
+
+- "converts the nonlinear nonconvex problem into a convex problem" — it
+  produces a *sequence* of convex subproblems, not one convex problem.
+- "superior to direct collocation" — the pipeline comparison was cut; no
+  experiment in this paper supports it.
+- "general method for orbital, drone, and car planning" — one domain is
+  demonstrated.
+- "continuous safety guarantee" without stating the assumptions: spherical
+  KOZ, supporting half-space construction, control-point satisfaction on each
+  subdivided sub-arc (명제 1).
+
+The April list also had "physically meaningful delta-v objective"; subsumed by
+§1 (Δv is never mentioned in any form).
 
 ## 9. KOZ constraint — exact formulation (settled 2026-08-09)
 

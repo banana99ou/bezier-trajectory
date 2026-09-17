@@ -8,9 +8,9 @@ Companion files, and what to believe in each:
 
 | File | Status |
 |---|---|
-| `doc/dcm_experiment_findings.md` | Findings 1–4, measured 2026-04-16/17. **Demoted to hypotheses** — see §1.3. |
-| `doc/dcm_downstream_pack.md` | The old `T6` result pack. **Stale**; produced by the April solver. |
-| `doc/conditional_branch_decisions.md` | Holds the locked claim wording for `T6` / §6.4. **Wording still applies.** |
+| `doc/dcm_experiment_findings.md` | Findings 1–4, measured 2026-04-16/17. **Demoted to hypotheses** — see §1.3 and §6, which restate them in full. File deleted 2026-09-17; in git history. |
+| `doc/dcm_downstream_pack.md` | The old `T6` result pack. **Stale**; produced by the April solver. Deleted 2026-09-17; in git history. |
+| `doc/conditional_branch_decisions.md` | Held the locked claim wording for `T6` / §6.4. The pipeline comparison was cut from the paper (`e60f6e8`), so no live section uses it. Deleted 2026-09-17; in git history if `T6` returns. |
 | `doc/design_freeze.md` | The upstream method of record. Outranks this file on anything about the Bézier solver. |
 | `doc/notation.md` | Symbol lock. Outranks this file on any symbol. |
 
@@ -369,9 +369,10 @@ Rules:
 
 ## 8. Claim wording
 
-Unchanged from `doc/conditional_branch_decisions.md`, which remains the
-authority. This redesign strengthens the *evidence* for the existing scoped
-claim; it does not widen the claim. In particular the following remain
+Carried unchanged from `doc/conditional_branch_decisions.md` (deleted
+2026-09-17; in git history). The prohibitions below and `doc/design_freeze.md`
+§8.2 are now the authority. This redesign strengthens the *evidence* for the
+existing scoped claim; it does not widen the claim. In particular the following remain
 prohibited: any method-class superiority over direct collocation, any general
 "Bézier is faster" statement, and any extension of a timing result outside the
 regime in which it was measured.

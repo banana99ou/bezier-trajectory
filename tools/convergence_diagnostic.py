@@ -3,8 +3,8 @@ Convergence diagnostic: run the representative case (N=7, n_seg=16)
 with truncated max_iter values to verify that solution metrics plateau
 well before the 10,000-iteration budget used in the paper.
 
-Scenario matches paper_execution_state.md:
-  120 deg phase lag, T=1500 s, r_e=6471 km
+Scenario is the paper baseline (see doc/results/paper_tables.md):
+  120 deg phase lag, T=1500 s, KOZ radius 6471 km
 """
 
 import json
