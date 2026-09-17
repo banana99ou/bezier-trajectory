@@ -13,10 +13,9 @@ python3 tools/check_notation.py
 ```
 
 Superseded on 2026-08-10: the "Frozen method notation lock" in
-`doc/paper_execution_state.md` (deleted 2026-09-17; in git history) and the
-`T1` table in `doc/method_artifact_pack.md`. Both are stale (they still
-mandate Δv / IRLS wording that `CLAUDE.md` forbids); the latter is retained
-only as historical record.
+`doc/paper_execution_state.md` and the `T1` table in
+`doc/method_artifact_pack.md`. Both mandated Δv / IRLS wording that
+`CLAUDE.md` forbids; both were deleted 2026-09-17 and live in git history.
 
 ---
 

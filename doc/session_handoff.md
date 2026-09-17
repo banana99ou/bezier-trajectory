@@ -24,7 +24,7 @@ whole workstream.
 ### Uncommitted right now
 
 The related-work draft and the terminology pull, in
-`doc/paper_draft_korean_rev2.md` and `tools/build_tables.py`. Suggested message:
+`papers/paper_draft_korean_rev2.md` and `tools/build_tables.py`. Suggested message:
 `docs(paper): 용어를 동반 논문에 맞추고 관련 연구를 안전 회랑 문헌에 접지한다`.
 
 ## What changed this session
@@ -134,5 +134,5 @@ framing prohibitions (§8.2).
   KOZ rows: `rust_optimizer/core/src/constraints.rs`
 - Verification: `tools/verify/*.py` → `artifacts/verify/VERDICT.md`. Order:
   `nlp_crosscheck, ablation, kkt_check, diagnostics, sweep, optimality`, then `verdict`.
-- Paper: `doc/paper_draft_korean_rev2.md` · numbers: `doc/results/paper_tables.md`
+- Paper: `papers/paper_draft_korean_rev2.md` · numbers: `doc/results/paper_tables.md`
 - Companion papers: `../bezier-trajectory-merge/` — see design_freeze §10

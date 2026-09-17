@@ -13,7 +13,7 @@ it on 2026-08-10 (`R_KOZ`, `Δ_k`, `μ`, `∇g_j`, `c_j`, `φ`/`φ⁽ᵏ⁾`, `�
 `python3 tools/check_notation.py`.
 
 **PRECEDENCE: the code + the 5-pillar verification are ground truth.** The
-paper (`doc/paper_draft_korean_rev2.md`) currently LAGS the code at
+paper (`papers/paper_draft_korean_rev2.md`) currently LAGS the code at
 §2 roadmap / §2.3 / §3.2 (it still shows the removed smoothness term and the
 Gram-for-smoothness story), at §4.1 (수렴 허용오차 still 10⁻⁶; locked value is
 10⁻⁸), at §3.3 / Algorithm 1 (no K-consecutive requirement stated), and at
@@ -773,6 +773,7 @@ manuscript — do not "fix" them by matching it.
 | 궤적 생성 | 궤적 초기화 | The method is not limited to initialization, and since the pipeline comparison was cut there is no experiment in this paper that demonstrates initialization. 초기화 survives only in related work and in the sentence saying the output can also be used as an initial guess. |
 | `\mu` | the companion paper's slack-penalty symbol (spelled out in notation.md §10) | **Divergence.** Its subscript is `s`, which here is the sub-arc index, and `w^{(s)}_i` is already the centroid weight. notation.md §10 owns the banned spellings; do not restate them elsewhere or the checker fires on the document that restates them. |
 | SCvx | SCP | **Divergence.** The companion paper says 순차 볼록 계획법(SCP). This solver is specifically canonical SCvx — penalized-merit ratio test, virtual control, trust region. SCP would be less precise, not more consistent. |
+| 연속시간 제약 만족 (the property) · 노드 간 제약 위반 (the failure mode) | 연속 안전, or bare 안전 for the property | Carried 2026-09-17 from the deleted `paper_decision_ledger.md` (D4–D6, 2026-06-13 → 07-08). The professor flagged 안전 as unclear; a coined label does not remove the vagueness. ct-SCvx (Elango et al.) is the standard term in the direct lineage of the SCvx references and Dueri et al. names the failure mode — both cited at first use in §1. Property (the goal) and half-space containment (the mechanism, a sufficient condition) stay distinct; the formal statement lives in §3.1 with the hook to 명제 1. 안전 여유 stays — it is a metric name, not the property. |
 
 ### 8.2 Framing prohibitions (carried 2026-09-17 from the deleted April `paper_claim_scope_nonclaims.md`)
 
