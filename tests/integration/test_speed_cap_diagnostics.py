@@ -240,8 +240,16 @@ def test_the_bound_is_not_advertised_as_a_numerical_threshold():
     HAS become a threshold and the comment should be rewritten to say so.
     """
     _, fine = _solve(v_max=3e4)
+    _, uncapped = _solve()
     assert bool(fine["converged"]) is True
-    assert float(fine["min_clearance"]) == pytest.approx(0.6204434559492797, abs=1e-6)
+    # Against the uncapped run measured HERE, not a constant lifted from
+    # `optimize_scenario`: that constant is a DIFFERENT configuration (elastic
+    # weight 100, the scenario harness, not 1e5 here), so pinning to it made this
+    # assertion drift with every solver change rather than with the cone -- which
+    # is what it is for. Measured gap 4.42e-07 on 2026-09-20.
+    assert float(fine["min_clearance"]) == pytest.approx(
+        float(uncapped["min_clearance"]), abs=1e-6
+    )
 
     _, degenerate = _solve(v_max=MAX_SPEED_CAP)
     assert bool(degenerate["converged"]) is False

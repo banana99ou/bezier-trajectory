@@ -161,7 +161,7 @@ def test_defaults_reproduce_the_recorded_original_run_exactly():
         scenario_original(), [(N_DEGREE, N_SEG)], elastic_weight=100.0, verbose=False
     )
     row = out["results"][f"N{N_DEGREE}_seg{N_SEG}"]
-    assert row["min_clearance"] == pytest.approx(0.6204434559492797, abs=1e-9)
+    assert row["min_clearance"] == pytest.approx(0.6204432935456294, abs=1e-9)
     assert row["converged"] is True
     assert row["certificate_violation"] == pytest.approx(0.0, abs=1e-12)
 

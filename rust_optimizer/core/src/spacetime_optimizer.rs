@@ -362,9 +362,10 @@ fn violations_rebuilt_at(
     )
 }
 
-/// idea/spacetime.md statement (7) at `x`, counted: (segment, obstacle) pairs whose clip
-/// ball was smaller than the segment radius plus the trust-box reach, so their
-/// rows certify against the clipped piece and the whole zone is not covered.
+/// idea/spacetime.md statement (7) at `x`, counted per WALL -- one per
+/// (segment, obstacle, approach) plane -- whose clip ball was smaller than the
+/// segment radius plus the trust-box reach, so their rows certify against the
+/// clipped piece and the whole zone is not covered.
 /// Zero means the hull certificate at `x` covers the FULL keep-out zone -- by
 /// construction when `sound_clip` is on, by luck otherwise.
 fn unsound_clips_rebuilt_at(
@@ -645,6 +646,11 @@ pub fn scp_step(
     stations: &StationData<'_>,
     scp_prox_weight: f64,
     scp_trust_radius: f64,
+    // E2 (2026-09-09): the reach margin the WALLS are built for. Fixed for the
+    // whole run (= the initial trust radius, which is also the cap), so the
+    // constraint set never changes shape because the trust region resized.
+    // `scp_trust_radius` bounds the STEP; this bounds the geometry.
+    wall_reach_trust: f64,
     elastic_weight: f64,
     tol: f64,
     iteration: u32,
@@ -684,7 +690,7 @@ pub fn scp_step(
         dim,
         obstacles,
         stations,
-        trust_radius,
+        wall_reach_trust,
         pre.sound_clip,
         stations.n_stations > 0,
     );
@@ -1137,6 +1143,8 @@ impl ScpState {
             p: p_init.to_vec(),
             trust,
             trust_min: trust * 1e-3,
+            // E2b: trust may grow past the wall margin; a step that outruns the
+            // walls' coverage is caught by the exact rebuild in the ratio test.
             trust_max: trust * 4.0,
             trust_init: trust,
             weight: elastic_weight,
@@ -1223,6 +1231,7 @@ pub fn scp_iterate(
         stations,
         0.0,
         state.trust,
+        state.trust_init,
         elastic_weight,
         tol,
         state.iteration,
@@ -1268,7 +1277,7 @@ pub fn scp_iterate(
     let (quad_c, scale_c) = quadratic_cost_scaled(&pre.h_energy, &pre.f_linear, &cand, nvars);
     let vtrue_p = step.vlin_p; // rows were built at p; exact there
     let vtrue_c =
-        relaxable_violation_rebuilt_at(&cand, pre, obstacles, stations, trust_before);
+        relaxable_violation_rebuilt_at(&cand, pre, obstacles, stations, state.trust_init);
     let t_p = quad_p + w_s * vtrue_p;
     let t_c = quad_c + w_s * vtrue_c;
     let pred = step.l_p - step.l_c;
@@ -1803,7 +1812,7 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     // curve is.
     info.insert(
         "koz_violation_reference".to_string(),
-        koz_violation_rebuilt_at(&p, &pre, obstacles, stations, state.trust),
+        koz_violation_rebuilt_at(&p, &pre, obstacles, stations, state.trust_init),
     );
     // What that certificate COVERS. `koz_unsound_clips` is idea/spacetime.md statement
     // (7) counted at the returned iterate: pairs whose clip ball did not reach
@@ -1815,7 +1824,7 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     // certificate without recording what it certified against.
     info.insert(
         "koz_unsound_clips".to_string(),
-        unsound_clips_rebuilt_at(&p, &pre, obstacles, stations, state.trust) as f64,
+        unsound_clips_rebuilt_at(&p, &pre, obstacles, stations, state.trust_init) as f64,
     );
     info.insert(
         "sound_clip".to_string(),
@@ -1831,7 +1840,7 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     // visible and not merely the verdict. Both are evaluated at `p`, the point
     // that is actually returned.
     let (occ_cert, occ_dropped) =
-        occlusion_certificate_at(&p, &pre, obstacles, stations, state.trust);
+        occlusion_certificate_at(&p, &pre, obstacles, stations, state.trust_init);
     info.insert("occlusion_violation_reference".to_string(), occ_cert);
     info.insert(
         "occlusion_planes_dropped".to_string(),

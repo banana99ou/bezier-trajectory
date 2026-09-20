@@ -129,6 +129,6 @@ def test_the_default_configuration_is_bit_identical():
         scenario_original(), [(8, 4)], elastic_weight=100.0, verbose=False
     )
     row = out["results"]["N8_seg4"]
-    assert row["min_clearance"] == pytest.approx(0.6204434559492797, abs=1e-9)
+    assert row["min_clearance"] == pytest.approx(0.6204432935456294, abs=1e-9)
     assert row["converged"] is True
     assert row["certificate_violation"] == pytest.approx(0.0, abs=1e-12)
