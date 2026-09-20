@@ -77,6 +77,16 @@ starts at 1e3 / 1e4 / 1e5 on every config the default run failed, keep the best 
 retried run under the requested start weight. If multi-start returns, it returns over seeds, and
 the row names the start it came from. → [`SOLVER.md`](SOLVER.md) §Decided against
 
+### `solver.curve-seg16` — the floor's own cost is a limit cycle, and it is not this session's
+`curve` N8_seg16 certifies with `sound_clip` off and, with it on, escalates to the weight cap and
+runs to the iteration cap inside an exact limit cycle no iterate of which is feasible. **Owned by
+the other (solver) session, not the journal one**, and as of 2026-09-09 an uncommitted `E1` change
+to `clip_band` (`rust_optimizer/core/src/spacetime_obstacle.rs`) sits on disk against it. **This
+blocks nothing in the journal workstream** — it is one configuration of one scenario, named so it
+is not mistaken for an unknown.
+*Closes when:* that session lands or abandons the change and the configuration is re-measured.
+→ [`SOLVER.md`](SOLVER.md) §Measurements
+
 ### `solver.kkt` — duals are extracted, but `converged` tests no KKT residual
 Since 2026-08-31 Clarabel's dual vector is read (`solve_qp_with_socs_duals`); it drives the
 exactness margin (`max_koz_dual` vs the weight, tested both ways in
@@ -122,3 +132,85 @@ page's committed `SCENARIOS` blob is test mock data. Deleting them was left as i
 scenario table was made with neither, and there is no flag for trust radius at all. A live
 violation of "one canonical execution model", left alone deliberately because changing a default
 silently changes every number.
+
+---
+
+## Idea 1 저널 — parallel tracks, opened 2026-09-18
+
+**These five items belong to the journal in [`paper/journal_1/`](paper/journal_1/) and to nothing
+else.** They are written as *parallel* tracks: column "files" is a boundary, not a hint. Two
+sessions may run at the same time iff their file sets are disjoint. One session takes one track,
+updates its owning document, and commits under `journal:`.
+
+The specification every track is written against is
+[`paper/journal_1/SPEC.md`](paper/journal_1/SPEC.md) — claim, formulation as numbered definitions
+and lemmas, the algorithm as one procedure, the experiments as things that can fail. **SPEC.md
+follows the code**; a solver change that alters behaviour either edits SPEC.md §2–3 in the same
+commit or says "SPEC impact: none" in its message.
+
+| track | files it owns | may measure? |
+|---|---|---|
+| `journal.draft` | `paper/journal_1/main.tex` and its `.bib` | no — quotes nothing |
+| `journal.baseline` | a new top-level directory of its own | its own solver only |
+| `journal.bench` | `tools/bench.py`, `tools/make_tables.py`, `spacetime_bezier/families.py` + its tests | **only after `journal.freeze`** |
+| `journal.demos` | `spacetime_bezier/scenarios.py`, figure scripts under `tools/` | **only after `journal.freeze`** |
+| `journal.freeze` | `rust_optimizer/`, `SOLVER.md` | it *is* the freeze |
+
+**Two collisions, and they are the only two.**
+
+1. `journal.bench` and `journal.demos` both write `tools/`. **Not parallel** — demos waits for the
+   bench runner to exist.
+2. `journal.freeze` rebuilds the extension in place, so anything measuring while it is open gets a
+   mixed build. That happened on 2026-09-09 and cost a whole table. **While `journal.freeze` is
+   open, every other track may write code and none may quote a number.**
+
+So: `journal.draft` + `journal.baseline` + `journal.bench` run concurrently; `journal.freeze`
+whenever; `journal.demos` last.
+
+### `journal.freeze` — one solver, named, with a clean tree behind it
+**E1 is refused — 2026-09-18, the user's decision: a hail mary, not a fix.** The uncommitted `E1`
+change to `clip_band` (`rust_optimizer/core/src/spacetime_obstacle.rs`) does not land; the
+committed clip rule of [`SPEC.md`](paper/journal_1/SPEC.md) §2.4 stands. `solver.curve-seg16` is
+still open and still owned by the solver session — this decision closes E1 as its candidate
+repair, not the limit cycle it was aimed at.
+*Closes when:* E1 is reverted, the working tree is committed, the suite runs (the one deliberate
+red and no other), and the solver build the journal measures is named in
+[`SOLVER.md`](SOLVER.md) §Measurements.
+→ [`SOLVER.md`](SOLVER.md) §Measurements, [`paper/journal_1/SPEC.md`](paper/journal_1/SPEC.md) §2.4
+
+### `journal.draft` — the manuscript, venue-neutral, started from the spec
+§2 formulation and §3 algorithm of SPEC.md carry no measured number, so they are writable before
+anything is measured. Results and figures are left as slots that fail the build when empty.
+*Closes when:* a venue-neutral LaTeX draft exists whose methods and algorithm sections are
+complete and whose every number arrives from a figure-grade sidecar.
+→ [`paper/journal_1/SPEC.md`](paper/journal_1/SPEC.md) §2, §3, §5
+
+### `journal.baseline` — Osburn re-implemented, dimension-agnostic from the first line
+Stage 1 is 2D + time: IRIS-sampled sets over the lifted space, a graph of convex sets with Bézier
+control points, time-monotonicity and velocity-cone rows, Clarabel — the same solver as ours,
+which is what makes the comparison fair. Write the spatial part as `x[:-1]` and the time part as
+`x[-1]` throughout; a hard-coded dimension is the one thing that makes Stage 2 a rewrite instead of
+a configuration. Stage 2 (3D + time) is a separate go/no-go after Stage 1's cost is known.
+**No baseline has ever been run. This is the experiment that decides whether the paper has
+evidence or only an argument.**
+*Closes when:* Stage 1 runs both methods on Osburn's moving-obstacle case and his cluttered case,
+graded by our own independent certificate on both sides, with the IRIS sample count swept.
+→ [`paper/journal_1/SPEC.md`](paper/journal_1/SPEC.md) §4.3
+
+### `journal.bench` — numbers regenerable by one command, or they are not numbers
+`tools/bench.py` and `tools/make_tables.py` per [`demo_specs/C_traffic_and_backbone.md`](paper/journal_1/demo_specs/C_traffic_and_backbone.md)
+Parts 2 and 3, plus committing `spacetime_bezier/families.py` and its two test files, which sit
+untracked. The bench records both mtimes — the compiled extension's and the package's — and
+refuses a dirty tree, so "which build produced this number" stops being a question.
+*Closes when:* one command regenerates every table the manuscript uses, and a dirty tree or a
+non-figure-grade sidecar makes it fail rather than print.
+→ [`paper/journal_1/demo_specs/C_traffic_and_backbone.md`](paper/journal_1/demo_specs/C_traffic_and_backbone.md)
+
+### `journal.demos` — the pairs, each with a baseline that can fail
+Demo B's journal figure and its honest baseline arm (the audit found the figure and the tested
+pair running different configurations); demo A's production scenario; demo WAKE in or out.
+Each demo is a pair differing in exactly one named thing — if the baseline also succeeds, the
+constraint was slack and the figure proves nothing.
+*Closes when:* every figure slot of [`SPEC.md`](paper/journal_1/SPEC.md) §5 has a figure-grade
+pair behind it.
+→ [`paper/journal_1/demo_specs/`](paper/journal_1/demo_specs/), [`paper/journal_1/SPEC.md`](paper/journal_1/SPEC.md) §4.2
