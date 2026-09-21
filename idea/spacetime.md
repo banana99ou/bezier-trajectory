@@ -37,9 +37,16 @@ contribution legible as a contribution rather than a correction.
 
 # The claim
 
-> The obstacle's convex over-approximation is built over a **local neighbourhood of the current
-> iterate in the lifted space**, and rebuilt on every successive-convexification iteration, instead
-> of free space being decomposed into convex cells before the solve begins.
+> Avoidance constraints are built from a **support oracle on the hazard** rather than from a
+> representation of free space: the construction asks the keep-out set only for a nearest point and
+> for a rigorous bound on its support in one direction, over a **local neighbourhood of the current
+> iterate in the lifted space**, rebuilt on every successive-convexification iteration.
+>
+> *Reframed 2026-09-20. The earlier wording led with "instead of free space being decomposed into
+> convex cells" — true, but it describes what we decline to build rather than what the construction
+> consumes, and it picks a fight a space-time decomposition half-wins. The full statement, with the
+> four requirements O1–O4, is [`paper/journal_1/SPEC.md`](../paper/journal_1/SPEC.md) §1.1, which
+> owns the journal's claim.*
 
 That single property is what keeps arbitrary known non-straight obstacle motion affordable, and
 what permits timing — including stopping and waiting — to be optimised. Waiting and free arrival
@@ -70,6 +77,11 @@ two-dimensional toy.
 다시 구성하는 선행 연구가 있으면 무너진다. 둘째 기여는 모든 지지 반공간을 여유 없이 만족한 해가
 장애물의 실제 궤적에 대해 재검증했을 때 침범으로 판정되면 무너진다. 셋째 기여는 차폐 제약이
 KOZ와 다른 구성을 요구하는 사례가 나오면 무너진다.
+
+**2026-09-09.** 저널판 산출물 문서는 위 세 기여를 대등한 목록이 아니라 주장 하나와 그로부터
+따라오는 결과 셋으로 다시 배치하는데, 대등한 기여 목록은 심사자가 가장 약한 항목을 골라 공격하도록
+초대하기 때문이며, 위 세 기여는 학술대회 원고의 구성으로서 그대로
+둔다([`paper/journal_1/README.md`](../paper/journal_1/README.md)).
 
 ## What is different
 
@@ -173,7 +185,7 @@ Four families, all with time as a genuine dimension.
 | dynamic obstacle | other robots' planned paths only | perceived bounding boxes | any constant-velocity **polygon** | any constant-velocity **capsule** |
 | free space | extrude 2D sets + exact carve (ECD) | inflate along an RRT\* path | **IRIS sampled in 3D** | **none — half-space per (segment, obstacle)** |
 | optimality | time-optimal, global | local | **global w.r.t. its graph** | local |
-| arrival time | free | — | free | **fixed** (endpoint pins `t`) |
+| arrival time | free | — | **pinned** (his examples end at a fixed space-time point; the cost is spatial path length, so time is never optimised) | **free, optionally** (`free_arrival_time`; pinned by default) |
 | solver | Mosek (commercial) | L-BFGS | **Clarabel** | **Clarabel** |
 | spatial dims | 2 | **3** | 2 | 2 today, 3 intended |
 
@@ -192,6 +204,11 @@ supporting half-spaces are generated directly against the tube, each SCP iterati
 > tube rather than as a precomputed convex cell complex, so there is no cell-selection search.
 > This is what makes the lift practical at 3 spatial dimensions plus time, where building and
 > searching the cell complex is the dominant cost.
+>
+> *2026-09-20: this remains the correct statement of what separates us from the corridor family,
+> and it is no longer how the journal opens. The journal leads with what the construction consumes
+> — the support oracle — because that claim needs no comparison to hold.
+> → [`paper/journal_1/SPEC.md`](../paper/journal_1/SPEC.md) §1.1.*
 
 Do **not** phrase the hook as "time as a coordinate" — that is Osburn's, published.
 
@@ -237,7 +254,8 @@ Their strengths are real and must be stated in every limitations section:
 ## Benchmark comparison
 
 Osburn: Python, CVXPY, **Clarabel**, AMD Ryzen 7 9700X / 32 GB. Ours: Rust, **Clarabel**, Apple M1
-(`BENCHMARKS.md`). Same solver — an unusually fair comparison.
+(**the deleted `BENCHMARKS.md`** — deleted by `327a28e`, and nothing in it may be quoted; see the
+paragraph below the table). Same solver — an unusually fair comparison.
 
 | | scenario | time | feasible |
 |---|---|---|---|
@@ -425,6 +443,12 @@ Three knobs, and **none of the three is settled**:
 3. Whether the answers to 1 and 2 are independent — a centring choice can change which radius is
    sound.
 
+**Partly settled, 2026-09-01.** Knob 2 is decided: the shipped default floors the radius at the
+reach-sized value `E + Δ√(d_spatial+1)` (`sound_clip`, decided in `43224b4` 2026-08-31, default on
+this branch since 2026-09-01), so the tangent value `d` is now a comparison setting rather than a
+candidate. Knobs 1 and 3 — where the ball is centred, and whether centring and radius interact —
+are still open and still unmeasured.
+
 These are experimental questions. They are to be measured on real runs, not decided by argument in
 this file.
 
@@ -599,6 +623,16 @@ ball, are recorded above as the properties that decide the question.
 
 ## The hole, stated as a hole
 
+**Correction, 2026-09-01 — read this section as the description of the comparison arm, not of the
+shipped solver.** The one-line repair described at the end of this section is no longer optional: the
+reach floor is the `sound_clip` default (decided in `43224b4`, 2026-08-31; the default on this branch
+since 2026-09-01 — see [`SOLVER.md`](../SOLVER.md) §Measurements, "The clip floor"). **So by default
+this construction IS sound by construction.** The unfloored, tangent-radius clip survives only as the
+arm the floor is compared against, reachable as `sound_clip=False`; the hole below is precisely what
+that arm measures, and it is still the right description of it. In particular the two sentences
+below — "**So this construction is not sound by construction**" and "**the tangent form goes in
+first**" — record the 2026-08 plan and now describe the comparison arm alone.
+
 The wall protects against tube material inside the clipping ball. **Tube material lying outside the
 ball *and* on the safe side of the wall is not protected** — and at a bend, the far arm is exactly
 that.
@@ -613,14 +647,16 @@ obstacle, which is when the constraint matters. **There is no accidental extra c
 on**: the moment the wall is built against the clipped volume rather than against the overshooting
 band, the band's 1.13–2.23 of reach beyond the clip radius stops contributing anything.
 
-**Measured, on the current code, whose set is the band and not the clipped volume** — `curve`,
-iteration 1, the same six (segment, obstacle) pairs: the band covers 100%, 86.9%, 100%, 100%,
-61.1% and 99.8% of the true tube material lying inside the reach ball. So **today the soundness
-flag is more pessimistic than today's geometry** — it reports "not covered" on pairs the band
-happens to cover in full, and it cannot report the two pairs where coverage is genuinely partial as
+**Measured on a builder whose set is the band and not the clipped volume** — `curve`,
+iteration 1, the same six (segment, obstacle) pairs: the band covered the true tube material lying
+inside the reach ball in full on most of the pairs and only partly on two of them
+**[stale — measured before the 2026-08-21 construction change on a builder that no longer exists;
+not re-measured; do not quote]**. So **on that build the soundness
+flag was more pessimistic than that build's geometry** — it reported "not covered" on pairs the band
+happened to cover in full, and it could not report the pairs where coverage was genuinely partial as
 anything more specific. After the fix the flag and the geometry agree: what the flag reports is
-what the wall actually protects. *(These percentages describe the pre-fix code. They are diagnostic
-numbers, not paper numbers, and must be re-measured after the change.)*
+what the wall actually protects. *(Pre-fix diagnostic on a retired builder. The change landed
+2026-08-21 and no re-measurement exists as of 2026-09-09; nothing here may be quoted.)*
 
 **So this construction is not sound by construction.** It is adopted because its failure is
 **detectable**, by the check below.
@@ -937,10 +973,12 @@ between them is the regime table below.
 **With the wall built against the clipped KOZ volume, this condition is exactly coverage — there
 is nothing else.** Under the retired outer approximation the wall also happened to hold back
 material out to $\mathcal H$'s overshoot, so the flag could be pessimistic relative to the
-geometry; measured on the current code, the band covers $100\%$, $86.9\%$, $100\%$, $100\%$,
-$61.1\%$ and $99.8\%$ of the true tube material inside the reach ball over the six pairs of
-`curve` at iteration 1. Once the wall is the support of $\mathcal L$, no such accidental coverage
-exists and flag and geometry agree. *(Pre-fix diagnostic; re-measure after the change.)*
+geometry; measured on that build, the band covered the true tube material inside the reach ball in
+full on most of the six pairs of `curve` at iteration 1 and only partly on two of them
+**[stale — measured before the 2026-08-21 construction change on a builder that no longer exists;
+not re-measured; do not quote]**. Once the wall is the support of $\mathcal L$, no such accidental
+coverage exists and flag and geometry agree. *(Pre-fix diagnostic; no re-measurement exists as of
+2026-09-09.)*
 
 Four regimes for the construction's radius
 $r_clip=\operatorname{clip}(d,\ r_m,\ r_{\mathrm{clip,max}})$:
@@ -965,7 +1003,8 @@ It costs conservatism precisely where the constraint is active, because the ball
 than the distance to the obstacle and more of the tube is clipped in. By the step-size argument in
 the prose, that conservatism is paid in iterations, not in correctness. **Which of the two is used
 is an open experimental question, not a settled one** — it is reachable in the code as the
-`sound_clip` flag — **the default since 2026-09-01** — and the count of **walls** failing the
+`sound_clip` flag — **decided 2026-08-31 (`43224b4`), the default on this branch since 2026-09-01,
+when it was imported** ([`SOLVER.md`](../SOLVER.md) §Measurements, "The clip floor") — and the count of **walls** failing the
 condition (one per emitted plane, so a two-approach clip counts twice) is exported per iteration as
 `unsound_clips` so the hole is a number rather than a caveat. Since the same date the figure-grade
 gate refuses a run whose count is nonzero, so the hole can no longer be passed over in silence.
@@ -1200,6 +1239,18 @@ Kept so the choice is legible and so a discarded option cannot quietly reappear:
 
 ## The scenario the paper uses — stay **outside** the shadow
 
+**Superseded in the particulars, 2026-09-09 — the demo that was actually built is `loiter`.** A body
+loitering on a circle *above* a ground control station, with the corridor laid TANGENT to the shadow
+ring so the shadow spot sweeps ALONG the corridor instead of across it, and retiming rather than a
+sidestep is the escape (`spacetime_bezier/scenarios.py`, `scenario_loiter`; measured in
+[`SOLVER.md`](../SOLVER.md) §Demo Scenarios and §Measurements; the falsification-verified pair is
+`tests/integration/test_loiter_scenario.py`). Everything below is the 2026-08-24 design
+(`e41f365d`) and is kept because its *requirements* still hold and `loiter` was built to meet them —
+moving occluder on a non-straight path, the third dimension load-bearing, the constraint picking the
+passing side, and a baseline that must be able to fail. What did **not** survive is the **Geometry**
+paragraph's fence: there is no wide low fence and no station beyond it, and its aside about `wall`
+needing to be replaced is moot — `wall` was never the occlusion demo.
+
 Maintain line of sight to a ground station while avoiding a moving obstacle, at **three spatial
 dimensions plus time**.
 
@@ -1260,7 +1311,11 @@ stays above. The margin panel is dimension-free and is the part a reviewer check
 One pass, after the new construction lands. Nothing before it may be quoted.
 
 - the stay-visible scenario keeping line of sight start to finish, with the baseline failing;
+  *(2026-09-09: measured — see [`SOLVER.md`](../SOLVER.md) §Measurements; re-measure on the current
+  build before quoting)*
 - **minimum clearance against the true obstacle trajectory**, never against the solver's hulls;
+  *(2026-09-09: measured — see [`SOLVER.md`](../SOLVER.md) §Measurements; re-measure on the current
+  build before quoting)*
 - how often the clip's hole actually fires — a returned iterate where every half-space is satisfied
   but the trajectory-wide check reports penetration. This is the number the limitations section
   needs;

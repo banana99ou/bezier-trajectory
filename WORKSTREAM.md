@@ -168,12 +168,15 @@ So: `journal.draft` + `journal.baseline` + `journal.bench` run concurrently; `jo
 whenever; `journal.demos` last.
 
 ### `journal.freeze` — one solver, named, with a clean tree behind it
-**E1 is refused — 2026-09-18, the user's decision: a hail mary, not a fix.** The uncommitted `E1`
-change to `clip_band` (`rust_optimizer/core/src/spacetime_obstacle.rs`) does not land; the
-committed clip rule of [`SPEC.md`](paper/journal_1/SPEC.md) §2.4 stands. `solver.curve-seg16` is
-still open and still owned by the solver session — this decision closes E1 as its candidate
-repair, not the limit cycle it was aimed at.
-*Closes when:* E1 is reverted, the working tree is committed, the suite runs (the one deliberate
+**E1 is refused — 2026-09-18, the user's decision: a hail mary, not a fix.** The committed clip
+rule of [`SPEC.md`](paper/journal_1/SPEC.md) §2.4 stands.
+**E1 is already gone from the tree (verified 2026-09-21)**, and the limit cycle it was aimed at was
+repaired a different way by `2ea964d` (2026-09-20) — the wall reach frozen at the initial trust
+radius, `curve` N8_seg16 going from the iteration cap to a stationary stop. So the remaining work
+here is the freeze itself, not the revert. **`solver.curve-seg16` above still describes E1 as
+sitting uncommitted on disk and is stale; it belongs to the solver session, which has not been
+told.**
+*Closes when:* the working tree is committed, the suite runs (the one deliberate
 red and no other), and the solver build the journal measures is named in
 [`SOLVER.md`](SOLVER.md) §Measurements.
 → [`SOLVER.md`](SOLVER.md) §Measurements, [`paper/journal_1/SPEC.md`](paper/journal_1/SPEC.md) §2.4

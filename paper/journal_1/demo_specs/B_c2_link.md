@@ -1,7 +1,9 @@
 # Demo B — C2-link continuity for UAM
 
 **Slot:** [`paper/journal_1/README.md`](../README.md) figure slot 3, "Line-of-sight demo, as a pair".
-**Carries:** consequence 3 — constraints a decomposition cannot express are ordinary rows.
+**Carries:** consequence 1 — hazard shape is free; the shadow is the **thesis demonstration**
+(`SPEC.md` §1.2). *Renumbered 2026-09-20; the old line read "consequence 3 — constraints a
+decomposition cannot express are ordinary rows", which is the retired wording (`SPEC.md` §1.2).*
 **Scene:** `loiter`, already in metres and seconds, already a verified pair.
 **Status:** the scene, the pair and the tests exist. Missing: the journal figure, the mission
 paragraph, three sidecar fields the caption needs, and one honest baseline arm.

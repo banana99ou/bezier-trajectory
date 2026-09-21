@@ -12,9 +12,16 @@ file follows the **code** and says so in place.
 appear as symbols with their current code value beside them, marked as parameters. Measured
 numbers live in figure-grade sidecars and reach the manuscript only through them.
 
-**Companion files.** [`README.md`](README.md) is the short artifact document (claim shape, figure
-slots, status). The four demo specifications in [`demo_specs/`](demo_specs/) are build
-specifications and keep their own detail; §4 below only assigns each a job.
+**Companion files, and what outranks what.** **This file owns the claim, the formulation, the
+algorithm and the experiment plan, and it outranks every other document in this directory.**
+[`README.md`](README.md) is the short artifact document (figure slots, status); its claim and
+consequence 3 are marked superseded in place. [`pi_report_2026-09-09.md`](pi_report_2026-09-09.md)
+is a superseded snapshot of one session's recommendations — **read its precedence header before
+using anything in it**; it is still the only source for the schedule, demo A's stop rule, and the
+baseline options, and its argument against self-implementation is an open conflict recorded in §6.
+The four demo specifications in [`demo_specs/`](demo_specs/) are build specifications and keep
+their own detail; §4 below only assigns each a job and outranks them on which consequence each
+carries.
 
 **Numbering.** Definitions D1…, Lemmas L1…, one Problem P, one Algorithm A, one Condition C. The
 labels are for cross-reference *inside this file and the manuscript*; `idea/spacetime.md`
@@ -24,61 +31,108 @@ deliberately carries none, so a statement there is referred to by what it says.
 
 ## 1. Claim and positioning
 
+**Framing decided 2026-09-20, after the audience decision (§6).** The paper is written for the
+planning and trajectory-optimization methods community, and the claim is stated as an *interface
+requirement*, not as the absence of a competitor's machinery. "Decomposition-free" describes what
+we do not do; it also picks a fight that cannot be fully won, because a space-time decomposition
+can carve any closed set and can optimize arrival time inside itself (Tang et al.). What can be
+claimed without qualification is what this construction *consumes*.
+
 ### 1.1 The claim
 
-> A **decomposition-free** convexification of space-time collision avoidance, rebuilt **per
-> iterate** around the current trajectory. Each (segment, obstacle, approach) triple contributes one
-> supporting half-space of a clipped piece of the keep-out volume; the subproblem is a QP with
-> second-order cones, its size is linear in segments × obstacles, and it carries no discrete
-> structure — no integer variables, no region graph, no cell selection. Conservatism is bounded by
-> the trust region, not by the geometric complexity of the free space.
+> Continuous-time avoidance constraints can be built from a **support oracle on the hazard**
+> instead of a representation of free space. For each (segment, obstacle, approach) the
+> construction asks the keep-out set for a nearest point and for a rigorous bound on its support
+> in one direction, and returns one supporting half-space imposed on the segment's control points.
+> The resulting subproblem is a quadratic program with second-order cones whose size is linear in
+> segments × obstacles and carries no discrete structure — no integer variables, no region graph,
+> no cell selection — and whose conservatism is bounded by the trust region rather than by the
+> geometric complexity of the free space.
 
-Opening sentence rule, inherited: **never "time as a coordinate."** That lift is Osburn, Peterson
-and Salmon, August 2025. What is new is that nothing is decomposed.
+**What the construction requires of a keep-out set $\mathcal K$, and nothing more.** Given the
+current segment's centroid $c$ and a clipping ball $\bar B(c,r_{\mathrm{clip}})$:
 
-### 1.2 Consequences — narrowed 2026-09-17
+| | requirement | used for |
+|---|---|---|
+| **O1** | the nearest point of $\mathcal K$ to $c$, or equivalently the direction from $\mathcal K$ back to $c$ | the wall's normal $n$ (D9, L7) |
+| **O2** | a **rigorous upper bound** on $\max\{n^\top z:\ z\in\mathcal K\cap\bar B(c,r_{\mathrm{clip}})\}$ | the wall's offset $\hat b$ (D9) |
+| **O3** | a partition of $\mathcal K\cap\bar B(c,r_{\mathrm{clip}})$ into pieces, one wall each | approaches (D8) |
+| **O4** | *optional* — the active face of $\mathcal K$ at the nearest point | the rotation term of the linearised row (§2.8); without it the rows are still sound, only slower to converge |
 
-Each consequence is evidence that the claim buys something. Each is stated against the specific
-prior work it actually separates us from; a consequence overstated against the whole corridor
-family is the sentence a reviewer who knows Tang rejects.
+O3 is sound for **any** partition, so it is a quality knob, never a correctness one. O4 changes
+only the rate. The load-bearing requirements are O1 and O2.
+
+**Why this is enough, and why convexity never appears.** A set and its convex hull have identical
+support in every direction (L5), so O2 can be answered on any superset sharing supports and
+$\mathcal K$ need not be convex, connected, or even representable. The continuous-time guarantee
+then comes from the Bézier hull property alone (L1, L8): a half-space satisfied at every control
+point of a segment is satisfied along the whole segment, for all times in it.
+
+**The evidence that the interface is real, not a retrospective story.** The same construction and
+the same row builder produce the walls for a ball, for a curving lifted tube, and for the shadow
+a moving body casts from a ground station — a set that twists, widens with distance and is not
+convex in space-time. There is no occlusion-specific branch anywhere in the derivation or in the
+code: the obstacle and its shadow are one keep-out set read at two stretch factors, and with no
+station present every formula reduces to the plain tube identically (L3). A hazard nobody would
+choose to carve costs one paragraph, because the oracle does not care what shape it is.
+
+**Title direction.** Support-oracle constraints for continuous-time trajectory optimization among
+moving hazards. **Never open with "time as a coordinate"** — that lift is Osburn, Peterson and
+Salmon, August 2025.
+
+### 1.2 Consequences — narrowed 2026-09-17, reframed under the oracle 2026-09-20
+
+Each consequence is evidence that the interface buys something. Each is stated against the
+specific prior work it actually separates us from; a consequence overstated against the whole
+corridor family is the sentence a reviewer who knows Tang rejects.
 
 | consequence | separates us from | does **not** separate us from | demo that carries it |
 |---|---|---|---|
-| **1. Moving obstacles of arbitrary polynomial motion are structurally free.** An obstacle is a lifted Bézier centreline of any degree with a radius; a curving, accelerating body produces the same rows as a static one. | Osburn (static or constant-velocity only; "more complex motions require finer sampling and will only approximate"); ST-GCS (piecewise-constant velocity trajectories); every space-only decomposition | — | A (rotating appendages), B (occluder on a circular lap) |
-| **2. Timing is a decision inside the same convex subproblem.** Arrival time, the speed cap and the time penalty are variables and rows of the one QP; there is no path-then-time-allocation stage. | Osburn (end point pinned at a fixed space-time point; cost is spatial path length, so time is never optimised); space-only corridor methods | **ST-GCS** (Tang et al.: time-optimal, free arrival, inside a space-time graph) | A (when to cross), WAKE (wait for decay) if built |
-| **3. Row count is independent of the geometric complexity of the keep-out set.** Rows are linear in segments × obstacles whatever the shape of the volume; the twisting shadow of a moving station costs one row block, the same as a ball. A decomposition's set count grows with the geometry it has to carve. | the whole corridor family, on cost — not on expressibility | — | B (line of sight), C (obstacle count axis) |
+| **1. Hazard shape is free.** The oracle is all the construction sees, so an obstacle of arbitrary polynomial motion, a finite lifetime, or a twisting shadow produces the same rows as a static ball. | Osburn (static or constant-velocity only; "more complex motions require finer sampling and will only approximate"); ST-GCS (piecewise-constant velocity); every space-only decomposition | — | **B (the shadow — the thesis demonstration)**, A (rotating appendages) |
+| **2. Timing is a decision inside the same convex subproblem.** Arrival time, the speed cap and the time penalty are variables and rows of the one QP; there is no path-then-time-allocation stage. | Osburn (end point pinned at a fixed space-time point; cost is spatial path length, so time is never optimised); space-only corridor methods | **ST-GCS** (Tang et al.: time-optimal, free arrival, inside a space-time graph) | A (when to cross) |
+| **3. Cost is independent of the geometry of the keep-out set.** Rows are linear in segments × obstacles whatever the shape; answering the oracle is local work at one point. A decomposition's set count grows with the geometry it must carve, and must be built before the solve. | the whole corridor family, on **cost** — not on expressibility | — | **C (obstacle-count axis — the cost evidence)** |
 
 **Retired wording, do not reintroduce:** "a decomposition cannot express visibility" (false as
 stated — a space-time decomposition can carve any closed set); "a decomposition must be fixed
-before the timing that decides which cells are free" (true only of space-only decomposition; a
-space-time decomposition never commits to timing). Consequence 3 is about *cost*, and the paper
-says so.
+before the timing that decides which cells are free" (true only of space-only decomposition).
+Consequence 3 is about *cost*, and the paper says so.
 
-**Two stale cells in the prior-art table** at `idea/spacetime.md` §"The corridor / convex-opt
-family in detail", row "arrival time": Osburn is recorded as *free* — his examples pin the end
-point at a fixed time and his cost is spatial length; and ours is recorded as *fixed* — the
-`free_arrival_time` flag exists. Both cells are to be corrected when that file is next edited.
+**The prior-art table's two arrival-time cells were corrected 2026-09-21** (`idea/spacetime.md`
+§"The corridor / convex-opt family in detail"): Osburn now reads *pinned* and ours reads *free,
+optionally*. Recorded here because the correction is the evidence for consequence 2.
+**The submitted KSAS manuscript and the draft poster both carry the retired timing sentence**
+(`paper/ksas_2026_fall/manuscript.md`, and `poster/poster.tex` 「통과 시각도 그 셀 배치에 매인다」).
+The manuscript is submitted and cannot change; the poster is a draft and must be corrected before
+November, and the journal must not inherit the sentence from either.
 
 ### 1.3 The guarantee — what was not given up
 
 - **Continuous-time feasibility by hull containment** (L1, L8). Standard machinery; Bézier and
-  B-spline planners have used it for years. Cite it, do not claim it.
-- **The coverage condition** (C, §2.7) — ours. The half-spaces provably contain the clipped
-  keep-out volume, and a stated, testable condition on the clipping radius makes the segment
-  certificate cover the *whole* keep-out zone rather than the clipped piece. The residual hole is
-  named, counted per iteration, and gates every figure. Nobody in the corridor family reports
-  coverage; they report that the solver converged.
+  B-spline planners have used it for years. Cite it, do not claim it. What is ours is that it is
+  made to work against a set given only by an oracle.
+- **The coverage condition** (C, §2.7) — ours, and the paper's second thesis. A construction built
+  from a *local* oracle owes the reader a statement of what it covers: the half-spaces provably
+  contain the clipped keep-out volume, and a stated, testable condition on the clipping radius
+  makes the segment certificate cover the *whole* keep-out zone rather than the clipped piece.
+  The residual hole is named, counted per iteration, and gates every figure. **Nobody in the
+  corridor family reports coverage at all; they report that the solver converged.** The paper
+  proposes this as the thing such methods should report.
 - **The independent certificate** (D11). Every reported guarantee is re-checked by a computation
   that shares nothing with the construction it checks.
 
 ### 1.4 What is not claimed
 
 - Global optimality. The method is local; the passing homotopy class comes from the initialization.
+  This is the price of a local oracle instead of global structure, and it is stated as a design
+  position, not conceded as an oversight.
 - Stationarity. `converged` asserts feasibility plus no further progress; there is no KKT residual.
 - Speed on small problems. Osburn's small cases take a fraction of a second; "we are fast" cannot
-  carry the paper. The argument is how cost scales with dimension and obstacle count.
-- Any physical model of the mission: no gravity or Δv (A), no wake physics (WAKE), no radar
-  equation or detection probability (B). Binary occlusion, exact known motion, offline solve.
+  carry the paper. The argument is how cost scales with dimension and hazard geometry.
+- **A plugin interface.** O1–O4 describe what the *derivation* consumes and what the one row
+  builder implements for the tube and the center surface. The code exposes no abstract oracle type,
+  and the paper must not imply one.
+- Any physical model of the mission: no gravity or Δv (A), no wake physics, no radar equation or
+  detection probability (B). Binary occlusion, exact known motion, offline solve.
 - "Minimises spatial acceleration." Forbidden phrase; the objective is a parameter-domain
   smoothness regulariser blind to timing (§2.8).
 
@@ -97,10 +151,15 @@ point at a fixed time and his cost is spatial length; and ours is recorded as *f
   at two seconds with binned time. Read via summariser only — verify before citing detail.
 - **Marcucci et al.** (GCS, SIAM J. Opt. 2024; Science Robotics 2023) and **Deits & Tedrake**
   (IRIS) for framing; **Zhang, Yadmellat, Gao (arXiv 2110.00065)** for the hull-property
-  sufficient condition in corridors; **MADER** for planes as decision variables, the alternative to
-  linearising them.
+  sufficient condition in corridors; **MADER** for separating planes as decision variables, the
+  alternative to linearising them.
 - The three strengths of the graph family that every limitations section states: no initial guess
   needed; global with respect to their graph; small cases solved in under a second.
+
+**Blocking the introduction:** four of these are marked "search-level only, bibliography not
+verified" in `idea/spacetime.md` §Confidence and known gaps — GCS, IRIS, Zhang, SPOT. This
+audience's reviewers are those authors. Read them from source before sections 1 and 2 are written;
+Osburn and ST-GCS are already read from PDF.
 
 ---
 
@@ -213,11 +272,11 @@ $c\in\mathcal K_m$, and without it the wall understates a penetration by $r_m-d$
 is Condition C of §2.7 made unconditional. $\tau^\star$ need not be unique — non-uniqueness is
 the bend case that makes $f$ discontinuous in $\mathbf p$, and any minimiser serves.
 
-> **Code note.** An uncommitted experiment labelled `E1 (2026-09-09)` in
-> `rust_optimizer/core/src/spacetime_obstacle.rs` replaces the clamp under `sound_clip` with the
-> minimal sound radius $\min(r_{\mathrm{floor}},r_{\mathrm{clip,max}})$, discarding $d$. The
-> 2026-09-09 measurement pass reported it as a regression. This specification states the
-> **committed** rule above; E1 is landed or reverted before the measurement pass, never both.
+> **Code note — closed 2026-09-21.** An experiment labelled `E1 (2026-09-09)` once replaced the
+> clamp under the reach floor with the minimal sound radius, discarding $d$; it was measured a
+> regression, **refused 2026-09-18 and is no longer in the tree** (verified 2026-09-21). The rule
+> above is the one the code runs. Four demo specifications still describe a "post-E1 build
+> installed now" and are wrong on that point.
 
 **D7 (clipped keep-out volume).** $\mathcal L^{(k)}_m=\mathcal K_m\cap\bar B(c,r_{\mathrm{clip}})$.
 
@@ -499,7 +558,7 @@ bounds, $\lambda_0$ and whether escalation was held, $w_t$, $v_{\max}$, $\delta$
 
 ### 4.1 Rules
 
-- **One measurement pass, on a frozen solver, after E1 is landed or reverted.** Three different
+- **One measurement pass, on a frozen solver.** (E1 is closed — see §2.4.) Three different
   builds produced the numbers currently scattered through the demo specs; none may be compared
   with another and none reaches the manuscript.
 - Numbers reach the manuscript only from figure-grade sidecars (D12), injected at build time;
@@ -516,13 +575,24 @@ bounds, $\lambda_0$ and whether escalation was held, $w_t$, $v_{\max}$, $\delta$
 
 | demo | scene | carries | must show | fails if | status |
 |---|---|---|---|---|---|
-| **B — C2-link continuity** ([spec](demo_specs/B_c2_link.md)) | `loiter`: occluder on a circular lap above a ground station, corridor tangent to the shadow ring, $d_s=3$ | consequences 1 and 3; the guarantee via the line-of-sight certificate | constrained run keeps the link start to finish while the pair loses it for a measurable interval; the escape is retiming, not a sidestep; the third dimension is load-bearing | the pair also keeps the link; the figure and the tested pair run different configurations (audit finding, open) | scene, pair and tests exist; journal figure, mission paragraph and one honest baseline arm missing |
-| **C — traffic** ([spec](demo_specs/C_traffic_and_backbone.md)) | scheduled traffic family, obstacle count as the axis, every obstacle moving, 2 + t and 3 + t twins with the same conflict schedule | **the claim itself** and consequence 3; the scaling experiment | walls and rows grow linearly in obstacle count and stay inside the segments × obstacles bound; solve time against count; success rate at each count | a vacuous count axis (obstacles never approached produce no wall — placement rule); a confounded axis (horizon knob moving the geometry); no wall-clock number | families module and tests exist uncommitted; `tools/bench.py` and `tools/make_tables.py` not written |
+| **B — C2-link continuity** ([spec](demo_specs/B_c2_link.md)) | `loiter`: occluder on a circular lap above a ground station, corridor tangent to the shadow ring, $d_s=3$ | consequence 1 — **the thesis demonstration**; the guarantee via the line-of-sight certificate | constrained run keeps the link start to finish while the pair loses it for a measurable interval; the escape is retiming, not a sidestep; the third dimension is load-bearing | the pair also keeps the link; the figure and the tested pair run different configurations (audit finding, open) | scene, pair and tests exist; journal figure, mission paragraph and one honest baseline arm missing |
+| **C — traffic** ([spec](demo_specs/C_traffic_and_backbone.md)) | scheduled traffic family, obstacle count as the axis, every obstacle moving, 2 + t and 3 + t twins with the same conflict schedule | consequence 3 — **the cost evidence**; the scaling experiment | walls and rows grow linearly in obstacle count and stay inside the segments × obstacles bound; solve time against count; success rate at each count | a vacuous count axis (obstacles never approached produce no wall — placement rule); a confounded axis (horizon knob moving the geometry); no wall-clock number | families module and tests exist uncommitted; `tools/bench.py` and `tools/make_tables.py` not written |
 | **A — rotating target** ([spec](demo_specs/A_rotating_target.md)) | chaser to a fixed port on a stabilised bus whose appendages rotate; target-fixed frame, kinematic only | consequences 1 and 2 in one picture; the cross-domain demonstration | the decision is *when* to cross, made inside one subproblem; a cluster of balls on Bézier circular paths costs the same kind of row as a static ball | the figure implies gravity, Δv, tumbling or a rendezvous result; the pair (fixed timing) also crosses cleanly | specification and a cost spike only; no production scenario |
-| **WAKE** ([spec](demo_specs/WAKE_vortex.md)) | follower crosses a leader's decayed wake: chain of balls with birth and death times drifting with wind | consequence 2 (finite obstacle lifetime priced) | the run holds until the wake at the crossing has died and crosses not a second later | any sentence reads as a wake-encounter result | specification and exploratory solve; **in only if it shows something A and B do not** |
+| **WAKE** ([spec](demo_specs/WAKE_vortex.md)) | follower crosses a leader's decayed wake: chain of balls with birth and death times drifting with wind | consequence 2 (finite obstacle lifetime priced) | the run holds until the wake at the crossing has died and crosses not a second later | any sentence reads as a wake-encounter result | specification and exploratory solve; **expected OUT — it demonstrates nothing B and C do not** (§6) |
 
-Order in the manuscript: B as the introductory example (why timing matters to a mission), C as
-the quantitative evidence, A as the cross-domain demonstration. WAKE is a decision for §6.
+> **`DECISIONS.md` does not exist and never did** (checked across all branches, 2026-09-21). The
+> three demo specifications cite it about ten times, sometimes with quoted text. Those citations
+> are unresolvable: treat any claim sourced to it as unverified, and this section as the authority
+> on which demo carries what.
+
+**Where the centre of the paper is, stated once so it is not stated three ways.** The *thesis* —
+that constraints can be built from a support oracle — is demonstrated by **B**, because the shadow
+is the hazard nobody would choose to carve. The *cost* consequence that makes the thesis worth
+having is carried by **C**. The *mechanism* is shown by figure slot 2 (per-iterate reconstruction),
+which belongs to no demo. Those are three different jobs, not three candidates for one job.
+
+Order in the manuscript: B first as the thesis demonstration, C as the quantitative evidence, A as
+the generality demonstration. WAKE is a decision for §6.
 
 ### 4.3 The comparison baseline — the experiment that decides the paper's impact
 
@@ -613,12 +683,45 @@ next edited.
 
 ---
 
-## 6. Open decisions — the user's and the PI's, not an agent's
+## 6. Decisions taken, and what is still open
 
-1. **Venue.** Page budget, reviewer expectations on the baseline, and template all follow from it.
-   Graduation is 2027-02.
-2. **Baseline Stage 2 go / no-go**, after Stage 1's cost is known (§4.3).
-3. **E1 — revert or land** before the measurement pass (§2.4 code note).
-4. **WAKE in or out** (§4.2).
+### Taken
+
+- **Audience — the planning and trajectory-optimization methods community. Decided 2026-09-20.**
+  Not aerospace guidance and control, and not air-traffic systems. Reasons, in order: the
+  contribution is a construction rather than a mission result; the only physics in the formulation
+  is a speed cap, which this audience treats as normal and an aerospace-control audience treats as
+  disqualifying; the baseline (IRIS, GCS, ST-GCS) is this audience's own literature; idea 2
+  (`idea/risk_field.md`) addresses the same audience, so the portfolio coheres; and the aerospace
+  community already has the KSAS conference version and will see the poster in November.
+  **Consequences the rest of this file must reflect:** the shadow is the thesis demonstration, not
+  a feature; scaling is the cost evidence; the rotating-target demo demonstrates generality; code
+  release becomes expected rather than optional.
+- **Framing — the support oracle (§1.1). Decided 2026-09-20.** Stated as what the construction
+  consumes, not as the absence of a decomposition.
+- **E1 — refused. Decided 2026-09-18** (a hail mary, not a fix). The committed clip rule of §2.4
+  stands. → `WORKSTREAM.md` `journal.freeze`
+
+### Open
+
+1. **Venue.** The advisor declines to advise until he has read a draft, so the deliverable that
+   unblocks this is a **skeleton draft** — introduction, contributions, figure list and experiment
+   table, roughly five pages, no results — not a full manuscript. Room-A venues want the same paper
+   shape, so writing is not blocked while this is open. Graduation is 2027-02.
+2. **Baseline by public implementation or by re-implementation — an open conflict, recorded
+   2026-09-21.** §4.3 specifies re-implementing Osburn. `pi_report_2026-09-09.md` §"비교 대상"
+   recommends the opposite: run a *public* graph-of-convex-sets implementation on our scenarios,
+   two weeks, dropping to ablation-only if it will not run — because a self-built baseline that
+   comes out weak leaves a reviewer unable to tell a method difference from an implementation
+   difference, and running published code removes that objection entirely. The audience decision
+   sharpens this rather than settling it: room-A reviewers are the authors of those
+   implementations. **§4.3 has not answered the objection and must, before `journal.baseline`
+   starts.** A candidate resolution, not yet chosen: public implementation for the 2D + time
+   fairness argument, our own only for 3D + time, where no public implementation runs.
+3. **Baseline Stage 2 go / no-go**, after Stage 1's cost is known (§4.3). Stage 2 is the
+   only answer to this audience's central objection — *your method is local, GCS is global* — so
+   "no-go" costs the paper its rebuttal, not merely an experiment.
+4. **WAKE in or out** (§4.2). Under the audience decision it demonstrates nothing B and C do not.
 5. **The mission citation for demo B** — naming a regulation or a continuity requirement is a
-   literature decision (demo B spec §7).
+   literature decision (demo B spec §7). Lower stakes now: for this audience the mission is
+   motivation, not the result.

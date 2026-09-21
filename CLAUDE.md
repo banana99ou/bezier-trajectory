@@ -21,7 +21,16 @@ needs a paragraph it is a finding, and it belongs to its owner instead.
   `rust_optimizer/` from scratch, so it is an add/add conflict on every file. Bringing solver work
   across is a file-level port. → [`SOLVER.md`](SOLVER.md)
 - **Never open the novelty claim with "time as a coordinate."** The lift was published in August
-  2025. What is new here is *decomposition-free*. → [`idea/spacetime.md`](idea/spacetime.md)
+  2025. What is new is the **support oracle on the hazard** — decomposition-free describes what we
+  do not do. Guarded in artifact text only by `tests/unit/test_retired_wording.py`; believing it
+  is still your job. → [`paper/journal_1/SPEC.md`](paper/journal_1/SPEC.md) §1.1
+- **Never write that a decomposition binds the passing time.** False against a space-time
+  decomposition, and it is already in the submitted KSAS manuscript and the draft poster — the
+  poster's copy must go before 2026-11-10. Guarded in artifact text by
+  `tests/unit/test_retired_wording.py`. → [`paper/journal_1/SPEC.md`](paper/journal_1/SPEC.md) §1.2
+- **The journal's reader is the planning / trajectory-optimization community**, not aerospace
+  guidance and control — decided 2026-09-20, and it outranks the PI report's JGCD recommendation,
+  which predates it. → [`paper/journal_1/SPEC.md`](paper/journal_1/SPEC.md) §6
 - **A zero time coefficient on a keep-out row is a reportable defect**, shadow rows included —
   never a modelling choice. → [`SOLVER.md`](SOLVER.md)
 - **`doc/notes/` is not part of this repository.** Each note is its own git repo on disk and the
@@ -30,6 +39,8 @@ needs a paragraph it is a finding, and it belongs to its owner instead.
   it, weaken it, or revert the density that turned it red. → [`SOLVER.md`](SOLVER.md) §Known Issues
 - **A number in a markdown file is not evidence.** Put a measured number where a test re-measures
   it and cite the test; a document quotes a measurement pass, it never owns one.
+- **Exclude `.claude/worktrees/` from every repo-wide search** — it shadows every document at an
+  older commit, so each hit returns twice and the wrong copy is citable. → [`README.md`](README.md)
 
 ## Session protocol
 

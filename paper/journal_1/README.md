@@ -26,13 +26,18 @@ pick the weakest and attack it; one claim with consequences does not.
 
 ### The claim
 
-A **decomposition-free** convexification of space-time collision avoidance, rebuilt **per iterate**
+> **SUPERSEDED 2026-09-20 — [`SPEC.md`](SPEC.md) §1.1 owns the claim and outranks this section.**
+> The framing moved from "decomposition-free" to the **support oracle on the hazard**: what the
+> construction consumes, not what it declines to build. The paragraph below is kept because the
+> size and no-discrete-structure properties it states are still true and still used.
+
+A convexification of space-time collision avoidance, rebuilt **per iterate**
 around the current trajectory. Its size is linear in (segments × obstacles) and it carries no
 discrete structure — no integer variables, no region graph, no mode enumeration. Conservatism is
 bounded by the trust region, not by the geometric complexity of the free space.
 
 **Never open with "time as a coordinate."** That lift was published in August 2025. What is new is
-decomposition-free. → [`idea/spacetime.md`](../../idea/spacetime.md) §Novelty and prior art.
+the support oracle. → [`SPEC.md`](SPEC.md) §1.1.
 
 ### Three consequences — evidence the claim buys something, not separate claims
 
@@ -44,11 +49,12 @@ decomposition-free. → [`idea/spacetime.md`](../../idea/spacetime.md) §Novelty
    time penalty are variables, not a pre-committed grid. There is no path-then-time-allocation
    stage, and therefore no two stages fighting when the timing changes which regions would have
    been needed.
-3. **Constraints that depend on timing are ordinary rows** — line of sight through a moving
-   shadow being the one the demos exercise. The structural point is *ordering*, not expressibility:
-   a free-space decomposition must be fixed before the timing that decides which cells are free, so
-   it commits to the timing it was supposed to optimize. Do not write "a decomposition cannot
-   express visibility"; that sentence is false as stated (demo-B fairness audit, 2026-09-09).
+3. **SUPERSEDED 2026-09-20 — see [`SPEC.md`](SPEC.md) §1.2 for the current consequence 3.**
+   It is now *cost is independent of the geometry of the keep-out set*, carried by demo C. The
+   ordering argument that stood here is retired: it is true only of a space-only decomposition,
+   and a space-time decomposition never commits to timing (Tang et al.). Do not write "a
+   decomposition cannot express visibility" and do not write that a decomposition binds the
+   passing time; both are false as stated.
 
 ### The guarantee — what was *not* given up
 
@@ -114,6 +120,10 @@ never typed.** A build that cannot find a sidecar, or finds one that is not figu
 
 ## Status
 
-Manuscript: **not started.** Nothing in this directory but this file.
-Open items are [`WORKSTREAM.md`](../../WORKSTREAM.md) `journal.scope` and `journal.measure`.
+Manuscript: **not started.** This directory holds [`SPEC.md`](SPEC.md) (the specification every
+track is written against), [`pi_report_2026-09-09.md`](pi_report_2026-09-09.md) (a superseded
+snapshot — read its precedence header first) and [`demo_specs/`](demo_specs/) (four build
+specifications).
+Open items are the journal tracks in [`WORKSTREAM.md`](../../WORKSTREAM.md) — `journal.draft`,
+`journal.baseline`, `journal.bench`, `journal.demos`, `journal.freeze` — and `journal.measure`.
 **`journal.measure` has not run, so no number may be quoted anywhere yet** — including here.
