@@ -578,7 +578,7 @@ bounds, $\lambda_0$ and whether escalation was held, $w_t$, $v_{\max}$, $\delta$
 | **B — C2-link continuity** ([spec](demo_specs/B_c2_link.md)) | `loiter`: occluder on a circular lap above a ground station, corridor tangent to the shadow ring, $d_s=3$ | consequence 1 — **the thesis demonstration**; the guarantee via the line-of-sight certificate | constrained run keeps the link start to finish while the pair loses it for a measurable interval; the escape is retiming, not a sidestep; the third dimension is load-bearing | the pair also keeps the link; the figure and the tested pair run different configurations (audit finding, open) | scene, pair and tests exist; journal figure, mission paragraph and one honest baseline arm missing |
 | **C — traffic** ([spec](demo_specs/C_traffic_and_backbone.md)) | scheduled traffic family, obstacle count as the axis, every obstacle moving, 2 + t and 3 + t twins with the same conflict schedule | consequence 3 — **the cost evidence**; the scaling experiment | walls and rows grow linearly in obstacle count and stay inside the segments × obstacles bound; solve time against count; success rate at each count | a vacuous count axis (obstacles never approached produce no wall — placement rule); a confounded axis (horizon knob moving the geometry); no wall-clock number | families module and tests exist uncommitted; `tools/bench.py` and `tools/make_tables.py` not written |
 | **A — rotating target** ([spec](demo_specs/A_rotating_target.md)) | chaser to a fixed port on a stabilised bus whose appendages rotate; target-fixed frame, kinematic only | consequences 1 and 2 in one picture; the cross-domain demonstration | the decision is *when* to cross, made inside one subproblem; a cluster of balls on Bézier circular paths costs the same kind of row as a static ball | the figure implies gravity, Δv, tumbling or a rendezvous result; the pair (fixed timing) also crosses cleanly | specification and a cost spike only; no production scenario |
-| **WAKE** ([spec](demo_specs/WAKE_vortex.md)) | follower crosses a leader's decayed wake: chain of balls with birth and death times drifting with wind | consequence 2 (finite obstacle lifetime priced) | the run holds until the wake at the crossing has died and crosses not a second later | any sentence reads as a wake-encounter result | specification and exploratory solve; **expected OUT — it demonstrates nothing B and C do not** (§6) |
+| ~~**WAKE**~~ ([spec](demo_specs/WAKE_vortex.md)) | — | — | — | — | **OUT, decided 2026-09-21.** It demonstrates nothing B and C do not. The specification stays on disk as a record; no track builds it. |
 
 > **`DECISIONS.md` does not exist and never did** (checked across all branches, 2026-09-21). The
 > three demo specifications cite it about ten times, sometimes with quoted text. Those citations
@@ -592,7 +592,7 @@ having is carried by **C**. The *mechanism* is shown by figure slot 2 (per-itera
 which belongs to no demo. Those are three different jobs, not three candidates for one job.
 
 Order in the manuscript: B first as the thesis demonstration, C as the quantitative evidence, A as
-the generality demonstration. WAKE is a decision for §6.
+the generality demonstration. WAKE is out (§6).
 
 ### 4.3 The comparison baseline — the experiment that decides the paper's impact
 
@@ -668,7 +668,7 @@ battery already used for `SOLVER.md` §Measurements.
 2. Per-iterate reconstruction — the same segment across iterations, the half-space re-aiming,
    with $\rho$ beneath. **The central claim lives in this figure.**
 3. Line-of-sight pair — demo B; sight margin over time under the geometry.
-4. Timing pair — demo A (or WAKE); the agent waits for the gap.
+4. Timing pair — demo A; the agent waits for the gap.
 5. Scaling curve — §4.4, with the baseline's sample-sweep curve on the same axes where Stage 1 or
    2 has run.
 6. Coverage — §4.5.
@@ -701,6 +701,8 @@ next edited.
   consumes, not as the absence of a decomposition.
 - **E1 — refused. Decided 2026-09-18** (a hail mary, not a fix). The committed clip rule of §2.4
   stands. → `WORKSTREAM.md` `journal.freeze`
+- **WAKE — out. Decided 2026-09-21.** It demonstrates nothing B and C do not. Its specification
+  stays as a record; no track builds it.
 
 ### Open
 
@@ -721,7 +723,9 @@ next edited.
 3. **Baseline Stage 2 go / no-go**, after Stage 1's cost is known (§4.3). Stage 2 is the
    only answer to this audience's central objection — *your method is local, GCS is global* — so
    "no-go" costs the paper its rebuttal, not merely an experiment.
-4. **WAKE in or out** (§4.2). Under the audience decision it demonstrates nothing B and C do not.
+4. **Submitted or accepted by 2027-02?** Whether the degree requires the journal paper to be
+   *submitted* or *accepted* by graduation has been asked and not answered. It decides whether a
+   slow venue is eligible at all, and the advisor's venue advice lands on top of it.
 5. **The mission citation for demo B** — naming a regulation or a continuity requirement is a
    literature decision (demo B spec §7). Lower stakes now: for this audience the mission is
    motivation, not the result.

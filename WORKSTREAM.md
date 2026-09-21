@@ -155,6 +155,7 @@ commit or says "SPEC impact: none" in its message.
 | `journal.bench` | `tools/bench.py`, `tools/make_tables.py`, `spacetime_bezier/families.py` + its tests | **only after `journal.freeze`** |
 | `journal.demos` | `spacetime_bezier/scenarios.py`, figure scripts under `tools/` | **only after `journal.freeze`** |
 | `journal.freeze` | `rust_optimizer/`, `SOLVER.md` | it *is* the freeze |
+| `journal.release` | a public repository, at the end | no — it ships what `journal.bench` measured |
 
 **Two collisions, and they are the only two.**
 
@@ -184,9 +185,32 @@ red and no other), and the solver build the journal measures is named in
 ### `journal.draft` — the manuscript, venue-neutral, started from the spec
 §2 formulation and §3 algorithm of SPEC.md carry no measured number, so they are writable before
 anything is measured. Results and figures are left as slots that fail the build when empty.
+**First deliverable is a skeleton draft, not a manuscript** — introduction, contributions, figure
+list, experiment table, roughly five pages, no results — because the advisor gives no venue advice
+until he has read a draft (SPEC.md §6). Three things this track owns that were decided in chat on
+2026-09-20 and recorded nowhere else until now:
+- **Figure slot 2 — per-iterate reconstruction — is sketched first, with fake data, before any
+  prose.** It is the only picture in which the claim is visible and nobody has attempted it; if it
+  cannot be drawn legibly that has to be known in the first week, not in December.
+- **The prior-publication paragraph**: what the journal adds over the KSAS two-pager, written as
+  the cover-letter paragraph an editor reads, not as a section heading. SPEC.md §1 and the README's
+  "what the journal adds" are its source.
+- **The November poster is the reviewer panel.** Every question asked at the poster is written
+  down verbatim, in the asker's words, unanswered; that list is the introduction's list of
+  objections to pre-empt. Better than any simulated review, because the askers do not already
+  believe the framing.
 *Closes when:* a venue-neutral LaTeX draft exists whose methods and algorithm sections are
 complete and whose every number arrives from a figure-grade sidecar.
-→ [`paper/journal_1/SPEC.md`](paper/journal_1/SPEC.md) §2, §3, §5
+→ [`paper/journal_1/SPEC.md`](paper/journal_1/SPEC.md) §1, §2, §3, §5
+
+### `journal.release` — the code ships with the paper
+The audience decided 2026-09-20 expects a public implementation, and a release is the cheapest
+citation multiplier the paper has. Nothing is scheduled; the item exists so it is not forgotten
+until the week before submission. Scope is the solver, the scenarios the paper uses, and the bench
+that regenerates its tables — not the sandbox or the retired viewer (`repo.superseded-viewer`).
+*Closes when:* a tagged public repository reproduces every table and figure in the manuscript
+from one command.
+→ [`paper/journal_1/SPEC.md`](paper/journal_1/SPEC.md) §6, `journal.bench`
 
 ### `journal.baseline` — Osburn re-implemented, dimension-agnostic from the first line
 Stage 1 is 2D + time: IRIS-sampled sets over the lifted space, a graph of convex sets with Bézier
