@@ -1,581 +1,133 @@
-% Skeleton draft — venue-neutral. Written from paper/journal_1/SPEC.md, which outranks this
-% file on every claim. No number appears here that was not injected from a figure-grade sidecar;
-% until the measurement pass (WORKSTREAM.md journal.measure) there are none, and every place one
-% will go is marked \todo.
-%
-% Guarded by tests/unit/test_retired_wording.py: the retired sentences of SPEC.md section 1.2
-% must not appear in this file, even negated.
+% Reading skeleton. Detailed formulation and experiment protocol: SPEC.md.
+% Planned evidence is not a reported result. No benchmark numbers are claimed here.
 \documentclass[11pt]{article}
-\usepackage[a4paper,margin=25mm]{geometry}
-\usepackage{amsmath,amssymb,amsthm}
-\usepackage{booktabs}
-\usepackage{graphicx}
-\usepackage{xcolor}
+\usepackage[a4paper,margin=23mm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs,tabularx}
 \usepackage[hidelinks]{hyperref}
-
-\newcommand{\todo}[1]{\textcolor{red}{\textbf{[TODO: #1]}}}
-\newcommand{\slot}[2]{\begin{figure}[t]\centering\fbox{\parbox{0.9\linewidth}{\centering\vspace{18mm}\textbf{Figure slot #1}\\[2mm]#2\vspace{18mm}}}\end{figure}}
-\newcommand{\R}{\mathbb{R}}
-\newcommand{\Kz}{\mathcal{K}}
-\newcommand{\Lz}{\mathcal{L}}
-\newcommand{\conv}{\operatorname{conv}}
-\newcommand{\ball}{\bar B}
-\newcommand{\rclip}{r_{\mathrm{clip}}}
-\newcommand{\ds}{d_s}
-
-\theoremstyle{definition}
-\newtheorem{definition}{Definition}
-\newtheorem{condition}{Condition}
-\theoremstyle{plain}
-\newtheorem{lemma}{Lemma}
-\newtheorem{proposition}{Proposition}
-\theoremstyle{remark}
-\newtheorem{remark}{Remark}
-
-\title{Support-Oracle Constraints for Continuous-Time Trajectory Optimization Among Moving Hazards}
-\author{Hyunyong Jung\thanks{Corresponding author.} \and Suwon Lee\\[1mm]
-  Kookmin University}
-\date{Skeleton draft --- \today}
-
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\title{Support-Oracle Constraints for Continuous-Time\\
+Trajectory Optimization Among Moving Hazards}
+\author{Hyunyong Jung \and Suwon Lee\\Kookmin University}
+\date{Reading skeleton --- September 2026}
 \begin{document}
-\maketitle
+\begin{center}
+{\Large\bfseries Support-Oracle Constraints for Continuous-Time\\[2pt]
+Trajectory Optimization Among Moving Hazards\par}
+\medskip
+Hyunyong Jung and Suwon Lee --- Kookmin University\\
+{\small Reading skeleton --- September 2026}
+\end{center}
 
-\begin{abstract}
-\todo{Abstract is written last, against the figures. Must state the scope boundary in its own
-words: obstacle motion known and deterministic, solve offline, occlusion binary. Must state the
-claim as what the construction consumes (a nearest point and a support bound on the hazard), not
-as the absence of a decomposition.}
-\end{abstract}
+\section{Introduction: the question and the reader}
+Can a local trajectory optimizer handle a complicated moving hazard using only
+queries to its geometry? We investigate a construction that asks for a nearest
+point and a bound on the hazard's extent in a chosen direction, then builds a
+separating half-space for each trajectory segment. These queries are the
+\emph{support-oracle interface} studied here.
 
-% =====================================================================================
-\section{Introduction}
-% Drafted from SPEC.md section 1. The introduction is the one section that has to be in the
-% first author's voice; treat every paragraph below as a target to rewrite, not text to keep.
+The intended reader develops motion-planning or trajectory-optimization methods.
+The motivating example is a moving body's line-of-sight shadow: the trajectory
+must avoid collision while retaining visibility to a ground station. The paper
+asks whether the same constraint construction can handle both hazards efficiently
+and with an explicit continuous-time safety condition.
 
-Trajectory optimization among obstacles is a nonconvex problem, and every practical method
-convexifies it somewhere. The family this paper belongs to convexifies by building, before the
-solve, a collection of convex regions of free space and a combinatorial structure that selects
-among them: safe corridors, and more recently graphs of convex sets over which a single convex
-relaxation is solved~\cite{marcucci2024gcs,marcucci2023science}. Lifting time into the state
-turns a moving obstacle into a static set in one higher dimension, and the same machinery
-extends to obstacles in motion~\cite{osburn2025stgcs,tang2025stgcs}. The cost of that route is
-the construction of the regions themselves. Free space has to be represented, sampled and carved
-into convex pieces; the number of pieces grows with the geometry of the hazards and with the
-dimension of the lifted space, and the resulting graph is what the optimizer searches.
+\textbf{Proposed contribution.} A local supporting-half-space construction for
+moving hazards, its coverage condition, and demonstrations for curved obstacle
+motion and moving shadows. Speed relative to existing planners remains an
+experimental question.
 
-This paper asks what the optimizer actually needs from a hazard, and answers with an interface
-rather than a representation. For each segment of a B\'ezier trajectory and each hazard, the
-construction below asks the keep-out set for two things: the point of the set nearest the
-segment, and a rigorous bound on how far the set reaches in one direction. From those two answers
-it returns one supporting half-space, imposed on the segment's control points, and by the convex
-hull property of B\'ezier curves that half-space is satisfied along the whole segment, for all
-times in it. The half-spaces are rebuilt around the current iterate at every step of a
-successive-convexification loop, so the convex subproblem is a quadratic program with second-order
-cones whose size is linear in the number of segments times the number of hazards, with no integer
-variables, no region graph, and no cell selection. Nothing about the hazard's shape enters except
-through the two oracle answers: a set and its convex hull have identical support in every
-direction, so the keep-out set need not be convex, connected, or even representable.
+\section{Related work: where the contribution must stand}
+Space-time GCS already plans around moving obstacles; Osburn et al.\ use
+B\'ezier trajectories, while Tang et al.\ optimize arrival time in a space-time
+graph. MADER already uses separating planes for trajectory avoidance.
+Neither the space-time representation nor the B\'ezier hull property is new.
+The paper must establish what the proposed support-bound construction adds,
+including comparison with a conventional local optimizer.
 
-The evidence that this is an interface and not a retrospective description is a hazard that
-nobody would choose to carve. A body moving on a curved path above a ground station casts a
-shadow that twists, widens with distance from the station, and is not convex in space-time. The
-same construction and the same row builder produce the walls for a static ball, for the lifted
-tube of a moving body, and for that shadow; there is no occlusion-specific branch anywhere, and
-with no station present every formula reduces to the plain tube identically. Keeping a
-line of sight through a moving occluder costs one paragraph of this paper because the oracle does
-not care what shape the hazard is.
+\section{Method: the construction and its guarantee}
+Represent a trajectory by a B\'ezier curve $Z(u)=(x(u),t(u))$, where $u$ is a
+curve parameter and $t(u)$ increases. Both spatial and temporal control points
+are optimized, subject to boundary conditions and a speed cap.
 
-Two things follow from building constraints from a local oracle rather than from a global
-structure, and the paper states both plainly. The first is what is owed to the reader: a
-construction that sees the hazard only through a ball around the current segment must say what it
-covers. Section~\ref{sec:coverage} gives a condition on the clipping radius under which the
-segment certificate covers the whole keep-out set, names the regime in which it does not, and
-counts that regime in every reported run. Methods in this family report that the solver
-converged; none, to our knowledge, report coverage. The second is the price: the method is local,
-and the passing side of each hazard is inherited from the initialization. That is a design
-position, and its consequences are measured rather than conceded.
-
-\paragraph{Contributions.} One claim, with three consequences that are evidence it buys
-something, and one guarantee that was not given up.
-\begin{enumerate}
-\item \textbf{The claim.} Continuous-time avoidance constraints can be built from a support
-  oracle on the hazard (Section~\ref{sec:oracle}): a nearest point and a rigorous support bound,
-  per segment and per hazard, yield one supporting half-space of a clipped piece of the keep-out
-  set, imposed on the segment's control points and rebuilt per iterate.
-\item \textbf{Hazard shape is free.} A body of arbitrary polynomial motion, a finite lifetime, or
-  a twisting shadow produces the same rows as a static ball (Section~\ref{sec:instantiations}).
-\item \textbf{Timing is a decision inside the same convex subproblem.} Arrival time, the speed
-  cap and the time penalty are variables and rows of one QP; there is no path-then-time-allocation
-  stage (Section~\ref{sec:subproblem}).
-\item \textbf{Cost is independent of hazard geometry.} Rows are linear in segments times
-  hazards whatever the shape; answering the oracle is local work at one point
-  (Section~\ref{sec:experiments}).
-\item \textbf{Coverage is stated and counted} (Section~\ref{sec:coverage}), and every reported
-  guarantee is re-checked by a certificate that shares nothing with the construction it checks.
-\end{enumerate}
-
-\todo{Reader's objections to pre-empt here, in order of likelihood: (1) ``you reimplemented their
-method and tuned yours'' --- the sample sweep is the defence, and it goes in the body; (2) ``local
-and seed-dependent, GCS is global'' --- answered only by the three-dimensional-plus-time baseline;
-(3) ``your linearized rows are not conservative, so what is guaranteed?'' --- Section
-\ref{sec:subproblem}, named paragraph; (4) ``no dynamics, no actuator limits''; (5) ``known
-deterministic motion is a strong assumption'' --- belongs in the abstract. Replace this list with
-the questions actually asked at the KSAS poster, November 2026.}
-
-% =====================================================================================
-\section{Related work}
-\label{sec:related}
-% Only claims read from the source are asserted. The four references marked \todo were read
-% through a summariser or an abstract only (idea/spacetime.md, ``Confidence and known gaps'') and
-% must be verified before this section is final.
-
-\paragraph{Configuration-time space.} Planning among moving obstacles in a space whose last
-coordinate is time goes back to Erdmann and Lozano-P\'erez~\cite{erdmann1987}, who represented
-space-time approximately by two-dimensional slices. Search-based methods discretize it
-directly (safe-interval path planning~\cite{phillips2011sipp}); sampling-based methods sample
-$(x,t)$ with a free arrival time~\cite{grothe2022strrt}. Both produce discrete or sampled
-trajectories rather than a smooth curve with a continuous-time guarantee.
-
-\paragraph{Corridors and graphs of convex sets.} The convex-optimization branch of the family
-builds convex sets in the planning space before the solve and constrains the curve inside them.
-Semantic corridors~\cite{ding2019ssc} do so along a reference; graphs of convex
-sets~\cite{marcucci2024gcs,marcucci2023science} replace the corridor with a graph of regions and
-a single convex relaxation over it, with the regions generated by iterative regional inflation
-(IRIS)~\cite{deits2015iris}. \todo{Verify from source: GCS (arXiv 2205.04422 and the SIAM paper)
-and IRIS were read via summariser and abstract only.} Tang et al.~\cite{tang2025stgcs} extend
-the graph to space-time for multi-robot planning, optimizing arrival time inside it, with
-piecewise-constant-velocity trajectories and other robots' planned paths as the only moving
-obstacles. Osburn, Peterson and Salmon~\cite{osburn2025stgcs} are the nearest prior work to this
-paper: B\'ezier control points carrying an explicit time component, IRIS-sampled convex sets in
-two spatial dimensions plus time, static or constant-velocity prismatic obstacles, and Clarabel as
-the conic solver. In their formulation the end point is pinned at a fixed point of space-time and
-the cost is spatial path length, so timing is not optimized; their own Table~I shows set count and
-solve time rising with the number of IRIS samples while coverage of free space remains incomplete,
-which is the observation this paper starts from. \todo{SPOT (arXiv 2602.01189), the only
-member of the family in three spatial dimensions plus time, caps its horizon at two seconds with
-binned time --- read via summariser only; verify before citing.}
-
-\paragraph{Supporting planes and the hull property.} The continuous-time guarantee below is the
-convex hull property of B\'ezier curves, standard machinery used by B\'ezier and B-spline planners
-for years; it is cited, not claimed. Zhang et al.\ give a sufficient condition under which the hull
-property holds in general spatio-temporal corridors~\cite{zhang2021hull}
-\todo{verify from source}. MADER~\cite{tordesillas2022mader} treats the separating plane as a
-decision variable, the alternative to linearizing it as done here.
-
-\paragraph{What is not attempted.} A coordinate transform that convexifies free space cannot
-exist: a convex set is simply connected and free space around an obstacle is not, and
-homeomorphisms preserve that. The strongest published version, navigation
-functions~\cite{rimon1991}, deforms geometry and leaves topology alone, which is why its guarantee
-holds from almost all initial conditions. \todo{Rimon and Koditschek read at abstract level only.}
-
-\paragraph{The strengths of the graph family, stated here and in Section~\ref{sec:limitations}.}
-Graph-of-convex-sets methods need no initial guess; they are globally optimal with respect to
-their graph; and their small cases solve in a fraction of a second. This paper is local, seeded,
-and argues about how cost scales with hazard geometry and dimension, not about wall-clock on
-small problems.
-
-% =====================================================================================
-\section{The lifted setting}
-\label{sec:setting}
-
-\begin{definition}[Lifted space]
-\label{def:lift}
-Let $\ds\in\{2,3\}$ be the spatial dimension. The lifted space is $\R^{\ds+1}$ with points
-$z=(x,\tau)$, $x\in\R^{\ds}$, $\tau\in\R$. The axis scale is one: $\|\cdot\|$ is the Euclidean
-norm on $\R^{\ds+1}$ and every ball, distance and projection below is taken in it. Nothing in the
-construction singles out the time axis.
-\end{definition}
-
-\begin{definition}[Trajectory]
-\label{def:curve}
-The decision variable is the control polygon $P_0,\dots,P_N\in\R^{\ds+1}$, $P_j=(x_j,t_j)$,
-stacked into $\mathbf p\in\R^{(N+1)(\ds+1)}$. With $u\in[0,1]$ the curve parameter (not time),
+For a segment with control points $Q_i$ and centroid $c$, clip a hazard to a
+ball $B(c,r)$. For each relevant piece $\mathcal L$ of this clipped set, choose
+a unit normal $n$ pointing from the hazard toward $c$, and compute
 \[
-Z(u)=\sum_{j=0}^{N}B_j^N(u)\,P_j,\qquad B_j^N(u)=\binom{N}{j}u^j(1-u)^{N-j},\qquad
-\tau(u)=\sum_j B_j^N(u)\,t_j .
+ \widehat b\ \ge\ \sup_{z\in\mathcal L}n^\top z,
+ \qquad n^\top Q_i\ \ge\ \widehat b+\varepsilon\quad\text{for every }i,
 \]
-\end{definition}
+where $\varepsilon>0$ is a separation margin. The hull property then separates
+the entire segment from that piece. Applying the construction to every piece
+covers the clipped hazard. It covers the full hazard if the clipping ball
+contains every point the segment can reach within the trust region.
 
-\begin{definition}[Segments]
-\label{def:segments}
-De Casteljau subdivision into $M$ segments gives row-stochastic matrices $A^{(k)}$ and, for
-segment $k$, control points, centroid and radius
-\[
-Q^{(k)}_i=\sum_j A^{(k)}_{ij}P_j,\qquad
-c^{(k)}=\tfrac{1}{N+1}\sum_i Q^{(k)}_i=\sum_j w^{(k)}_j P_j,\qquad
-E^{(k)}=\max_i\|Q^{(k)}_i-c^{(k)}\|,
-\]
-with $w^{(k)}\ge 0$, $\sum_j w^{(k)}_j=1$.
-\end{definition}
+\textbf{Algorithm and proof obligations.} Rebuild the walls at each iterate,
+solve a convex subproblem, and check the candidate using the exact constraints.
+The objective combines spatial control-point smoothness, an optional arrival-time
+penalty, and elastic penalties. Prove the support bound and coverage condition;
+explain how the independent clearance check is computed. Linearized rows alone
+are not a safety certificate.
 
-\begin{lemma}[Hull property]
-\label{lem:hull}
-For $u$ in segment $k$'s parameter interval, $Z(u)\in\conv\{Q^{(k)}_i\}_{i=0}^{N}$.
-\end{lemma}
-Standard; see e.g.~\cite{zhang2021hull} for its use in corridors.
+\newpage
+\section{Experiments: the evidence the paper needs}
+All entries below are planned experiments, not results. Use one frozen solver
+build and record the full configuration. Report failures alongside successful runs.
 
-\begin{definition}[Keep-out set of a moving body]
-\label{def:koz}
-Body $m$ has known motion $\pi_m$ on its existence window $[T^0_m,T^1_m]$ and radius $r_m$. Its
-lifted centreline and keep-out set are
-\[
-\gamma_m(\tau)=(\pi_m(\tau),\tau),\qquad
-\Gamma_m=\gamma_m([T^0_m,T^1_m]),\qquad
-\Kz_m=\Gamma_m\oplus\ball(0,r_m).
-\]
-If $\pi_m$ is polynomial of degree $N_m$, then $\gamma_m$ is a B\'ezier curve in $\R^{\ds+1}$
-whose first and last control points carry the existence window. $\Kz_m$ is not convex unless
-$\pi_m$ is affine.
-\end{definition}
-
-\begin{remark}
-The last sentence is why the rest of the paper exists: a nonconvex keep-out set admits no single
-supporting half-space, and the hull property alone certifies nothing against it.
-\end{remark}
-
-% =====================================================================================
-\section{What the construction requires: a support oracle}
-\label{sec:oracle}
-
-Fix a segment with centroid $c$ and a clipping ball $\ball(c,\rclip)$, defined in
-Section~\ref{sec:construction}. The construction asks the keep-out set $\Kz$ for the following
-and nothing more.
-\begin{itemize}
-\item[\textbf{O1}] The nearest point of $\Kz$ to $c$, or equivalently the direction from $\Kz$
-  back to $c$. (Used for the wall's normal.)
-\item[\textbf{O2}] A rigorous upper bound on $\max\{\,n^\top z : z\in\Kz\cap\ball(c,\rclip)\,\}$
-  for a given direction $n$. (Used for the wall's offset.)
-\item[\textbf{O3}] A partition of $\Kz\cap\ball(c,\rclip)$ into pieces, one wall each. Any
-  partition is sound; the choice affects quality only.
-\item[\textbf{O4}] Optionally, the active face of $\Kz$ at the nearest point, for the rotation
-  term of the linearized row (Section~\ref{sec:subproblem}). Without it the rows remain sound
-  and converge more slowly.
-\end{itemize}
-
-\begin{lemma}[Support functions do not see convexity]
-\label{lem:support}
-For a compact set $S\subset\R^{d}$ and any direction $n$,
-$h_S(n):=\max_{z\in S}n^\top z=\max_{z\in\conv S}n^\top z=h_{\conv S}(n)$.
-\end{lemma}
-\begin{proof}
-A linear functional attains its maximum over a compact convex set at an extreme point, and every
-extreme point of $\conv S$ belongs to $S$.
-\end{proof}
-
-Lemma~\ref{lem:support} is what makes O2 answerable without ever forming a convex
-over-approximation of the hazard: the wall built against a piece of $\Kz$ and the wall built
-against that piece's convex hull are the same wall, so the convexity of $\Kz$ is irrelevant to the
-construction. It is also the step at which a tangent plane fails: a tangent to the tube at the
-nearest centreline point is a support of $\Kz$ only when $\Kz$ is convex.
-
-\todo{This section is the paper's spine and does not exist in this form in any prior document.
-Expand: one paragraph on why O1--O2 are cheap for anything with a B\'ezier centreline (nearest
-point is a one-dimensional minimization; the support bound is a De Casteljau ceiling), one on why
-they are cheap in any dimension.}
-
-% =====================================================================================
-\section{Instantiations: ball, curved tube, shadow}
-\label{sec:instantiations}
-
-\paragraph{Ball and lifted tube.} A static ball is Definition~\ref{def:koz} with $\pi_m$ constant;
-a body of polynomial motion is the same definition with a B\'ezier centreline. Neither needs
-anything beyond Section~\ref{sec:oracle}.
-
-\paragraph{Shadow.} A ground station is a point $p\in\R^{\ds}$ present at every instant.
-
-\begin{definition}[Center surface]
-\label{def:center-surface}
-Stretching the centreline of body $m$ away from the station,
-\[
-\Sigma_m(\tau,u)=\bigl(p+u\,(\pi_m(\tau)-p),\ \tau\bigr),\quad u\ge 1,\qquad
-\Kz_m^{p}=\bigcup_{\tau,\,u\ge 1}\ball\bigl(\Sigma_m(\tau,u),\ u\,r_m\bigr).
-\]
-\end{definition}
-At $u=1$ this is the body itself with its own radius; what widens with $u$ is the shadow, because a
-point source at finite distance casts an umbra of constant angular thickness. Time is not
-stretched: the station maps each instant to itself, so every shadow wall carries a nonzero time
-component like every other wall.
-
-\begin{lemma}[Shadow of a convex body at one instant]
-\label{lem:shadow}
-For a point observer and a convex body not containing it, the set of positions whose line of
-sight to the observer meets the body is convex.
-\end{lemma}
-\begin{proof}
-A shadow position is a body point scaled from the observer by a factor at least one. A convex
-combination of two such positions is a convex combination of body points scaled by the averaged
-factor, which is at least one, and a convex combination of body points is a body point.
-\end{proof}
-
-\begin{lemma}[The sweep is the umbra]
-\label{lem:umbra}
-Position $q$ is occluded at instant $\tau$ if and only if $q=p+u(z-p)$ for some body point $z$
-and some $u\ge 1$, if and only if $(q,\tau)\in\Kz^p_m$. With no station, $u\equiv 1$ and
-$\Kz^p_m=\Kz_m$.
-\end{lemma}
-
-\begin{remark}
-The shadow of a \emph{moving} body in space-time is not convex --- the cone rotates as the body
-crosses the sight line --- which is exactly why the wall below is a support of a clipped piece and
-not a tangent plane, for the shadow as for the tube. For fixed $u$ the stretch is affine, so
-$\Sigma_m(\cdot,u)$ is again a B\'ezier curve and every bound of Section~\ref{sec:construction}
-applies to it unchanged. There is no occlusion-specific branch in the construction; the body and
-its shadow are one keep-out set read at two stretch factors.
-\end{remark}
-
-% =====================================================================================
-\section{The clip, the wall, and the segment certificate}
-\label{sec:construction}
-Everything in this section is per segment $k$ and per body $m$, with the centroid $c=c^{(k)}$
-fixed at the reference iterate.
-
-\begin{definition}[Nearest point and clipping radius]
-\label{def:clip}
-\[
-\tau^\star\in\arg\min_{\tau\in[T^0_m,T^1_m]}\|c-\gamma_m(\tau)\|,\qquad
-f=\gamma_m(\tau^\star),\qquad d=\|c-f\|,
-\]
-\[
-\rclip=\max\bigl(\min(d,\,r_{\mathrm{clip,max}}),\ r_{\mathrm{floor}}\bigr),\qquad
-r_{\mathrm{clip,max}}=r_m+E^{(k)}+\Delta\sqrt{\ds+1},
-\]
-where $\Delta$ is the trust radius of the current iteration and the floor is either the
-construction floor $r_m$ or the reach floor $\max(r_m,\,E^{(k)}+\Delta\sqrt{\ds+1})$ of
-Section~\ref{sec:coverage}.
-\end{definition}
-
-\begin{definition}[Clipped keep-out volume and approaches]
-\label{def:clipped}
-$\Lz^{(k)}_m=\Kz_m\cap\ball(c,\rclip)$. Let
-$I=\{\tau:\|\gamma_m(\tau)-c\|\le\rclip+r_m\}$, cut $I$ at every interior local maximum of
-$\tau\mapsto\|\gamma_m(\tau)-c\|$, and call each resulting sub-interval $I_\ell$ an
-\emph{approach}, with piece
-$\Lz^{(k)}_{m,\ell}=(\gamma_m(I_\ell)\oplus\ball(0,r_m))\cap\ball(c,\rclip)$.
-\end{definition}
-
-\begin{lemma}[Band containment]
-\label{lem:band}
-$\Lz^{(k)}_m\subseteq\gamma_m(I)\oplus\ball(0,r_m)$, and the pieces cover $\Lz^{(k)}_m$ for any
-partition of $I$.
-\end{lemma}
-\begin{proof}
-A point of $\Lz^{(k)}_m$ is within $r_m$ of some $\gamma_m(\tau)$ and within $\rclip$ of $c$; the
-triangle inequality puts $\tau$ in $I$.
-\end{proof}
-
-One wall per approach, never one per body: two separated lumps inside the ball are two
-approaches, and a single lump that wraps the centroid is also two, because its single wall is
-non-separating. The cut position is a quality choice; soundness holds for any partition (O3).
-
-\begin{definition}[Supporting half-space]
-\label{def:wall}
-For one piece $\Lz=\Lz^{(k)}_{m,\ell}$,
-\[
-y^\star\in\arg\min_{y\in\Lz}\|c-y\|,\qquad
-n=\frac{c-y^\star}{\|c-y^\star\|},\qquad
-b=h_{\Lz}(n)=\max_{z\in\Lz}n^\top z .
-\]
-\end{definition}
-
-\begin{lemma}[Half-space containment]
-\label{lem:containment}
-$\Lz\subseteq\{z:n^\top z\le b\}$, with no convexity assumption on $\Kz_m$.
-\end{lemma}
-
-\begin{lemma}[The direction does not depend on $y^\star$]
-\label{lem:direction}
-With $f_\ell=\gamma_m(\tau^\star_\ell)$ the nearest centreline point within approach $\ell$,
-$n=(c-f_\ell)/\|c-f_\ell\|$ whenever the quotient of Definition~\ref{def:wall} exists, and this
-form is used also when it does not (centroid inside the keep-out set). The only undefined case is
-$c=f_\ell$; it, and a station lying within $r_m$ of the centreline, are counted as dropped walls,
-never silently treated as out of reach.
-\end{lemma}
-
-\paragraph{Computing $b$.} By Lemma~\ref{lem:hull} applied to the body's own B\'ezier centreline,
-subdivided over $I_\ell$ (and over the stretch parameter $u$ when a station is present), the
-support of the piece is at most the largest $n^\top$ of the subdivided control points plus $r_m$.
-The construction uses this rigorous ceiling $\hat b\ge b$; Lemma~\ref{lem:containment} holds a
-fortiori. Hulling sampled centreline points is never done, because a curve bulges outside such a
-hull.
-
-\begin{definition}[Exact rows]
-\label{def:rows}
-For every control point of segment $k$ and every wall $(k,m,\ell)$:
-$\;n_{km\ell}^\top Q^{(k)}_i\ \ge\ \hat b_{km\ell}$, $i=0,\dots,N$.
-\end{definition}
-
-\begin{proposition}[Segment certificate]
-\label{prop:certificate}
-If the $N+1$ rows of one wall hold, then $n^\top Z(u)\ge\hat b$ for every $u$ in segment $k$, hence
-$Z(u)\notin\operatorname{int}\Lz$: the curve does not enter the interior of the clipped keep-out
-volume for all times in the segment.
-\end{proposition}
-\begin{proof}
-Lemma~\ref{lem:hull} writes $Z(u)$ as a convex combination of the $Q^{(k)}_i$; linearity gives
-$n^\top Z(u)\ge\hat b$; an interior point of $\Lz$ has $n^\top z<b\le\hat b$.
-\end{proof}
-The proof uses the same $n$ for all $i$; one plane per control point would destroy it.
-
-\slot{1}{Formulation schematic: clipped keep-out volume, clipping ball, supporting half-space,
-trust box, in one picture; Condition~\ref{cond:coverage} should be readable from it.}
-
-% =====================================================================================
-\section{Coverage}
-\label{sec:coverage}
-Proposition~\ref{prop:certificate} certifies against $\Kz_m\cap\ball(c,\rclip)$, not against
-$\Kz_m$. The trust region closes the difference, and nothing else does.
-
-\begin{lemma}[Reachability]
-\label{lem:reach}
-If $\|\mathbf p^{+}-\mathbf p\|_\infty\le\Delta$, then for every $u$ in segment $k$,
-$Z^{+}(u)\in\ball\bigl(c,\;E^{(k)}+\Delta\sqrt{\ds+1}\bigr)$.
-\end{lemma}
-\begin{proof}
-Each $Q^{+}_i-Q_i$ is a convex combination of vectors of $\infty$-norm at most $\Delta$, so
-$\|Q^{+}_i-c\|\le E^{(k)}+\Delta\sqrt{\ds+1}$, and the ball is convex.
-\end{proof}
-
-\begin{condition}[Coverage]
-\label{cond:coverage}
-$\rclip\ \ge\ E^{(k)}+\Delta\sqrt{\ds+1}$.
-\end{condition}
-Under Condition~\ref{cond:coverage} the clipping ball contains the whole next-iterate segment, so
-Proposition~\ref{prop:certificate} certifies against the full $\Kz_m$. The condition does not
-involve $r_m$ or the hazard. With the construction floor $r_m$ it fails exactly when the segment is
-close --- $r_m<d<E^{(k)}+\Delta\sqrt{\ds+1}$ --- which is where the constraint binds; this is the
-hole. The reach floor makes the condition hold unconditionally, at the price of conservatism where
-the row is active, paid in iterations rather than correctness. Whichever floor a run uses, the
-number of walls failing the condition is exported per iteration, and no figure in this paper is
-drawn from a run in which that count is nonzero.
-
-\slot{6}{Coverage: how often the condition fails per iteration and per run with the construction
-floor; what the reach floor costs in iterations and minimum clearance on the same configurations.}
-
-\todo{Independent certificate: state $\mu(\mathbf p)=\min_u\min_{m}\|x(u)-\pi_m(\tau(u))\|-r_m$
-over bodies alive at $\tau(u)$, evaluated at the returned iterate, sharing nothing with the
-construction. Every reported guarantee is re-checked by it.}
-
-% =====================================================================================
-\section{The convex subproblem and the algorithm}
-\label{sec:subproblem}
-
-\paragraph{Subproblem at reference $\mathbf p^{\mathrm{ref}}$.}
-\[
-\min_{\mathbf p,\ \sigma\ge 0}\quad
-\tfrac12\,\mathbf p^\top H\mathbf p\;+\;w_t\,t_N\;+\;\lambda\sum\sigma
-\]
-subject to: boundary conditions ($P_0$ fixed, $x_N$ fixed, $t_N$ free or pinned); a workspace
-box; monotonicity $t_{j+1}-t_j\ge\delta>0$; the slant limit
-$\|x_{j+1}-x_j\|\le v_{\max}(t_{j+1}-t_j)$ as a second-order cone with no slack; the linearized
-keep-out and line-of-sight rows with elastic slack $\sigma$; and the trust region
-$\|\mathbf p-\mathbf p^{\mathrm{ref}}\|_\infty\le\Delta$.
-
-\paragraph{The linearized row, and what it does not guarantee.} The exact row of
-Definition~\ref{def:rows} freezes $n$ and $\hat b$ at the reference, but both move with the
-centroid once the control points move. The row imposed in the subproblem is the first-order model
-\[
-g_{ki}(\mathbf p^{\mathrm{ref}})+\sum_j\bigl(A^{(k)}_{ij}\,n+w^{(k)}_j\,\kappa_{ki}\bigr)^{\!\top}
-(P_j-P_j^{\mathrm{ref}})\ \ge\ 0,\qquad
-\kappa_{ki}=\frac{(I-P_F)(I-nn^\top)\,(Q^{(k)}_i-s)}{\|c-y^\star\|},
-\]
-with $s$ the support point on the plane and $P_F$ the projector onto the active face at $y^\star$
-(O4). \textbf{This row is not conservative}: a point satisfying it may violate the exact row.
-Soundness is untouched because every certificate, merit and gate in this paper rebuilds the exact
-rows at the iterate it grades; the linearized row only steers the solver.
-
-\paragraph{Objective.} $H$ is assembled from second differences of the spatial coordinates only,
-so it is blind to timing; physics enters through the constraints. Arrival time is $t_N$ because a
-B\'ezier passes through its last control point, so its penalty is linear and the subproblem stays a
-QP with cones. \todo{State the slant-limit sufficiency lemma (clearing the denominator requires
-$\tau'>0$, which is what makes monotonicity load-bearing) and the trap: a time penalty with no
-speed cap collapses arrival to $\delta N$.}
-
-\paragraph{Algorithm.} \todo{Translate SPEC.md section 3, steps 1--9: rows built at the
-reference; conic solve with duals; bootstrap step; ratio test with the exact merit ($J$ is exactly
-quadratic, so the two merits differ only because the half-spaces moved); accept, expand, halve;
-success stops that require the exact certificate; elastic weight raised in place on the SNOPT
-elastic-mode rule with a stall trigger; failure stops reported as failures; the returned iterate
-and the fallback, flagged. State what ``converged'' asserts (feasibility plus no further progress)
-and does not (stationarity; no KKT residual is tested).}
-
-\slot{2}{Per-iterate reconstruction: the same segment across iterations, the half-space
-re-aiming as the trajectory moves, with the ratio $\rho$ beneath. The claim lives in this figure.
-\textbf{Sketch this first, with fake data.}}
-
-% =====================================================================================
-\section{Experiments}
-\label{sec:experiments}
-\todo{No number in this section until the measurement pass. Every number arrives from a
-figure-grade sidecar; a build that cannot find one fails.}
-
-\subsection{Thesis demonstration: line of sight through a moving occluder}
-Demo B. A body on a circular lap above a ground station, the corridor tangent to the shadow
-ring so the shadow sweeps along it, three spatial dimensions plus time. The constrained run keeps
-the link start to finish; the pair, identical but for the station rows, loses it for a measurable
-interval; the escape is retiming, not a sidestep.
-\slot{3}{Line-of-sight pair: geometry above, sight margin over time beneath, baseline dipping
-below zero and the constrained run staying above.}
-
-\subsection{Cost evidence: scaling with hazard count}
-Demo C. A scheduled-traffic family with hazard count as the axis, every hazard moving, with
-two-plus-time and three-plus-time twins sharing one conflict schedule. Report per count: walls,
-rows (equal to walls times $N+1$, an identity the bench asserts), solve time with spread,
-iterations, weight raises, success rate, and the coverage count.
-\slot{5}{Scaling curve: solve time and row count against hazard count, the linear bound overlaid
-as a bound, the baseline's sample sweep on the same axes where it has run.}
-
-\subsection{Generality: approach to a rotating target}
-Demo A. A chaser to a fixed port on a stabilised bus whose appendages rotate; the decision is
-when to cross, made inside one subproblem; a cluster of balls on B\'ezier circular paths costs the
-same kind of row as a static ball. Kinematic only; no gravity, no propellant, not a rendezvous
-result.
-\slot{4}{Timing pair: the agent waits for the gap; the pair with fixed timing is caught.}
-
-\subsection{Comparison baseline}
-\todo{Open conflict recorded in SPEC.md section 6: public graph-of-convex-sets implementation
-versus a dimension-agnostic re-implementation of Osburn et al. The candidate resolution --- public
-implementation for the two-plus-time fairness argument, our own only for three-plus-time where no
-public implementation runs --- has not been chosen. Whichever is chosen: same conic solver, same
-machine, IRIS sample count swept as in their Table~I, both methods graded by our independent
-certificate, their published numbers beside ours as a check on the reimplementation.}
-
-\begin{table}[h]
-\centering
-\caption{Experiment table: what each experiment must show, and what would make it fail.}
-\begin{tabular}{p{28mm}p{52mm}p{52mm}}
+\renewcommand{\arraystretch}{1.18}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{32mm}X@{}}
 \toprule
-experiment & must show & fails if \\
+Experiment & Question and required evidence \\
 \midrule
-line of sight (B) & link held start to finish; pair loses it; escape is retiming & pair also holds the link; figure and tested pair differ in configuration \\
-scaling (C) & rows linear in hazard count, inside the bound; time against count & a vacuous count axis; a confounded horizon knob \\
-rotating target (A) & crossing time decided in one subproblem & figure implies dynamics, propellant, or a rendezvous result \\
-baseline, 2+time & feasibility, quality and time against the graph method on its own cases & the baseline matches our quality at comparable time with no seed --- then the paper's contribution is consequences 1 and 4 only, and says so \\
-baseline, 3+time & the cell complex is the dominant cost in four dimensions & cannot be attributed to the method rather than to the baseline's tuning --- the sample sweep is the defence \\
-coverage & how often the condition fails; what the reach floor costs & --- \\
-ablations & rotation term on/off; reach floor on/off; time weight swept; start weight & --- \\
+Moving shadow (B) & Does the construction preserve line of sight? Compare with
+station constraints disabled; show visibility margin over time and whether the
+successful escape comes from retiming. \\
+Traffic scaling (C) & How does total runtime grow with hazard count in two and
+three spatial dimensions? Report row and approach counts, iterations, success
+rate, and time spent answering geometric queries. \\
+Rotating target (A) & Can the same method choose when to cross moving appendages?
+Compare free timing with fixed timing. This is a kinematic demonstration. \\
+ST-GCS comparison & On matched scenes, compare total computation time, trajectory
+quality, and feasibility. Include graph construction, our initialization cost,
+and parameter sweeps. Validate any reimplementation against published cases. \\
+Local baseline and coverage & Does the support construction improve on ordinary
+local linearization? Test curved hazards and shadows. Compare the coverage floor
+on/off and report conservatism, failures, and independently checked clearance. \\
 \bottomrule
-\end{tabular}
-\end{table}
+\end{tabularx}
 
-% =====================================================================================
-\section{Limitations}
-\label{sec:limitations}
-In this order, each in its own paragraph: local and seeded, the passing side inherited from the
-initialization, stated as the price of a local oracle; ``converged'' is feasibility plus no
-further progress, not stationarity; the hole of Section~\ref{sec:coverage} and its measured rate;
-the conservatism of the reach floor; the strengths of the graph family (no seed, global with
-respect to the graph, fast on small cases); the scope boundary --- deterministic known motion,
-offline solve, binary occlusion, a speed cap as the only dynamics.
+\textbf{Figures to build.} (1) One segment, its clipped hazard, and the wall
+reconstructed across iterations; (2) the shadow comparison and visibility margin;
+(3) runtime and success rate against hazard count; (4) the rotating-target timing
+comparison. Put coverage and ablations in a compact table.
 
-\section{Conclusion}
-\todo{Written last.}
+\section{Discussion: what a reviewer will challenge}
+\textbf{Novelty.} Which part improves on existing separating-plane methods?
+Identify the construction and its useful consequences precisely.
 
-\paragraph{Relation to the conference version.} \todo{Cover-letter paragraph: this paper extends
-a two-page KSAS 2026 conference paper by the authors. New here: the oracle interface as the claim,
-the supporting half-space construction in full, per-iterate reconstruction, the coverage condition
-and its count, proofs as numbered lemmas, a comparison baseline actually run, a scaling
-experiment, and demos built as pairs.}
+\textbf{Cost.} Fixed approach count and polynomial degree give a row count linear
+in segments times hazards. Approach count, oracle evaluation, and iteration count
+may still depend on geometry. Total runtime must be measured.
 
-\bibliographystyle{plain}
-\bibliography{refs}
+\textbf{Fairness.} Our solver is local and depends on initialization. Graph
+methods search route alternatives represented by their graph. Compare quality
+and success as well as runtime; unrelated examples do not establish a speedup.
+
+\textbf{Scope.} Known deterministic motion, offline planning, binary occlusion,
+and kinematic constraints. No global-optimality or stationarity claim. Safety
+claims require the stated coverage and verification conditions.
+
+\section{Conclusion to write after the experiments}
+State which hazards the construction handled, under which safety conditions,
+and the measured trade-off against the baselines. The journal extends the KSAS
+two-page paper with the full construction and proofs, coverage analysis, and
+comparative experiments. No performance conclusion is available yet.
+
+\smallskip
+{\small\textbf{Starting references:}
+\href{https://arxiv.org/abs/2508.10203}{Osburn et al., ST-GCS (2025)};
+\href{https://arxiv.org/abs/2503.00583}{Tang et al., ST-GCS (2025)};
+\href{https://arxiv.org/abs/2010.11061}{Tordesillas and How, MADER}.
+Full bibliography: \texttt{refs.bib}. Detailed plan: \texttt{SPEC.md}.}
 \end{document}

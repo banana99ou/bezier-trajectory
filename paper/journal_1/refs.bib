@@ -1,6 +1,11 @@
 % Entries marked "note = {UNVERIFIED ...}" were read via summariser or abstract only
 % (idea/spacetime.md, section "Confidence and known gaps"). Verify against the source
-% and delete the note before submission. Read from PDF in full: osburn2025stgcs, tang2025stgcs.
+% and delete the note before submission.
+%
+% Read from PDF in full: osburn2025stgcs, tang2025stgcs, and -- as of 2026-09-21 --
+% marcucci2024gcs, marcucci2023science, deits2015iris, zhang2021hull, srivastava2026spot.
+% Still UNVERIFIED: tang2026searchstgcs, phillips2011sipp, grothe2022strrt, ding2019ssc,
+% tordesillas2022mader, rimon1991, han1979exact.
 
 @article{osburn2025stgcs,
   author  = {Osburn, Jared and Peterson, Cameron and Salmon, John},
@@ -34,34 +39,53 @@
   number  = {1},
   pages   = {507--532},
   year    = {2024},
-  note    = {arXiv:2101.11565. UNVERIFIED: read via summariser only.}
+  doi     = {10.1137/22M1523790},
+  note    = {arXiv:2101.11565v5. Read from PDF in full 2026-09-21; archived at doc/refs/papers/. The archived copy is the arXiv version; if a numbered remark or section is cited in the text, check the number against the published SIAM article. This paper contains no Bezier material -- do not cite it for the hull property.}
 }
 
 @article{marcucci2023science,
   author  = {Marcucci, Tobia and Petersen, Mark and von Wrangel, David and Tedrake, Russ},
-  title   = {Motion Planning Around Obstacles with Convex Optimization},
+  title   = {Motion planning around obstacles with convex optimization},
   journal = {Science Robotics},
   volume  = {8},
   number  = {84},
+  eid     = {eadf7843},
   year    = {2023},
-  note    = {arXiv:2205.04422. UNVERIFIED: read via summariser only.}
+  doi     = {10.1126/scirobotics.adf7843},
+  note    = {arXiv:2205.04422v1. Read from PDF in full 2026-09-21; archived at doc/refs/papers/. The archived copy is the preprint and its section numbering does NOT match the published article -- never cite a section number of this paper without relocating it in the published version. Author name "von Wrangel" must stay lowercase.}
 }
 
 @inproceedings{deits2015iris,
   author    = {Deits, Robin and Tedrake, Russ},
   title     = {Computing Large Convex Regions of Obstacle-Free Space Through Semidefinite Programming},
-  booktitle = {Algorithmic Foundations of Robotics XI (WAFR 2014)},
-  publisher = {Springer},
+  booktitle = {Algorithmic Foundations of Robotics XI},
+  series    = {Springer Tracts in Advanced Robotics},
+  volume    = {107},
+  editor    = {Akin, H. Levent and Amato, Nancy M. and Isler, Volkan and van der Stappen, A. Frank},
+  pages     = {109--124},
+  publisher = {Springer International Publishing},
+  address   = {Cham},
   year      = {2015},
-  note      = {UNVERIFIED: search summary only.}
+  doi       = {10.1007/978-3-319-16595-0_7},
+  note      = {WAFR 2014. Read from PDF in full 2026-09-21; archived at doc/refs/papers/ (authors' camera-ready, byte-identical to the MIT copy; section numbers verified against the preprint, not the Springer typesetting).}
 }
 
-@article{zhang2021hull,
-  author  = {Zhang, Zhi and Yadmellat, Peyman and Gao, Ke},
-  title   = {A Sufficient Condition for Convex Hull Property in General Convex Spatio-Temporal Corridors},
-  journal = {arXiv preprint arXiv:2110.00065},
-  year    = {2021},
-  note    = {UNVERIFIED: read via summariser only. Load-bearing for the hull argument; read from source.}
+@inproceedings{srivastava2026spot,
+  author    = {Srivastava, Astik and Chackenkulam, Thomas J. and Teja, Bitla Bhanu and Thomas, Antony and Krishna, Madhava},
+  title     = {{SPOT}: Spatio-Temporal Obstacle-free Trajectory Planning for {UAVs} in Unknown Dynamic Environments},
+  booktitle = {IEEE International Conference on Robotics and Automation (ICRA)},
+  year      = {2026},
+  note      = {arXiv:2602.01189v3, accepted at ICRA 2026. Read from PDF in full 2026-09-21; archived at doc/refs/papers/.}
+}
+
+@inproceedings{zhang2021hull,
+  author    = {Zhang, Weize and Yadmellat, Peyman and Gao, Zhiwei},
+  title     = {A Sufficient Condition for Convex Hull Property in General Convex Spatio-Temporal Corridors},
+  booktitle = {2022 IEEE Intelligent Vehicles Symposium (IV)},
+  pages     = {1033--1039},
+  year      = {2022},
+  doi       = {10.1109/IV51971.2022.9827156},
+  note      = {arXiv:2110.00065v2. Read from PDF in full 2026-09-21; archived at doc/refs/papers/. Author given names and the venue were wrong in an earlier version of this entry (it read "Zhi Zhang ... Ke Gao", @article, arXiv-only, 2021); verified against the PDF title block and Crossref.}
 }
 
 @article{erdmann1987,
