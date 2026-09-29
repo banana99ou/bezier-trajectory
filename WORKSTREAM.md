@@ -206,7 +206,10 @@ commit or says "SPEC impact: none" in its message.
 So: `journal.draft` + `journal.baseline` + `journal.bench` run concurrently; `journal.freeze`
 whenever; `journal.demos` last.
 
-### `journal.freeze` — one solver, named, with a clean tree behind it
+### ~~`journal.freeze` — one solver, named, with a clean tree behind it~~
+**Closed 2026-09-29 on `b506f34`**: walls at the trust region's cap, suite red only on the three
+of `repo.red-test`, the 28-configuration table re-taken on that commit in
+[`SOLVER.md`](SOLVER.md) §Measurements. `journal.bench` may now measure.
 **E1 is refused — 2026-09-18, the user's decision: a hail mary, not a fix.** The committed clip
 rule of [`SPEC.md`](paper/journal_1/SPEC.md) §2.4 stands.
 **E1 is already gone from the tree (verified 2026-09-21)**, and the limit cycle it was aimed at was

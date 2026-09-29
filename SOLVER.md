@@ -256,111 +256,80 @@ registered rather than the first rung that certifies.
 
 ## Measurements
 
-> **STALE — describes no build that exists.** Taken 2026-09-08, before the wall reach was frozen at
-> the starting trust radius (`2ea964d`, 2026-09-20) and then moved to the trust region's cap
-> (2026-09-29, `paper/journal_1/SPEC.md` §2.7). Nothing below may be quoted. The freeze pass
-> re-takes it on a committed tree (`WORKSTREAM.md` `journal.freeze`).
-
-Last full pass **2026-09-08**, every registered configuration run twice — once with the reach floor
-on, which is the default, and once with `sound_clip=False` as the comparison arm. **28
-configurations, 56 runs:** `original` 5, `curve` 4, `loiter` 2, `diverse` 5, `wall` 6, `fence3d` 4,
-`door3d` 2. Defaults otherwise: speed cap off, arrival pinned, elastic weight starting at 100 and
-escalating in-loop (x10 per raise, cap 1e5). A run that enables `v_max` / `time_weight` /
-`free_arrival_time` is a different problem and must be re-measured.
+Last full pass **2026-09-29, on `b506f34`** — the build the journal measures (`WORKSTREAM.md`
+`journal.freeze`). Every registered configuration run twice: reach floor on, the default, and
+`sound_clip=False` as the comparison arm. **28 configurations, 56 runs:** `original` 5, `curve` 4,
+`loiter` 2, `diverse` 5, `wall` 6, `fence3d` 4, `door3d` 2. Defaults otherwise: speed cap off,
+arrival pinned, elastic weight starting at 100 and escalating in-loop (x10 per raise, cap 1e5),
+walls built at the trust region's cap (`paper/journal_1/SPEC.md` §2.7). A run that enables
+`v_max` / `time_weight` / `free_arrival_time` is a different problem and must be re-measured.
 
 **FIGURE-GRADE** is the gate, checked per run: converged AND certificate ≤ 1e-6 at the returned
 iterate AND clearance > 0 against the true obstacle trajectories AND total slack ≤ 1e-6 AND the
 occlusion certificate where a station exists AND `koz_unsound_clips` == 0 AND the resolved weight
 reported.
 
-**Provenance.** Taken on this branch (`solver/dual-elastic-weight`, `8dc5a4b` plus the
-escalation-trigger repair and the stall-stop removal that carry this table), extension built
-2026-09-08T19:18:23 into this worktree's venv, arm64 Darwin, Python 3.14.6 (PyO3 0.24 built with
-`PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1`, ABI-only). One escalating solve per configuration from a
-start of 100 and no retry from other starts (the 2026-09-07 fallback is removed, §Decided against);
-every row satisfies `Weight == 100 × 10^Raises`, which
-`test_a_row_is_traceable_to_the_start_weight_it_reports` asserts on a raising row. Against the
-2026-09-06 pass (same trigger, stall stop still in) 25 rows are unchanged at the table's precision;
-`curve` N8_seg4 and N8_seg16 run on past the stall (135 → 172 iterations by trust collapse, 82 →
-200 by the iteration cap) and `curve` N10_seg8's floor-OFF arm moves +0.1000 → +0.0956.
-The 2026-09-01 pass (`paper/journal-1` at `d42db55`, ladder era) is superseded: its
-`Weight` column held ladder rungs (800, 3000) the in-loop schedule cannot produce, and its `Iters`
-counted one rung, where iterations now accumulate across raises. **Every configuration that never
-raises is bit-identical to that pass's re-measured rows** (`original` N8_seg4, `loiter` N8_seg8);
-`wall` N8_seg16 moved +0.0556 → +0.0575 under the repaired trigger.
+**Provenance.** Commit `b506f34`; extension built 2026-09-29T18:16:16 into this worktree's venv,
+after the newest Rust source (18:15:50), with `rust_optimizer/` and `spacetime_bezier/` clean at that
+commit. arm64 Darwin, Python 3.14.6. Taken through `optimize_scenario` directly, both arms, one
+escalating solve per configuration from a start of 100, no retry. **Do not take this table with
+`tools/sweep_scenarios.py` as it stands:** its clip defaults to floor OFF unless `--sound-clip` is
+passed — the 2026-08-31 default flip missed it. All 28 floor-on rows equal the cap arm of the
+2026-09-29 eleven-policy comparison exactly, clearance and grade, and a second run of this pass
+reproduced it.
 
-The **Unsound walls** column is measured on the floor-OFF arm only. With the floor on it is zero for
-every configuration by construction, so a column of zeros would say nothing. **Weight** is the
-weight the run ENDED at, **Raises** how many x10 steps it took to get there from 100, and **Stop**
-is the loop's own reason (`stationary` and `merit_streak` are the success claims; `trust_collapse`
-is success only if certified, which the Grade column settles).
+The **Unsound walls** column is measured on the floor-OFF arm only; with the floor on it is zero by
+construction. **Weight** is the weight the run ENDED at, **Raises** how many x10 steps it took from
+100, and **Stop** is the loop's own reason (`stationary` and `merit_streak` are the success claims;
+`trust_collapse` is success only if certified, which the Grade column settles).
 
 | Scenario | Config | Unsound walls (floor OFF) | Clearance ON | Clearance OFF | Cert ON | Iters ON | Raises | Weight | Stop | Grade ON | Grade OFF |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `original` | N4_seg4 | 4 | +0.6189 | +0.6189 | 0.00e+00 | 11 | 0 | 100 | stationary | **yes** | no |
-| `original` | N4_seg8 | 4 | +0.3058 | +0.3060 | 0.00e+00 | 8 | 0 | 100 | stationary | **yes** | no |
-| `original` | N6_seg8 | 10 | +0.3231 | +0.3231 | 0.00e+00 | 9 | 0 | 100 | stationary | **yes** | no |
-| `original` | N8_seg4 | 10 | +0.6204 | +0.6204 | 0.00e+00 | 9 | 0 | 100 | stationary | **yes** | no |
-| `original` | N8_seg8 | 10 | +0.3230 | +0.3230 | 8.80e-09 | 10 | 0 | 100 | stationary | **yes** | no |
-| `curve` | N8_seg4 | 1 | +0.1000 | +0.1000 | 5.78e-01 | 172 | 3 | 100000 | trust_collapse | no | no |
-| `curve` | N8_seg8 | 3 | +0.0999 | +0.0894 | 8.85e-09 | 111 | 3 | 100000 | trust_collapse | **yes** | no |
-| `curve` | N8_seg16 | 2 | +0.1000 | +0.1000 | 1.02e+00 | 200 | 3 | 100000 | iteration_cap | no | no |
-| `curve` | N10_seg8 | 0 | +0.0989 | +0.0956 | 1.16e-09 | 88 | 2 | 10000 | trust_collapse | **yes** | no |
-| `loiter` | N8_seg8 | 2 | +35.3767 | +35.3204 | 0.00e+00 | 3 | 0 | 100 | stationary | **yes** | no |
-| `loiter` | N8_seg16 | 0 | +36.8459 | +36.8417 | 0.00e+00 | 3 | 0 | 100 | stationary | **yes** | yes |
-| `diverse` | N8_seg4 | 25 | +0.1136 | +0.1136 | 1.21e-10 | 39 | 1 | 1000 | stationary | **yes** | no |
-| `diverse` | N8_seg8 | 32 | +0.0279 | +0.0279 | 1.15e-07 | 60 | 2 | 10000 | stationary | **yes** | no |
-| `diverse` | N8_seg16 | 29 | +0.0051 | +0.0051 | 3.02e-08 | 58 | 2 | 10000 | stationary | **yes** | no |
-| `diverse` | N10_seg4 | 28 | +0.1085 | +0.1085 | 5.25e-08 | 31 | 1 | 1000 | stationary | **yes** | no |
-| `diverse` | N10_seg16 | 11 | +0.0074 | +0.0074 | 7.59e-08 | 47 | 2 | 10000 | stationary | **yes** | no |
-| `wall` | N8_seg2 | 22 | -0.0978 | -0.0978 | 4.50e+00 | 48 | 3 | 100000 | trust_collapse | no | no |
-| `wall` | N8_seg3 | 17 | -0.3056 | -0.3083 | 2.66e+00 | 44 | 3 | 100000 | trust_collapse | no | no |
-| `wall` | N8_seg4 | 14 | -0.4808 | -0.4784 | 2.88e+00 | 43 | 3 | 100000 | trust_collapse | no | no |
-| `wall` | N8_seg16 | 130 | +0.0575 | +0.0556 | 5.90e-11 | 55 | 2 | 10000 | merit_streak | **yes** | no |
-| `wall` | N10_seg16 | 130 | +0.2018 | +0.2018 | 0.00e+00 | 41 | 2 | 10000 | stationary | **yes** | no |
-| `wall` | N10_seg24 | 202 | +0.0667 | +0.0667 | 0.00e+00 | 41 | 2 | 10000 | stationary | **yes** | no |
-| `fence3d` | N8_seg2 | 22 | +0.1623 | +0.1623 | 0.00e+00 | 9 | 0 | 100 | stationary | **yes** | no |
+| `original` | N4_seg4 | 12 | +0.6189 | +0.6189 | 0.00e+00 | 11 | 0 | 100 | stationary | **yes** | no |
+| `original` | N4_seg8 | 18 | +0.2151 | +0.2151 | 0.00e+00 | 19 | 0 | 100 | stationary | **yes** | no |
+| `original` | N6_seg8 | 21 | +0.3231 | +0.3231 | 0.00e+00 | 10 | 0 | 100 | stationary | **yes** | no |
+| `original` | N8_seg4 | 12 | +0.6204 | +0.6204 | 0.00e+00 | 9 | 0 | 100 | stationary | **yes** | no |
+| `original` | N8_seg8 | 22 | +0.3230 | +0.3230 | 0.00e+00 | 10 | 0 | 100 | stationary | **yes** | no |
+| `curve` | N8_seg4 | 7 | +0.1000 | +0.1000 | 4.71e+00 | 48 | 3 | 100000 | trust_collapse | no | no |
+| `curve` | N8_seg8 | 13 | -0.8742 | +0.1000 | 5.61e+01 | 43 | 3 | 100000 | trust_collapse | no | no |
+| `curve` | N8_seg16 | 23 | +0.1000 | +0.1000 | 0.00e+00 | 64 | 3 | 100000 | trust_collapse | **yes** | no |
+| `curve` | N10_seg8 | 12 | +0.0758 | +0.1000 | 1.84e-08 | 47 | 2 | 10000 | trust_collapse | **yes** | no |
+| `loiter` | N8_seg8 | 24 | +43.6367 | +33.9050 | 0.00e+00 | 4 | 0 | 100 | stationary | **yes** | no |
+| `loiter` | N8_seg16 | 40 | +33.1094 | +32.3308 | 0.00e+00 | 3 | 0 | 100 | stationary | **yes** | no |
+| `diverse` | N8_seg4 | 28 | +0.1136 | +0.1136 | 4.37e-10 | 39 | 1 | 1000 | stationary | **yes** | no |
+| `diverse` | N8_seg8 | 48 | +0.0279 | +0.0279 | 4.23e-08 | 60 | 2 | 10000 | stationary | **yes** | no |
+| `diverse` | N8_seg16 | 87 | +0.0051 | +0.0051 | 2.13e-09 | 58 | 2 | 10000 | stationary | **yes** | no |
+| `diverse` | N10_seg4 | 28 | +0.1085 | +0.1085 | 1.11e-09 | 31 | 1 | 1000 | stationary | **yes** | no |
+| `diverse` | N10_seg16 | 86 | +0.0074 | +0.0074 | 2.54e-08 | 48 | 2 | 10000 | stationary | **yes** | no |
+| `wall` | N8_seg2 | 25 | -0.0978 | -0.0978 | 4.50e+00 | 48 | 3 | 100000 | trust_collapse | no | no |
+| `wall` | N8_seg3 | 46 | -0.3056 | -0.3082 | 2.66e+00 | 44 | 3 | 100000 | trust_collapse | no | no |
+| `wall` | N8_seg4 | 61 | -0.4808 | -0.4784 | 2.88e+00 | 43 | 3 | 100000 | trust_collapse | no | no |
+| `wall` | N8_seg16 | 130 | +0.0556 | +0.0556 | 0.00e+00 | 41 | 2 | 10000 | stationary | **yes** | no |
+| `wall` | N10_seg16 | 114 | -0.4892 | -0.4807 | 3.55e+00 | 50 | 3 | 100000 | trust_collapse | no | no |
+| `wall` | N10_seg24 | 202 | -0.4979 | +0.0667 | 3.86e+00 | 49 | 3 | 100000 | trust_collapse | no | no |
+| `fence3d` | N8_seg2 | 26 | +0.1623 | +0.1623 | 0.00e+00 | 9 | 0 | 100 | stationary | **yes** | no |
 | `fence3d` | N8_seg4 | 49 | +0.0342 | +0.0342 | 0.00e+00 | 13 | 0 | 100 | stationary | **yes** | no |
-| `fence3d` | N8_seg8 | 43 | +0.0087 | +0.0087 | 0.00e+00 | 10 | 0 | 100 | stationary | **yes** | no |
-| `fence3d` | N10_seg8 | 42 | +0.0088 | +0.0088 | 0.00e+00 | 10 | 0 | 100 | stationary | **yes** | no |
-| `door3d` | N8_seg4 | 36 | +0.9828 | +0.9827 | 0.00e+00 | 8 | 0 | 100 | stationary | **yes** | no |
-| `door3d` | N8_seg8 | 60 | +1.0044 | +1.0009 | 0.00e+00 | 9 | 0 | 100 | stationary | **yes** | no |
+| `fence3d` | N8_seg8 | 89 | +0.0087 | +0.0087 | 0.00e+00 | 10 | 0 | 100 | stationary | **yes** | no |
+| `fence3d` | N10_seg8 | 90 | +0.0088 | +0.0088 | 0.00e+00 | 10 | 0 | 100 | stationary | **yes** | no |
+| `door3d` | N8_seg4 | 36 | +0.9825 | +1.0062 | 0.00e+00 | 8 | 0 | 100 | stationary | **yes** | no |
+| `door3d` | N8_seg8 | 60 | +1.0044 | +1.0038 | 0.00e+00 | 9 | 0 | 100 | stationary | **yes** | no |
 
-**Figure-grade: 23 of 28 with the floor on, 1 of 28 with it off.** Three things have to travel with
-that, or the table misleads:
+**Figure-grade: 21 of 28 with the floor on, 0 of 28 with it off.** What travels with that:
 
-1. **The "Grade OFF" column is not a quality judgement on those runs.** 22 of its 27 no's are the
-   uncovered-walls condition *alone* — every other gate condition passes (measured 2026-09-06 by
-   reading `figure_grade_reasons` per run; re-read 2026-09-08, still 22). It measures the hole,
-   not the trajectories. The other five no's are `curve` N8_seg4 and `wall` N8_seg2/3/4 — four of
-   the five that fail with the floor on — plus `curve` N10_seg8's floor-OFF arm, which runs to the
-   iteration cap unconverged while its floor-ON arm is figure-grade. `curve` N8_seg16's floor-OFF
-   arm is one of the 22: converged at 1000, two uncovered walls.
-2. **Four of the five that fail with the floor ON fail for reasons unrelated to the clip.** `wall`
-   N8_seg2/3/4 penetrate either way (−0.0978, −0.3056, −0.4808; the 2026-09-01 pass had −0.1292,
-   −0.3002, −0.4098 from the ladder's cold restarts), which is the 2026-08-24 densification; `curve`
-   N8_seg4 does not converge either way and was a standing failure before any of this — it now
-   escalates to the cap and ends by trust collapse at 172 iterations holding 0.58 of slack, and no
-   start weight certifies it (held at 1e4, 1.3e-05; escalating from 1e3 / 1e4 / 1e5, 1.95e-05 /
-   2.09e-06 / 1.97e-05, measured 2026-09-08), so what it lacks is the basin, not the weight
-   (`WORKSTREAM.md` `solver.multistart`).
-3. **The fifth is the floor's own cost, and it is named rather than dropped.** `curve` N8_seg16
-   certifies at 2.39e-12 with the floor off (converged at 1000 after one raise, though not
-   figure-grade there either: 2 uncovered walls) and with it on escalates to the weight cap and
-   runs to the iteration cap inside an exact 5-iteration limit cycle, returning a certificate of
-   1.02. The stall stop that used to catch this cycle at iteration 82 with 2.87e-03 was removed on
-   2026-09-07 (trigger comment in `spacetime_optimizer.rs`); no iterate of the cycle is feasible,
-   so the best-iterate fallback has nothing to keep and the returned iterate is whatever phase of
-   the cycle the cap lands on. On the one scenario whose tube is genuinely non-convex, a rigorous
-   support ceiling is sometimes paid in convergence.
-   The clearance cost the 2026-09-01 pass recorded on `wall` N8_seg16 and N10_seg24 is gone at this
-   pass: +0.0575 ON against +0.0556 OFF, and +0.0667 both arms.
-
-Everything else is free — `original`, `diverse` and `fence3d` are identical to three decimals across
-all fourteen of their configurations, and `door3d` and `loiter` come out slightly better with the
-floor on. `curve` N8_seg8 and N10_seg8, which the ladder certified and which `f5a0ac1`'s
-never-expiring stall reference had over-escalated out of figure grade (certificates 5.1e-6 and
-1.5e-6 at the cap), are figure-grade again under the repaired trigger.
+1. **The "Grade OFF" column is not a quality judgement.** 21 of its 28 no's are the uncovered-walls
+   condition alone; every other gate condition passes. It measures the hole, not the trajectories.
+2. **The seven floor-on failures are three different things.**
+   - `wall` N8_seg2/3/4 penetrate in both arms. A timing-only retry recovered all three on the
+     2026-09-08 build (`artifacts/koz-principled-20260922/seed_controls/portfolio.json`, not re-run
+     here): initialization, until the seed test of `SPEC.md` §4.7 says otherwise.
+   - `curve` N8_seg4 ends on slack in both arms — the standing failure no start weight certifies
+     (`WORKSTREAM.md` `solver.multistart`).
+   - `curve` N8_seg8, `wall` N10_seg16 and `wall` N10_seg24 are **the cap's price**. Under the
+     starting radius all three certified. With the reach at the cap the floored clip balls are
+     large, and `curve` N8_seg8 and `wall` N10_seg24 clear with the floor OFF while penetrating with
+     it on. Named, not hidden: this is what covering every allowed step costs on this battery.
+3. **The previous pass (2026-09-08, 23 of 28) described a build that no longer exists** — two
+   solver changes ago. It lives in git history (`b506f34^:SOLVER.md`), not here.
 
 ### `loiter`, measured 2026-08-30 — the pass that found the gate blind to an unsound clip
 
