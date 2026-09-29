@@ -259,7 +259,9 @@ $$r_{\mathrm{clip}}=\operatorname{clip}\bigl(d,\ r_{\mathrm{floor}},\ r_{\mathrm
 =\max\bigl(\min(d,\,r_{\mathrm{clip,max}}),\ r_{\mathrm{floor}}\bigr),\qquad
 r_{\mathrm{clip,max}}=r_m+E^{(k)}+\Delta\sqrt{d_s+1},$$
 
-where $\Delta$ is the trust radius of the current iteration and the floor is one of two:
+where $\Delta$ is the walls' **reach radius**: the trust region's cap $\Delta_{\max}$, fixed for the
+whole run — not the live trust radius, and not the starting one (§2.7, decided 2026-09-29). The
+floor is one of two:
 
 $$r_{\mathrm{floor}}=\begin{cases}
 r_m & \text{construction floor, always applied}\\[2pt]
@@ -396,6 +398,32 @@ Four regimes of the construction floor ($r_{\mathrm{floor}}=r_m$), writing $R=E^
 | $r_m<d<R$ — segment close | $d$ | **no — this is the hole** |
 | $d\le r_m$ — centroid inside | $r_m$ | no unless $r_m\ge R$; the floor fixes the understated penetration, not coverage |
 
+**Which $\Delta$ the walls are built with — decided 2026-09-29.** Every wall, the ratio test's
+rebuild at the candidate, and the three certificates at the returned iterate use one radius, the
+trust region's cap $\Delta_{\max}$, fixed for the run. Two properties, and this is the only reach
+policy that has both without changing the trust region itself:
+- **Fixed in the iterate.** The walls are a function of the trajectory alone. Built at the live
+  radius, every trust resize moved the walls under an unchanged trajectory, and the ratio test
+  compared merits measured against different walls — the limit cycle that `2ea964d` removed.
+- **Covers every allowed step.** The trust region never exceeds its cap, so with the reach floor
+  on, C holds at every iteration, not only while the trust region sits at its start. `2ea964d`
+  froze the reach at the *starting* radius, which kept the first property and lost this one: a
+  step inside a grown trust region could reach keep-out material no wall covered. That case is
+  built by hand in `tests/integration/test_wall_reach_coverage.py`, and the same file guards the
+  policy (the trust region never outgrows the walls).
+
+Eleven reach policies were run side by side on 2026-09-29 — live, starting radius, cap, ratchet,
+trust capped at its start, each with and without the out-of-reach cutoff, the refused E1 clip, and
+floor-off references. This one was chosen on principle. On that small sample it certified slightly
+fewer problems than the starting radius; the number lives in `SOLVER.md` §Measurements once the
+freeze pass is taken, never here.
+
+**L10 (the certificate at a trajectory needs no trust region).** At the returned iterate no step
+follows, so C is needed only with $\Delta=0$: $r_{\mathrm{clip}}\ge E^{(k)}$. The reach floor gives
+that at any reach radius. The guarantee on the returned trajectory therefore does not depend on
+how the trust region behaved. Tested against three recorded lines that fool the floor-off
+certificate and are refused by the floored one (`tests/integration/test_wall_reach_coverage.py`).
+
 The hole sits at small $d$, exactly where the constraint binds. **The reach floor**
 (`sound_clip`, default on since 2026-09-01) raises $r_{\mathrm{floor}}$ to $\max(r_m,R)$ and makes
 C hold unconditionally — sound by construction — at the price of conservatism precisely where the
@@ -477,7 +505,9 @@ evaluated at the **returned** iterate, and where C fails it is the only statemen
 **D12 (`figure_grade`).** A run may feed a figure or a table iff *all* of: `converged`; the
 hull-row certificate at the returned iterate at most the certificate tolerance; $\mu>0$; total
 slack at most the slack tolerance; the line-of-sight certificate where a station exists;
-`unsound_clips` equal to zero. Each condition has been shown to sink the gate alone. The figure
+`unsound_clips` equal to zero. Each condition has been shown to sink the gate alone — except that
+with the reach floor on, `unsound_clips` is zero by construction and cannot; it grades floor-off
+runs only. The figure
 pipeline refuses to draw a run that fails it, and a build that cannot find a figure-grade sidecar
 fails.
 
@@ -492,7 +522,8 @@ and the best feasible iterate seen.
 
 1. **Build rows at the reference.** For every segment and obstacle (and station): D6–D9, the
    exact rows D10, the linearised rows of P, the per-wall `sound` flag against C, and the dropped-
-   wall count. $\Delta$ enters here through $r_{\mathrm{clip,max}}$ and the reach floor.
+   wall count. The reach radius $\Delta_{\max}$ enters here through $r_{\mathrm{clip,max}}$ and the
+   reach floor; the live $\Delta$ bounds only the step, through the trust box of P.
 2. **Solve P** with Clarabel (interior-point conic), reading the dual vector. Candidate
    $\mathbf p^{\mathrm c}$, slack totals, largest keep-out dual.
 3. **Bootstrap.** If the reference violates a row that carries no slack (box, monotonicity — the
@@ -501,7 +532,7 @@ and the best feasible iterate seen.
    `FIRST_QP_INFEASIBLE`, a label, not a repair.
 4. **Ratio test.** Convex merit $L(\cdot)=J(\cdot)+\lambda\cdot$(violation of the rows the QP was
    given); true merit $T(\cdot)=J(\cdot)+\lambda\cdot$(violation of rows **rebuilt** at the
-   point). $J$ is exactly quadratic, so the two differ for one reason only: the half-spaces moved.
+   point, at the same reach radius $\Delta_{\max}$). $J$ is exactly quadratic, so the two differ for one reason only: the half-spaces moved.
    $\mathrm{pred}=L(\mathbf p)-L(\mathbf p^{\mathrm c})$,
    $\mathrm{act}=T(\mathbf p)-T(\mathbf p^{\mathrm c})$, $\rho=\mathrm{act}/\mathrm{pred}$;
    a prediction below the cancellation floor is a null step, accepted iff it does not make things

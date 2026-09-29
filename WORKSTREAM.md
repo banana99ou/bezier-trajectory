@@ -38,12 +38,21 @@ Full venue rules, schedule and manuscript state:
 
 ## Blocking honesty, not the deadline
 
-### `repo.red-test` — one test is red by choice, and the choice is yours
-`tests/integration/test_figure_grade_gate.py::test_a_clearing_run_can_still_be_standing_on_slack`
-fails because `wall` was densified 2026-08-24 at your request, which turned its only specimen from
-+0.102 into −0.129. 19 configurations were probed; no replacement specimen exists.
-*Closes when:* you pick one of — keep the density and drop the test, restore the density, or accept
-a synthetic specimen. **Do not close it by weakening the test.** → [`SOLVER.md`](SOLVER.md) §Known Issues
+### `repo.red-test` — three tests are red by choice, and each choice is yours
+Each lost its specimen to a solver improvement; none is a regression.
+1. `tests/integration/test_figure_grade_gate.py::test_a_clearing_run_can_still_be_standing_on_slack`
+   — `wall` was densified 2026-08-24 at your request, which turned its only specimen from +0.102
+   into −0.129. 19 configurations were probed; no replacement specimen exists.
+2. `tests/unit/test_spacetime_koz_geometry.py::test_wall_penetrates_below_its_penalty_threshold`
+   — since `2ea964d` (2026-09-20), `wall` held at weight 100 clears instead of penetrating.
+3. `tests/integration/test_scvx_invariants.py::TestElasticComplementarity::test_zero_slack_leaves_a_real_margin[wall-10-16]`
+   — since the cap reach (2026-09-29), `wall` N10_seg16 ends on slack. A replacement exists and
+   was checked the same day: `wall` N8_seg16 ends with zero slack and its largest dual well below
+   the weight. The sibling `test_active_slack_pins_the_dual_at_the_weight[wall-10-16]`, red since
+   `2ea964d`, is green again for the same reason.
+*Closes when:* you pick, per test, one of — drop it, restore what removed its specimen, or accept a
+replacement specimen. **Do not close any of them by weakening the test.**
+→ [`SOLVER.md`](SOLVER.md) §Known Issues
 
 ---
 
@@ -94,13 +103,19 @@ What it buys over the three-seed test of [`SPEC.md`](paper/journal_1/SPEC.md) §
 - **A split between timing and path.** Blending the time column and the spatial columns
   separately says which one the failure is about. The 2026-09-22 retries that recovered `wall`
   changed timing only.
-Blending across configurations, from a working segment count into a failing one, needs the
-trajectory re-fitted to the coarser basis first. If that re-fit is itself uncertifiable, the coarse
-configuration cannot hold the path, and the failure is discretization, not initialization.
+**Corrected 2026-09-29: no re-fit is needed across segment counts.** The segment count does not
+change the trajectory — every degree-8 `wall` configuration is one degree-8 curve, and the segments
+only set how finely the certificate splits it. So the cheapest first probe solves nothing: take the
+certified N8_seg16 trajectory and evaluate its certificate at 2, 3 and 4 segments. If it passes, a
+safe answer exists there and the straight start is the problem; if it fails, the coarse split is
+too conservative to hold that path. Only a change of degree needs a re-fit.
 *Closes when:* after the first §4.7 pass, `wall` is swept on at least one working and one failing
 configuration, and the blend-weight-one run is a test.
 
-### `solver.curve-seg16` — the floor's own cost is a limit cycle, and it is not this session's
+### ~~`solver.curve-seg16` — the floor's own cost is a limit cycle, and it is not this session's~~
+**Closed 2026-09-29.** E1 was refused and is gone; `2ea964d` ended the cycle, and under the cap
+reach the configuration still certifies (2026-09-29 policy sweep). The freeze pass re-measures it.
+
 `curve` N8_seg16 certifies with `sound_clip` off and, with it on, escalates to the weight cap and
 runs to the iteration cap inside an exact limit cycle no iterate of which is feasible. **Owned by
 the other (solver) session, not the journal one**, and as of 2026-09-09 an uncommitted `E1` change
@@ -196,12 +211,12 @@ whenever; `journal.demos` last.
 rule of [`SPEC.md`](paper/journal_1/SPEC.md) §2.4 stands.
 **E1 is already gone from the tree (verified 2026-09-21)**, and the limit cycle it was aimed at was
 repaired a different way by `2ea964d` (2026-09-20) — the wall reach frozen at the initial trust
-radius, `curve` N8_seg16 going from the iteration cap to a stationary stop. So the remaining work
-here is the freeze itself, not the revert. **`solver.curve-seg16` above still describes E1 as
-sitting uncommitted on disk and is stale; it belongs to the solver session, which has not been
-told.**
-*Closes when:* the working tree is committed, the suite runs (the one deliberate
-red and no other), and the solver build the journal measures is named in
+radius, `curve` N8_seg16 going from the iteration cap to a stationary stop.
+**The reach moved to the trust region's cap, 2026-09-29, the user's decision** — frozen at the start
+it covered no step past the starting radius. Why, what was compared, and the guarantee that does
+not depend on it: [`SPEC.md`](paper/journal_1/SPEC.md) §2.7.
+*Closes when:* the working tree is committed, the suite runs with only the three reds of
+`repo.red-test`, and the 28-configuration table is re-taken on that commit and named in
 [`SOLVER.md`](SOLVER.md) §Measurements.
 → [`SOLVER.md`](SOLVER.md) §Measurements, [`paper/journal_1/SPEC.md`](paper/journal_1/SPEC.md) §2.4
 

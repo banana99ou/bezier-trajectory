@@ -39,8 +39,11 @@ def build_smoothness_regularizer(N: int, dim: int) -> np.ndarray:
     is never written into (that is asserted by
     ``tests/unit/test_objective_operators.py``).
 
-    Physics is bounded by constraints instead: the slant-limit speed cap
-    (item B9) and the linearized acceleration cap.
+    Physics is bounded by constraints instead. The slant-limit speed cap
+    (item B9) is the one bound that is implemented; there is no acceleration
+    cap in the Rust space-time solver. An acceleration cap is a recorded
+    DECISION, not an implementation -- idea/spacetime.md "Frozen decisions":
+    "The acceleration bound is bilinear, so linearize it".
 
     The time coordinate is left unpenalized, deliberately: penalizing it would
     bias the arrival time through the smoothness term rather than through the

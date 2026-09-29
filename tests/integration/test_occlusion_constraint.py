@@ -75,13 +75,18 @@ def test_zero_station_run_reproduces_the_pre_occlusion_golden():
     initial trust radius: the rows no longer change shape as the trust region
     resizes, so the solver leaves 36x less residue on them. The clearance again
     did not move at four decimals, for the same reason as before.
+
+    **Re-measured 2026-09-29 at 2.06e-11** when the walls' reach moved from the
+    starting trust radius to the trust region's cap (SPEC.md sec. 2.7). The rows
+    still do not change shape with the trust region; they are built once at a
+    larger reach. The clearance did not move at four decimals.
     """
     P, info, clearance = _fence3d_run(None)
     assert clearance == pytest.approx(0.162344, abs=5e-5)
     assert bool(info["converged"])
     assert float(info["koz_violation_reference"]) <= FIGURE_GRADE_CERTIFICATE_TOL
     assert float(info["occlusion_violation_reference"]) == 0.0
-    assert float(info["total_koz_slack_returned"]) == pytest.approx(3.54e-11, rel=0.2)
+    assert float(info["total_koz_slack_returned"]) == pytest.approx(2.06e-11, rel=0.2)
 
 
 def test_absent_and_empty_station_sets_are_the_same_problem():

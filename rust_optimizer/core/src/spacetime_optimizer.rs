@@ -646,10 +646,12 @@ pub fn scp_step(
     stations: &StationData<'_>,
     scp_prox_weight: f64,
     scp_trust_radius: f64,
-    // E2 (2026-09-09): the reach margin the WALLS are built for. Fixed for the
-    // whole run (= the initial trust radius, which is also the cap), so the
-    // constraint set never changes shape because the trust region resized.
-    // `scp_trust_radius` bounds the STEP; this bounds the geometry.
+    // The reach margin the WALLS are built for: the trust region's CAP, fixed for
+    // the whole run (decided 2026-09-29, SPEC.md sec. 2.7). Fixed, so the
+    // constraint set never changes shape because the trust region resized -- the
+    // limit cycle of 2ea964d. The cap, not the starting radius, so no step the
+    // trust region allows can outrun the walls: condition C holds every
+    // iteration. `scp_trust_radius` bounds the STEP; this bounds the geometry.
     wall_reach_trust: f64,
     elastic_weight: f64,
     tol: f64,
@@ -1047,6 +1049,10 @@ pub struct ScpState {
     /// this, for the same reason each retired ladder rung started fresh: the
     /// collapsed radius was a verdict on the OLD merit landscape.
     pub trust_init: f64,
+    /// INSTRUMENT (not behaviour): the largest trust radius this run ever held.
+    /// Reported as `info["max_trust"]` so "did the trust region grow past its
+    /// starting value?" is a measured fact instead of an argument.
+    pub trust_peak: f64,
     /// Current elastic weight — state of the algorithm, not a constant of the
     /// run. Raised in place by the SNOPT elastic-mode rule; see
     /// `ELASTIC_WEIGHT_FACTOR`.
@@ -1128,6 +1134,14 @@ pub struct ScpState {
 }
 
 impl ScpState {
+    /// The one radius every keep-out wall is built with: the trust region's cap.
+    /// Walls, the ratio test's rebuild and the returned iterate's certificates all
+    /// read it, so the merit compares like with like. Since `trust <= trust_max`
+    /// always, every step the trust region allows is covered (condition C).
+    pub fn wall_reach(&self) -> f64 {
+        self.trust_max
+    }
+
     pub fn new(
         p_init: &[f64],
         trust_radius: f64,
@@ -1143,10 +1157,11 @@ impl ScpState {
             p: p_init.to_vec(),
             trust,
             trust_min: trust * 1e-3,
-            // E2b: trust may grow past the wall margin; a step that outruns the
-            // walls' coverage is caught by the exact rebuild in the ratio test.
+            // The cap is also the walls' reach margin (see `wall_reach`), so the
+            // trust region can never grow past what the walls cover.
             trust_max: trust * 4.0,
             trust_init: trust,
+            trust_peak: trust,
             weight: elastic_weight,
             weight_raises: 0,
             escalate: escalate_weight,
@@ -1231,7 +1246,7 @@ pub fn scp_iterate(
         stations,
         0.0,
         state.trust,
-        state.trust_init,
+        state.wall_reach(),
         elastic_weight,
         tol,
         state.iteration,
@@ -1277,7 +1292,7 @@ pub fn scp_iterate(
     let (quad_c, scale_c) = quadratic_cost_scaled(&pre.h_energy, &pre.f_linear, &cand, nvars);
     let vtrue_p = step.vlin_p; // rows were built at p; exact there
     let vtrue_c =
-        relaxable_violation_rebuilt_at(&cand, pre, obstacles, stations, state.trust_init);
+        relaxable_violation_rebuilt_at(&cand, pre, obstacles, stations, state.wall_reach());
     let t_p = quad_p + w_s * vtrue_p;
     let t_c = quad_c + w_s * vtrue_c;
     let pred = step.l_p - step.l_c;
@@ -1365,6 +1380,7 @@ pub fn scp_iterate(
         state.p = cand;
         if rho > 0.9 && rho.is_finite() {
             state.trust = (state.trust * 2.0).min(state.trust_max);
+            state.trust_peak = state.trust_peak.max(state.trust);
         }
         update_best(state, &step, vtrue_c, stations.n_stations > 0);
         // Converged = merit stationary for K consecutive accepted steps AND the
@@ -1780,6 +1796,9 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     info.insert("null_step_count".to_string(), state.null_step_count as f64);
     info.insert("bootstrap_count".to_string(), state.bootstrap_count as f64);
     info.insert("final_trust".to_string(), state.trust);
+    info.insert("max_trust".to_string(), state.trust_peak);
+    info.insert("trust_init".to_string(), state.trust_init);
+    info.insert("wall_reach_trust".to_string(), state.wall_reach());
     info.insert("rho_last".to_string(), state.last_rho);
     info.insert("rho_samples".to_string(), state.rho_n as f64);
     info.insert(
@@ -1812,7 +1831,7 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     // curve is.
     info.insert(
         "koz_violation_reference".to_string(),
-        koz_violation_rebuilt_at(&p, &pre, obstacles, stations, state.trust_init),
+        koz_violation_rebuilt_at(&p, &pre, obstacles, stations, state.wall_reach()),
     );
     // What that certificate COVERS. `koz_unsound_clips` is idea/spacetime.md statement
     // (7) counted at the returned iterate: pairs whose clip ball did not reach
@@ -1824,7 +1843,7 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     // certificate without recording what it certified against.
     info.insert(
         "koz_unsound_clips".to_string(),
-        unsound_clips_rebuilt_at(&p, &pre, obstacles, stations, state.trust_init) as f64,
+        unsound_clips_rebuilt_at(&p, &pre, obstacles, stations, state.wall_reach()) as f64,
     );
     info.insert(
         "sound_clip".to_string(),
@@ -1840,7 +1859,7 @@ vlin_p,vlin_c,vtrue_c,hard_viol_p,clearance,total_slack,conv_streak,stat_streak"
     // visible and not merely the verdict. Both are evaluated at `p`, the point
     // that is actually returned.
     let (occ_cert, occ_dropped) =
-        occlusion_certificate_at(&p, &pre, obstacles, stations, state.trust_init);
+        occlusion_certificate_at(&p, &pre, obstacles, stations, state.wall_reach());
     info.insert("occlusion_violation_reference".to_string(), occ_cert);
     info.insert(
         "occlusion_planes_dropped".to_string(),

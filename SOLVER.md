@@ -149,7 +149,7 @@ and `tests/integration/test_scvx_invariants.py` are where the evidence lives.
   converges figure-grade instead of relying on the best-iterate fallback (its fallback tests pin
   `max_iter=15` to stop before the rescue).
 - **The certificate is evaluated at the RETURNED iterate.** Fixed 2026-08-19; it used to report the loop's final *reference* point, which is a different trajectory whenever the best-iterate fallback fires.
-- **`obstacle_pos0` / `obstacle_vel` are not parameters of anything — and the drift they caused is CLOSED.** `0918df5` moved the Rust API to lifted control points and did not update the tests. 75 of 338 were red at that commit; 52 were still red as late as `e9d953f` on 2026-08-31, and `test_los_margin.py` and `test_clearance_sampling.py` were among them — the independent line-of-sight check behind the occlusion claim, and the computation behind every clearance number in §Measurements, neither of which had executed a single assertion since `0918df5` because they failed at the CALL in 0.09 s. Repaired by `d3a1426` + `8c948a7`, merged from `paper/journal-1` on 2026-09-01. **Suite is now 1 failed / 364 passed / 1 skipped (2026-09-08; 363 on 2026-09-06 before the start-weight provenance guard, 352 before the escalation-trigger repair added eleven), and the one red is the deliberate one.** Convert `pos0`/`vel` obstacles with `spacetime_bezier.geometry.obstacle_array_bundle`; a legacy obstacle with no window needs one, because the active window is now intrinsic to the control points.
+- **`obstacle_pos0` / `obstacle_vel` are not parameters of anything — and the drift they caused is CLOSED.** `0918df5` moved the Rust API to lifted control points and did not update the tests. 75 of 338 were red at that commit; 52 were still red as late as `e9d953f` on 2026-08-31, and `test_los_margin.py` and `test_clearance_sampling.py` were among them — the independent line-of-sight check behind the occlusion claim, and the computation behind every clearance number in §Measurements, neither of which had executed a single assertion since `0918df5` because they failed at the CALL in 0.09 s. Repaired by `d3a1426` + `8c948a7`, merged from `paper/journal-1` on 2026-09-01. **Suite is now 1 failed / 364 passed / 1 skipped (2026-09-08; 363 on 2026-09-06 before the start-weight provenance guard, 352 before the escalation-trigger repair added eleven), and the one red is the deliberate one.** *(That count covers TRACKED tests only; untracked test files — as of 2026-09-09 `tests/unit/test_families.py` and `tests/integration/test_families_rows.py` — are outside it until they are committed, so "the one red is the deliberate one" is a claim about the committed suite.)* Convert `pos0`/`vel` obstacles with `spacetime_bezier.geometry.obstacle_array_bundle`; a legacy obstacle with no window needs one, because the active window is now intrinsic to the control points.
 - **The dead Python triple is gone** — `327a28e` deleted `spacetime_bezier/constraints.py`, `debug_stepper.py`, `tests/unit/test_spacetime_constraints.py` and `BENCHMARKS.md` on 2026-08-20. The lesson they carried is worth keeping: those KOZ tests could not fail on G1, because every one used zero velocity and one asserted the time column was zero, enshrining the bug. **The Rust builder's coverage is `tests/unit/test_spacetime_koz_geometry.py`** (and `tests/unit/test_center_surface_geometry.py` since `46a15f7`); nothing else covers it.
 - **The keep-out zone and the shadow are ONE set at two stretch factors.** There is no occlusion
   builder and there are not two keep-out zones: the centreline generalises to a **center surface**,
@@ -255,6 +255,11 @@ registered rather than the first rung that certifies.
 ---
 
 ## Measurements
+
+> **STALE — describes no build that exists.** Taken 2026-09-08, before the wall reach was frozen at
+> the starting trust radius (`2ea964d`, 2026-09-20) and then moved to the trust region's cap
+> (2026-09-29, `paper/journal_1/SPEC.md` §2.7). Nothing below may be quoted. The freeze pass
+> re-takes it on a committed tree (`WORKSTREAM.md` `journal.freeze`).
 
 Last full pass **2026-09-08**, every registered configuration run twice — once with the reach floor
 on, which is the default, and once with `sound_clip=False` as the comparison arm. **28
@@ -514,17 +519,21 @@ the occlusion rows turns the file red, and which tests fire depends on which hal
 making the *baseline* constrained sinks three of four; making the *constrained* run a baseline sinks
 two of four (the link assertion, and the graft, which reports the schedules 0.0000 s apart).
 
-**Known gap, small:** `test_the_pair_differs_by_the_occlusion_rows_and_nothing_else` does **not**
-detect a pair whose halves fail to differ — with both halves solved as baselines it still passes,
-because every assertion in it is satisfied by two baselines. Its name claims more than it checks.
-The condition is caught by the neighbouring `test_the_constrained_run_holds_the_link`, so the file
-is sound; the name is the defect.
+**That known gap is CLOSED, 2026-09-01 — the name now claims what the body checks.** This paragraph
+used to say `test_the_pair_differs_by_the_occlusion_rows_and_nothing_else` does not detect a pair
+whose halves fail to differ, since with both halves solved as baselines every assertion in it was
+satisfied. `d42db55` closed it later the same day by scoring **both** returned curves against the
+**same** recomputed shadow rows (`_shadow_violation_at`): the constrained half must come out at zero
+violation and the baseline half must come out strictly violating them, so two baselines now fail on
+the constrained assertion and two constrained runs fail on the baseline one. **What would make it
+fail:** doctoring either half into the other — which is the falsification recorded above.
 
 ---
 
 ## Known Issues
 
-- **ONE TEST IS RED, deliberately, and the decision is the user's.** `wall` was densified
+- **THREE TESTS ARE RED, deliberately, and each decision is the user's** — listed in
+  `WORKSTREAM.md` `repo.red-test`. The first, and its history: `wall` was densified
   2026-08-24 at the user's request (spacing 0.8 → 0.5, 13 → 21 circles). The forbidden slab barely
   moves, but 8 more per-segment planes make the relaxation more conservative, and the consequence
   is measured: `wall` N8_seg2 went from +0.102 (clears while standing on 1.35 of slack) to −0.129

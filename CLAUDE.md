@@ -35,8 +35,9 @@ needs a paragraph it is a finding, and it belongs to its owner instead.
   never a modelling choice. → [`SOLVER.md`](SOLVER.md)
 - **`doc/notes/` is not part of this repository.** Each note is its own git repo on disk and the
   folder is ignored here. → [`doc/notes/README.md`](doc/notes/README.md)
-- **One test is red on purpose** (`test_a_clearing_run_can_still_be_standing_on_slack`). Do not fix
-  it, weaken it, or revert the density that turned it red. → [`SOLVER.md`](SOLVER.md) §Known Issues
+- **Three tests are red on purpose, each waiting on the user's decision** — each lost its specimen
+  to a solver improvement. Do not fix, weaken, or re-anchor them. → [`WORKSTREAM.md`](WORKSTREAM.md)
+  `repo.red-test`
 - **A number in a markdown file is not evidence.** Put a measured number where a test re-measures
   it and cite the test; a document quotes a measurement pass, it never owns one.
 - **Exclude `.claude/worktrees/` from every repo-wide search** — it shadows every document at an

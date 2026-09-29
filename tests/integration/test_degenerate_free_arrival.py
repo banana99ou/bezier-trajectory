@@ -124,11 +124,16 @@ def test_the_default_configuration_is_bit_identical():
     The golden number is the one recorded before B8/B9/B10 landed. FAILS IF the
     new guard changed the default problem in any way -- it may not, because the
     default combination is precisely the one it does not refuse.
+
+    Re-pinned 2026-09-29 when the walls' reach moved from the starting trust
+    radius to the trust region's cap (SPEC.md sec. 2.7): 0.6204432935 to
+    0.6204432916, a change of 2e-9 on straight obstacles, whose walls are
+    global supporting planes whatever the reach. The tolerance is unchanged.
     """
     out = optimize_scenario(
         scenario_original(), [(8, 4)], elastic_weight=100.0, verbose=False
     )
     row = out["results"]["N8_seg4"]
-    assert row["min_clearance"] == pytest.approx(0.6204432935456294, abs=1e-9)
+    assert row["min_clearance"] == pytest.approx(0.6204432915525513, abs=1e-9)
     assert row["converged"] is True
     assert row["certificate_violation"] == pytest.approx(0.0, abs=1e-12)

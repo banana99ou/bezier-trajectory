@@ -175,6 +175,7 @@ obstacles, fixed endpoints, and the optimizer plans path *and* timing.
 | Scenario | What it shows |
 |---|---|
 | `original` | 3 moving obstacles — curve threads between constant-velocity tubes in (x, y, t) |
+| `curve` | one obstacle on a **curved** path — its lifted centreline is a genuine Bezier arc, so its tube is NOT convex and has no supporting half-space. The only scenario that distinguishes the hull-projection plane from the tangent plane, which makes it **the case the whole construction is for**; its measured configurations are in [`SOLVER.md`](SOLVER.md) §Measurements |
 | `wall` | a wall that vanishes at a known time; the curve should wait, then pass — time as a real optimization dimension |
 | `diverse` | varied sizes / speeds / directions; stress case |
 | `fence3d` | three spatial dimensions + time; the curve climbs a wide low **moving** fence instead of going around — the dimension is load-bearing, and the motion is what makes waiting futile. Renamed from `wall3d` 2026-08-24; the problem definition is unchanged |

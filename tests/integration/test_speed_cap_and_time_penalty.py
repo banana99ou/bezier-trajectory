@@ -156,12 +156,17 @@ def test_defaults_reproduce_the_recorded_original_run_exactly():
     Recorded before B8/B9/B10 landed. FAILS IF freeing the arrival time, adding
     the linear cost term, or plumbing the cone changed the default problem --
     which none of them may, because they are all off by default.
+
+    Re-pinned 2026-09-29 when the walls' reach moved from the starting trust
+    radius to the trust region's cap (SPEC.md sec. 2.7): 0.6204432935 to
+    0.6204432916, a change of 2e-9 on straight obstacles, whose walls are
+    global supporting planes whatever the reach. The tolerance is unchanged.
     """
     out = optimize_scenario(
         scenario_original(), [(N_DEGREE, N_SEG)], elastic_weight=100.0, verbose=False
     )
     row = out["results"][f"N{N_DEGREE}_seg{N_SEG}"]
-    assert row["min_clearance"] == pytest.approx(0.6204432935456294, abs=1e-9)
+    assert row["min_clearance"] == pytest.approx(0.6204432915525513, abs=1e-9)
     assert row["converged"] is True
     assert row["certificate_violation"] == pytest.approx(0.0, abs=1e-12)
 

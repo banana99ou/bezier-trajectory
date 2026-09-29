@@ -429,8 +429,9 @@ def _optimize_spacetime_rust(
     # idea/spacetime.md statement (8): clamp the clip radius from below by
     # E + Delta*sqrt(d+1) so statement (7) holds unconditionally and the
     # construction is sound by construction, at the cost of conservatism where
-    # the row binds. Off by default -- idea/spacetime.md calls the choice between the two
-    # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
+    # the row binds. ON by default since 2026-08-31 (43224b4): an unsound clip
+    # was never a mode. The flag survives only so the comparison arm stays
+    # reachable and reproducible.
     sound_clip: bool = True,
     v_max: float | None = None,
     time_weight: float = 0.0,
@@ -602,8 +603,9 @@ def optimize_spacetime_from_control_points(
     # idea/spacetime.md statement (8): clamp the clip radius from below by
     # E + Delta*sqrt(d+1) so statement (7) holds unconditionally and the
     # construction is sound by construction, at the cost of conservatism where
-    # the row binds. Off by default -- idea/spacetime.md calls the choice between the two
-    # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
+    # the row binds. ON by default since 2026-08-31 (43224b4): an unsound clip
+    # was never a mode. The flag survives only so the comparison arm stays
+    # reachable and reproducible.
     sound_clip: bool = True,
     v_max: float | None = None,
     time_weight: float = 0.0,
@@ -662,8 +664,9 @@ def optimize_spacetime(
     # idea/spacetime.md statement (8): clamp the clip radius from below by
     # E + Delta*sqrt(d+1) so statement (7) holds unconditionally and the
     # construction is sound by construction, at the cost of conservatism where
-    # the row binds. Off by default -- idea/spacetime.md calls the choice between the two
-    # an OPEN EXPERIMENTAL QUESTION, so both are reachable and measurable.
+    # the row binds. ON by default since 2026-08-31 (43224b4): an unsound clip
+    # was never a mode. The flag survives only so the comparison arm stays
+    # reachable and reproducible.
     sound_clip: bool = True,
     v_max: float | None = None,
     time_weight: float = 0.0,

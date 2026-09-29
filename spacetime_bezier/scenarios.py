@@ -130,7 +130,7 @@ def scenario_wall() -> dict:
     Spacing densified 0.8 -> 0.5 on 2026-08-24 (user request: the row of circles
     must READ as a wall). A denser wall is a different problem -- more rows, a
     slightly larger forbidden union between the old centres -- so the measured
-    numbers were re-taken the same day; see README sec. Measurements.
+    numbers were re-taken the same day; see SOLVER.md sec. Measurements.
     """
     wall_obs = make_wall(
         p1=[2.5, 0.0],
@@ -243,8 +243,8 @@ def scenario_door3d() -> dict:
     is that scenario). The load-bearing-z evidence is `fence3d`'s, where motion
     closes the waiting strategy.
 
-    Measured behaviour lives beside its assertion, not here -- see README
-    sec. Measurements for the recorded pass.
+    Measured behaviour lives beside its assertion, not here -- see
+    SOLVER.md sec. Measurements for the recorded pass.
     """
     row = make_wall(p1=[4.0, -2.0, 0.9], p2=[4.0, 12.0, 0.9],
                     thickness=1.6, spacing=0.8, color="#8e44ad",
@@ -535,7 +535,7 @@ SCENARIO_MAP = {
     # rather than draw z as if it were time. Short list on purpose -- the
     # occlusion rows re-aim every iteration, so a run costs an order of
     # magnitude more than a keep-out-only one. Measured 2026-08-30; see
-    # README sec. Measurements.
+    # SOLVER.md sec. Measurements.
     "loiter":   (scenario_loiter,   [(8, 8), (8, 16)]),
     "diverse":  (scenario_diverse,  [(8, 4), (8, 8), (8, 16), (10, 4), (10, 16)]),
     "wall":     (scenario_wall,     [(8, 2), (8, 3), (8, 4), (8, 16), (10, 16), (10, 24)]),
@@ -546,6 +546,6 @@ SCENARIO_MAP = {
     # picture; see the comment there. Renamed from `wall3d` 2026-08-24.
     "fence3d":  (scenario_fence3d,  [(8, 2), (8, 4), (8, 8), (10, 8)]),
     # The waiting demo: static tall wall, opens at t=6.5. Configs measured
-    # 2026-08-24; see README sec. Measurements.
+    # 2026-08-24; see SOLVER.md sec. Measurements.
     "door3d":   (scenario_door3d,   [(8, 4), (8, 8)]),
 }
