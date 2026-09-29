@@ -52,7 +52,7 @@ from spacetime_bezier.optimize import (
     is_figure_grade,
     optimize_scenario,
 )
-from spacetime_bezier.scenarios import scenario_original, scenario_wall
+from spacetime_bezier.scenarios import scenario_curve, scenario_original, scenario_wall
 
 pytest.importorskip("bezier_opt")
 
@@ -274,7 +274,7 @@ def test_a_penetrating_run_below_the_penalty_threshold_is_not_figure_grade():
     times to the 1e5 cap and still penetrates (-0.0978 with 4.50 of slack,
     measured 2026-09-08), so what this test shows now is that escalation to the
     cap does not rescue it either. The HELD weight-100 statement lives in
-    `tests/unit/test_spacetime_koz_geometry.py::test_wall_penetrates_below_its_penalty_threshold`.
+    `tests/unit/test_spacetime_koz_geometry.py::test_diverse_penetrates_below_its_penalty_threshold`.
     """
     # Pinned to the straight start: since 2026-09-29 `wall` starts by waiting and certifies,
     # and this test needs the penetrating run the straight start produces.
@@ -316,21 +316,21 @@ def test_a_row_is_traceable_to_the_start_weight_it_reports():
 def test_a_clearing_run_can_still_be_standing_on_slack():
     """Clearance is not the guarantee, measured on a run that has it.
 
-    `wall` N8_seg2 through the weight ladder settles on w=800 with a SAMPLED
-    clearance of +0.102 -- it passes the clearance condition outright -- while
-    holding 1.35 of elastic slack and a hull certificate of 1.35. The sampled
-    curve misses the obstacles; the control-point hull does not. That is the
-    distinction idea/spacetime.md sec. 6 turns on, and this row is what it looks like.
+    `curve` N8_seg4 from its own start ends with a SAMPLED clearance of +0.100 --
+    it passes the clearance condition outright -- while holding 4.68 of elastic
+    slack and a hull certificate of 4.71 (2026-09-29). The sampled curve misses
+    the obstacle; the control-point hull does not. That is the distinction
+    idea/spacetime.md sec. 6 turns on, and this row is what it looks like.
 
-    Its 1.35 is also the smallest genuine relaxation across the 22 registered
-    configurations -- the closest the bad population comes to the threshold, and
-    still six orders above it.
+    Specimen history: `wall` N8_seg2 until the 2026-08-24 densification made it
+    penetrate outright; no replacement existed until the cap reach, and since
+    2026-09-29 `wall` starts by waiting and certifies there anyway.
 
     FAILS IF the clearance condition is ever allowed to stand in for the
     certificate or the slack: this row would then be figure-grade.
     """
-    out = optimize_scenario(scenario_wall(), [(8, 2)], verbose=False)
-    row = out["results"]["N8_seg2"]
+    out = optimize_scenario(scenario_curve(), [(8, 4)], verbose=False)
+    row = out["results"]["N8_seg4"]
 
     assert row["min_clearance"] > 0.0, (
         "this run no longer clears, so it cannot show clearance passing while "

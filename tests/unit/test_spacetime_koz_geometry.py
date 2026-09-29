@@ -430,40 +430,38 @@ def test_wall_scenario_waits_for_the_wall():
     )
 
 
-def test_wall_penetrates_below_its_penalty_threshold():
-    """The companion fact: weight 100 is below `wall`'s exact-penalty threshold.
+def test_diverse_penetrates_below_its_penalty_threshold():
+    """Weight 100 is below `diverse`'s exact-penalty threshold.
 
-    This is why the scenario was misread as infeasible for months, and it is
-    what makes the weight a property of the scenario rather than a tuning knob.
-    The fact is a statement about a HELD weight, and it is tested as one: with
-    escalation off, the weight-100 run must end penetrating, standing on
-    keep-out slack, with its largest dual pinned at 100 (complementarity: the
-    penalty is not exact there). The escalating default from the same start
-    is the control -- it raises and clears -- so the two runs together say
-    "100 is below the threshold, and the threshold is reachable above it".
+    This is what makes the weight a property of the scenario rather than a
+    tuning knob -- the registry records `diverse` at 800. The fact is a
+    statement about a HELD weight, and it is tested as one: with escalation
+    off, the weight-100 run must end penetrating, standing on keep-out slack,
+    with its largest dual pinned at 100 (complementarity: the penalty is not
+    exact there). The escalating default from the same start is the control --
+    it raises and clears -- so the two runs together say "100 is below the
+    threshold, and the threshold is reachable above it".
 
-    History: the in-loop escalation (f5a0ac1) rewrote this test to assert only
-    "a raise fired and the final weight exceeds 100", which is one condition
-    written twice and a weak proxy -- a raise can fire while the violation is
-    still dropping, so a raise does not imply 100 is below the threshold. The
-    held-weight assertion was restored 2026-09-06 with the
-    `escalate_elastic_weight=False` hold, which did not exist before then: a
-    pinned weight silently no longer pinned.
+    History: this was `wall` N10_seg16, the scene misread as infeasible for
+    months. The in-loop escalation (f5a0ac1) once weakened it to "a raise
+    fired", and the held-weight assertion was restored 2026-09-06. `wall` lost
+    the property twice -- held at 100 it cleared after `2ea964d`, and since
+    2026-09-29 it starts by waiting and clears without a raise -- so the specimen
+    moved to `diverse` N8_seg8 that day.
 
-    FAILS IF: the held run at 100 clears (100 was never below the threshold
-    and the threshold story is wrong); or it clears without slack or with a
-    dual below 100 (the penalty would be exact at 100 after all); or the hold
-    does not hold (a raise fires, or the final weight is not 100); or the
-    escalating control from the same start no longer clears (escalation broke
-    a certified configuration).
+    FAILS IF: the held run at 100 clears (100 was never below the threshold);
+    or it clears without slack or with a dual below 100 (the penalty would be
+    exact at 100 after all); or the hold does not hold (a raise fires, or the
+    final weight is not 100); or the escalating control from the same start no
+    longer clears (escalation broke a certified configuration).
     """
     from spacetime_bezier.scenarios import SCENARIO_MAP
 
-    fn, _ = SCENARIO_MAP["wall"]
+    fn, _ = SCENARIO_MAP["diverse"]
     sc = fn()
     common = dict(
-        N=10, dim=3, p_start=sc["start"], p_end=sc["end"],
-        obstacles=sc["obstacles"], n_seg=16, max_iter=200, tol=1e-6,
+        N=8, dim=len(sc["start"]), p_start=sc["start"], p_end=sc["end"],
+        obstacles=sc["obstacles"], n_seg=8, max_iter=200, tol=1e-6,
         scp_trust_radius=0.5, min_dt=0.1, verbose=False,
         elastic_weight=100.0, init_curve=sc.get("init_curve"),
     )
@@ -474,7 +472,7 @@ def test_wall_penetrates_below_its_penalty_threshold():
         f"{held['final_elastic_weight']:g}"
     )
     assert held["min_clearance"] < 0.0, (
-        f"held at weight 100, `wall` clears by {held['min_clearance']:.4f}; 100 "
+        f"held at weight 100, `diverse` clears by {held['min_clearance']:.4f}; 100 "
         "is not below the threshold and the penalty-threshold explanation needs "
         "revisiting"
     )
@@ -492,7 +490,7 @@ def test_wall_penetrates_below_its_penalty_threshold():
         "the escalating control never raised from 100"
     )
     assert escalated["min_clearance"] > 0.0, (
-        "the escalated run no longer clears `wall`"
+        "the escalated run no longer clears `diverse`"
     )
 
 

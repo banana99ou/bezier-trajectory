@@ -38,19 +38,10 @@ Full venue rules, schedule and manuscript state:
 
 ## Blocking honesty, not the deadline
 
-### `repo.red-test` — two tests are red by choice, and each choice is yours
-Each lost its specimen to a solver improvement; none is a regression.
-1. `tests/integration/test_figure_grade_gate.py::test_a_clearing_run_can_still_be_standing_on_slack`
-   — `wall` was densified 2026-08-24 at your request, which turned its only specimen from +0.102
-   into −0.129. 19 configurations were probed; no replacement specimen exists.
-2. `tests/unit/test_spacetime_koz_geometry.py::test_wall_penetrates_below_its_penalty_threshold`
-   — since `2ea964d` (2026-09-20), `wall` held at weight 100 clears instead of penetrating.
-A third, `test_zero_slack_leaves_a_real_margin[wall-10-16]`, went red with the cap reach and green
-again the same day, 2026-09-29, when `wall` started by waiting: from its own start the scene now
-ends with zero slack. Tests that need a FAILING `wall` run now pin the straight start by name.
-*Closes when:* you pick, per test, one of — drop it, restore what removed its specimen, or accept a
-replacement specimen. **Do not close any of them by weakening the test.**
-→ [`SOLVER.md`](SOLVER.md) §Known Issues
+### ~~`repo.red-test` — red tests waiting on your decision~~
+**Closed 2026-09-29.** Both remaining reds got real replacement specimens, your decision, thresholds
+unchanged: the clearing-but-uncertified row is `curve` N8_seg4, and the penalty-threshold test is
+`diverse` N8_seg8 (renamed). The suite has no red test. → [`SOLVER.md`](SOLVER.md) §Known Issues
 
 ---
 

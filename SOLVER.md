@@ -501,21 +501,12 @@ fail:** doctoring either half into the other — which is the falsification reco
 
 ## Known Issues
 
-- **TWO TESTS ARE RED, deliberately, and each decision is the user's** — listed in
-  `WORKSTREAM.md` `repo.red-test`. The first, and its history: `wall` was densified
-  2026-08-24 at the user's request (spacing 0.8 → 0.5, 13 → 21 circles). The forbidden slab barely
-  moves, but 8 more per-segment planes make the relaxation more conservative, and the consequence
-  is measured: `wall` N8_seg2 went from +0.102 (clears while standing on 1.35 of slack) to −0.129
-  (penetrates outright). That row was the ONLY real specimen of "clears by sampling yet fails the
-  certificate", so `tests/integration/test_figure_grade_gate.py::test_a_clearing_run_can_still_be_standing_on_slack`
-  now fails. 19 configurations across `wall`, `diverse` and `original` were probed; no replacement
-  specimen exists. **Do not "fix" this by weakening the test, re-anchoring it on a synthetic row,
-  or reverting the density** — the user has the evidence and is choosing between keeping the
-  density, restoring it, and dropping the test. **Corrected 2026-08-31:** this used to add that
-  every `wall` row in README §Measurements is stale for the same reason and marked so. Neither half
-  held — the README pass is dated **2026-08-26**, two days after the densification, and its `wall`
-  row already attributes N8_seg2/3/4 penetrating to the densification rather than to the clipped-volume
-  change. The rows are current and carry no stale marker.
+- **No test is red since 2026-09-29.** Two tests had lost their specimens to solver improvements and
+  were given real replacements that day, the user's decision, thresholds unchanged:
+  `test_a_clearing_run_can_still_be_standing_on_slack` moved from `wall` N8_seg2 (penetrating
+  outright since the 2026-08-24 densification) to `curve` N8_seg4, and the penalty-threshold test
+  moved from `wall` N10_seg16 to `diverse` N8_seg8 and was renamed
+  `test_diverse_penetrates_below_its_penalty_threshold`. Each docstring carries its history.
 - **`spacetime_bezier/viewer.py` is UNVERIFIED.** Tracked 2026-08-20 because it was already
   documented as live, not because it was checked. No test exercises it -- nothing in `tests/`
   imports it, and no test opens a browser, so the server, the static page, and the verdict fields
