@@ -77,6 +77,29 @@ starts at 1e3 / 1e4 / 1e5 on every config the default run failed, keep the best 
 retried run under the requested start weight. If multi-start returns, it returns over seeds, and
 the row names the start it came from. → [`SOLVER.md`](SOLVER.md) §Decided against
 
+### `solver.init-blend` — where does `wall` stop working as the initial guess moves? *(pinned 2026-09-29)*
+Your note, in your words: *"wall is not getting done right. test different init curves. find out
+at what conf does current straight init works. then take that working resulting traj and blend it
+with straight init to make many multiple of different init traj. then check where things stop
+working."* A blend of two control polygons of the same degree is always a valid initial guess:
+the endpoints are shared and the time column stays monotone. The solver already takes one
+(`optimize_spacetime_from_control_points`), so the probe needs no solver change.
+What it buys over the three-seed test of [`SPEC.md`](paper/journal_1/SPEC.md) §4.7:
+- **An invariant that cannot fail if the solver is right.** A blend weight of one starts the
+  solver on a certified solution. It must come back certified. If it does not, that is a
+  construction defect, and no seed argument can explain it away.
+- **A basin width instead of a yes or no.** The blend weight where solving stops is a number for
+  the limitations section: how close the initial guess has to be. It is one slice of the basin,
+  along one line, not the whole basin.
+- **A split between timing and path.** Blending the time column and the spatial columns
+  separately says which one the failure is about. The 2026-09-22 retries that recovered `wall`
+  changed timing only.
+Blending across configurations, from a working segment count into a failing one, needs the
+trajectory re-fitted to the coarser basis first. If that re-fit is itself uncertifiable, the coarse
+configuration cannot hold the path, and the failure is discretization, not initialization.
+*Closes when:* after the first §4.7 pass, `wall` is swept on at least one working and one failing
+configuration, and the blend-weight-one run is a test.
+
 ### `solver.curve-seg16` — the floor's own cost is a limit cycle, and it is not this session's
 `curve` N8_seg16 certifies with `sound_clip` off and, with it on, escalates to the weight cap and
 runs to the iteration cap inside an exact limit cycle no iterate of which is feasible. **Owned by
@@ -229,6 +252,10 @@ graded by our own independent certificate on both sides, with the IRIS sample co
 Parts 2 and 3, plus committing `spacetime_bezier/families.py` and its two test files, which sit
 untracked. The bench records both mtimes — the compiled extension's and the package's — and
 refuses a dirty tree, so "which build produced this number" stops being a question.
+**Since 2026-09-29 the bench also runs the reliability pass of [`SPEC.md`](paper/journal_1/SPEC.md)
+§4.7**: both traffic arms (`traffic_curved` landed in `families.py` that day, with tests), every run
+binned, and the seed test on every unsolved run. The wait and hurry seeds do not exist in the
+package yet.
 *Closes when:* one command regenerates every table the manuscript uses, and a dirty tree or a
 non-figure-grade sidecar makes it fail rather than print.
 → [`paper/journal_1/demo_specs/C_traffic_and_backbone.md`](paper/journal_1/demo_specs/C_traffic_and_backbone.md)

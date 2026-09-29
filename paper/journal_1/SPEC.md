@@ -657,6 +657,55 @@ battery already used for `SOLVER.md` §Measurements.
 - Start weight $\lambda_0$: the escalation path depends on it; report that no single start
   dominates rather than hide it behind a retry.
 
+### 4.7 Reliability — the bar solver work stops at (decided 2026-09-29)
+
+**Why this section exists.** Solver reliability was worked on for a month with no finish line.
+The 28-configuration battery of §4.5 varies discretization on seven hand-built scenes, so a pass
+rate over it is a rate over tuning choices, not over problems. And a timing-only retry on the
+unchanged 2026-09-08 build passed four of that battery's five failures
+(`artifacts/koz-principled-20260922/seed_controls/portfolio.json`, a Codex run, not re-run here):
+most of what the wall-construction fixes were chasing was initialization, which no wall
+construction can fix. The battery stays as the regression suite and the §4.5 coverage battery. It
+is not the reliability scoreboard.
+
+**The benchmark is §4.4's run, not a second experiment.** The traffic family
+(`spacetime_bezier/families.py`) in two arms that share every seed and every crossing: `traffic`
+(straight tracks, which lift to convex capsules) and `traffic_curved` (every aircraft turning
+through the same crossing point, time and velocity, so the tube is not convex). Counts 1, 2, 4, 8,
+12, 16, 20; twenty seeds per count; degree 8 and 8 segments fixed; one frozen build for the whole
+pass. The arm-to-arm difference is what the non-convex case costs.
+
+**Every run lands in exactly one bin, read at the returned iterate.**
+
+| bin | test | bar |
+|---|---|---|
+| false certificate | hull-row certificate within tolerance, yet the independent $\mu\le0$ (D11) | **zero, across every run.** One occurrence is a bug and stops the pass. |
+| solved | `figure_grade` (D12) | reported per count and per arm |
+| safe, uncertified | $\mu>0$, gate fails | reported: conservatism |
+| failed | $\mu\le0$, no certificate claimed | reported, and split by the seed test |
+
+**The seed test.** Every run outside *solved* is re-run from a fixed set of timing seeds —
+straight, wait, hurry. If any seed solves it, it is an **initialization failure**; if none does, a
+**construction failure**. Wait and hurry are not implemented in the package yet
+(`build_initial_guess` knows `straight` and `quadratic_bow`); the bench defines them, and the row
+names the seed it came from.
+
+**The stopping rule.**
+- False certificates are zero.
+- Solver work may target **construction failures only**. Initialization failures go to the
+  limitations section, which §1.4 already commits to: the method is local and seeded.
+- Solved with seed retries at least 90% at every count, on both arms. **The 90 is a guess**, made
+  2026-09-29 before any data; it is revisited once, after the first pass, and never again.
+
+**What refutes it.** Any false certificate. A curved arm that solves far less often than the
+straight arm. Construction failures clustering at high counts.
+
+**Named risk — the curved arm may be too gentle.** At the initial guess the two arms put nearly the
+same walls in front of the solver, one approach per wall. So does the hand-built `curve` scene,
+whose failures are real, so the initial guess cannot settle it. If the first pass shows the two
+arms' outcomes identical run for run, the turn is not exercising the construction, and the turn
+rate goes up before any number is quoted.
+
 ---
 
 ## 5. Figure slots, limitations, and what the README keeps
