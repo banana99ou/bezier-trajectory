@@ -149,7 +149,12 @@ def scenario_wall() -> dict:
     return {
         "name": "wall",
         "title": "Disappearing Wall (t<5)",
-        "init_curve": {"mode": "straight"},
+        # The wall stands until t = 5. The straight start reaches it at t ~ 2.2,
+        # inside it; the wait start reaches it at t ~ 6.0, after it is gone.
+        # From the straight start the coarse settings (2-4 segments) end inside
+        # the wall; from this one every registered setting certifies
+        # (2026-09-29, tests/integration/test_timing_starts.py).
+        "init_curve": {"mode": "wait", "power": 3},
         "obstacles": wall_obs + other_obs,
         "start": [1.0, 5.0, 0.0],
         "end": [8.0, 5.0, 10.0],

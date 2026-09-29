@@ -257,7 +257,8 @@ registered rather than the first rung that certifies.
 ## Measurements
 
 Last full pass **2026-09-29, on `b506f34`** — the build the journal measures (`WORKSTREAM.md`
-`journal.freeze`). Every registered configuration run twice: reach floor on, the default, and
+`journal.freeze`). **The six `wall` rows were re-taken the same day** after the scene's own start
+changed from straight to wait (`spacetime_bezier/scenarios.py`); the solver build is the same. Every registered configuration run twice: reach floor on, the default, and
 `sound_clip=False` as the comparison arm. **28 configurations, 56 runs:** `original` 5, `curve` 4,
 `loiter` 2, `diverse` 5, `wall` 6, `fence3d` 4, `door3d` 2. Defaults otherwise: speed cap off,
 arrival pinned, elastic weight starting at 100 and escalating in-loop (x10 per raise, cap 1e5),
@@ -301,12 +302,12 @@ construction. **Weight** is the weight the run ENDED at, **Raises** how many x10
 | `diverse` | N8_seg16 | 87 | +0.0051 | +0.0051 | 2.13e-09 | 58 | 2 | 10000 | stationary | **yes** | no |
 | `diverse` | N10_seg4 | 28 | +0.1085 | +0.1085 | 1.11e-09 | 31 | 1 | 1000 | stationary | **yes** | no |
 | `diverse` | N10_seg16 | 86 | +0.0074 | +0.0074 | 2.54e-08 | 48 | 2 | 10000 | stationary | **yes** | no |
-| `wall` | N8_seg2 | 25 | -0.0978 | -0.0978 | 4.50e+00 | 48 | 3 | 100000 | trust_collapse | no | no |
-| `wall` | N8_seg3 | 46 | -0.3056 | -0.3082 | 2.66e+00 | 44 | 3 | 100000 | trust_collapse | no | no |
-| `wall` | N8_seg4 | 61 | -0.4808 | -0.4784 | 2.88e+00 | 43 | 3 | 100000 | trust_collapse | no | no |
-| `wall` | N8_seg16 | 130 | +0.0556 | +0.0556 | 0.00e+00 | 41 | 2 | 10000 | stationary | **yes** | no |
-| `wall` | N10_seg16 | 114 | -0.4892 | -0.4807 | 3.55e+00 | 50 | 3 | 100000 | trust_collapse | no | no |
-| `wall` | N10_seg24 | 202 | -0.4979 | +0.0667 | 3.86e+00 | 49 | 3 | 100000 | trust_collapse | no | no |
+| `wall` | N8_seg2 | 40 | +0.6180 | +0.6180 | 2.10e-09 | 44 | 2 | 10000 | stationary | **yes** | no |
+| `wall` | N8_seg3 | 35 | +0.3483 | +0.3483 | 2.14e-09 | 28 | 1 | 1000 | stationary | **yes** | no |
+| `wall` | N8_seg4 | 63 | +0.3356 | +0.3360 | 6.66e-13 | 11 | 0 | 100 | stationary | **yes** | no |
+| `wall` | N8_seg16 | 130 | +0.2003 | +0.0556 | 0.00e+00 | 12 | 0 | 100 | stationary | **yes** | no |
+| `wall` | N10_seg16 | 150 | +0.2003 | +0.0749 | 0.00e+00 | 9 | 0 | 100 | stationary | **yes** | no |
+| `wall` | N10_seg24 | 202 | +0.0687 | +0.0687 | 0.00e+00 | 10 | 0 | 100 | stationary | **yes** | no |
 | `fence3d` | N8_seg2 | 26 | +0.1623 | +0.1623 | 0.00e+00 | 9 | 0 | 100 | stationary | **yes** | no |
 | `fence3d` | N8_seg4 | 49 | +0.0342 | +0.0342 | 0.00e+00 | 13 | 0 | 100 | stationary | **yes** | no |
 | `fence3d` | N8_seg8 | 89 | +0.0087 | +0.0087 | 0.00e+00 | 10 | 0 | 100 | stationary | **yes** | no |
@@ -314,20 +315,19 @@ construction. **Weight** is the weight the run ENDED at, **Raises** how many x10
 | `door3d` | N8_seg4 | 36 | +0.9825 | +1.0062 | 0.00e+00 | 8 | 0 | 100 | stationary | **yes** | no |
 | `door3d` | N8_seg8 | 60 | +1.0044 | +1.0038 | 0.00e+00 | 9 | 0 | 100 | stationary | **yes** | no |
 
-**Figure-grade: 21 of 28 with the floor on, 0 of 28 with it off.** What travels with that:
+**Figure-grade: 26 of 28 with the floor on, 0 of 28 with it off.** What travels with that:
 
-1. **The "Grade OFF" column is not a quality judgement.** 21 of its 28 no's are the uncovered-walls
+1. **The "Grade OFF" column is not a quality judgement.** 25 of its 28 no's are the uncovered-walls
    condition alone; every other gate condition passes. It measures the hole, not the trajectories.
-2. **The seven floor-on failures are three different things.**
-   - `wall` N8_seg2/3/4 penetrate in both arms. A timing-only retry recovered all three on the
-     2026-09-08 build (`artifacts/koz-principled-20260922/seed_controls/portfolio.json`, not re-run
-     here): initialization, until the seed test of `SPEC.md` §4.7 says otherwise.
-   - `curve` N8_seg4 ends on slack in both arms — the standing failure no start weight certifies
-     (`WORKSTREAM.md` `solver.multistart`).
-   - `curve` N8_seg8, `wall` N10_seg16 and `wall` N10_seg24 are **the cap's price**. Under the
-     starting radius all three certified. With the reach at the cap the floored clip balls are
-     large, and `curve` N8_seg8 and `wall` N10_seg24 clear with the floor OFF while penetrating with
-     it on. Named, not hidden: this is what covering every allowed step costs on this battery.
+2. **`wall` starts by waiting.** The wall stands until t = 5; the straight start reaches it at
+   t ~ 2.2 and, at 2 to 4 segments, ends inside it. The wait start reaches it at t ~ 6.0, after it
+   is gone, and every `wall` setting certifies (`tests/integration/test_timing_starts.py`). A
+   scene-specific start, like `original`'s bow. At 2 segments the certified path is contorted --
+   drift back, sit until t ~ 8, dash -- because two hull pieces certify only if the whole first
+   half stays left of the wall and the whole second half comes after it.
+   - The two floor-on failures left are `curve` N8_seg4, the standing failure no start weight
+     certifies (`WORKSTREAM.md` `solver.multistart`), and `curve` N8_seg8, which certified under
+     the starting reach radius and is the cap's price on this battery.
 3. **The previous pass (2026-09-08, 23 of 28) described a build that no longer exists** — two
    solver changes ago. It lives in git history (`b506f34^:SOLVER.md`), not here.
 
@@ -501,7 +501,7 @@ fail:** doctoring either half into the other — which is the falsification reco
 
 ## Known Issues
 
-- **THREE TESTS ARE RED, deliberately, and each decision is the user's** — listed in
+- **TWO TESTS ARE RED, deliberately, and each decision is the user's** — listed in
   `WORKSTREAM.md` `repo.red-test`. The first, and its history: `wall` was densified
   2026-08-24 at the user's request (spacing 0.8 → 0.5, 13 → 21 circles). The forbidden slab barely
   moves, but 8 more per-segment planes make the relaxation more conservative, and the consequence

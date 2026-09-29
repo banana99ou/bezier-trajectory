@@ -717,9 +717,8 @@ pass. The arm-to-arm difference is what the non-convex case costs.
 
 **The seed test.** Every run outside *solved* is re-run from a fixed set of timing seeds —
 straight, wait, hurry. If any seed solves it, it is an **initialization failure**; if none does, a
-**construction failure**. Wait and hurry are not implemented in the package yet
-(`build_initial_guess` knows `straight` and `quadratic_bow`); the bench defines them, and the row
-names the seed it came from.
+**construction failure**. `wait` exists in the package since 2026-09-29, as the `wall` scene's own
+start; `hurry` does not. The bench defines the seed set, and the row names the seed it came from.
 
 **The stopping rule.**
 - False certificates are zero.

@@ -160,6 +160,9 @@ def test_infeasible_solve_response_is_strict_json(_require_rust):
 
     response = spacetime_sandbox.solve_from_payload({
         "scenario_name": "wall",
+        # Pinned to the straight start: since 2026-09-29 `wall` starts by waiting,
+        # and this test needs a solve that never finds a feasible iterate.
+        "init_curve": {"mode": "straight"},
         "N": 8,
         "n_seg": 2,
         "max_iter": 3,

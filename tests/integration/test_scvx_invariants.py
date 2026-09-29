@@ -251,9 +251,12 @@ class TestElasticComplementarity:
     # Runs that END with slack active. `wall` N8_seg2 is the deliberately red
     # config: it reaches the cap with 4.5 of slack. The held runs pin a weight
     # below the scene's threshold, which is what the hold exists for.
+    # The `wall` rows are pinned to the straight start: since 2026-09-29 the scene
+    # starts by waiting and certifies, and these rows need a run that ends on slack.
     ACTIVE = [
-        ("wall", 8, 2, {}),
-        ("wall", 10, 16, dict(elastic_weight=100.0, escalate_elastic_weight=False)),
+        ("wall", 8, 2, dict(init_curve={"mode": "straight"})),
+        ("wall", 10, 16, dict(elastic_weight=100.0, escalate_elastic_weight=False,
+                              init_curve={"mode": "straight"})),
         ("curve", 8, 4, dict(elastic_weight=100.0, escalate_elastic_weight=False)),
         ("diverse", 8, 4, dict(elastic_weight=100.0, escalate_elastic_weight=False)),
     ]

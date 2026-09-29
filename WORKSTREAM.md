@@ -38,18 +38,16 @@ Full venue rules, schedule and manuscript state:
 
 ## Blocking honesty, not the deadline
 
-### `repo.red-test` — three tests are red by choice, and each choice is yours
+### `repo.red-test` — two tests are red by choice, and each choice is yours
 Each lost its specimen to a solver improvement; none is a regression.
 1. `tests/integration/test_figure_grade_gate.py::test_a_clearing_run_can_still_be_standing_on_slack`
    — `wall` was densified 2026-08-24 at your request, which turned its only specimen from +0.102
    into −0.129. 19 configurations were probed; no replacement specimen exists.
 2. `tests/unit/test_spacetime_koz_geometry.py::test_wall_penetrates_below_its_penalty_threshold`
    — since `2ea964d` (2026-09-20), `wall` held at weight 100 clears instead of penetrating.
-3. `tests/integration/test_scvx_invariants.py::TestElasticComplementarity::test_zero_slack_leaves_a_real_margin[wall-10-16]`
-   — since the cap reach (2026-09-29), `wall` N10_seg16 ends on slack. A replacement exists and
-   was checked the same day: `wall` N8_seg16 ends with zero slack and its largest dual well below
-   the weight. The sibling `test_active_slack_pins_the_dual_at_the_weight[wall-10-16]`, red since
-   `2ea964d`, is green again for the same reason.
+A third, `test_zero_slack_leaves_a_real_margin[wall-10-16]`, went red with the cap reach and green
+again the same day, 2026-09-29, when `wall` started by waiting: from its own start the scene now
+ends with zero slack. Tests that need a FAILING `wall` run now pin the straight start by name.
 *Closes when:* you pick, per test, one of — drop it, restore what removed its specimen, or accept a
 replacement specimen. **Do not close any of them by weakening the test.**
 → [`SOLVER.md`](SOLVER.md) §Known Issues
@@ -109,8 +107,11 @@ only set how finely the certificate splits it. So the cheapest first probe solve
 certified N8_seg16 trajectory and evaluate its certificate at 2, 3 and 4 segments. If it passes, a
 safe answer exists there and the straight start is the problem; if it fails, the coarse split is
 too conservative to hold that path. Only a change of degree needs a re-fit.
-*Closes when:* after the first §4.7 pass, `wall` is swept on at least one working and one failing
-configuration, and the blend-weight-one run is a test.
+**Answered 2026-09-29, the user's call: a better start for this scene only, no front end.** `wall`
+now starts by waiting and every setting certifies; a certified start comes back certified (both
+tests in `tests/integration/test_timing_starts.py`). The segment count does not change the
+trajectory, so no re-fit is needed across settings. The basin-width sweep is not scheduled.
+*Closes when:* you drop it, or ask for the sweep.
 
 ### ~~`solver.curve-seg16` — the floor's own cost is a limit cycle, and it is not this session's~~
 **Closed 2026-09-29.** E1 was refused and is gone; `2ea964d` ended the cycle, and under the cap

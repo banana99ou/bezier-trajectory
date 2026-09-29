@@ -276,7 +276,10 @@ def test_a_penetrating_run_below_the_penalty_threshold_is_not_figure_grade():
     cap does not rescue it either. The HELD weight-100 statement lives in
     `tests/unit/test_spacetime_koz_geometry.py::test_wall_penetrates_below_its_penalty_threshold`.
     """
-    out = optimize_scenario(scenario_wall(), [(8, 2)], elastic_weight=100.0, verbose=False)
+    # Pinned to the straight start: since 2026-09-29 `wall` starts by waiting and certifies,
+    # and this test needs the penetrating run the straight start produces.
+    out = optimize_scenario(dict(scenario_wall(), init_curve={"mode": "straight"}), [(8, 2)],
+                            elastic_weight=100.0, verbose=False)
     row = out["results"]["N8_seg2"]
     assert row["min_clearance"] < 0.0
     assert row["figure_grade"] is False

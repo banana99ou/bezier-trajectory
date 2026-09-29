@@ -171,6 +171,30 @@ def lift_operator(M: np.ndarray, dim: int) -> np.ndarray:
     return np.kron(M, np.eye(int(dim), dtype=float))
 
 
+def _wait_start(p_start: np.ndarray, p_end: np.ndarray, N: int, power: int) -> np.ndarray:
+    """The straight chord, travelled slowly first and fast at the end (2026-09-29).
+
+    Space follows ``start + (end - start) * s**power`` and time stays uniform
+    in ``s``: the same path as the straight start, reached later. Exact
+    Bernstein coefficients, ``C(i, power) / C(N, power)``, not a fit. Needs
+    ``N >= power``.
+
+    It exists for ONE scene: `wall`, whose wall stands only until t = 5. The
+    straight start reaches the wall line at t ~ 2.2, inside the wall; this one
+    reaches it at t ~ 6.0, after the wall is gone. A scene-specific start, like
+    `original`'s bow -- not a general remedy (tests/integration/test_timing_starts.py).
+    """
+    from math import comb
+
+    if power < 1 or N < power:
+        raise ValueError(f"a power-{power} wait start needs degree >= {power}, got {N}")
+    frac = np.array([comb(i, power) / comb(N, power) for i in range(N + 1)], dtype=float)
+    P = np.empty((N + 1, p_start.size), dtype=float)
+    P[:, :-1] = p_start[:-1] + np.outer(frac, p_end[:-1] - p_start[:-1])
+    P[:, -1] = p_start[-1] + (p_end[-1] - p_start[-1]) * np.arange(N + 1) / N
+    return P
+
+
 def build_initial_guess(p_start, p_end, n_cp: int, init_curve: dict | None = None) -> np.ndarray:
     """
     Build the initial control polygon for SCP.
@@ -186,6 +210,9 @@ def build_initial_guess(p_start, p_end, n_cp: int, init_curve: dict | None = Non
 
     if not init_curve or init_curve.get("mode", "straight") == "straight":
         return P
+
+    if init_curve.get("mode") == "wait":
+        return _wait_start(p_start, p_end, int(n_cp) - 1, int(init_curve.get("power", 3)))
 
     if init_curve.get("mode") != "quadratic_bow":
         raise ValueError(f"Unknown init_curve mode: {init_curve.get('mode')}")
