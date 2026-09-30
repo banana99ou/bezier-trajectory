@@ -709,6 +709,91 @@ def optimize_spacetime(
     )
 
 
+def result_row(P_opt, opt_info: dict, clearance: float, N: int, n_seg: int,
+               trust_radius: float, initial_weight: float) -> dict:
+    """The gate row for one solve: ``optimize_spacetime``'s output mapped to the
+    keys ``figure_grade_failures`` reads, plus the verdict.
+
+    One mapping, shared by ``optimize_scenario`` and ``tools/bench.py`` -- the bench
+    times the solve itself and must not reimplement this (demo spec C sec. 2.3).
+    """
+    used_weight = float(opt_info.get("final_elastic_weight", float("nan")))
+    backend_used = opt_info["backend"]
+    # `feasible` says the sampled curve misses the obstacles. `certified`
+    # says the control-point hull satisfies the half-spaces it generates,
+    # which is the property the paper claims. They are different, and a run
+    # can pass the first while failing the second -- so both are recorded and
+    # neither is allowed to stand in for the other.
+    certificate = float(opt_info.get("koz_violation_reference", float("nan")))
+    occlusion = float(opt_info.get("occlusion_violation_reference", 0.0))
+    total_slack = float(opt_info.get("total_koz_slack_returned", float("nan")))
+    row = {
+        "N": int(N),
+        "n_seg": int(n_seg),
+        "control_points": np.asarray(P_opt, dtype=float).tolist(),
+        "min_clearance": float(clearance),
+        "feasible": bool(clearance > 0.0),
+        "backend": backend_used,
+        "converged": bool(opt_info.get("converged", 0.0)),
+        "stop_reason": int(opt_info.get("stop_reason", -1)),
+        "stop_label": _STOP_REASONS.get(int(opt_info.get("stop_reason", -1)), "unknown"),
+        "iterations": int(opt_info.get("iterations", -1)),
+        "certificate_violation": certificate,
+        "certified": bool(certificate <= 1e-6),
+        "occlusion_violation": occlusion,
+        "occlusion_certified": bool(occlusion <= 1e-6),
+        "occlusion_planes_dropped": float(
+            opt_info.get("occlusion_planes_dropped", 0.0)
+        ),
+        # PAPER_1 statement (7) at the returned iterate, and a gate
+        # condition since 2026-08-31. NaN when the extension did not emit
+        # it, so a stale build refuses rather than grades as sound.
+        "koz_unsound_clips": float(
+            opt_info.get("koz_unsound_clips", float("nan"))
+        ),
+        # Whether that count was FORCED to zero by the reach floor or simply
+        # came out zero. Not a gate condition -- the count is.
+        "sound_clip": bool(opt_info.get("sound_clip", 0.0)),
+        "total_slack": total_slack,
+        "accept_count": int(opt_info.get("accept_count", 0)),
+        "reject_count": int(opt_info.get("reject_count", 0)),
+        "returned_best_iterate": bool(opt_info.get("returned_best_iterate", 0.0)),
+        # The RESOLVED radius, not the argument: the scene may have
+        # supplied it, and this row is what the verdicts and every
+        # recorded measurement downstream read.
+        "trust_radius": float(trust_radius),
+        "elastic_weight": float(used_weight),
+        "initial_elastic_weight": float(initial_weight),
+        # -1 = not reported, the `stop_reason` sentinel: an int field cannot
+        # carry NaN, and 0 would read as "no raise was needed".
+        "weight_raises": (
+            int(opt_info["weight_raises"]) if "weight_raises" in opt_info else -1
+        ),
+        # The exactness margin's other half: complementarity pins a relaxed
+        # row's multiplier at the weight exactly when its slack is active,
+        # so (max_koz_dual < elastic_weight) and (total_slack ~ 0) are one
+        # claim computed two independent ways.
+        "max_koz_dual": float(opt_info.get("max_koz_dual", float("nan"))),
+        "speed_cap_violation": float(opt_info.get("speed_cap_violation", 0.0)),
+        "arrival_time": float(opt_info.get("arrival_time", float("nan"))),
+        # Not a gate condition -- see the Rust export. It flags an arrival
+        # time that is a property of `min_dt` rather than of the scenario,
+        # which is a modelling artifact and not a constraint violation.
+        "arrival_on_min_dt_floor": float(
+            opt_info.get("arrival_on_min_dt_floor", 0.0)
+        ),
+        # The upper clamp on a freed arrival, and whether the answer is
+        # sitting on it. Also not a gate condition: an arrival at the bound
+        # is a legitimate answer to the problem as posed, it just was not
+        # posed by the geometry.
+        "time_ub_used": float(opt_info.get("time_ub_used", float("nan"))),
+        "arrival_on_time_ub": float(opt_info.get("arrival_on_time_ub", 0.0)),
+    }
+    row["figure_grade"] = is_figure_grade(row)
+    row["figure_grade_reasons"] = figure_grade_failures(row)
+    return row
+
+
 def optimize_scenario(
     scenario: dict,
     configs: list[tuple[int, int]],
@@ -820,78 +905,7 @@ def optimize_scenario(
             print(f"  Final clearance: {clearance:.4f} (elastic_weight={used_weight:g})")
 
         key = f"N{N}_seg{n_seg}"
-        # `feasible` says the sampled curve misses the obstacles. `certified`
-        # says the control-point hull satisfies the half-spaces it generates,
-        # which is the property the paper claims. They are different, and a run
-        # can pass the first while failing the second -- so both are recorded and
-        # neither is allowed to stand in for the other.
-        certificate = float(opt_info.get("koz_violation_reference", float("nan")))
-        occlusion = float(opt_info.get("occlusion_violation_reference", 0.0))
-        total_slack = float(opt_info.get("total_koz_slack_returned", float("nan")))
-        results[key] = {
-            "N": int(N),
-            "n_seg": int(n_seg),
-            "control_points": np.asarray(P_opt, dtype=float).tolist(),
-            "min_clearance": float(clearance),
-            "feasible": bool(clearance > 0.0),
-            "backend": backend_used,
-            "converged": bool(opt_info.get("converged", 0.0)),
-            "stop_reason": int(opt_info.get("stop_reason", -1)),
-            "stop_label": _STOP_REASONS.get(int(opt_info.get("stop_reason", -1)), "unknown"),
-            "iterations": int(opt_info.get("iterations", -1)),
-            "certificate_violation": certificate,
-            "certified": bool(certificate <= 1e-6),
-            "occlusion_violation": occlusion,
-            "occlusion_certified": bool(occlusion <= 1e-6),
-            "occlusion_planes_dropped": float(
-                opt_info.get("occlusion_planes_dropped", 0.0)
-            ),
-            # PAPER_1 statement (7) at the returned iterate, and a gate
-            # condition since 2026-08-31. NaN when the extension did not emit
-            # it, so a stale build refuses rather than grades as sound.
-            "koz_unsound_clips": float(
-                opt_info.get("koz_unsound_clips", float("nan"))
-            ),
-            # Whether that count was FORCED to zero by the reach floor or simply
-            # came out zero. Not a gate condition -- the count is.
-            "sound_clip": bool(opt_info.get("sound_clip", 0.0)),
-            "total_slack": total_slack,
-            "accept_count": int(opt_info.get("accept_count", 0)),
-            "reject_count": int(opt_info.get("reject_count", 0)),
-            "returned_best_iterate": bool(opt_info.get("returned_best_iterate", 0.0)),
-            # The RESOLVED radius, not the argument: the scene may have
-            # supplied it, and this row is what the verdicts and every
-            # recorded measurement downstream read.
-            "trust_radius": float(trust_radius),
-            "elastic_weight": float(used_weight),
-            "initial_elastic_weight": float(initial_weight),
-            # -1 = not reported, the `stop_reason` sentinel: an int field cannot
-            # carry NaN, and 0 would read as "no raise was needed".
-            "weight_raises": (
-                int(opt_info["weight_raises"]) if "weight_raises" in opt_info else -1
-            ),
-            # The exactness margin's other half: complementarity pins a relaxed
-            # row's multiplier at the weight exactly when its slack is active,
-            # so (max_koz_dual < elastic_weight) and (total_slack ~ 0) are one
-            # claim computed two independent ways.
-            "max_koz_dual": float(opt_info.get("max_koz_dual", float("nan"))),
-            "speed_cap_violation": float(opt_info.get("speed_cap_violation", 0.0)),
-            "arrival_time": float(opt_info.get("arrival_time", float("nan"))),
-            # Not a gate condition -- see the Rust export. It flags an arrival
-            # time that is a property of `min_dt` rather than of the scenario,
-            # which is a modelling artifact and not a constraint violation.
-            "arrival_on_min_dt_floor": float(
-                opt_info.get("arrival_on_min_dt_floor", 0.0)
-            ),
-            # The upper clamp on a freed arrival, and whether the answer is
-            # sitting on it. Also not a gate condition: an arrival at the bound
-            # is a legitimate answer to the problem as posed, it just was not
-            # posed by the geometry.
-            "time_ub_used": float(opt_info.get("time_ub_used", float("nan"))),
-            "arrival_on_time_ub": float(opt_info.get("arrival_on_time_ub", 0.0)),
-        }
-        results[key]["figure_grade"] = is_figure_grade(results[key])
-        results[key]["figure_grade_reasons"] = figure_grade_failures(results[key])
+        results[key] = result_row(P_opt, opt_info, clearance, N, n_seg, trust_radius, initial_weight)
         if verbose and not results[key]["figure_grade"]:
             print(
                 "  NOT FIGURE-GRADE: "

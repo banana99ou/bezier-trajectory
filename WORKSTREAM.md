@@ -258,16 +258,23 @@ graded by our own independent certificate on both sides, with the IRIS sample co
 → [`paper/journal_1/SPEC.md`](paper/journal_1/SPEC.md) §4.3
 
 ### `journal.bench` — numbers regenerable by one command, or they are not numbers
-`tools/bench.py` and `tools/make_tables.py` per [`demo_specs/C_traffic_and_backbone.md`](paper/journal_1/demo_specs/C_traffic_and_backbone.md)
-Parts 2 and 3, plus committing `spacetime_bezier/families.py` and its two test files, which sit
-untracked. The bench records both mtimes — the compiled extension's and the package's — and
-refuses a dirty tree, so "which build produced this number" stops being a question.
-**Since 2026-09-29 the bench also runs the reliability pass of [`SPEC.md`](paper/journal_1/SPEC.md)
-§4.7**: both traffic arms (`traffic_curved` landed in `families.py` that day, with tests), every run
-binned, and the seed test on every unsolved run. The wait and hurry seeds do not exist in the
-package yet.
-*Closes when:* one command regenerates every table the manuscript uses, and a dirty tree or a
-non-figure-grade sidecar makes it fail rather than print.
+**Built 2026-09-29:** `tools/bench.py` (records) and `tools/make_tables.py` (tables: `backbone`,
+`scaling`, `axes`, `coverage`, and `reliability` -- the four bins of [`SPEC.md`](paper/journal_1/SPEC.md)
+§4.7, where a false certificate stops the build), tested in `tests/integration/test_bench.py` and
+`tests/unit/test_make_tables.py`, each invariant shown to fail under a mutation. Three adaptations
+from demo spec C, stated in the bench's docstring: scenario runs start at weight 100 like the
+committed table (not the ladder-era registry weight); `--starts` is a record field over the
+package's own starts, never a retry; the `realistic` arm is refused by name until `families.py` has
+that mode. The `--expect-grid` input is the bench's own `--dry-run` output.
+**Finding, 2026-09-29, not acted on:** the clearance oracle's 3000- and 20001-sample grids are not
+nested, and on `wall` N10_seg24 the denser one reports a LARGER minimum (+0.0690 vs +0.0687).
+No verdict changes; the table generator marks such records. Nesting the grids is the fix, and it
+is your call because it touches the oracle every clearance number comes from.
+A smoke pass on a dirty tree reproduced the committed 28-row table: every cell equal except five
+clearances, all explained by the 3000- vs 20001-sample difference.
+*Closes when:* the backbone table in [`SOLVER.md`](SOLVER.md) §Measurements is replaced by the
+generator's output from a pass on a clean committed tree. That needs the poster edits and the
+Codex experiment committed or set aside first -- a dirty tree is refused by design.
 → [`paper/journal_1/demo_specs/C_traffic_and_backbone.md`](paper/journal_1/demo_specs/C_traffic_and_backbone.md)
 
 ### `journal.demos` — the pairs, each with a baseline that can fail

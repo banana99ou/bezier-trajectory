@@ -273,7 +273,7 @@ reported.
 **Provenance.** Commit `b506f34`; extension built 2026-09-29T18:16:16 into this worktree's venv,
 after the newest Rust source (18:15:50), with `rust_optimizer/` and `spacetime_bezier/` clean at that
 commit. arm64 Darwin, Python 3.14.6. Taken through `optimize_scenario` directly, both arms, one
-escalating solve per configuration from a start of 100, no retry. **Do not take this table with
+escalating solve per configuration from a start of 100, no retry. **Regenerate it with `tools/bench.py` + `tools/make_tables.py` (`WORKSTREAM.md` `journal.bench`), never with
 `tools/sweep_scenarios.py` as it stands:** its clip defaults to floor OFF unless `--sound-clip` is
 passed — the 2026-08-31 default flip missed it. All 28 floor-on rows equal the cap arm of the
 2026-09-29 eleven-policy comparison exactly, clearance and grade, and a second run of this pass
