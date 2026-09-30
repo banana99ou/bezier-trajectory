@@ -38,7 +38,7 @@ NOTATION_DOC = REPO / "doc" / "notation.md"
 
 # Files under the lock, with the scan mode each one needs.
 LOCKED_DOCS: dict[str, str] = {
-    "papers/paper_draft_korean_rev2.md": "latex",
+    "papers/paper_draft.md": "latex",
     "doc/design_freeze.md": "plain",
 }
 

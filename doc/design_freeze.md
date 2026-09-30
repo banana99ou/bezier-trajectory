@@ -13,7 +13,7 @@ it on 2026-08-10 (`R_KOZ`, `Δ_k`, `μ`, `∇g_j`, `c_j`, `φ`/`φ⁽ᵏ⁾`, `�
 `python3 tools/check_notation.py`.
 
 **PRECEDENCE: the code + the 5-pillar verification are ground truth.** The
-paper (`papers/paper_draft_korean_rev2.md`) currently LAGS the code at
+paper (`papers/paper_draft.md`) currently LAGS the code at
 §2 roadmap / §2.3 / §3.2 (it still shows the removed smoothness term and the
 Gram-for-smoothness story), at §4.1 (수렴 허용오차 still 10⁻⁶; locked value is
 10⁻⁸), at §3.3 / Algorithm 1 (no K-consecutive requirement stated), and at

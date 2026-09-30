@@ -2,7 +2,7 @@
 
 > 피드백 원본: [paper_draft_korean_rev2_PF.pdf](paper_draft_korean_rev2_PF.pdf) (14쪽).
 > 원본 파일명: `bezier-koz-subdivision-분할구간별 볼록화 Bezier 궤적 생성 (rev2)-2026-09-08_1835-scribble.pdf`
-> 전사 기준: `paper_draft_korean_rev2.md` 본문에 PDF의 손글씨 의견을 `[[...]]`, 제안 문구를 `{...}`로 덧붙였다. 수정 지시 자체는 본문에 적용하지 않았다. PDF는 피드백이 있는 발췌 페이지로 구성되어 있어, PDF에 없는 본문은 기준 Markdown에서 유지했다.
+> 전사 기준: `../paper_draft.md`(당시 파일명 `paper_draft_korean_rev2.md`) 본문에 PDF의 손글씨 의견을 `[[...]]`, 제안 문구를 `{...}`로 덧붙였다. 수정 지시 자체는 본문에 적용하지 않았다. PDF는 피드백이 있는 발췌 페이지로 구성되어 있어, PDF에 없는 본문은 기준 Markdown에서 유지했다.
 > `표시:`는 글자 없는 동그라미·강조 표시의 설명이며, `판독 불확실`은 확정 전사가 어려운 부분이다. 각 의견 뒤 HTML 주석의 쪽수는 피드백 PDF 기준이다.
 
 
