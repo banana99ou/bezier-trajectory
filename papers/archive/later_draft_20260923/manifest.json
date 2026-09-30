@@ -1,0 +1,147 @@
+{
+  "created": "2026-09-23T15:26:09.372051+09:00",
+  "head": "01d1d29a914519bf47fef40557b05b6551a76b98",
+  "files": [
+    {
+      "path": ".gitignore",
+      "sha256": "a8dcf0e042f428043880e73ffd95a79443bd1e4dceb1c806e76ae3ec42ca0a32",
+      "bytes": 1416
+    },
+    {
+      "path": "README.md",
+      "sha256": "ea4290b888da6fc140abf967c36f18c3e959fd624cf06753f4c1cf6912427998",
+      "bytes": 8901
+    },
+    {
+      "path": "doc/dcm_downstream_experiment_design.md",
+      "sha256": "674190324dea5c2c6a2a54cecb08bd7ddbeb2413755d86c6bcdb7ad32c3cfe31",
+      "bytes": 23435
+    },
+    {
+      "path": "doc/design_freeze.md",
+      "sha256": "ce5ed310ff7f6ed501b493e68da660519b437341fb71176c1034d3f9be14e453",
+      "bytes": 61616
+    },
+    {
+      "path": "doc/tmp.md",
+      "sha256": "ddd224b6d44cfb1664e0a896f737ca0aa18c9a3b5e11fc59716f0c6c41a424a3",
+      "bytes": 5161
+    },
+    {
+      "path": "experiments/downstream/pipeline.py",
+      "sha256": "0a0259d9a13484adac59136ef1a4ac78fabbe883c719d21dbd8795d3318b7052",
+      "bytes": 26975
+    },
+    {
+      "path": "figures/control_subdivision.png",
+      "sha256": "dd07e7dfec172672af2826b45c0104310ea3f48971aa68224732b25efe7c5263",
+      "bytes": 275527
+    },
+    {
+      "path": "figures/koz_linearization.png",
+      "sha256": "34cdaf44aea17d3f0bf7020aeef0ccbc747d597fda0a0de2c5a18077ea7a150a",
+      "bytes": 330237
+    },
+    {
+      "path": "figures/representative_trajectories.png",
+      "sha256": "ce8a2d2cad1589a8b44a7b099c0f9ef0a04a780ed57db64ae5445befafc52abc",
+      "bytes": 788694
+    },
+    {
+      "path": "figures/scenario_trajectories.html",
+      "sha256": "b2377a124f497eb4f3fd483d97dcb63560e1b3895a7ffc6b0c3748acd5633fa3",
+      "bytes": 374687
+    },
+    {
+      "path": "figures/scp_pipeline.pdf",
+      "sha256": "77fb0285fc4acd139355279732798266b2fd094d4356767c703d17f5a8ece1f1",
+      "bytes": 37651
+    },
+    {
+      "path": "figures/scp_pipeline.png",
+      "sha256": "55a7d2d05b3579564e364c13853130116a43700ef47820ee9f968c2fcd6fed15",
+      "bytes": 275048
+    },
+    {
+      "path": "figures/scp_pipeline.py",
+      "sha256": "a4611b59457fb0bfb8484d19c9ec5b4df35bbf9dd99764986c032882f7771465",
+      "bytes": 14933
+    },
+    {
+      "path": "figures/subdivision_tradeoff_N7.png",
+      "sha256": "c2b1ccde61cdb21c94caee2d9f97d2d70f0969d740cf61ef0b7c3088833e2340",
+      "bytes": 222049
+    },
+    {
+      "path": "papers/exports/feedback_applied_11c772e/SOURCE.txt",
+      "sha256": "7e8ebc9afe93fbc578af03c0ec1632f50f58a0e5168202e2d1d639a907a957aa",
+      "bytes": 875
+    },
+    {
+      "path": "papers/exports/feedback_applied_11c772e/figures/control_subdivision.png",
+      "sha256": "dd07e7dfec172672af2826b45c0104310ea3f48971aa68224732b25efe7c5263",
+      "bytes": 275527
+    },
+    {
+      "path": "papers/exports/feedback_applied_11c772e/figures/koz_linearization.png",
+      "sha256": "34cdaf44aea17d3f0bf7020aeef0ccbc747d597fda0a0de2c5a18077ea7a150a",
+      "bytes": 330237
+    },
+    {
+      "path": "papers/exports/feedback_applied_11c772e/figures/representative_trajectories.png",
+      "sha256": "b017bc923e0edb1d2f9ed58902bafbefb879e20217987263a9f40fad67a12eb8",
+      "bytes": 805475
+    },
+    {
+      "path": "papers/exports/feedback_applied_11c772e/figures/scp_pipeline.png",
+      "sha256": "1fcf218ce4ae3e06015e6e7c1d6811832f88b0435f1b2160ddf981021f768801",
+      "bytes": 272195
+    },
+    {
+      "path": "papers/exports/feedback_applied_11c772e/figures/subdivision_tradeoff_N7.png",
+      "sha256": "c2b1ccde61cdb21c94caee2d9f97d2d70f0969d740cf61ef0b7c3088833e2340",
+      "bytes": 222049
+    },
+    {
+      "path": "papers/feedback/paper_draft_korean_PF.md",
+      "sha256": "2fcc1c8a1b5456049ab4527d1cb636ad4415ef530588bb3d6b28db34bcbfbd2d",
+      "bytes": 53122
+    },
+    {
+      "path": "papers/feedback/paper_draft_korean_rev2_PF.md",
+      "sha256": "56ca76c96955d699f6a5a78bf3791f46e7cf50d384cc644dcda074972969e894",
+      "bytes": 65377
+    },
+    {
+      "path": "papers/paper_draft.md",
+      "sha256": "f316a967fc99fe1d7cd48c457d3e6834ff8ca3cfbfa671966b1ec5d602408f6c",
+      "bytes": 46358
+    },
+    {
+      "path": "papers/paper_draft_feedback_applied_11c772e.md",
+      "sha256": "2f25aa53c9680315028f9196dacb63b9ed4ca6c343ef3bab83b7ed192e0fe3a2",
+      "bytes": 46945
+    },
+    {
+      "path": "papers/paper_draft_feedback_applied_11c772e.pdf",
+      "sha256": "8086260dce8a9cf8fcb2feeafb9ccbbb207b68a32bc17eac260fd862a179e06f",
+      "bytes": 2027177
+    },
+    {
+      "path": "tools/build_representative_trajectories.py",
+      "sha256": "88d6466f1d63ce81b13902c5d0b94e18b3dbaade549dba5824bf0118a338f9b4",
+      "bytes": 8712
+    },
+    {
+      "path": "tools/check_notation.py",
+      "sha256": "795933ec57f6263dfd7b7b18ae0ebd4fc40ddeacf6e62e2c1f545559593e1fdb",
+      "bytes": 14551
+    }
+  ],
+  "deleted": [
+    "doc/session_handoff.md",
+    "papers/paper_draft_korean_PF.md",
+    "papers/paper_draft_korean_rev2.md",
+    "papers/paper_draft_korean_rev2_PF.md"
+  ]
+}

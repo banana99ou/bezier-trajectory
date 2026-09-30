@@ -88,25 +88,25 @@ def _sphere(ax, radius, color, alpha, lw=0.0, wire=False, n=48):
                         shade=True, zorder=0)
 
 
-def main():
+def main(solved=None):
+    """Render supplied, verified trajectories or solve fresh when omitted."""
     taus = np.linspace(0.0, 1.0, SAMPLES)
 
     # One solve per geometry, cache off, through the harness the table uses.
-    solved = []
-    r_koz = None
-    for (name, _label_ko), color in zip(T2_SCENARIOS, COLORS):
-        label = EN_LABEL[name]
-        sc = H.make_scenario(name, N=T2_DEGREE)
-        P, info = H.run_rust(sc, n_seg=T2_NSEG,
-                             scp_trust_radius=PAPER_R0.get(name, sc["r0"]))
-        pts = H.positions(P, taus)
-        k = int(np.argmin(np.linalg.norm(pts, axis=1)))
-        margin = float(info["min_radius"]) - sc["r_e"]
-        # Endpoint clearance is set by the boundary positions; reserve the
-        # closest-approach cross for an interior point.
-        binds = 0 < k < len(taus) - 1
-        r_koz = float(sc["r_e"])
-        solved.append((label, color, sc, pts, k, margin, binds, info))
+    if solved is None:
+        solved = []
+        for (name, _label_ko), color in zip(T2_SCENARIOS, COLORS):
+            label = EN_LABEL[name]
+            sc = H.make_scenario(name, N=T2_DEGREE)
+            P, info = H.run_rust(sc, n_seg=T2_NSEG,
+                                 scp_trust_radius=PAPER_R0.get(name, sc["r0"]))
+            pts = H.positions(P, taus)
+            k = int(np.argmin(np.linalg.norm(pts, axis=1)))
+            margin = float(info["min_radius"]) - sc["r_e"]
+            # Endpoint clearance is fixed by the boundary positions.
+            binds = 0 < k < len(taus) - 1
+            solved.append((label, color, sc, pts, k, margin, binds, info))
+    r_koz = float(solved[0][2]["r_e"])
 
     basis = _orbit_frame(solved[0][2])
     span = max(float(np.abs(pts @ basis.T).max()) for *_, pts, _, _, _, _ in
@@ -140,7 +140,9 @@ def main():
     set_axes_equal_around(ax, center=(0, 0, 0), radius=span * 1.02, pad=0.02)
     ax.view_init(elev=80, azim=0)
     beautify_3d_axes(ax, show_ticks=True, show_grid=True)
-    ax.set_xlabel("Departure direction (km)", fontsize=9, labelpad=4)
+    # The nearly overhead view compresses the depth axis into an unreadable strip.
+    ax.set_zticks([])
+    ax.set_xlabel("Departure direction (km)", fontsize=9, labelpad=14)
     ax.set_ylabel("In-plane normal direction (km)", fontsize=9, labelpad=4)
     ax.set_title("(A) Trajectories viewed from above the departure orbit plane", fontsize=11, pad=4)
 

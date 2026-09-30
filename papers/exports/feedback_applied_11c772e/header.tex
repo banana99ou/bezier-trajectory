@@ -1,0 +1,25 @@
+\usepackage{kotex}
+\setmainhangulfont[Path=/Users/hyeon-yongjeong/Library/Fonts/,BoldFont=NanumBarunGothicBold.ttf,ItalicFont=NanumBarunGothic.ttf,ItalicFeatures={FakeSlant=0.2}]{NanumBarunGothic.ttf}
+\setsanshangulfont[Path=/Users/hyeon-yongjeong/Library/Fonts/]{NanumBarunGothic.ttf}
+% unicode-math has no separate Latin Modern bold face. Define the bold math
+% version explicitly so amsmath's boldsymbol retains nu and script ell.
+\setmathfont[version=bold,FakeBold=1.5]{latinmodern-math.otf}
+\usepackage{caption}
+\usepackage{needspace}
+\usepackage{placeins}
+\captionsetup{labelformat=empty,font=small,justification=justified,singlelinecheck=false}
+\usepackage{etoolbox}
+\AtBeginEnvironment{longtable}{\small}
+\setlength{\tabcolsep}{5.9pt}
+\setlength{\emergencystretch}{3em}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt plus 1pt minus 1pt}
+\predisplaypenalty=10000
+\clubpenalty=10000
+\widowpenalty=10000
+\setcounter{topnumber}{2}
+\setcounter{bottomnumber}{2}
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\bottomfraction}{0.8}
+\renewcommand{\textfraction}{0.08}
+\renewcommand{\floatpagefraction}{0.7}

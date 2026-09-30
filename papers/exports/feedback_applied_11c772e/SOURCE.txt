@@ -1,0 +1,34 @@
+Professor-facing manuscript, revised 2026-09-23
+
+Baseline commit: 11c772ed7bdf71b503832b93bd7d0b701770b4e0
+Baseline source: doc/paper_draft_korean_rev2.md
+Baseline commit description: docs: complete rev2 feedback revisions (2026-09-16)
+
+The filename records the feedback-applied baseline. This export now includes
+selective later corrections approved on 2026-09-23; it is no longer a verbatim
+export of that commit. The pre-correction export and later draft are preserved
+in papers/archive/later_draft_20260923/ with a checksum manifest and Git patch.
+
+Working manuscript: papers/paper_draft.md
+Professor-facing Markdown: papers/paper_draft_feedback_applied_11c772e.md
+Professor-facing PDF: papers/paper_draft_feedback_applied_11c772e.pdf
+The two Markdown files contain identical text, with only five image paths changed.
+The version sent to the professor is the baseline for subsequent feedback.
+
+Figures 1, 2, 5: unchanged baseline assets.
+Figure 3: rebuilt from figures/scp_pipeline.py, with compact layout, 10-point
+text, and acceptance/stopping rules delegated to Algorithm 1.
+Figure 4: rebuilt with the corrected axis layout from preserved 400-point
+trajectories in data/trajectories.json; sampled clearance checked against the
+September 16 saved result rows. No optimization rerun or numerical table change.
+
+Build: .venv/bin/python tools/export_professor_paper.py
+Requires Pandoc, XeLaTeX, and the fonts specified in header.tex.
+The header explicitly defines bold math to preserve bold nu and script ell.
+
+Validation: all 13 final PDF pages visually inspected; all five figures present;
+Korean text searchable; 20 reference labels present; all three table contents
+unchanged; no missing-character, undefined-command, font-fallback, or overfull
+horizontal-box warnings. Markdown/figure equality and checksums passed.
+See REVIEW.md and the two .diff files for the scope of the approved revision.
+Exact current artifact/source checksums are recorded in checksums.json.

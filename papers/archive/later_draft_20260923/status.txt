@@ -1,0 +1,15 @@
+ M .gitignore
+ M README.md
+ M doc/design_freeze.md
+ D doc/session_handoff.md
+ M experiments/downstream/pipeline.py
+ M figures/scp_pipeline.py
+ D papers/paper_draft_korean_PF.md
+ D papers/paper_draft_korean_rev2.md
+ D papers/paper_draft_korean_rev2_PF.md
+ M tools/build_representative_trajectories.py
+ M tools/check_notation.py
+?? papers/exports/
+?? papers/feedback/
+?? papers/paper_draft.md
+?? papers/paper_draft_feedback_applied_11c772e.md

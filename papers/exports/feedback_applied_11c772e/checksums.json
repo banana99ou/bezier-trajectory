@@ -1,0 +1,16 @@
+{
+  "papers/paper_draft.md": "aedf20279f983d1eaee7384d3f2439944aa68a76b7029a86278b7e7d976ad2ae",
+  "papers/paper_draft_feedback_applied_11c772e.md": "3a30fc9b987631c773d234b12bf91863c36662700291d8a17aa8b259c07bad58",
+  "papers/paper_draft_feedback_applied_11c772e.pdf": "21c5a7768ccc0d75733d75a53203ba161caefe44f4b573c2c9668fad41617eec",
+  "papers/exports/feedback_applied_11c772e/export.lua": "02331c3597504ba93766a8d91e1dc616142c7417c738d4d502fa6044ceab9796",
+  "papers/exports/feedback_applied_11c772e/header.tex": "1632e962de245051905e720399c14c3e1ca2c2fecae23a4effb7177c05356715",
+  "tools/export_professor_paper.py": "8f1e14d62abcd216532a85cfe2454300f15925fd4b7ddbb1832a3409f7c0da03",
+  "figures/scp_pipeline.py": "ed455e1aa8632fe45d9037ec8b0e6b1c8bc841065de6ae91916aaf648dd5f6b6",
+  "tools/build_representative_trajectories.py": "91cb0965f94ad8b85c0d889dfc9b69af2ca429722198118bdfdd30351f8a5584",
+  "papers/exports/feedback_applied_11c772e/data/trajectories.json": "413b3f7c296b43bdcc831f7eca7ad3ea34793587a49ad144fd0c53a6980c9bfa",
+  "papers/exports/feedback_applied_11c772e/figures/control_subdivision.png": "dd07e7dfec172672af2826b45c0104310ea3f48971aa68224732b25efe7c5263",
+  "papers/exports/feedback_applied_11c772e/figures/koz_linearization.png": "34cdaf44aea17d3f0bf7020aeef0ccbc747d597fda0a0de2c5a18077ea7a150a",
+  "papers/exports/feedback_applied_11c772e/figures/representative_trajectories.png": "1fe5f579a5c8ed2074880ea25853e87dc39462ba341bb82abd346bb69b863997",
+  "papers/exports/feedback_applied_11c772e/figures/scp_pipeline.png": "80604fcdb210f63b9111ce469f4dc0e1111da01d324e1a6dc80751946582a416",
+  "papers/exports/feedback_applied_11c772e/figures/subdivision_tradeoff_N7.png": "c2b1ccde61cdb21c94caee2d9f97d2d70f0969d740cf61ef0b7c3088833e2340"
+}
