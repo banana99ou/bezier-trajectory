@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build Figure 5 from the committed measurements used in Table 3.
 
-Compare measured and estimated minimum clearances, control cost, and runtime for
+Compare measured and estimated minimum clearances, control cost J, and runtime for
 n_seg = 8, 16, 32, 64 at N = 7. These configurations are certified and attain
 their closest approach to the obstacle between the endpoints. Table 3 retains
 the complete sweep, including the uncertified and endpoint cases at n_seg = 2
@@ -29,14 +29,16 @@ C_INK, C_DATA, C_PRED, C_GRID = "#333333", "#006BA4", "#444444", "#DDDDDD"
 PLOT_SEGS = (8, 16, 32, 64)
 PANELS = (
     ("margin_km", "Minimum clearance (km)", "(a) Minimum clearance", ".2f"),
-    ("ctrl_cost_ms2", "Control cost (m/s$^2$)", "(b) Control cost", ".3f"),
+    ("objective", "Control cost $J$ (m$^2$/s$^4$)", "(b) Control cost", ".2f"),
     ("runtime_s", "Runtime (s)", "(c) Runtime", ".3f"),
 )
+# The CSV stores J in km^2/s^4; the paper reports m^2/s^4.
+SCALE = {"objective": 1e6}
 # Keep labels away from the line approaching or leaving each measurement.
 LABEL_OFFSETS = {
     ("margin_km", 16): (9, 7, "left"),
     ("margin_km", 32): (9, 7, "left"),
-    ("ctrl_cost_ms2", 16): (9, 7, "left"),
+    ("objective", 16): (9, 7, "left"),
     ("runtime_s", 32): (-9, 8, "right"),
 }
 
@@ -55,7 +57,7 @@ def main():
     fig, axes = plt.subplots(1, 3, figsize=(12.0, 3.8), constrained_layout=True)
 
     for ax, (key, ylabel, title, fmt) in zip(axes, PANELS):
-        y = np.array([r[key] for r in rows])
+        y = np.array([r[key] * SCALE.get(key, 1.0) for r in rows])
         ax.plot(segs, y, color=C_DATA, linewidth=2.0, marker="o",
                 markersize=5.5, label="Measured", zorder=3)
 
@@ -70,9 +72,9 @@ def main():
             ax.set_ylim(0.65, 115)
             ax.legend(loc="upper right", frameon=False, fontsize=10,
                       handlelength=2.8)
-        elif key == "ctrl_cost_ms2":
-            ax.set_ylim(4.54, 4.94)
-            ax.set_yticks([4.6, 4.7, 4.8, 4.9])
+        elif key == "objective":
+            ax.set_ylim(21.6, 25.4)
+            ax.set_yticks([22, 23, 24, 25])
         else:
             ax.set_ylim(0.075, 0.245)
             ax.set_yticks([0.08, 0.12, 0.16, 0.20, 0.24])
@@ -106,7 +108,7 @@ def main():
     for r in rows:
         print(f"  n_seg={r['n_seg']:2d}  measured={r['margin_km']:.2f} km  "
               f"estimated={float(r['pred_margin_km']):.2f} km  "
-              f"cost={r['ctrl_cost_ms2']:.3f} m/s^2  "
+              f"J={r['objective'] * 1e6:.2f} m^2/s^4  "
               f"runtime={r['runtime_s']:.3f} s")
     print(f"Saved -> {out}")
 

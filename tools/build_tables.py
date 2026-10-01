@@ -25,7 +25,9 @@ Definitions used here, matching paper section 4.1:
               orbit's altitude above the KOZ, not clearance the method achieved,
               and it must not be compared with the rows where the constraint is
               active. Measured, not assumed -- see `_koz_binds`.
-  제어 비용   mean_control_accel_ms2 (m/s^2), per section 4.1's definition
+  제어 비용   the objective J at the returned iterate (info['cost']); the CSV keeps
+              km^2/s^4 under `objective`, the tables print m^2/s^4, per section
+              4.1's definition
   계산 시간   MINIMUM of REPEATS solves (s). A single solve is ~0.1 s, so any
               one sample is dominated by scheduler noise. The minimum is the
               standard robust estimator for timings: noise only ever ADDS
@@ -170,19 +172,19 @@ def _pred(r):
 def _rows_t2(rs, labels):
     for r in rs:
         yield (f"| {labels[r['scenario']]} | {_ok(r)} | {_margin(r)} | {_pred(r)} | "
-               f"{r['ctrl_cost_ms2']:.3f} | {r['runtime_s']:.3f} | {r['iters']} |")
+               f"{r['objective'] * 1e6:.2f} | {r['runtime_s']:.3f} | {r['iters']} |")
 
 
 def _rows_t3(rs):
     for r in rs:
         yield (f"| {r['n_seg']} | {_ok(r)} | {_margin(r)} | {_pred(r)} | "
-               f"{r['ctrl_cost_ms2']:.3f} | {r['runtime_s']:.3f} | {r['iters']} |")
+               f"{r['objective'] * 1e6:.2f} | {r['runtime_s']:.3f} | {r['iters']} |")
 
 
 def _rows_t4(rs):
     for r in rs:
         yield (f"| {r['degree']} | {r['n_ctrl']} | {r['n_seg']} | {_ok(r)} | "
-               f"{_margin(r)} | {r['ctrl_cost_ms2']:.3f} | {r['runtime_s']:.3f} |")
+               f"{_margin(r)} | {r['objective'] * 1e6:.2f} | {r['runtime_s']:.3f} |")
 
 
 def main():
@@ -231,18 +233,18 @@ def main():
         "행과 같은 뜻으로 읽어서는 안 된다. 가정이 아니라 조밀 표본으로 측정한다.", "",
         f"## 표 2 [T2]. 시나리오별 결과 요약 "
         f"($N={T2_DEGREE}$, $n_{{\\mathrm{{seg}}}}={T2_NSEG}$)", "",
-        "| 시나리오 | 성공 여부 | 안전 여유 (km) | 예측 여유 (km) | 제어 비용 (m/s²) | "
+        "| 시나리오 | 성공 여부 | 안전 여유 (km) | 예측 여유 (km) | 제어 비용 $J$ (m²/s⁴) | "
         "계산 시간 (s) | 반복 횟수 |",
         "|:--|---:|---:|---:|---:|---:|---:|",
         *_rows_t2(t2, labels), "",
         f"## 표 3 [T3]. 분할 수에 대한 비교 실험 결과 (중심각 120 deg, $N={T3_DEGREE}$)", "",
         "| $n_{\\mathrm{seg}}$ | 성공 여부 | 안전 여유 (km) | 예측 여유 (km) | "
-        "제어 비용 (m/s²) | 계산 시간 (s) | 반복 횟수 |",
+        "제어 비용 $J$ (m²/s⁴) | 계산 시간 (s) | 반복 횟수 |",
         "|---:|---:|---:|---:|---:|---:|---:|",
         *_rows_t3(t3), "",
         f"## 표 4 [T4]. 차수에 대한 비교 실험 결과 (중심각 120 deg, $n_{{\\mathrm{{seg}}}}={T24_NSEG}$)", "",
         "| 차수 | 제어점 수 | $n_{\\mathrm{seg}}$ | 성공 여부 | 안전 여유 (km) | "
-        "제어 비용 (m/s²) | 계산 시간 (s) |",
+        "제어 비용 $J$ (m²/s⁴) | 계산 시간 (s) |",
         "|---:|---:|---:|---:|---:|---:|---:|",
         *_rows_t4(t4), "",
         "## 표에 싣지 않은 진단값", "",
