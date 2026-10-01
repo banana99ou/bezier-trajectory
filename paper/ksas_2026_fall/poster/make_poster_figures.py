@@ -1,26 +1,22 @@
 #!/usr/bin/env python3
 """The poster's own figures, in the style of the author's clipwall figures.
 
-Five PDFs, all vector, written next to poster.tex:
-
-  fig_lift.pdf       (a) a sphere moving at constant velocity becomes a tilted
-                     static tube once time is a coordinate; (b) the loiter
-                     scenario's shadow spot at the corridor altitude over one
-                     lap, with the two RETURNED curves from the sidecar threaded
-                     through it. (b) is drawn from scenario_loiter() and
-                     figures/paper1/occlusion_figure.json; (a) is a schematic.
-                     Full poster width.
+  fig_lift.pdf       a sphere moving at constant velocity becomes one tilted
+                     static tube once time is a coordinate. Schematic.
+  fig_scene.pdf      the loiter scenario in the lifted space: the corridor as a
+                     slab through time, the shadow's tube bending across it, and
+                     the two RETURNED curves threaded inside. Drawn from
+                     scenario_loiter() and the sidecar; every number on it is
+                     read, never typed. Camera from lift_viewer.py.
   fig_clip.pdf       one subdivided segment of a full trajectory, the clipping
                      ball, the clipped KOZ volume L and the wall built on it;
                      r = max(d, E + delta) with d, E, r marked. Schematic.
-  fig_halfspace.pdf  a hairpin tube that wraps the centroid: the band cut at the
-                     distance maximum, one wall per approach segment (orange,
-                     purple), the mint slab both walls allow. Schematic.
+  fig_halfspace.pdf  a hairpin tube that wraps the centroid: cut at the distance
+                     maximum, one wall per approach segment (orange, purple),
+                     the mint gap both walls allow. Schematic.
   fig_iterate.pdf    three SCP iterates, ball and wall rebuilt at each. Schematic.
-  fig_runs.pdf       the two returned curves in (x, t) on the corridor axis with
-                     the shadow band, from the sidecar. Every number printed on
-                     it is read from the sidecar, never typed. This one keeps the
-                     paper figures' own palette, since it sits beside Fig. 2.
+  fig_runs.pdf       the two returned curves in (x, t) with the shadow band.
+  (fig_iterate and fig_runs are drawn but do not fit on the poster.)
 
 Style, from fig_clipwall.py (recovered 2026-09-03): white ground, equal aspect,
 faint grid, keep-out zone a flat grey tube with a thin dark-slate centreline,
@@ -30,11 +26,13 @@ piece's colour, the allowed region flat mint, the region a wall excludes that is
 not keep-out left white so the conservatism is visible. Segment control points
 are small blue dots on a short nearly straight blue line, the centroid a dark
 star, the foot a black square, the nearest KOZ point an open circle, the normal a
-short arrow from it in the wall's colour. A symbol legend sits below the axes.
+short arrow from it in the wall's colour. No legend: every object is named where
+it sits.
 
-Authored at HALF the printed width -- a column on the A0 poster is about 14.8
-in, the column figures are 7.4 in -- so a 12 pt label prints at 24 pt and a 1 pt
-stroke at 2 pt.
+Label sizes are chosen for the PRINT, not for the canvas. These go onto the board
+at roughly the width they are authored at (7.4 in authored, about 19 cm printed),
+so the point size here is very nearly the point size on the poster: 17 pt labels
+read from a couple of metres, 12 pt do not.
 
     python3 paper/ksas_2026_fall/poster/make_poster_figures.py
 """
@@ -59,7 +57,7 @@ CTRL = "#2874a6"
 PAPER = "#FFFFFF"   # the poster ground; the figures share it
 # the paper figures' palette, for the one figure drawn from the measured run
 GREY, BLUE, DARK, SHADOW = "#8a8a8a", "#2255bb", "#404040", "#bbbbbb"
-W = 7.4  # authored width in inches: half the printed column
+W = 7.4  # authored width in inches
 
 
 def setup():
@@ -67,8 +65,8 @@ def setup():
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     plt.rcParams.update({
-        "font.size": 12, "axes.labelsize": 12, "legend.fontsize": 10,
-        "xtick.labelsize": 11, "ytick.labelsize": 11,
+        "font.size": 16, "axes.labelsize": 16, "legend.fontsize": 14,
+        "xtick.labelsize": 14, "ytick.labelsize": 14,
         "axes.linewidth": 0.8, "lines.linewidth": 1.4,
         "xtick.major.width": 0.8, "ytick.major.width": 0.8,
         "xtick.major.size": 3.5, "ytick.major.size": 3.5,
@@ -171,15 +169,15 @@ def symbol_legend(ax, handles):
 
 
 # ----------------------------------------------------------------------------- figures
-def tag(ax, xy, text, colour=SLATE, size=12.5, ha="center", va="center", halo=3.2):
+def tag(ax, xy, text, colour=SLATE, size=17, ha="center", va="center", halo=3.2, on=PAPER):
     """A label placed ON the geometry, with a white halo. This is what replaces
     the legend: nothing in these figures should need a lookup."""
     import matplotlib.patheffects as pe
     ax.text(xy[0], xy[1], text, fontsize=size, color=colour, ha=ha, va=va, zorder=20,
-            path_effects=[pe.withStroke(linewidth=halo, foreground=PAPER)])
+            path_effects=[pe.withStroke(linewidth=halo, foreground=on)])
 
 
-def measure(ax, a, b, text, colour=SLATE, off=(0.0, 0.0), size=13):
+def measure(ax, a, b, text, colour=SLATE, off=(0.0, 0.0), size=17.5):
     ax.annotate("", xy=b, xytext=a, zorder=9,
                 arrowprops=dict(arrowstyle="<->", color=colour, lw=1.2, shrinkA=3, shrinkB=3))
     m = 0.5 * (np.asarray(a) + np.asarray(b)) + np.asarray(off)
@@ -192,7 +190,7 @@ def fig_clip(plt):
     object is labelled where it sits."""
     from matplotlib.patches import Circle, Polygon
     fig, ax = plt.subplots(figsize=(W, 3.5))
-    lo, hi = np.array([-12.0, -8.0]), np.array([12.0, 4.2])
+    lo, hi = np.array([-13.2, -8.6]), np.array([13.2, 4.6])
     # the keep-out tube: one dip toward the trajectory, so it is NOT convex,
     # and fat enough to read as a volume rather than a line
     xs = np.linspace(-13.0, 13.0, 400)
@@ -228,22 +226,22 @@ def fig_clip(plt):
     ax.plot(seg_cp[:, 0], seg_cp[:, 1], "o--", color=CTRL, ms=6.5, lw=1.1, alpha=0.9, zorder=13)
     ax.plot(*c, "*", color=SLATE, ms=15, zorder=14)
 
-    measure(ax, c, p, "d", SLATE, off=(0.85, 0.2))
+    measure(ax, c, p, "d", SLATE, off=(-1.15, 0.15))
     eoff = np.array([0.0, -1.0])          # E as a dimension line below the segment
     ax.plot([c[0], c[0]], [c[1], c[1] + eoff[1]], color=SLATE, lw=0.6, alpha=0.6, zorder=8)
     ax.plot([seg_cp[i_far][0]] * 2, [seg_cp[i_far][1], seg_cp[i_far][1] + eoff[1]],
             color=SLATE, lw=0.6, alpha=0.6, zorder=8)
     measure(ax, c + eoff, seg_cp[i_far] + eoff, "E", SLATE, off=(0.0, -0.75))
-    aR = np.deg2rad(-150)
-    measure(ax, c, c + r * np.array([np.cos(aR), np.sin(aR)]), "r", BALL, off=(-0.3, 0.75))
-    tag(ax, c + [0.35, 0.75], "c", SLATE, 13.5, ha="left")
-    tag(ax, (-9.4, -4.7), "trajectory", CTRL, 12.5)
-    tag(ax, (-3.4, -6.9), "one segment, with its control points", CTRL, 12.5)
-    tag(ax, (8.8, 3.0), "keep-out tube", SLATE, 13)
-    tag(ax, (3.4, -1.2), "L = tube ∩ ball", "#7a3d0a", 12.5)
-    tag(ax, (-7.4, 3.6), "wall  n·Q ≥ b", "#a4530f", 13)
-    tag(ax, (8.0, -6.9), "allowed by the wall", "#3d7a55", 12.5)
-    tag(ax, (-6.6, -2.4), "ball  B(c, r)", BALL, 12.5)
+    aR = np.deg2rad(172)
+    measure(ax, c, c + r * np.array([np.cos(aR), np.sin(aR)]), "r", BALL, off=(0.0, 0.62))
+    tag(ax, c + [0.35, 0.75], "c", SLATE, 18, ha="left")
+    tag(ax, (-10.2, -4.4), "trajectory", CTRL, 17)
+    tag(ax, (-7.2, -6.6), "one segment,\nwith its control points", CTRL, 17)
+    tag(ax, (6.9, 3.6), "keep-out tube", SLATE, 17.5)
+    tag(ax, (1.7, 0.75), "L = tube ∩ ball", PAPER, 17, on=ORANGE)
+    tag(ax, (-8.2, 3.9), "wall  n·Q ≥ b", "#a4530f", 17.5)
+    tag(ax, (7.6, -7.4), "allowed by the wall", "#3d7a55", 17)
+    tag(ax, (-8.4, -1.6), "ball  B(c, r)", BALL, 17)
     frame(ax, lo, hi)
     fig.subplots_adjust(left=0.035, right=0.985, bottom=0.075, top=0.985)
     return fig
@@ -291,16 +289,16 @@ def fig_halfspace(plt):
     ax.plot(*cut, "x", color=SLATE, ms=14, mew=2.8, zorder=15)
 
     (n1, b1, ys1, _, _), (n2, b2, ys2, _, _) = walls
-    tag(ax, c + [0.05, -0.42], "c", SLATE, 13.5)
-    tag(ax, (4.6, 5.78), "one segment", CTRL, 12.5)
-    tag(ax, cut + [0.30, -1.30], "distance maximum:\ncut the centreline here", SLATE, 12, ha="left")
-    tag(ax, ys1 + n1 * 0.55 + [0.62, 0.0], "n₁", ORANGE, 13.5)
-    tag(ax, ys2 + n2 * 0.55 + [0.62, 0.0], "n₂", PURPLE, 13.5)
-    tag(ax, (6.4, 2.10), "approach segment 1", "#a4530f", 12.5)
-    tag(ax, (6.4, 8.10), "approach segment 2", "#5b2c72", 12.5)
-    tag(ax, (10.2, (b1 - n1[0] * 10.2) / n1[1] - 0.36), "wall 1", "#a4530f", 13, ha="right")
-    tag(ax, (10.2, (b2 - n2[0] * 10.2) / n2[1] + 0.36), "wall 2", "#5b2c72", 13, ha="right")
-    tag(ax, (10.5, 5.95), "the gap both walls allow", "#3d7a55", 12.5, ha="right")
+    tag(ax, c + [0.05, -0.42], "c", SLATE, 18)
+    tag(ax, (4.55, 5.72), "one segment", CTRL, 17)
+    tag(ax, (-3.35, 6.45), "distance maximum:\ncut the centreline here", SLATE, 16)
+    tag(ax, ys1 + n1 * 0.55 + [0.62, 0.0], "n₁", ORANGE, 18)
+    tag(ax, ys2 + n2 * 0.55 + [0.62, 0.0], "n₂", PURPLE, 18)
+    tag(ax, (1.15, 2.35), "approach segment 1", "#a4530f", 17)
+    tag(ax, (1.15, 7.35), "approach segment 2", "#5b2c72", 17)
+    tag(ax, (10.2, (b1 - n1[0] * 10.2) / n1[1] - 0.36), "wall 1", "#a4530f", 17.5, ha="right")
+    tag(ax, (10.2, (b2 - n2[0] * 10.2) / n2[1] + 0.36), "wall 2", "#5b2c72", 17.5, ha="right")
+    tag(ax, (10.6, 4.35), "the gap both walls allow", "#3d7a55", 17, ha="right")
     frame(ax, lo, hi)
     fig.subplots_adjust(left=0.035, right=0.985, bottom=0.07, top=0.985)
     return fig
@@ -337,7 +335,7 @@ def fig_iterate(plt):
         ax.plot(*y_star, "o", color="k", mfc="w", mew=1.4, ms=7, zorder=10)
         ax.annotate("", xy=y_star + n * 0.7, xytext=y_star,
                     arrowprops=dict(arrowstyle="-|>", color=ORANGE, lw=1.8, mutation_scale=11), zorder=11)
-        ax.set_title("iteration k" + ("" if k == 0 else f" + {k}"), fontsize=12, pad=4)
+        ax.set_title("iteration k" + ("" if k == 0 else f" + {k}"), fontsize=16, pad=4)
         frame(ax, lo, hi, xlabel="", ylabel="")
     fig.subplots_adjust(left=0.01, right=0.99, bottom=0.02, top=0.9, wspace=0.06)
     return fig
@@ -391,14 +389,18 @@ def style_3d(ax):
         axis.pane.set_edgecolor("#dddddd")
         axis._axinfo["grid"]["color"] = "#e6e6e6"
         axis._axinfo["grid"]["linewidth"] = 0.6
-    ax.tick_params(labelsize=10, pad=-1, colors=SLATE)
+    ax.tick_params(labelsize=13, pad=-1, colors=SLATE)
 
 
-def label3(ax, p, text, dx, dy, colour, ha="left", size=11):
+def label3(ax, p, text, dx, dy, colour, ha="left", size=15, leader=False):
+    """A label for a point in a 3-D axes, placed at a pixel offset from where the
+    point lands. ``leader`` draws a hairline back to it, for when the only free
+    space is far from the thing being named."""
     from mpl_toolkits.mplot3d import proj3d
     x2, y2, _ = proj3d.proj_transform(p[0], p[1], p[2], ax.get_proj())
+    arrow = dict(arrowstyle="-", color=colour, lw=0.8, shrinkA=2, shrinkB=2) if leader else None
     ax.annotate(text, (x2, y2), xytext=(dx, dy), textcoords="offset points",
-                fontsize=size, color=colour, ha=ha, va="center")
+                fontsize=size, color=colour, ha=ha, va="center", arrowprops=arrow)
 
 
 def fig_lift(plt, sc, side):
@@ -431,14 +433,14 @@ def fig_lift(plt, sc, side):
     ax.set_box_aspect((80, 28, 36), zoom=1.16)
     style_3d(ax)
     ax.set_xticks([0, 30, 60]), ax.set_yticks([-10, 10]), ax.set_zticks([0, 15, 30])
-    ax.set_xlabel("x [m]", labelpad=6), ax.set_ylabel("y [m]", labelpad=6), ax.set_zlabel("t [s]", labelpad=2)
+    ax.set_xlabel("x [m]", labelpad=8), ax.set_ylabel("y [m]", labelpad=2), ax.set_zlabel("t [s]", labelpad=2)
     # notes in FIGURE coordinates: the axes is oversized, so ax.text2D would clip
-    ax.set_position([-0.02, 0.015, 1.02, 0.955])
+    ax.set_position([-0.02, 0.045, 1.00, 0.925])
     fig.text(0.50, 0.975, "lifted KOZ: one static tube", ha="center", va="top",
-             fontsize=13.5, color=SLATE)
-    fig.text(0.985, 0.975, "1 s = 1 m", ha="right", va="top", fontsize=13.5, color=SLATE)
+             fontsize=18, color=SLATE)
+    fig.text(0.985, 0.975, "1 s = 1 m", ha="right", va="top", fontsize=18, color=SLATE)
     fig.text(0.015, 0.87, "the same sphere in space,\nseen at four instants",
-             ha="left", va="top", fontsize=12, color="#6b7783")
+             ha="left", va="top", fontsize=16, color="#6b7783")
     return fig
 
 
@@ -447,7 +449,7 @@ def fig_scene(plt, sc, side):
     corridor is a slab through time, the shadow spot's tube bends across it, and
     the two returned runs are threaded inside the corridor."""
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-    fig = plt.figure(figsize=(W, 3.4))
+    fig = plt.figure(figsize=(W, 2.8))
     ax = fig.add_subplot(111, projection="3d")
     ax.computed_zorder = False
     t, xs, ys, spot_r = loiter_shadow_track(sc)
@@ -474,21 +476,23 @@ def fig_scene(plt, sc, side):
     lo, hi = side["baseline"]["los_loss_interval"]
     lost = (cb[:, 2] >= lo) & (cb[:, 2] <= hi)
     ax.plot(cb[lost, 0], cb[lost, 1], cb[lost, 2], color=RED_PAPER, lw=5.0, zorder=8)
-    ax.view_init(elev=17, azim=112)
-    ax.set_xlim(100, -100), ax.set_ylim(-45, 60), ax.set_zlim(0, t_max)
-    ax.set_box_aspect((200, 105, t_max * 1.35), zoom=1.12)
+    # the author's camera, read off lift_viewer.py, pulled back so nothing crops
+    ax.view_init(elev=6, azim=151)
+    ax.set_xlim(-100, 100), ax.set_ylim(-45, 60), ax.set_zlim(0, t_max)
+    ax.set_box_aspect((200, 105, t_max * 1.35), zoom=0.98)
     style_3d(ax)
     ax.set_xticks([-100, 0, 100]), ax.set_yticks([-30, 30]), ax.set_zticks([0, 20, 40])
-    ax.set_xlabel("x [m]", labelpad=-2), ax.set_ylabel("y [m]", labelpad=-4), ax.set_zlabel("t [s]", labelpad=-4)
+    ax.set_xlabel("x [m]", labelpad=6), ax.set_ylabel("y [m]", labelpad=8), ax.set_zlabel("t [s]", labelpad=2)
     i_top = int(np.argmax(helix[:, 2]))
-    label3(ax, helix[i_top], "shadow spot's tube: bent", 0, 16, SLATE, ha="center", size=12)
-    label3(ax, (-60, ylo, t_max * 0.5), "corridor", -8, 4, CTRL, ha="right", size=12)
-    i_b = int(np.argmin(np.abs(cb[:, 0] - 55.0)))
-    i_c = int(np.argmin(np.abs(cc[:, 0] - 20.0)))
-    label3(ax, cb[i_b], f"baseline, {side['baseline']['arrival_time']:.1f} s", 0, -16, DARK, ha="center", size=12)
-    label3(ax, cc[i_c], f"proposed, {side['constrained']['arrival_time']:.1f} s", 0, 15, BLUE, ha="center", size=12)
-    label3(ax, cb[lost].mean(axis=0), f"link lost, {lo:.2f}–{hi:.2f} s", 12, -20, RED_PAPER, ha="left", size=12)
-    ax.set_position([-0.04, -0.10, 1.06, 1.16])
+    label3(ax, helix[i_top], "the shadow's tube, bent", 0, 14, SLATE, ha="center", size=16)
+    label3(ax, (55.0, 0.5 * (ylo + yhi), 2.0), "corridor", 0, 0, CTRL, ha="center", size=16)
+    i_b = int(np.argmin(np.abs(cb[:, 0] - 70.0)))
+    i_c = int(np.argmin(np.abs(cc[:, 0] - 95.0)))
+    label3(ax, cb[i_b], f"baseline, {side['baseline']['arrival_time']:.1f} s", -14, -22, DARK, ha="right", size=16)
+    label3(ax, cc[i_c], f"proposed, {side['constrained']['arrival_time']:.1f} s", -8, 13, BLUE, ha="right", size=16)
+    label3(ax, cb[lost].mean(axis=0), f"link lost, {lo:.2f}–{hi:.2f} s", -72, 44, RED_PAPER,
+           ha="right", size=16, leader=True)
+    ax.set_position([-0.03, -0.14, 1.04, 1.26])
     return fig
 
 
@@ -508,17 +512,17 @@ def fig_runs(plt, sc, side):
     ax.plot(cc[:, 0], cc[:, 1], color=BLUE, lw=1.8, zorder=4)
     x_start, x_end = float(sc["start"][0]), float(sc["end"][0])
     base_arr, con_arr = side["baseline"]["arrival_time"], side["constrained"]["arrival_time"]
-    ax.text(x_end + 3, cb[-1, 1], f"baseline, {base_arr:.1f} s", fontsize=11, color=DARK, ha="left", va="center")
-    ax.text(x_end + 3, cc[-1, 1], f"proposed, {con_arr:.1f} s", fontsize=11, color=BLUE, ha="left", va="center")
+    ax.text(x_end + 3, cb[-1, 1], f"baseline, {base_arr:.1f} s", fontsize=15, color=DARK, ha="left", va="center")
+    ax.text(x_end + 3, cc[-1, 1], f"proposed, {con_arr:.1f} s", fontsize=15, color=BLUE, ha="left", va="center")
     lo, hi = side["baseline"]["los_loss_interval"]
     lost = (cb[:, 1] >= lo) & (cb[:, 1] <= hi)
     ax.plot(cb[lost, 0], cb[lost, 1], color=RED_PAPER, lw=4.0, solid_capstyle="butt", zorder=5)
     ax.text(float(cb[lost, 0].mean()) + 14, float(cb[lost, 1].mean()) + 3.5,
-            f"link lost, {lo:.1f}–{hi:.1f} s", fontsize=11, color=RED_PAPER, ha="left", va="center")
+            f"link lost, {lo:.1f}–{hi:.1f} s", fontsize=15, color=RED_PAPER, ha="left", va="center")
     bound = side["axis_arrival_bound"]
     ax.plot([x_end - 34, x_end], [bound, bound], color=GREY, lw=0.8, ls=":", zorder=2)
-    ax.text(x_end - 36, bound, f"axis bound, {bound:.1f} s", fontsize=10, color=GREY, ha="right", va="center")
-    ax.text(float(xs[ok].mean()) + 16, float(t[ok].mean()) - 4, "shadow on the\ncorridor axis", fontsize=11, color=DARK, ha="left", va="center")
+    ax.text(x_end - 36, bound, f"axis bound, {bound:.1f} s", fontsize=14, color=GREY, ha="right", va="center")
+    ax.text(float(xs[ok].mean()) + 16, float(t[ok].mean()) - 4, "shadow on the\ncorridor axis", fontsize=15, color=DARK, ha="left", va="center")
     ax.set_xlim(x_start, x_end + 64), ax.set_ylim(0, con_arr + 6)
     ax.set_xlabel("x along corridor [m]", labelpad=2), ax.set_ylabel("t [s]", labelpad=2)
     ax.tick_params(colors=SLATE)
