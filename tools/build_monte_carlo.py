@@ -10,25 +10,38 @@ between subdivision counts are paired within one geometry -- and reports per-n_s
 statistics.
 
 Run:
-    .venv/bin/python tools/build_monte_carlo.py                 # full study
+    .venv/bin/python tools/build_monte_carlo.py                 # near set, 1024
+    .venv/bin/python tools/build_monte_carlo.py --ranges wide --n 4096
     .venv/bin/python tools/build_monte_carlo.py --n 16 --out /tmp/mc_pilot
     .venv/bin/python tools/build_monte_carlo.py --summarize-only --out DIR
 
-What is perturbed (RANGES) and why:
-  lag           central angle, 110..130 deg. Keeps the obstacle constraint
-                active (it goes inactive below the ~100 deg free-fall angle at
-                T = 1500 s) and keeps the iteration-1 boundary-condition repair
-                inside the 2000 km trust box that the baseline uses.
-  progress_alt  departure altitude, 225..265 km.
-  iss_alt       arrival altitude, 380..420 km.
-  dinc, draan   arrival-plane inclination / RAAN offsets, -5..5 deg each, so most
-                instances leave the departure plane.
-  iss_u         arrival argument of latitude, 0..360 deg. The baseline's 45 deg is
-                arbitrary; it sets where the transfer sits in latitude, which is
-                what J2 sees.
+What is perturbed (RANGE_SETS) and why. `near` asks whether the baseline's
+subdivision trends hold around it; `wide` asks where the method stops working
+across the family of transfers the paper's scenarios belong to.
+  lag           argument-of-latitude gap, the central angle when coplanar.
+                near 110..130 deg: keeps the obstacle constraint active (it goes
+                inactive below the ~100 deg free-fall angle at T = 1500 s).
+                wide 100..170 deg: from that activation angle up to the paper's
+                hardest scenario. The geometric central angle is recorded too.
+  progress_alt  departure altitude. near 225..265 km, wide 195..295 km.
+  iss_alt       arrival altitude. near 380..420 km, wide 350..450 km.
+  dinc, draan   arrival-plane inclination / RAAN offsets. near -5..5 deg each;
+                wide -20..20 and -15..15 deg, which contains the paper's plane-
+                change scenario (+20, +15).
+  iss_u         arrival argument of latitude, 0..360 deg in both sets. The
+                baseline's 45 deg is arbitrary; it sets where the transfer sits
+                in latitude, which is what J2 sees.
   Held fixed: inc = 51.64 deg, departure RAAN = 0 (J2 is symmetric about z, so a
-  common RAAN is a pure rotation), R_KOZ, T, N = 7, n_lin = 100, Delta_0 = 2000 km,
-  tolerances -- all as in the paper.
+  common RAAN is a pure rotation), R_KOZ, T, N = 7, n_lin = 100, tolerances --
+  all as in the paper.
+
+Initial trust-region size, per instance, by rule: Delta_0 = 2000 km, doubled
+until it exceeds the iteration-1 repair distance (2-norm) -- the distance the
+boundary conditions move p_1 and p_{N-1} in the first QP, which must fit inside
+the box. This is the paper's own rule (2000 km, and 4000 km for the 170 deg
+scenario whose repair is 2416 km), written down once and applied to every
+instance; above the threshold the converged answer does not move
+(harness_common, phase135/phase170 notes). Every near-set instance gets 2000 km.
 
 Two check instances are solved but excluded from every statistic:
   baseline   the unperturbed phase120 geometry. It must reproduce the committed
@@ -54,14 +67,16 @@ at every n_seg, and every deterministic output must match bit for bit.
 Nothing is filtered silently: every (instance, n_seg) solve is one CSV row, a
 solver exception is a row with `error` set, and the summary counts every stop
 reason. Timing: the Rust solver is single-threaded, so `--workers` scales, but
-parallel solves share caches and clocks; runtime statistics are only reported as
-paper-grade when the run used --workers 1 (the summary says which).
+parallel solves share caches and clocks, so the summary reports iterations, not
+runtime; runs.csv keeps both clocks as diagnostics.
 """
 
 from __future__ import annotations
 
 import argparse
+import collections
 import csv
+import hashlib
 import json
 import math
 import multiprocessing as mp
@@ -75,34 +90,49 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools import build_tables as BT  # noqa: E402
 from tools.verify import harness_common as H  # noqa: E402
+from orbital_docking.de_casteljau import segment_matrices_equal_params  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUT = REPO_ROOT / "doc" / "results" / "monte_carlo_subdivision"
+RESULTS = REPO_ROOT / "doc" / "results"
 
 NSEGS = (4, 8, 16, 32, 64)
 DEGREE = 7
-TRUST_RADIUS_KM = 2000.0
+TRUST_BASE_KM = 2000.0
+TRUST_RULE = "2000 km doubled until it exceeds the iteration-1 repair (2-norm)"
 ROT_DEG = 37.0
 RECHECK = 32
+ACTIVE_TOL_KM = 1e-3   # a half-space row this close to equality is binding
 DET_KEYS = ("certified", "koz_binds", "margin_km", "ctrl_cost_ms2", "objective",
             "iters", "stop", "hull_violation_km")
 
 BASE = dict(lag=120.0, progress_alt=245.0, iss_alt=400.0,
             dinc=0.0, draan=0.0, iss_u=45.0, raan=0.0)
-RANGES = {
-    "lag": (110.0, 130.0),
-    "progress_alt": (225.0, 265.0),
-    "iss_alt": (380.0, 420.0),
-    "dinc": (-5.0, 5.0),
-    "draan": (-5.0, 5.0),
-    "iss_u": (0.0, 360.0),
+RANGE_SETS = {
+    "near": {
+        "lag": (110.0, 130.0),
+        "progress_alt": (225.0, 265.0),
+        "iss_alt": (380.0, 420.0),
+        "dinc": (-5.0, 5.0),
+        "draan": (-5.0, 5.0),
+        "iss_u": (0.0, 360.0),
+    },
+    "wide": {
+        "lag": (100.0, 170.0),
+        "progress_alt": (195.0, 295.0),
+        "iss_alt": (350.0, 450.0),
+        "dinc": (-20.0, 20.0),
+        "draan": (-15.0, 15.0),
+        "iss_u": (0.0, 360.0),
+    },
 }
 FIXED = dict(inc=51.64, r_e=6471.0, T=1500.0)
-PARAMS = tuple(RANGES)
+PARAMS = tuple(RANGE_SETS["near"])
+assert all(tuple(r) == PARAMS for r in RANGE_SETS.values())
 
-FIELDS = list(["instance", "kind", *PARAMS, "raan", "repair_inf_km", "repair_2_km",
+FIELDS = list(["instance", "kind", *PARAMS, "raan", "central_angle_deg",
+           "repair_inf_km", "repair_2_km", "trust_radius_km",
            "n_seg", "certified", "dense_probe_ok", "disagree", "koz_binds",
-           "tau_star", "margin_km", "l_seg_km", "pred_margin_km", "ratio",
+           "tau_star", "halfspace_slack_km", "margin_km", "l_seg_km", "pred_margin_km", "ratio",
            "ctrl_cost_ms2", "objective", "runtime_s", "cpu_s", "iters", "stop",
            "stop_name", "hull_violation_km", "error"])
 
@@ -127,13 +157,13 @@ def sample_unit(sampler, n, seed):
     sys.exit(f"unknown sampler {sampler!r}")
 
 
-def instances(sampler, n, seed):
+def instances(sampler, n, seed, ranges):
     """Check instances first (negative ids), then the n sampled ones."""
     out = [dict(instance=-2, kind="baseline", **BASE),
            dict(instance=-1, kind="rotated", **{**BASE, "raan": ROT_DEG})]
     u = sample_unit(sampler, n, seed)
     for i, row in enumerate(u):
-        p = {k: lo + (hi - lo) * float(x) for (k, (lo, hi)), x in zip(RANGES.items(), row)}
+        p = {k: lo + (hi - lo) * float(x) for (k, (lo, hi)), x in zip(ranges.items(), row)}
         out.append(dict(instance=i, kind="sample", raan=BASE["raan"], **p))
     return out
 
@@ -149,7 +179,39 @@ def scenario(inst, degree=DEGREE):
                                     raan0 + inst["draan"], inst["iss_u"])
     P_init = np.asarray(H.generate_initial_control_points(degree, P_start, P_end), float)
     return dict(N=degree, P_start=P_start, P_end=P_end, v0=v0, v1=v1,
-                r_e=FIXED["r_e"], T=FIXED["T"], r0=TRUST_RADIUS_KM, P_init=P_init)
+                r_e=FIXED["r_e"], T=FIXED["T"], P_init=P_init)
+
+
+def trust_radius(repair_2_km):
+    """TRUST_RULE: the first QP's box must contain the boundary-condition repair."""
+    d = TRUST_BASE_KM
+    while repair_2_km >= d:
+        d *= 2.0
+    return d
+
+
+def central_angle(sc):
+    """Angle at Earth's centre between the two endpoints (deg)."""
+    a, b = sc["P_start"], sc["P_end"]
+    c = float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+    return float(np.degrees(np.arccos(np.clip(c, -1.0, 1.0))))
+
+
+def halfspace_slack(P, n_seg, r_e):
+    """Smallest supporting-half-space slack over all sub-arc control points (km).
+
+    Section 3.1's row, gamma = n^T (q - c_KOZ) - R_KOZ with n from the sub-arc
+    centroid and c_KOZ at the origin. About zero means the obstacle constraint
+    shapes the solution; tens of km means it never touched it. An interior
+    closest approach alone does not say which: a transfer that never nears the
+    obstacle also has its minimum radius between the endpoints.
+    """
+    worst = np.inf
+    for A in segment_matrices_equal_params(P.shape[0] - 1, n_seg):
+        Q = A @ P
+        c = Q.mean(axis=0)
+        worst = min(worst, float((Q @ (c / np.linalg.norm(c))).min() - r_e))
+    return worst
 
 
 def repair_distance(sc):
@@ -175,12 +237,14 @@ def solve(task):
     sc = scenario(inst)
     rep_inf, rep_2 = repair_distance(sc)
     row = {k: inst[k] for k in ("instance", "kind", *PARAMS, "raan")}
-    row.update(repair_inf_km=rep_inf, repair_2_km=rep_2, n_seg=n_seg, error="")
+    delta0 = trust_radius(rep_2)
+    row.update(central_angle_deg=central_angle(sc), repair_inf_km=rep_inf,
+               repair_2_km=rep_2, trust_radius_km=delta0, n_seg=n_seg, error="")
     try:
         # CPU time of this process across the (single-threaded) solve: unlike the
         # wall clock it does not count time spent descheduled by other work.
         c0 = time.process_time()
-        P, info = H.run_rust(sc, n_seg=n_seg, scp_trust_radius=TRUST_RADIUS_KM)
+        P, info = H.run_rust(sc, n_seg=n_seg, scp_trust_radius=delta0)
         cpu = time.process_time() - c0
     except Exception as e:  # recorded, never dropped
         row["error"] = f"{type(e).__name__}: {e}"[:300]
@@ -197,7 +261,9 @@ def solve(task):
     margin = float(info["min_radius"]) - sc["r_e"]
     row.update(
         certified=certified, dense_probe_ok=dense_ok, disagree=(certified != dense_ok),
-        koz_binds=binds, tau_star=tau_star, margin_km=margin, l_seg_km=l_seg,
+        koz_binds=binds, tau_star=tau_star,
+        halfspace_slack_km=halfspace_slack(P, n_seg, sc["r_e"]),
+        margin_km=margin, l_seg_km=l_seg,
         pred_margin_km=pred, ratio=(margin / pred) if binds else float("nan"),
         ctrl_cost_ms2=float(info["mean_control_accel_ms2"]),
         objective=float(info["cost"]), runtime_s=float(info["elapsed_time"]), cpu_s=cpu,
@@ -213,10 +279,12 @@ def solve(task):
 def run_meta(args):
     # workers is part of the configuration because it changes what the runtime
     # column measures: a resumed run must not mix serial and parallel timings.
+    # script_sha256 ties the run to this exact file even before it is committed.
     return dict(sampler=args.sampler, n=args.n, seed=args.seed, nsegs=list(args.nsegs),
-                workers=args.workers,
-                degree=DEGREE, trust_radius_km=TRUST_RADIUS_KM, rot_deg=ROT_DEG,
-                base=BASE, ranges=RANGES, fixed=FIXED,
+                workers=args.workers, range_set=args.ranges,
+                degree=DEGREE, trust_rule=TRUST_RULE, rot_deg=ROT_DEG,
+                base=BASE, ranges=RANGE_SETS[args.ranges], fixed=FIXED,
+                script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                 commit=H._git("rev-parse", "HEAD", default="unknown"),
                 dirty=bool(H._git("status", "--porcelain", "--", *H._CODE_PATHS,
                                   "tools/build_monte_carlo.py", "tools/build_tables.py")),
@@ -273,7 +341,7 @@ def run(args):
     else:
         meta_path.write_text(json.dumps(meta, indent=2) + "\n")
 
-    insts = instances(args.sampler, args.n, args.seed)
+    insts = instances(args.sampler, args.n, args.seed, RANGE_SETS[args.ranges])
     inst_path = out / "instances.csv"
     if not inst_path.exists():
         H.write_csv(inst_path, [{k: i[k] for k in ("instance", "kind", *PARAMS, "raan")}
@@ -350,11 +418,18 @@ def _typed(r):
     for k in ("instance", "n_seg", "iters", "stop"):
         t[k] = int(r[k]) if r.get(k) not in (None, "") else None
     for k in ("margin_km", "pred_margin_km", "ratio", "ctrl_cost_ms2", "objective",
-              "runtime_s", "cpu_s", "hull_violation_km", "repair_inf_km", *PARAMS):
+              "runtime_s", "cpu_s", "hull_violation_km", "repair_inf_km",
+              "central_angle_deg", "trust_radius_km", "halfspace_slack_km", *PARAMS):
         t[k] = float(r[k]) if r.get(k) not in (None, "") else float("nan")
     for k in ("certified", "dense_probe_ok", "disagree", "koz_binds"):
         t[k] = r.get(k) == "True"
     return t
+
+
+def _active(r):
+    """Some supporting half-space row is (numerically) tight at the solution."""
+    s = r.get("halfspace_slack_km", float("nan"))
+    return bool(np.isfinite(s) and s <= ACTIVE_TOL_KM)
 
 
 def check_baseline(by):
@@ -409,33 +484,48 @@ def summarize(args):
 
     md = [f"# Monte Carlo over perturbed baseline instances",
           "",
-          f"- sampler `{meta['sampler']}`, {len(ids)} of {meta['n']} instances present, "
-          f"seed {meta['seed']}, degree {meta['degree']}, "
-          f"Delta_0 = {meta['trust_radius_km']:.0f} km",
+          f"- range set `{meta.get('range_set', 'near')}`, sampler `{meta['sampler']}`, "
+          f"{len(ids)} of {meta['n']} instances present, seed {meta['seed']}, "
+          f"degree {meta['degree']}",
+          f"- Delta_0: {meta.get('trust_rule', 'fixed 2000 km')}; instances by Delta_0: "
+          + ", ".join(f"{d:.0f} km: {c}" for d, c in sorted(collections.Counter(
+              by[(i, nsegs[0])]["trust_radius_km"] for i in ids if (i, nsegs[0]) in by
+              and np.isfinite(by[(i, nsegs[0])]["trust_radius_km"])).items())),
           "- ranges: " + ", ".join(f"{k} {lo:g}..{hi:g}" for k, (lo, hi) in meta["ranges"].items()),
-          f"- instances whose iteration-1 repair (inf-norm) exceeds Delta_0: "
-          f"{sum(1 for i in ids if by.get((i, nsegs[0]), {}).get('repair_inf_km', 0) > meta['trust_radius_km'])}",
           "- cells: median [5th, 95th percentile]; rates with 95% Wilson interval",
           "",
+          "- constraint active: some half-space row within "
+          f"{ACTIVE_TOL_KM:g} km of equality; interior: closest approach strictly "
+          "between the endpoints. The clearance ratio uses certified solves that are both; "
+          "the cost change uses certified solves where the constraint is active.",
+          "",
           "| n_seg | solves | errors | certified % [95% CI] | constraint active % | "
+          "interior % | "
           f"measured/estimated clearance | cost vs n_seg={top} (%) | iterations |",
-          "|---:|---:|---:|:--|---:|:--|:--|:--|"]
+          "|---:|---:|---:|:--|---:|---:|:--|:--|:--|"]
     for s in nsegs:
         rs = [by[(i, s)] for i in ids if (i, s) in by]
         n = len(rs)
         err = sum(1 for r in rs if r["error"])
         cert = [r for r in rs if not r["error"] and r["certified"]]
         lo, hi = wilson(len(cert), n)
-        active = [r for r in cert if r["koz_binds"]]
+        act = [r for r in cert if _active(r)]
+        inter = [r for r in cert if r["koz_binds"]]
+        active = [r for r in act if r["koz_binds"]]
         dc = []
         for i in ids:
             a, b = by.get((i, s)), by.get((i, top))
-            if a and b and a["certified"] and b["certified"]:
+            # Only where the constraint shapes the solution at this n_seg: an
+            # instance it never touches has the same cost at every n_seg.
+            if a and b and a["certified"] and b["certified"] and _active(a):
                 dc.append(100 * (a["ctrl_cost_ms2"] / b["ctrl_cost_ms2"] - 1))
         md.append(
             f"| {s} | {n} | {err} | {100*len(cert)/max(n,1):.1f} [{lo:.1f}, {hi:.1f}] | "
-            f"{100*len(active)/max(len(cert),1):.1f} | {pct([r['ratio'] for r in active])} | "
-            f"{pct(dc)} | {pct([r['iters'] for r in cert], '{:.0f}')} |")
+            f"{100*len(act)/max(len(cert),1):.1f} | {100*len(inter)/max(len(cert),1):.1f} | "
+            f"{pct([r['ratio'] for r in active])} | "
+            f"{pct(dc)} | {pct([r['iters'] for r in cert], '{:.0f}')} "
+            f"max {max([r['iters'] for r in rs if r['iters'] is not None], default=0)}, "
+            f">100: {sum(1 for r in rs if (r['iters'] or 0) > 100)} |")
 
     # Per-instance scaling exponent over n_seg >= 8, where the closest approach is
     # interior at every such n_seg; the section 3.1 estimate predicts -2.
@@ -443,10 +533,26 @@ def summarize(args):
     slopes = []
     for i in ids:
         rs = [by.get((i, s)) for s in fit_s]
-        if all(r and r["certified"] and r["koz_binds"] and r["margin_km"] > 0 for r in rs):
+        if all(r and r["certified"] and r["koz_binds"] and _active(r) and r["margin_km"] > 0
+               for r in rs):
             slopes.append(np.polyfit(np.log(fit_s), np.log([r["margin_km"] for r in rs]), 1)[0])
     md += ["", f"Clearance scaling exponent over n_seg {fit_s} (per instance, "
                f"{len(slopes)} instances): {pct(slopes)}; the arc estimate predicts -2."]
+
+    # Certification against the input that sets difficulty most directly: where
+    # in the range does the method stop working, if anywhere?
+    edges = list(range(100, 181, 10))
+    md += ["", "## Certified / solved, by geometric central angle", "",
+           "| central angle (deg) | " + " | ".join(f"n_seg {s}" for s in nsegs) + " |",
+           "|:--|" + "---:|" * len(nsegs)]
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        cells = []
+        for s in nsegs:
+            rs = [by[(i, s)] for i in ids if (i, s) in by
+                  and lo <= by[(i, s)]["central_angle_deg"] < hi]
+            cells.append(f"{sum(1 for r in rs if r['certified'])}/{len(rs)}" if rs else "—")
+        if any(c != "—" for c in cells):
+            md.append(f"| {lo}–{hi} | " + " | ".join(cells) + " |")
 
     md += ["", "## Every non-certified solve, by stop reason", "",
            "| n_seg | stop reason | count |", "|---:|:--|---:|"]
@@ -492,9 +598,14 @@ def main():
     ap.add_argument("--seed", type=int, default=20260930)
     ap.add_argument("--nsegs", type=int, nargs="+", default=list(NSEGS))
     ap.add_argument("--workers", type=int, default=1)
-    ap.add_argument("--out", default=str(DEFAULT_OUT))
+    ap.add_argument("--ranges", choices=tuple(RANGE_SETS), default="near")
+    ap.add_argument("--out", default=None,
+                    help="default doc/results/monte_carlo_subdivision[_wide]")
     ap.add_argument("--summarize-only", action="store_true")
     args = ap.parse_args()
+    if args.out is None:
+        suffix = "" if args.ranges == "near" else f"_{args.ranges}"
+        args.out = str(RESULTS / f"monte_carlo_subdivision{suffix}")
     if not args.summarize_only:
         run(args)
     summarize(args)
