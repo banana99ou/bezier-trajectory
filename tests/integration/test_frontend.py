@@ -1005,3 +1005,19 @@ def test_module_entrypoint_serves_this_frontend():
 
     entry = importlib.import_module("spacetime_bezier.__main__")
     assert entry.main is frontend.main
+
+
+def test_a_family_member_can_be_put_on_the_page(monkeypatch):
+    """`--family-scene` / SPACETIME_FAMILY_SCENES (2026-09-29). FAILS IF the spec
+    does not become a catalog key, or the scene behind it is not the family
+    generator's member for that value and seed."""
+    from spacetime_bezier import frontend
+    from spacetime_bezier.families import family_traffic_curved
+
+    monkeypatch.setenv(frontend.FAMILY_SCENES_ENV, "traffic_curved:12:7")
+    m = frontend._with_family_scenes({})
+    assert list(m) == ["traffic_curved:12:7"]
+    fn, configs = m["traffic_curved:12:7"]
+    assert fn() == family_traffic_curved(12, seed=7) and configs == [(8, 8)]
+    monkeypatch.delenv(frontend.FAMILY_SCENES_ENV)
+    assert frontend._with_family_scenes({"x": 1}) == {"x": 1}

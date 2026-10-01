@@ -79,6 +79,41 @@ from .optimize import (
 )
 from .scenarios import SCENARIO_MAP, scenario_elastic_weight
 
+# Family members on the page, on request (2026-09-29): a comma list of
+# ``family:value:seed`` specs, e.g. ``traffic_curved:12:7,traffic:16:0``. Read from
+# the environment so the solve child, which re-imports this module, sees the same
+# catalog. Each spec is its own catalog key, at the family's own configuration.
+FAMILY_SCENES_ENV = "SPACETIME_FAMILY_SCENES"
+
+
+def _with_family_scenes(base: dict) -> dict:
+    specs = [s.strip() for s in os.environ.get(FAMILY_SCENES_ENV, "").split(",") if s.strip()]
+    if not specs:
+        return base
+    import inspect
+
+    from .families import FAMILY_MAP
+
+    out = dict(base)
+    for spec in specs:
+        fam, value, seed = spec.split(":")
+        gen, _values, config = FAMILY_MAP[fam]
+        for cast in (int, float, str):
+            try:
+                value = cast(value)
+                break
+            except ValueError:
+                pass
+        if "seed" in inspect.signature(gen).parameters:
+            fn = lambda g=gen, v=value, s=int(seed): g(v, seed=s)  # noqa: E731
+        else:
+            fn = lambda g=gen, v=value: g(v)  # noqa: E731
+        out[spec] = (fn, [config])
+    return out
+
+
+SCENARIO_MAP = _with_family_scenes(SCENARIO_MAP)
+
 DEFAULT_HOST = "127.0.0.1"
 
 # Hard-wired, and there is no CLI flag to move it. The shared port IS the mutual
@@ -533,7 +568,7 @@ def reload_scenarios() -> dict:
 
     importlib.reload(_scenarios_module)
     global SCENARIO_MAP, scenario_elastic_weight
-    SCENARIO_MAP = _scenarios_module.SCENARIO_MAP
+    SCENARIO_MAP = _with_family_scenes(_scenarios_module.SCENARIO_MAP)
     scenario_elastic_weight = _scenarios_module.scenario_elastic_weight
     with _CACHE_LOCK:
         _SOLVE_CACHE.clear()
@@ -1580,7 +1615,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--host", default=DEFAULT_HOST, help="Host to bind")
     parser.add_argument("--no-open", action="store_true", help="Do not open the browser")
+    parser.add_argument("--family-scene", action="append", default=[],
+                        help="add a family member to the page, as family:value:seed "
+                             "(e.g. traffic_curved:12:7); repeatable")
     args = parser.parse_args(argv)
+    if args.family_scene:
+        global SCENARIO_MAP
+        os.environ[FAMILY_SCENES_ENV] = ",".join(args.family_scene)
+        SCENARIO_MAP = _with_family_scenes(SCENARIO_MAP)
 
     conflict = describe_port_conflict(args.host, DEFAULT_PORT)
     if conflict:
