@@ -96,6 +96,40 @@ def test_verdict_and_reasons_agree_including_a_deliberate_failure(tmp_path):
     joined = " | ".join(bad["figure_grade_reasons"])
     for needle in ("not converged", "hull certificate violated", "penetrates", "elastic slack"):
         assert needle in joined, joined
+    # The recomputed certificate agrees with the solver's where it is NOT zero --
+    # an agreement of 0 with 0 would prove nothing about the start's certificate.
+    assert bad["certificate_violation"] > 1e-3 and bad["certificate_recheck_agrees"], bad["certificate_recheck"]
+
+
+def test_the_answer_start_keeps_the_problem_and_reads_its_start():
+    """The bar's last row. FAILS IF a start at a figure-grade answer does not read
+    certified, the straight start of `original` -- which penetrates -- does, or an
+    answer that arrives early widens the arrival box (the box is the start's last
+    time x 1.5, so without the rescale it would shrink here)."""
+    own = bench.run_one(_item(), repeats=1)
+    ans = bench.run_one(_item(start="answer", answer_identity=own["identity"], answer_start="own",
+                              answer_control_points=own["control_points"]), repeats=1)
+    assert own["figure_grade"] and ans["start_certified"] and ans["figure_grade"]
+    straight = bench.run_one(_item(start="straight"), repeats=1)
+    assert not straight["start_certified"] and straight["start_certificate"] > 1.0
+    assert straight["start_min_clearance"] < 0.0
+
+    free = bench.run_one(_item(arm="free_arrival"), repeats=1)
+    assert free["figure_grade"] and free["arrival_time"] < 9.5, "the free run must arrive early to test the box"
+    again = bench.run_one(_item(arm="free_arrival", start="answer", answer_identity=free["identity"],
+                                answer_start="own", answer_control_points=free["control_points"]), repeats=1)
+    assert again["time_ub_used"] == pytest.approx(1.5 * 10.0, abs=1e-9)
+
+
+def test_the_speed_cap_is_scaled_to_the_scene():
+    """FAILS IF the free-arrival cap is one number for every scene: `loiter` must
+    cover 200 units by the latest arrival, 1.5 x 80 s, which needs 1.67 -- a fixed
+    1.5 fails it by construction."""
+    from spacetime_bezier.scenarios import SCENARIO_MAP
+
+    args = bench.resolved_arguments(_item(scenario_name="loiter", arm="free_arrival"), SCENARIO_MAP["loiter"][0]())
+    assert args["v_max"] == pytest.approx(1.5 * 200.0 / 80.0)
+    assert args["v_max"] > 200.0 / (1.5 * 80.0)
 
 
 def test_resume_skips_the_same_run_and_reruns_a_different_build(tmp_path, monkeypatch):

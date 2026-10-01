@@ -152,3 +152,75 @@ def test_a_sampling_disagreement_is_marked_not_hidden():
     recs[4]["min_clearance_3000"] = recs[4]["min_clearance"] - 3e-4
     text, _, _ = mt.build(recs, "backbone", "md", grid=grid)
     assert "sampling disagreement" in text and "‡" in text
+
+
+def _bar_records():
+    """traffic, counts 2 and 8, three seeds, from the own start; the one own failure
+    (count 8, seed 0) solved from `wait`; every solved problem started at its answer."""
+    own = _traffic()
+    for r in own:
+        r.update(walls_seed=5, rows_seed=45, walls_returned=6, rows_returned=54, walls_bound=16, sound_clip=True,
+                 certificate_recheck_agrees=True, start_certified=False)
+    wait = copy.deepcopy(own[3])                          # traffic n8 seed 0
+    wait.update(start="wait", identity=wait["identity"] + "w", figure_grade=True, figure_grade_reasons=[],
+                min_clearance=0.3, certificate_violation=0.0)
+    answers = []
+    for r in [x for x in own if x["figure_grade"]] + [wait]:
+        a = copy.deepcopy(r)
+        a.update(start="answer", identity=a["identity"] + "a", start_certified=True, answer_start=r["start"])
+        answers.append(a)
+    return own + [wait] + answers
+
+
+def _bar_row(text, fam, timing="arrival pinned"):
+    line = next(x for x in text.splitlines() if x.startswith(f"| `{fam}` | {timing}"))
+    return [c.strip() for c in line.strip("|").split("|")]
+
+
+def test_the_bar_holds_on_a_clean_set_and_counts_without_judging():
+    """FAILS IF the clean set reads as broken, the counts mix starts, or a solved
+    share is turned into a verdict -- the paper claims no success rate."""
+    text, _, _ = mt.build(_bar_records(), "bar", "md")
+    assert "BAR BROKEN" not in text and "**BROKEN**" not in text, text
+    # problems 6; solved own 5; any start 6; no answer known 0; four zeros; refused 0
+    assert _bar_row(text, "traffic")[2:] == ["6", "5", "6", "0", "0", "0", "0", "0", "0"], text
+    assert "%" not in text.split("**The bar**")[0], "a share became a verdict"
+
+
+@pytest.mark.parametrize("row,edit", [
+    ("false certificates", dict(certificate_violation=0.0, min_clearance=-0.1)),
+    ("false certificates", dict(occlusion_violation=0.0, occlusion_planes_dropped=0.0, los_margin=-0.05)),
+    ("uncovered walls", dict(koz_unsound_clips=2.0)),
+    ("size breaks", dict(rows_returned=55)),
+    ("size breaks", dict(walls_returned=17, rows_returned=153)),
+    ("certified starts lost", dict(figure_grade=False, figure_grade_reasons=["not converged"], min_clearance=0.2,
+                                   certificate_violation=1.0)),
+])
+def test_each_bar_row_breaks_on_its_own(row, edit, tmp_path):
+    """Mutation per row. FAILS IF one bad run of each kind leaves its row at zero,
+    or the table still exits clean."""
+    recs = _bar_records()
+    target = next(r for r in recs if r["start"] == "answer")
+    target.update(edit)
+    text, _, _ = mt.build(recs, "bar", "md")
+    assert f"BAR BROKEN, {row}" in text, text
+    verdict = next(x for x in text.splitlines() if f"| {row} |" in x)
+    assert "**BROKEN**" in verdict, verdict
+    (tmp_path / "r.jsonl").write_text("\n".join(json.dumps(r) for r in recs))
+    with pytest.raises(SystemExit, match="bar is broken"):
+        mt.main(["--in", str(tmp_path / "r.jsonl"), "--table", "bar", "--format", "md", "--out", str(tmp_path / "b.md")])
+
+
+def test_the_bar_refuses_when_the_certificate_recomputation_disagrees():
+    """FAILS IF the bar renders although the recomputed certificate -- the one the
+    start's certificate is read from -- disagreed with the solver's somewhere."""
+    recs = _bar_records()
+    recs[0]["certificate_recheck_agrees"] = False
+    with pytest.raises(SystemExit, match="recomputed certificate disagrees"):
+        mt.build(recs, "bar", "md")
+
+
+def test_the_other_tables_still_count_one_start():
+    """FAILS IF a table other than the bar counts the answer and wait runs too."""
+    solo, _, _ = mt.build(_bar_records(), "reliability", "md")
+    assert "| 8 | 3 |" in solo, "the reliability table counted several starts"

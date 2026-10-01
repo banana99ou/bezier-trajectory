@@ -2,10 +2,12 @@
 """Tables from bench records: JSONL in, markdown or LaTeX out. Computes no solver
 quantity -- it reads, filters, aggregates and formats.
 
-Built to `paper/journal_1/demo_specs/C_traffic_and_backbone.md` Part 3, plus one
-table the spec predates: `reliability`, the four outcome bins of
-`paper/journal_1/SPEC.md` sec. 4.7 per family and count. Its one hard rule: a false
-certificate anywhere stops the build.
+Built to `paper/journal_1/demo_specs/C_traffic_and_backbone.md` Part 3, plus two
+tables the spec predates: `reliability`, the four outcome bins of
+`paper/journal_1/SPEC.md` sec. 4.7 per family and count, whose one hard rule is that
+a false certificate anywhere stops the build; and `bar`, the bar restated as the
+paper's claims (2026-10-01) -- four counts that must be zero in every regime, with
+the solved share reported beside them, not judged.
 
     python3 tools/make_tables.py --in bench/backbone.jsonl --table backbone --format md \\
         --out tables/backbone.md --expect-grid bench/backbone.plan.jsonl
@@ -309,6 +311,12 @@ def bin_of(r: dict) -> str:
     cert, clr = r.get("certificate_violation"), r.get("min_clearance")
     if cert is not None and clr is not None and cert <= CERT_TOL and clr <= 0.0:
         return "false certificate"
+    # The line-of-sight guarantee is its own: certified by the shadow rows with no
+    # plane dropped, yet the independent sight check finds it lost.
+    occ, los = r.get("occlusion_violation"), r.get("los_margin")
+    if (occ is not None and los is not None and occ <= CERT_TOL
+            and not (r.get("occlusion_planes_dropped") or 0.0) and los <= 0.0):
+        return "false certificate"
     if r.get("figure_grade"):
         return "solved"
     if clr is not None and clr > 0.0:
@@ -342,17 +350,98 @@ def table_reliability(records, primary, marks, allow_dirty, grid):
     return blocks
 
 
+ARM_LABEL = {"ours": "arrival pinned", "free_arrival": "arrival free, speed cap"}
+BAR_ROWS = (
+    ("false certificates", "a certified trajectory is safe at every instant"),
+    ("uncovered walls", "the walls cover the whole keep-out zone"),
+    ("size breaks", "size is linear in segments x obstacles"),
+    ("certified starts lost", "the construction does not care about hazard shape or timing"),
+)
+
+
+def _cell(r: dict) -> tuple:
+    """One problem: everything but the start (`bench.cell_key`, restated so this
+    module stays free of the solver)."""
+    name = r.get("scenario_name") if r.get("mode") == "scenario" else None
+    return (r.get("mode"), r.get("family"), name, r.get("axis_value"), r.get("seed"), r.get("arm"),
+            r.get("N"), r.get("n_seg"))
+
+
+def bar_breaks(r: dict) -> list[str]:
+    """Which of the four bar rows this one run breaks. Each can fail on its own."""
+    out = []
+    if bin_of(r) == "false certificate":
+        out.append("false certificates")
+    if r.get("error_type"):
+        return out
+    if r.get("sound_clip") and (r.get("koz_unsound_clips") or 0.0) > 0.0:
+        out.append("uncovered walls")
+    per = (r.get("N") or 0) + 1
+    if r.get("walls_returned") is not None and (
+            r["rows_returned"] != r["walls_returned"] * per or r["rows_seed"] != r["walls_seed"] * per
+            or r["walls_returned"] > r["walls_bound"] or r["walls_seed"] > r["walls_bound"]):
+        out.append("size breaks")
+    if r.get("start") == "answer" and r.get("start_certified") and not r.get("figure_grade"):
+        out.append("certified starts lost")
+    return out
+
+
+def table_bar(records, primary, marks, allow_dirty, grid):
+    """The bar as the paper claims it (2026-10-01). Four counts that must be zero
+    in every regime, and beside them how often a problem is solved -- which the
+    paper reports and never claims, since the method is local. Reads every start.
+    Refuses when the certificate recomputed at a returned trajectory disagreed
+    with the solver's anywhere: the start's certificate, on which the last row
+    rests, is the same recomputation."""
+    bad = [_who(r) for r in records if not r.get("error_type") and r.get("certificate_recheck_agrees") is False]
+    if bad:
+        raise SystemExit("make_tables refused: the recomputed certificate disagrees with the solver's at\n  "
+                         + "\n  ".join(bad))
+    regimes = {}
+    for r in records:
+        regimes.setdefault((r.get("family") or r.get("scenario_name"), r["arm"]), []).append(r)
+    header = ["Regime", "Timing", "Problems", "Solved, own start", "Solved, any start", "No answer known"] + \
+             [name.capitalize() for name, _ in BAR_ROWS] + ["Answers this build will not certify"]
+    rows, totals = [], {name: 0 for name, _ in BAR_ROWS}
+    for (regime, arm), rs in regimes.items():
+        problems = {_cell(r) for r in rs if r.get("start") == "own"}
+        solved_own = {_cell(r) for r in rs if r.get("start") == "own" and r.get("figure_grade")}
+        solved_any = {_cell(r) for r in rs if r.get("start") != "answer" and r.get("figure_grade")}
+        answered = {_cell(r) for r in rs if r.get("start") == "answer"}
+        counts = {name: 0 for name, _ in BAR_ROWS}
+        for r in rs:
+            for name in bar_breaks(r):
+                counts[name] += 1
+                marks.add(f"BAR BROKEN, {name}: {_who(r)}: " + "; ".join(r.get("figure_grade_reasons") or []))
+        refused = [r for r in rs if r.get("start") == "answer" and not r.get("start_certified")]
+        for r in refused:
+            marks.add(f"{_who(r)}: answer from start `{r.get('answer_start')}` "
+                      f"({r.get('answer_reach_policy') or 'this build'}) not certified here: certificate "
+                      f"{_f(r.get('start_certificate'), '.3e')}, clearance {_f(r.get('start_min_clearance'), '+.4f')}")
+        for name in counts:
+            totals[name] += counts[name]
+        rows.append([f"`{regime}`", ARM_LABEL.get(arm, arm), str(len(problems)), str(len(solved_own)),
+                     str(len(solved_any & problems)), str(len(problems - answered - solved_any))]
+                    + [str(counts[name]) for name, _ in BAR_ROWS] + [str(len(refused))])
+    verdict = [[claim, name, str(totals[name]), "holds" if totals[name] == 0 else "**BROKEN**"]
+               for name, claim in BAR_ROWS]
+    return [("Per regime", header, rows), ("The bar", ["Paper claim", "Broken by", "Count", "Verdict"], verdict)]
+
+
 TABLES = {"backbone": table_backbone, "scaling": table_scaling, "axes": table_axes,
-          "coverage": table_coverage, "reliability": table_reliability}
+          "coverage": table_coverage, "reliability": table_reliability, "bar": table_bar}
 
 
 # ------------------------------------------------------------------------ main
 
 def build(records, table, fmt, primary="ours", grid=None, allow_dirty=False, strict_timing=False,
-          sources=()) -> tuple[str, str | None, list[str]]:
+          sources=(), start="own") -> tuple[str, str | None, list[str]]:
     """(table text, numbers.tex text or None, missing grid points). Pure: the same
     records give byte-identical output."""
     check(records, allow_dirty=allow_dirty, strict_timing=strict_timing)
+    if table != "bar":
+        records = [r for r in records if r.get("start", "own") == start]
+        grid = [g for g in grid if g.get("start", "own") == start] if grid else grid
     marks = Marks()
     result = TABLES[table](records, primary, marks, allow_dirty, grid)
     numbers = {}
@@ -404,6 +493,7 @@ def main(argv=None) -> int:
     ap.add_argument("--format", choices=("md", "tex"), required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--arm", default="ours")
+    ap.add_argument("--start", default="own", help="which starting guess a table shows (all, for bar)")
     ap.add_argument("--expect-grid")
     ap.add_argument("--allow-dirty", action="store_true")
     ap.add_argument("--strict-timing", action="store_true")
@@ -412,13 +502,15 @@ def main(argv=None) -> int:
         raise SystemExit(f"--expect-grid is required for `{args.table}`: a silently short table is the failure it prevents")
     records = load(args.inputs)
     text, num, missing = build(records, args.table, args.format, args.arm, load_grid(args.expect_grid),
-                               args.allow_dirty, args.strict_timing, sources=args.inputs)
+                               args.allow_dirty, args.strict_timing, sources=args.inputs, start=args.start)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(text)
     if num is not None:
         Path(str(args.out) + ".numbers.tex").write_text(num)
     if missing:
         raise SystemExit("missing grid points (planned, never recorded):\n  " + "\n  ".join(missing))
+    if args.table == "bar" and "BAR BROKEN" in text:
+        raise SystemExit(f"the bar is broken -- the runs are listed in {args.out}")
     return 0
 
 
