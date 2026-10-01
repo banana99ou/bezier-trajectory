@@ -122,4 +122,5 @@ reading the rendered view, not by recalling an earlier note:
 `tests/unit/test_poster_gate.py`에 있다. 규칙과 남은 일(인쇄 규격 확인)은
 [`poster/README.md`](poster/README.md).
 
-저널판은 별도 worktree에서 병행한다 — [`idea/spacetime.md`](../../idea/spacetime.md) §Artifacts.
+저널판은 이 저장소 안 [`paper/journal_1/`](../journal_1/)에서 진행한다 — 별도 worktree는
+2026-09-04에 정리했다(`3035fe7`). [`idea/spacetime.md`](../../idea/spacetime.md) §Artifacts.
