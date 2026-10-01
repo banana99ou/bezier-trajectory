@@ -1,0 +1,61 @@
+{
+  "sampler": "lhs",
+  "n": 4096,
+  "seed": 20260930,
+  "nsegs": [
+    4,
+    8,
+    16,
+    32,
+    64
+  ],
+  "workers": 12,
+  "range_set": "wide",
+  "degree": 7,
+  "trust_rule": "2000 km doubled until it exceeds the iteration-1 repair (2-norm)",
+  "rot_deg": 37.0,
+  "base": {
+    "lag": 120.0,
+    "progress_alt": 245.0,
+    "iss_alt": 400.0,
+    "dinc": 0.0,
+    "draan": 0.0,
+    "iss_u": 45.0,
+    "raan": 0.0
+  },
+  "ranges": {
+    "lag": [
+      100.0,
+      170.0
+    ],
+    "progress_alt": [
+      195.0,
+      295.0
+    ],
+    "iss_alt": [
+      350.0,
+      450.0
+    ],
+    "dinc": [
+      -20.0,
+      20.0
+    ],
+    "draan": [
+      -15.0,
+      15.0
+    ],
+    "iss_u": [
+      0.0,
+      360.0
+    ]
+  },
+  "fixed": {
+    "inc": 51.64,
+    "r_e": 6471.0,
+    "T": 1500.0
+  },
+  "script_sha256": "6d678923a13f4b87c5defad5c69695ff6db633c9badd6e375488d4cfdb948303",
+  "commit": "8860782ec22e4600da7531e354ec1264f466d8e3",
+  "dirty": true,
+  "ext": "2c67baf508e0"
+}
