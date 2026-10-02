@@ -14,13 +14,13 @@
 
 항공우주, 로봇공학, 자율 시스템의 궤적 최적화에서는 경로 전 구간에 걸친 장애물 회피가 요구된다. 그러나 direct transcription과 direct collocation [1, 2]은 주로 이산화된 노드에 제약을 부과하므로, 노드에서 제약을 만족하더라도 노드 사이에서는 제약을 위반할 수 있다 [6]. 궤적 전 구간에서 제약을 만족하는 성질을 연속시간 제약 만족 [7]이라 하며, 이를 보장할 수 있는 궤적 표현과 제약 정식화가 필요하다.
 
-Bézier 곡선의 제어점을 최적화 변수로 사용하는 궤적 생성 기법은 여러 연구에서 다루어졌다 [13, 14]. [18]에서는 미분·차수 상승 연산자와 Gram 행렬을 이용하여 제어점에 대한 이차형식 비용함수를 구성하고, 곡선 분할과 분리 평면 제약을 순차 볼록 프로그래밍에 적용하였다. 본 연구에서는 이를 바탕으로 구형 장애물 회피 제약의 보수성을 정량적으로 분석하고, 비선형 중력을 고려한 궤도전이 문제로 확장한다.
+Bézier 곡선의 제어점을 최적화 변수로 사용하는 궤적 생성 기법은 여러 연구에서 다루어졌다 [12, 13]. [17]에서는 미분·차수 상승 연산자와 Gram 행렬을 이용하여 제어점에 대한 이차형식 비용함수를 구성하고, 곡선 분할과 분리 평면 제약을 순차 볼록 프로그래밍에 적용하였다. 본 연구에서는 이를 바탕으로 구형 장애물 회피 제약의 보수성을 정량적으로 분석하고, 비선형 중력을 고려한 궤도전이 문제로 확장한다.
 
-본 연구의 주요 내용은 다음과 같다. 첫째, 장애물 경계 부근의 최소 이격거리를 원호 근사로 추정하고, 분할 수에 따른 보수성의 변화를 실험으로 확인한다. 둘째, 선행연구 [18]의 선형 Clohessy–Wiltshire(CW) 상대운동 모델을 비선형 중력 모델로 확장한다. 이체 중력과 $J_2$ 섭동을 구간별로 선형화하고, 기존의 Gram 행렬 정식화를 적용하여 제어 가속도 비용을 볼록 이차형식으로 구성한다. 셋째, 제어점 변화에 따른 지지 반공간 법선의 변화까지 미분에 포함한다. 이를 신뢰영역 기반 순차 볼록화(successive convexification, SCvx) [4, 5]의 회피 제약 선형화와 감소량 평가에 반영한다.
+본 연구의 주요 내용은 다음과 같다. 첫째, 장애물 경계 부근의 최소 이격거리를 원호 근사로 추정하고, 분할 수에 따른 보수성의 변화를 실험으로 확인한다. 둘째, 선행연구 [17]의 선형 Clohessy–Wiltshire(CW) 상대운동 모델을 비선형 중력 모델로 확장한다. 이체 중력과 $J_2$ 섭동을 구간별로 선형화하고, 기존의 Gram 행렬 정식화를 적용하여 제어 가속도 비용을 볼록 이차형식으로 구성한다. 셋째, 제어점 변화에 따른 지지 반공간 법선의 변화까지 미분에 포함한다. 이를 신뢰영역 기반 순차 볼록화(successive convexification, SCvx) [4, 5]의 회피 제약 선형화와 감소량 평가에 반영한다.
 
-궤적 최적화의 비볼록 제약을 다루는 방법으로는 특정 문제에 적용할 수 있는 무손실 볼록화 [3]와, 제약을 반복적으로 선형화하는 순차 볼록화 [4, 5]가 (있다. 장애물 외부의 자유 공간은 비볼록이다)[[what is this 10 supposed to be? and connection with prev word '있다.' is unnatural]] [10]. 이를 볼록 최적화로 다루는 회피 기법은 주로 두 가지 접근을 취한다. 첫째는 자유 공간을 여러 볼록 영역으로 덮고 통과할 영역을 선택하는 방법으로, 볼록 영역 생성 [11]과 볼록 집합 그래프 [12]가 이에 해당한다. 둘째는 장애물의 통과 방향을 정하고 지지 반공간으로 자유 공간을 제한하는 방법이다.
+장애물 외부의 자유 공간은 볼록 집합이 아니므로, 장애물 회피 제약은 비볼록 제약이다. 궤적 최적화에서 비볼록 제약을 다루는 방법으로는 특정 문제에 적용할 수 있는 무손실 볼록화 [3]와 제약을 반복적으로 선형화하는 순차 볼록화 [4, 5]가 있다. 장애물 회피를 볼록 최적화로 다루는 기법은 주로 두 가지 접근을 취한다. 첫째는 자유 공간을 여러 볼록 영역으로 덮고 통과할 영역을 선택하는 방법으로, 볼록 영역 생성 [10]과 볼록 집합 그래프 [11]가 이에 해당한다. 둘째는 장애물의 통과 방향을 정하고 지지 반공간으로 자유 공간을 제한하는 방법이다.
 
-두 번째 방법에서는 볼록 껍질 성질을 이용하여 유한 개의 제어점에 대한 조건으로 연속시간 제약 만족을 보장한다 [13]. 이 보장은 한 분할구간의 모든 제어점이 같은 반공간 안에 있을 때 성립하며, 제어점마다 다른 반공간을 적용하면 볼록 껍질이 장애물과 겹칠 수 있다. 따라서 안전 회랑 기법 [15, 16, 17]은 분할구간마다 하나의 반공간을 정해 그 분할구간의 모든 제어점에 부과하며, 본 연구도 이 방식을 따른다.
+두 번째 방법에서는 볼록 껍질 성질을 이용하여 유한 개의 제어점에 대한 조건으로 연속시간 제약 만족을 보장한다 [12]. 이 보장은 한 분할구간의 모든 제어점이 같은 반공간 안에 있을 때 성립하며, 제어점마다 다른 반공간을 적용하면 볼록 껍질이 장애물과 겹칠 수 있다. 따라서 안전 회랑 기법 [14, 15, 16]은 분할구간마다 하나의 반공간을 정해 그 분할구간의 모든 제어점에 부과하며, 본 연구도 이 방식을 따른다.
 
 2절에서는 제어점 공간의 궤적 표현과 표기법을 정리하고, 3절에서는 제안 기법의 정식화와 알고리즘을 설명한다. 4절과 5절에서는 각각 실험 설정과 수치 결과를 제시하며, 6절에서 결론과 한계를 기술한다.
 
@@ -28,7 +28,7 @@ Bézier 곡선의 제어점을 최적화 변수로 사용하는 궤적 생성 �
 
 ## 2. 제어점 공간에서의 궤적 표현
 
-선행연구 [18]의 제어점 공간 정식화에 따라 필요한 표기와 식을 정리한다. 미분·차수 상승 연산자와 Gram 행렬의 기본 성질은 문헌 [13, 18]을 따른다.
+선행연구 [17]의 제어점 공간 정식화에 따라 필요한 표기와 식을 정리한다. 미분·차수 상승 연산자와 Gram 행렬의 기본 성질은 문헌 [12, 17]을 따른다.
 
 ### 2.1 궤적 표현과 결정 변수
 
@@ -49,7 +49,7 @@ $$
 
 ### 2.2 미분 연산자와 경계조건
 
-미분 행렬 $D_N\in\mathbb{R}^{N\times(N+1)}$과 차수 상승 행렬 $E_{N-1}\in\mathbb{R}^{(N+1)\times N}$을 이용하여 차수를 보존하는 미분 연산자를 정의한다 [18].
+미분 행렬 $D_N\in\mathbb{R}^{N\times(N+1)}$과 차수 상승 행렬 $E_{N-1}\in\mathbb{R}^{(N+1)\times N}$을 이용하여 차수를 보존하는 미분 연산자를 정의한다 [17].
 
 $$
 L_{1,N} = E_{N-1}D_N, \qquad L_{2,N} = E_{N-1}D_N E_{N-1}D_N
@@ -67,7 +67,7 @@ $$
 
 ### 2.3 Gram 행렬과 이차형식
 
-Bernstein Gram 행렬 $G_N$의 성분과 이에 따른 적분 항등식은 다음과 같다 [13, 18].
+Bernstein Gram 행렬 $G_N$의 성분과 이에 따른 적분 항등식은 다음과 같다 [12, 17].
 
 $$
 [G_N]_{il} = \frac{\binom{N}{i}\binom{N}{l}}{\binom{2N}{i+l}(2N+1)}, \qquad i,l=0,\ldots,N
@@ -87,7 +87,7 @@ $F$가 결정 변수 $\mathbf{x}$의 1차 함수이면 위 적분은 $\mathbf{x}
 
 ### 3.1 분할과 지지 반공간을 이용한 구형 장애물 처리
 
-곡선 분할과 분리 평면을 이용한 회피 제약은 [18]에서의 표현을 따른다. 중심이 $\mathbf{c}_{\mathrm{KOZ}}$이고 반경이 $R_{\mathrm{KOZ}}$인 구형 장애물을 다음과 같이 정의한다.
+곡선 분할과 분리 평면을 이용한 회피 제약은 [17]에서의 표현을 따른다. 중심이 $\mathbf{c}_{\mathrm{KOZ}}$이고 반경이 $R_{\mathrm{KOZ}}$인 구형 장애물을 다음과 같이 정의한다.
 
 $$
 \mathcal{K} = \left\{\mathbf{r}\in\mathbb{R}^3 : \|\mathbf{r}-\mathbf{c}_{\mathrm{KOZ}}\|_2 \le R_{\mathrm{KOZ}} \right\}
@@ -137,7 +137,7 @@ $$
 (\mathbf{n}^{(s)})^{\mathsf{T}} \mathbf{q}^{(s)}_m \ge (\mathbf{n}^{(s)})^{\mathsf{T}} \mathbf{c}_{\mathrm{KOZ}} + R_{\mathrm{KOZ}}, \qquad m=0,\ldots,N
 $$
 
-볼록 껍질 성질 [13]에 따른 회피 충분조건을 명제 1로 정리하고, 이를 실현 가능성 판정에 사용한다.
+볼록 껍질 성질 [12]에 따른 회피 충분조건을 명제 1로 정리하고, 이를 실현 가능성 판정에 사용한다.
 
 > **명제 1.** 분할구간 $s$의 제어점을 $P^{(s)} = S^{(s)}P$, 구형 장애물을 $\mathcal{K} = \{\mathbf{r}\in\mathbb{R}^3 : \|\mathbf{r}-\mathbf{c}_{\mathrm{KOZ}}\|_2 \le R_{\mathrm{KOZ}}\}$라 하자. 모든 제어점 $\mathbf{q}^{(s)}_0, \ldots, \mathbf{q}^{(s)}_N$이 위에서 정의한 지지 반공간 $\mathcal{H}^{(s)}$에 속하면, 해당 분할구간의 Bézier 곡선 전체도 $\mathcal{H}^{(s)}$에 속하므로 $\operatorname{int}\mathcal{K}$와 만나지 않는다.
 
@@ -148,7 +148,7 @@ $$
 > 3. 해당 분할구간의 모든 제어점에 동일한 지지 반공간 $\mathcal{H}^{(s)}$의 제약을 부과한다.
 > 4. 법선 구성 시 $\mathbf{c}^{(s)} \neq \mathbf{c}_{\mathrm{KOZ}}$이다.
 
-> **증명.** 곡선은 제어점의 볼록 껍질 안에 있고 [13], $\mathcal{H}^{(s)}$는 볼록이며 장애물 내부와 만나지 않는다. 따라서 모든 제어점이 $\mathcal{H}^{(s)}$ 안에 있으면 곡선 전체도 장애물 내부와 만나지 않는다. ($\square$)
+> **증명.** 곡선은 제어점의 볼록 껍질 안에 있고 [12], $\mathcal{H}^{(s)}$는 볼록이며 장애물 내부와 만나지 않는다. 따라서 모든 제어점이 $\mathcal{H}^{(s)}$ 안에 있으면 곡선 전체도 장애물 내부와 만나지 않는다. ($\square$)
 
 분할구간 제어점 $\mathbf{q}^{(s)}_m$은 원래 제어점의 선형결합이다. 따라서 법선 $\mathbf{n}^{(s)}$을 고정하면 위 부등식은 결정 변수 $\mathbf{x}$에 대해 선형이다. 그러나 법선도 무게중심 $\mathbf{c}^{(s)}$를 통해 $\mathbf{x}$에 의존한다. 명제 1의 조건에 대한 위반량을 다음과 같이 정의한다.
 
@@ -315,7 +315,7 @@ $\rho_k$는 근사 모델이 실제 감소량을 얼마나 정확히 예측하�
 
 > 중력 상수: $\mathrm{GM} = 3.986004418 \times 10^{5}$ km$^3$/s$^2$, $R_\oplus = 6371$ km, $J_2 = 1.08262668 \times 10^{-3}$.
 
-기준 시나리오는 Progress 우주선의 ISS 접근을 참고하여 두 원궤도 위의 점을 잇는 전이 문제로 단순화하였다. 출발·도착 고도는 Progress의 초기 원지점 고도 [19]와 ISS 운용 고도 범위 [20]를 참고하여 각각 245 km와 400 km로 정하였다. 두 궤도는 경사각 51.64 deg의 동일 평면에 있다. 두 끝점의 중심각은 120 deg이고, 속도 경계조건은 각 원궤도의 원운동 속도이다. 이 기준에서 중심각을 70~170 deg로 바꾸거나 도착 궤도면을 변경하여 표 1의 다섯 시나리오를 구성하였다.
+기준 시나리오는 Progress 우주선의 ISS 접근을 참고하여 두 원궤도 위의 점을 잇는 전이 문제로 단순화하였다. 출발·도착 고도는 Progress의 초기 원지점 고도 [18]와 ISS 운용 고도 범위 [19]를 참고하여 각각 245 km와 400 km로 정하였다. 두 궤도는 경사각 51.64 deg의 동일 평면에 있다. 두 끝점의 중심각은 120 deg이고, 속도 경계조건은 각 원궤도의 원운동 속도이다. 이 기준에서 중심각을 70~170 deg로 바꾸거나 도착 궤도면을 변경하여 표 1의 다섯 시나리오를 구성하였다.
 
 **표 1 [T1]. 시험한 전이 시나리오**
 
@@ -442,24 +442,22 @@ $\rho_k$는 근사 모델이 실제 감소량을 얼마나 정확히 예측하�
 
 [9] Nocedal, J., and Wright, S. J., *Numerical Optimization*, 2nd ed., Springer, New York, 2006, Theorem 17.3. doi:10.1007/978-0-387-40065-5
 
-[10] Rimon, E., and Koditschek, D. E., "The Construction of Analytic Diffeomorphisms for Exact Robot Navigation on Star Worlds," *Transactions of the American Mathematical Society*, Vol. 327, No. 1, 1991, pp. 71–116.
+[10] Deits, R., and Tedrake, R., "Computing Large Convex Regions of Obstacle-Free Space Through Semidefinite Programming," *Algorithmic Foundations of Robotics XI (WAFR)*, Springer, 2015, pp. 109–124.
 
-[11] Deits, R., and Tedrake, R., "Computing Large Convex Regions of Obstacle-Free Space Through Semidefinite Programming," *Algorithmic Foundations of Robotics XI (WAFR)*, Springer, 2015, pp. 109–124.
+[11] Marcucci, T., Petersen, M., von Wrangel, D., and Tedrake, R., "Motion Planning around Obstacles with Convex Optimization," *Science Robotics*, Vol. 8, No. 84, 2023.
 
-[12] Marcucci, T., Petersen, M., von Wrangel, D., and Tedrake, R., "Motion Planning around Obstacles with Convex Optimization," *Science Robotics*, Vol. 8, No. 84, 2023.
+[12] Kielas-Jensen, C., and Cichella, V., "Bernstein Polynomial-Based Transcription Method for Solving Optimal Trajectory Generation Problems," arXiv:2010.09992, 2020.
 
-[13] Kielas-Jensen, C., and Cichella, V., "Bernstein Polynomial-Based Transcription Method for Solving Optimal Trajectory Generation Problems," arXiv:2010.09992, 2020.
+[13] Lee, S., and Kim, Y., "Optimal Output Trajectory Shaping Using Bézier Curves," *Journal of Guidance, Control, and Dynamics*, Vol. 44, No. 5, 2021, pp. 1027–1035. doi:10.2514/1.G005887
 
-[14] Lee, S., and Kim, Y., "Optimal Output Trajectory Shaping Using Bézier Curves," *Journal of Guidance, Control, and Dynamics*, Vol. 44, No. 5, 2021, pp. 1027–1035. doi:10.2514/1.G005887
+[14] Preiss, J. A., Hönig, W., Ayanian, N., and Sukhatme, G. S., "Downwash-Aware Trajectory Planning for Large Quadrotor Teams," *2017 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)*, 2017, pp. 250–257.
 
-[15] Preiss, J. A., Hönig, W., Ayanian, N., and Sukhatme, G. S., "Downwash-Aware Trajectory Planning for Large Quadrotor Teams," *2017 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)*, 2017, pp. 250–257.
+[15] Tordesillas, J., and How, J. P., "MADER: Trajectory Planner in Multiagent and Dynamic Environments," *IEEE Transactions on Robotics*, Vol. 38, No. 1, 2022, pp. 463–476.
 
-[16] Tordesillas, J., and How, J. P., "MADER: Trajectory Planner in Multiagent and Dynamic Environments," *IEEE Transactions on Robotics*, Vol. 38, No. 1, 2022, pp. 463–476.
+[16] Gao, F., Wang, L., Zhou, B., Han, L., Pan, J., and Shen, S., "Teach-Repeat-Replan: A Complete and Robust System for Aggressive Flight in Complex Environments," *IEEE Transactions on Robotics*, Vol. 36, No. 5, 2020, pp. 1526–1545.
 
-[17] Gao, F., Wang, L., Zhou, B., Han, L., Pan, J., and Shen, S., "Teach-Repeat-Replan: A Complete and Robust System for Aggressive Flight in Complex Environments," *IEEE Transactions on Robotics*, Vol. 36, No. 5, 2020, pp. 1526–1545.
+[17] 최지웅, 이수원, "베지어 곡선 기반 컨벡스 궤적 최적화 및 순차 볼록 프로그래밍 충돌 회피 정식화," *한국항공우주학회지*, 2026, 게재 승인 원고(2026년 5월 14일 승인).
 
-[18] 최지웅, 이수원, "베지어 곡선 기반 컨벡스 궤적 최적화 및 순차 볼록 프로그래밍 충돌 회피 정식화," *한국항공우주학회지*, 2026, 게재 승인 원고(2026년 5월 14일 승인).
+[18] NASA National Space Science Data Center, "SPACEWARN Bulletin No. 632," 1 July 2006, Progress-M 57 항목. [SpaceRef 재수록본](https://spaceref.com/status-report/nasa-spacewarn-bulletin-no-632-01-july-2006/).
 
-[19] NASA National Space Science Data Center, "SPACEWARN Bulletin No. 632," 1 July 2006, Progress-M 57 항목. [SpaceRef 재수록본](https://spaceref.com/status-report/nasa-spacewarn-bulletin-no-632-01-july-2006/).
-
-[20] (European Space Agency, "ISS: International Space Station," [온라인 자료](https://www.esa.int/Science_Exploration/Human_and_Robotic_Exploration/International_Space_Station/ISS_International_Space_Station), 접속일: 2026년 9월 22일.)[[this url has to render as url. also I feed just bare url is not appropriate for reference section in paper?]]
+[19] (European Space Agency, "ISS: International Space Station," [온라인 자료](https://www.esa.int/Science_Exploration/Human_and_Robotic_Exploration/International_Space_Station/ISS_International_Space_Station), 접속일: 2026년 9월 22일.)[[this url has to render as url. also I feed just bare url is not appropriate for reference section in paper?]]
