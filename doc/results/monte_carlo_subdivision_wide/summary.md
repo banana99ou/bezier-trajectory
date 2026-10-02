@@ -5,15 +5,25 @@
 - ranges: lag 100..170, progress_alt 195..295, iss_alt 350..450, dinc -20..20, draan -15..15, iss_u 0..360
 - cells: median [5th, 95th percentile]; rates with 95% Wilson interval
 
-- constraint active: some half-space row within 0.001 km of equality; interior: closest approach strictly between the endpoints. The clearance ratio uses certified solves that are both; the cost change uses certified solves where the constraint is active.
+- constraint active: some half-space row within 0.001 km of equality; interior: closest approach strictly between the endpoints; closest sub-arc pressed: the sub-arc holding the closest approach is itself within that tolerance. The clearance ratio uses certified, active, interior solves whose closest sub-arc is pressed -- where the section 3.1 estimate applies. Cost is the objective J; its change uses certified solves where the constraint is active.
 
-| n_seg | solves | errors | certified % [95% CI] | constraint active % | interior % | measured/estimated clearance | cost vs n_seg=64 (%) | iterations |
-|---:|---:|---:|:--|---:|---:|:--|:--|:--|
-| 4 | 4096 | 0 | 98.6 [98.2, 98.9] | 98.6 | 2.9 | 1.01 [0.953, 1.07] | 63.8 [26.8, 164] | 15 [8, 53] max 1000, >100: 149 |
-| 8 | 4096 | 0 | 100.0 [99.9, 100.0] | 92.0 | 96.8 | 0.977 [0.924, 1.43] | 5.78 [4.01, 6.48] | 10 [6, 16] max 931, >100: 36 |
-| 16 | 4096 | 0 | 100.0 [99.9, 100.0] | 90.3 | 97.0 | 0.982 [0.923, 1.03] | 1.31 [0.968, 1.44] | 9 [6, 14] max 81, >100: 0 |
-| 32 | 4096 | 0 | 100.0 [99.9, 100.0] | 89.8 | 97.0 | 0.979 [0.923, 1.01] | 0.256 [0.194, 0.297] | 9 [6, 14] max 24, >100: 0 |
-| 64 | 4096 | 0 | 100.0 [99.9, 100.0] | 89.7 | 97.0 | 0.978 [0.922, 1] | 0 [0, 0] | 9 [6, 13] max 22, >100: 0 |
+| n_seg | solves | errors | certified % [95% CI] | constraint active % | interior % | closest sub-arc pressed % | measured/estimated clearance | J vs n_seg=64 (%) | iterations |
+|---:|---:|---:|:--|---:|---:|---:|:--|:--|:--|
+| 4 | 4096 | 0 | 98.6 [98.2, 98.9] | 98.6 | 2.9 | 43.3 | 0.967 [0.951, 0.98] max 0.984 | 171 [49.2, 671] | 15 [8, 53] max 1000, >100: 149 |
+| 8 | 4096 | 0 | 100.0 [99.9, 100.0] | 92.0 | 96.8 | 60.0 | 0.967 [0.91, 0.985] max 0.996 | 11.6 [5.02, 12.6] | 10 [6, 16] max 931, >100: 36 |
+| 16 | 4096 | 0 | 100.0 [99.9, 100.0] | 90.3 | 97.0 | 75.9 | 0.978 [0.916, 0.994] max 0.999 | 2.56 [1.27, 2.77] | 9 [6, 14] max 81, >100: 0 |
+| 32 | 4096 | 0 | 100.0 [99.9, 100.0] | 89.8 | 97.0 | 80.6 | 0.976 [0.917, 0.997] max 0.999 | 0.502 [0.25, 0.544] | 9 [6, 14] max 24, >100: 0 |
+| 64 | 4096 | 0 | 100.0 [99.9, 100.0] | 89.7 | 97.0 | 83.8 | 0.975 [0.918, 0.998] max 1.002 | 0 [0, 0] | 9 [6, 13] max 22, >100: 0 |
+
+## Clearance ratio by whether the closest sub-arc is pressed
+
+| n_seg | pressed: n, ratio | not pressed: n, ratio |
+|---:|:--|:--|
+| 4 | 45, 0.967 [0.951, 0.98] | 59, 1.03 [1, 1.07] |
+| 8 | 2252, 0.967 [0.91, 0.985] | 1504, 1.11 [0.976, 1.5] |
+| 16 | 2808, 0.978 [0.916, 0.994] | 892, 1.01 [0.965, 1.06] |
+| 32 | 2965, 0.976 [0.917, 0.997] | 715, 0.998 [0.946, 1.02] |
+| 64 | 3082, 0.975 [0.918, 0.998] | 594, 0.997 [0.967, 1.01] |
 
 Clearance scaling exponent over n_seg [8, 16, 32, 64] (per instance, 3665 instances): -1.99 [-2.01, -1.93]; the arc estimate predicts -2.
 
