@@ -132,7 +132,7 @@ assert all(tuple(r) == PARAMS for r in RANGE_SETS.values())
 FIELDS = list(["instance", "kind", *PARAMS, "raan", "central_angle_deg",
            "repair_inf_km", "repair_2_km", "trust_radius_km",
            "n_seg", "certified", "dense_probe_ok", "disagree", "koz_binds",
-           "tau_star", "halfspace_slack_km", "margin_km", "l_seg_km", "pred_margin_km", "ratio",
+           "tau_star", "halfspace_slack_km", "bind_slack_km", "margin_km", "l_seg_km", "pred_margin_km", "ratio",
            "ctrl_cost_ms2", "objective", "runtime_s", "cpu_s", "iters", "stop",
            "stop_name", "hull_violation_km", "error"])
 
@@ -197,8 +197,8 @@ def central_angle(sc):
     return float(np.degrees(np.arccos(np.clip(c, -1.0, 1.0))))
 
 
-def halfspace_slack(P, n_seg, r_e):
-    """Smallest supporting-half-space slack over all sub-arc control points (km).
+def halfspace_slacks(P, n_seg, r_e):
+    """Supporting-half-space slack of each sub-arc: min over its control points (km).
 
     Section 3.1's row, gamma = n^T (q - c_KOZ) - R_KOZ with n from the sub-arc
     centroid and c_KOZ at the origin. About zero means the obstacle constraint
@@ -206,12 +206,12 @@ def halfspace_slack(P, n_seg, r_e):
     closest approach alone does not say which: a transfer that never nears the
     obstacle also has its minimum radius between the endpoints.
     """
-    worst = np.inf
+    out = []
     for A in segment_matrices_equal_params(P.shape[0] - 1, n_seg):
         Q = A @ P
         c = Q.mean(axis=0)
-        worst = min(worst, float((Q @ (c / np.linalg.norm(c))).min() - r_e))
-    return worst
+        out.append(float((Q @ (c / np.linalg.norm(c))).min() - r_e))
+    return out
 
 
 def repair_distance(sc):
@@ -255,6 +255,7 @@ def solve(task):
     dense_ok = bool(info["feasible"])
     binds, tau_star = BT._koz_binds(P)
     s_bind = min(int(tau_star * n_seg), n_seg - 1)
+    slacks = halfspace_slacks(P, n_seg, sc["r_e"])
     a, b = H.positions(P, np.array([s_bind / n_seg, (s_bind + 1) / n_seg]))
     l_seg = float(np.linalg.norm(b - a))
     pred = l_seg ** 2 / (8.0 * sc["r_e"])
@@ -262,7 +263,7 @@ def solve(task):
     row.update(
         certified=certified, dense_probe_ok=dense_ok, disagree=(certified != dense_ok),
         koz_binds=binds, tau_star=tau_star,
-        halfspace_slack_km=halfspace_slack(P, n_seg, sc["r_e"]),
+        halfspace_slack_km=min(slacks), bind_slack_km=slacks[s_bind],
         margin_km=margin, l_seg_km=l_seg,
         pred_margin_km=pred, ratio=(margin / pred) if binds else float("nan"),
         ctrl_cost_ms2=float(info["mean_control_accel_ms2"]),
@@ -419,11 +420,24 @@ def _typed(r):
         t[k] = int(r[k]) if r.get(k) not in (None, "") else None
     for k in ("margin_km", "pred_margin_km", "ratio", "ctrl_cost_ms2", "objective",
               "runtime_s", "cpu_s", "hull_violation_km", "repair_inf_km",
-              "central_angle_deg", "trust_radius_km", "halfspace_slack_km", *PARAMS):
+              "central_angle_deg", "trust_radius_km", "halfspace_slack_km", "bind_slack_km",
+              *PARAMS):
         t[k] = float(r[k]) if r.get(k) not in (None, "") else float("nan")
     for k in ("certified", "dense_probe_ok", "disagree", "koz_binds"):
         t[k] = r.get(k) == "True"
     return t
+
+
+def _pressed(r):
+    """The sub-arc holding the closest approach is itself tight against its half-space.
+
+    Section 3.1's estimate is built from that sub-arc's chord with the sub-arc
+    lying on its supporting plane. When the closest approach falls in a sub-arc
+    whose own constraint is slack -- a tight neighbour pushed the curve -- the
+    estimate is computed from the wrong chord and does not apply.
+    """
+    s = r.get("bind_slack_km", float("nan"))
+    return bool(np.isfinite(s) and s <= ACTIVE_TOL_KM)
 
 
 def _active(r):
@@ -496,13 +510,16 @@ def summarize(args):
           "",
           "- constraint active: some half-space row within "
           f"{ACTIVE_TOL_KM:g} km of equality; interior: closest approach strictly "
-          "between the endpoints. The clearance ratio uses certified solves that are both; "
-          "the cost change uses certified solves where the constraint is active.",
+          "between the endpoints; closest sub-arc pressed: the sub-arc holding the closest "
+          "approach is itself within that tolerance. The clearance ratio uses certified, "
+          "active, interior solves whose closest sub-arc is pressed -- where the section 3.1 "
+          "estimate applies. Cost is the objective J; its change uses certified solves where "
+          "the constraint is active.",
           "",
           "| n_seg | solves | errors | certified % [95% CI] | constraint active % | "
-          "interior % | "
-          f"measured/estimated clearance | cost vs n_seg={top} (%) | iterations |",
-          "|---:|---:|---:|:--|---:|---:|:--|:--|:--|"]
+          "interior % | closest sub-arc pressed % | "
+          f"measured/estimated clearance | J vs n_seg={top} (%) | iterations |",
+          "|---:|---:|---:|:--|---:|---:|---:|:--|:--|:--|"]
     for s in nsegs:
         rs = [by[(i, s)] for i in ids if (i, s) in by]
         n = len(rs)
@@ -512,20 +529,31 @@ def summarize(args):
         act = [r for r in cert if _active(r)]
         inter = [r for r in cert if r["koz_binds"]]
         active = [r for r in act if r["koz_binds"]]
+        pressed = [r for r in active if _pressed(r)]
         dc = []
         for i in ids:
             a, b = by.get((i, s)), by.get((i, top))
             # Only where the constraint shapes the solution at this n_seg: an
             # instance it never touches has the same cost at every n_seg.
             if a and b and a["certified"] and b["certified"] and _active(a):
-                dc.append(100 * (a["ctrl_cost_ms2"] / b["ctrl_cost_ms2"] - 1))
+                dc.append(100 * (a["objective"] / b["objective"] - 1))
         md.append(
             f"| {s} | {n} | {err} | {100*len(cert)/max(n,1):.1f} [{lo:.1f}, {hi:.1f}] | "
             f"{100*len(act)/max(len(cert),1):.1f} | {100*len(inter)/max(len(cert),1):.1f} | "
-            f"{pct([r['ratio'] for r in active])} | "
+            f"{100*len(pressed)/max(len(active),1):.1f} | "
+            f"{pct([r['ratio'] for r in pressed])} max {max([r['ratio'] for r in pressed], default=float('nan')):.3f} | "
             f"{pct(dc)} | {pct([r['iters'] for r in cert], '{:.0f}')} "
             f"max {max([r['iters'] for r in rs if r['iters'] is not None], default=0)}, "
             f">100: {sum(1 for r in rs if (r['iters'] or 0) > 100)} |")
+
+    md += ["", "## Clearance ratio by whether the closest sub-arc is pressed", "",
+           "| n_seg | pressed: n, ratio | not pressed: n, ratio |", "|---:|:--|:--|"]
+    for s in nsegs:
+        a = [by[(i, s)] for i in ids if (i, s) in by and by[(i, s)]["certified"]
+             and _active(by[(i, s)]) and by[(i, s)]["koz_binds"]]
+        y = [r["ratio"] for r in a if _pressed(r)]
+        z = [r["ratio"] for r in a if not _pressed(r)]
+        md.append(f"| {s} | {len(y)}, {pct(y)} | {len(z)}, {pct(z)} |")
 
     # Per-instance scaling exponent over n_seg >= 8, where the closest approach is
     # interior at every such n_seg; the section 3.1 estimate predicts -2.
