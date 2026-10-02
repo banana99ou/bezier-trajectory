@@ -281,29 +281,30 @@ $$
 \rho_k = \frac{\phi(\mathbf{x}^{(k)}) - \phi(\hat{\mathbf{x}})}{\phi^{(k)}(\mathbf{x}^{(k)}) - \phi^{(k)}(\hat{\mathbf{x}})}
 $$
 
-$\rho_k$는 근사 모델이 실제 감소량을 얼마나 정확히 예측하는지를 나타낸다. 중력 선형화와 법선 변화의 오차가 모두 반영되도록 두 요소를 함께 1차 근사한다. $\rho_k$가 기준값 $\eta = 0.1$을 넘으면 $\hat{\mathbf{x}}$를 수용하여 기준점을 갱신한다. $\rho_k > 0.9$이면 신뢰영역 크기를 두 배로 늘리되 초기 크기의 네 배를 넘지 않도록 한다. $\rho_k \le \eta$이면 해를 수용하지 않고 신뢰영역 크기를 절반으로 줄여 같은 기준점에서 다시 푼다. 직선 보간 초기 궤적은 속도 경계조건을 만족하지 않으므로, 첫 반복에서는 위 비교 없이 해를 수용하여 경계조건을 맞춘다.
+$\rho_k$는 근사 모델이 실제 감소량을 얼마나 정확히 예측하는지를 나타낸다. 중력 선형화와 법선 변화의 오차가 모두 반영되도록 두 요소를 함께 1차 근사한다. $\rho_k$에 따라 해를 수용하고 신뢰영역 크기를 조절하는 규칙을 [그림 3](#fig-acceptance)에 나타내었다. 직선 보간 초기 궤적은 속도 경계조건을 만족하지 않으므로, 첫 반복에서는 $\rho_k$를 계산하지 않고 해를 수용하여 경계조건을 맞춘다.
+
+<a id="fig-acceptance"></a>
+![그림 3. 부문제 해의 수용과 신뢰영역 크기의 갱신](../figures/scp_pipeline.png)
+**그림 3 [F3].** 부문제 해의 수용과 신뢰영역 크기의 갱신.
 
 기준점에서 merit function의 상대 변화가 $10^{-8}$보다 작고 회피 제약 위반량이 $h \le 10^{-6}$ km인 상태가 연속 $n_{\mathrm{conv}} = 3$회 유지되면 수렴으로 판정한다. 법선이 갱신되는 동안 제어점이 제약면을 따라 천천히 이동하면 상대 변화가 일시적으로 작아질 수 있으므로, 한 번의 반복 결과만으로 수렴을 판정하지 않는다. 같은 이유로 제어점 변화량 자체는 수렴 기준으로 사용하지 않는다.
 
 예측 감소량이 $\phi$의 크기에 $10^{-8}$을 곱한 값보다 작고 회피 인증 조건을 만족하는 경우에도, 이 상태가 연속 $n_{\mathrm{conv}}$회 유지되면 종료한다. 두 종료 기준은 부문제의 정지점 조건에 근거한다. 신뢰영역 크기가 하한에 도달하여 반복을 진행할 수 없는 경우는 실패로 기록한다.
 
-제안 기법은 매 반복에서 볼록 QP를 풀고 merit function으로 해를 평가하는 국소 최적화 알고리즘이다. 전체 절차는 Algorithm 1에, 계산 구조는 [그림 3](#fig-scp-pipeline)에 나타내었다. 선형 연산자는 한 번 계산하여 재사용하고, 지지 반공간과 중력 선형화는 매 반복 갱신한다.
-
-> **Algorithm 1** — 신뢰영역 기반 궤적 생성 (SCvx)
+> **Algorithm 1** — SCvx 기반 궤적 생성
 >
-> 1. 직선 보간으로 초기 제어점 $\mathbf{x}^{(0)}$를 구성하고 신뢰영역의 초기 크기 $\Delta_0$를 설정한다
-> 2. **for** $k = 0, 1, 2, \ldots$:
-> 3. &nbsp;&nbsp; $\mathbf{x}^{(k)}$에서 De Casteljau 분할로 지지 반공간을 구성하고, 회피 조건을 1차 전개하여 $A_{\mathrm{KOZ}}^{(k)}$, $\mathbf{b}_{\mathrm{KOZ}}^{(k)}$를 구한다 (3.1절)
-> 4. &nbsp;&nbsp; 각 구간의 무게중심에서 중력을 1차 전개하여 $H^{(k)}$, $\boldsymbol{\ell}^{(k)}$를 구성한다 (3.2절)
-> 5. &nbsp;&nbsp; 볼록 QP를 풀어 해 $\hat{\mathbf{x}}$와 여유 변수 $\boldsymbol{\nu}$를 얻는다
-> 6. &nbsp;&nbsp; 기준점이 경계조건을 만족하지 못하면 $\hat{\mathbf{x}}$를 바로 수용하고 다음 반복으로 진행한다. 그렇지 않으면 $\rho_k$를 계산한다. $\rho_k > \eta$이면 해를 수용하고, $\rho_k > 0.9$이면 신뢰영역을 확대한다. $\rho_k \le \eta$이면 해를 수용하지 않고 신뢰영역을 축소한다
-> 7. &nbsp;&nbsp; **수렴 판정**: 기준점이 $h \le 10^{-6}$ km를 만족하고, merit function의 상대 변화가 허용오차보다 작은 상태가 연속 $n_{\mathrm{conv}}$회 유지되면 종료한다. 같은 인증 조건에서 예측 감소량이 $\phi(\mathbf{x}^{(k)})$의 크기에 허용오차를 곱한 값보다 작은 상태가 연속 $n_{\mathrm{conv}}$회 유지되어도 종료한다. 두 조건의 연속 만족 횟수는 각각 기록한다
-> 8. &nbsp;&nbsp; 신뢰영역 크기가 하한 미만이면 실패로 기록하고 종료한다
-> 9. &nbsp;&nbsp; 반복 횟수가 한도 1000회에 도달하면 실패로 기록하고 종료한다
-
-<a id="fig-scp-pipeline"></a>
-![그림 3. 제어점 공간에서의 SCvx 반복](../figures/scp_pipeline.png)
-**그림 3 [F3].** 제어점 공간에서의 SCvx 계산 개요.
+> 1. $\sigma_1 \leftarrow 0,\ \sigma_2 \leftarrow 0$
+> 2. **for** $k = 0, 1, \ldots, 999$ **do**
+> 3. &nbsp;&nbsp;&nbsp;&nbsp; $A_{\mathrm{KOZ}}^{(k)}, \mathbf{b}_{\mathrm{KOZ}}^{(k)} \leftarrow \gamma^{(s)}_m(\mathbf{x}^{(k)}),\ \partial\gamma^{(s)}_m/\partial\mathbf{p}_i$
+> 4. &nbsp;&nbsp;&nbsp;&nbsp; $H^{(k)}, \boldsymbol{\ell}^{(k)} \leftarrow \nabla\mathbf{g}_j^{(k)}, \mathbf{c}_j^{(k)}$
+> 5. &nbsp;&nbsp;&nbsp;&nbsp; $(\hat{\mathbf{x}}, \boldsymbol{\nu}) \leftarrow \mathrm{QP}(\mathbf{x}^{(k)}, \Delta_k)$
+> 6. &nbsp;&nbsp;&nbsp;&nbsp; **if** $|\phi^{(k)}(\mathbf{x}^{(k)}) - \phi^{(k)}(\hat{\mathbf{x}})| < 10^{-8}|\phi(\mathbf{x}^{(k)})|$ **and** $h(\mathbf{x}^{(k)}) \le 10^{-6}$ km **then** $\sigma_2 \leftarrow \sigma_2 + 1$ **else** $\sigma_2 \leftarrow 0$
+> 7. &nbsp;&nbsp;&nbsp;&nbsp; **if** $\sigma_2 = n_{\mathrm{conv}}$ **then return** $\mathbf{x}^{(k)}$
+> 8. &nbsp;&nbsp;&nbsp;&nbsp; $\mathbf{x}^{(k+1)}, \Delta_{k+1} \leftarrow$ 그림 3
+> 9. &nbsp;&nbsp;&nbsp;&nbsp; **if** $\mathbf{x}^{(k+1)} = \hat{\mathbf{x}}$ **and** $|\phi(\mathbf{x}^{(k)}) - \phi(\hat{\mathbf{x}})| < 10^{-8}|\phi(\mathbf{x}^{(k)})|$ **and** $h(\hat{\mathbf{x}}) \le 10^{-6}$ km **then** $\sigma_1 \leftarrow \sigma_1 + 1$ **else** $\sigma_1 \leftarrow 0$
+> 10. &nbsp;&nbsp;&nbsp;&nbsp; **if** $\sigma_1 = n_{\mathrm{conv}}$ **then return** $\mathbf{x}^{(k+1)}$
+> 11. &nbsp;&nbsp;&nbsp;&nbsp; **if** $\Delta_{k+1} < 10^{-2}$ km **then return** 실패
+> 12. **return** 실패
 
 ---
 

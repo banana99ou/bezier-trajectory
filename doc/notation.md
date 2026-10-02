@@ -181,6 +181,7 @@ gravitational parameter, because `\mu` is the exact-penalty weight (§8).
 | `\rho_k` | scalar | actual / predicted merit reduction | — |
 | `\eta` | scalar | acceptance threshold | — |
 | `n_{\mathrm{conv}}` | int | consecutive iterations required to declare convergence | — |
+| `\sigma_1, \sigma_2` | int | consecutive-iteration counters of the two stopping tests (merit change, predicted decrease) | `conv_streak`, `stat_streak` |
 
 Warrants for the letter choices, per the freeze's "textbook-with-citation"
 rule: `\boldsymbol{\nu}` for virtual control follows Malyuta et al. [5]; `\mu`
