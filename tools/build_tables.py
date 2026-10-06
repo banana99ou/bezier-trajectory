@@ -61,11 +61,11 @@ REPEATS = 15
 # problem, so it varies the GEOMETRY -- three Bezier degrees on one geometry
 # answered a different question, and the one T4 already owns.
 T2_SCENARIOS = (
-    ("phase70", "중심각 70 deg"),
-    ("phase120", "중심각 120 deg (기준)"),
-    ("phase135", "중심각 135 deg"),
-    ("phase170", "중심각 170 deg"),
-    ("planechange", "궤도면 변경"),
+    ("phase70", "1"),
+    ("phase120", "2 (기준)"),
+    ("phase135", "3"),
+    ("phase170", "4"),
+    ("planechange", "5"),
 )
 T2_DEGREE = 7
 T2_NSEG = 16
