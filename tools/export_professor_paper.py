@@ -52,7 +52,7 @@ def main():
         margin = float(rows[name]['margin_km'])
         assert abs(float(np.linalg.norm(pts[k]))-sc['r_e']-margin) < 0.002
         info = {'iterations':rows[name]['iters'], 'mean_control_accel_ms2':rows[name]['ctrl_cost_ms2']}
-        solved.append((f4.EN_LABEL[name],color,sc,pts,k,margin,0<k<len(pts)-1,info))
+        solved.append((f4.LABEL[name],color,sc,pts,k,margin,0<k<len(pts)-1,info))
     f4.main(solved=solved)
     for name in ('scp_pipeline.png','representative_trajectories.png'):
         shutil.copy2(ROOT/'figures'/name, EXPORT/'figures'/name)

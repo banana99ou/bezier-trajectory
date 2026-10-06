@@ -7,8 +7,11 @@ points P^(s) = S^(s) P, and how the per-segment convex hulls enclose the
 curve more tightly than the single global hull (the convex-hull property
 that the §3.1 supporting half-space relies on).
 
-  (a) Before subdivision: control points P, one loose convex hull
-  (b) After subdivision:   per-segment control points P^(s)=S^(s)P, tight hulls
+  (a) n_seg = 1: control points P, one loose convex hull, centroid c^(1)
+  (b) n_seg = 3: per-segment control points P^(s)=S^(s)P, tight hulls,
+      centroids c^(s)
+
+Drawn at the 6.8-inch page width in the manuscript fonts (figures/paper_style.py).
 
 Usage:
     python figures/control_subdivision.py          # show interactively
@@ -26,6 +29,7 @@ from scipy.spatial import ConvexHull
 # Real repo subdivision matrices: P^(s) = S^(s) P
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from orbital_docking.de_casteljau import segment_matrices_equal_params
+from figures.paper_style import apply as apply_paper_style, TEXT_PT
 
 
 # ---------------------------------------------------------------------------
@@ -73,9 +77,9 @@ P_GLOBAL = np.array([
 ])
 N_SEG = 3
 
-TITLE_A = "Before subdivision:  $P$\nsingle convex hull loosely encloses the curve"
-TITLE_B = ("After subdivision:  $P^{(s)}=S^{(s)}P$\n"
-           "per-segment hulls enclose the curve more tightly")
+TITLE_A = r"(a) $n_{\mathrm{seg}} = 1$"
+TITLE_B = r"(b) $n_{\mathrm{seg}} = 3$"
+FS = TEXT_PT
 
 
 # ---------------------------------------------------------------------------
@@ -89,15 +93,13 @@ def draw_hull(ax, pts, fc, ec, alpha=0.18, ls="-", lw=1.3, zorder=1):
                              alpha=alpha, zorder=zorder))
 
 
-def style_axes(ax, title, tag):
+def style_axes(ax, title):
     ax.set_aspect("equal")
     ax.set_facecolor("white")
     ax.set_xticks([]); ax.set_yticks([])
     for s in ax.spines.values():
         s.set_color("#cccccc")
-    ax.set_title(title, fontsize=11, pad=8, color="#333333")
-    ax.text(0.02, 0.97, tag, transform=ax.transAxes, fontsize=12,
-            fontweight="bold", va="top", color="#333333")
+    ax.set_title(title, fontsize=FS, pad=4, color="#333333")
 
 
 def seg_control_points(P, n_seg):
@@ -111,11 +113,12 @@ def seg_control_points(P, n_seg):
 # ---------------------------------------------------------------------------
 
 def build_figure(save=False):
+    apply_paper_style()
     Qs = seg_control_points(P_GLOBAL, N_SEG)
     t_dense = np.linspace(0, 1, 400)
     curve = bezier_eval(P_GLOBAL, t_dense)
 
-    fig, axes = plt.subplots(1, 2, figsize=(11.0, 5.2), constrained_layout=True)
+    fig, axes = plt.subplots(1, 2, figsize=(6.8, 3.0), constrained_layout=True)
 
     xlim = (P_GLOBAL[:, 0].min() - 1.0, P_GLOBAL[:, 0].max() + 1.0)
     ylim = (min(P_GLOBAL[:, 1].min(), curve[:, 1].min()) - 1.0,
@@ -125,31 +128,36 @@ def build_figure(save=False):
     # (a) Before subdivision: whole control polygon + one loose hull
     # -----------------------------------------------------------------------
     ax = axes[0]
-    style_axes(ax, TITLE_A, "(a)")
+    style_axes(ax, TITLE_A)
     draw_hull(ax, P_GLOBAL, GLOBAL_HULL_FC, GLOBAL_HULL_EC, alpha=0.5, ls="-")
-    ax.plot(curve[:, 0], curve[:, 1], color=CURVE, lw=2.2, zorder=4)
+    ax.plot(curve[:, 0], curve[:, 1], color=CURVE, lw=1.6, zorder=4)
     ax.plot(P_GLOBAL[:, 0], P_GLOBAL[:, 1], "--s", color=CP_LINE,
-            mfc=CP_MARK, mec=CP_MARK, ms=7, lw=1.2, zorder=5)
+            mfc=CP_MARK, mec=CP_MARK, ms=4.5, lw=0.9, zorder=5)
     for i, p in enumerate(P_GLOBAL):
         ax.annotate(rf"$\mathbf{{p}}_{{{i}}}$", xy=p,
                     xytext=(p[0] + 0.18, p[1] + 0.22),
-                    fontsize=10, color=CP_MARK, zorder=10)
+                    fontsize=FS, color=CP_MARK, zorder=10)
+    # The whole curve is the single sub-arc here, so its centroid is c^(1).
+    cen = P_GLOBAL.mean(axis=0)
+    ax.plot(*cen, "D", color=CENTROID, ms=5, mec="white", mew=0.8, zorder=6)
+    ax.annotate(r"$\mathbf{c}^{(1)}$", xy=cen, xytext=(cen[0] + 0.35, cen[1] - 0.45),
+                fontsize=FS, color=CENTROID, zorder=10, ha="left", va="center")
     ax.set_xlim(*xlim); ax.set_ylim(*ylim)
 
     # -----------------------------------------------------------------------
     # (b) After subdivision: per-segment control polygons + tight hulls
     # -----------------------------------------------------------------------
     ax = axes[1]
-    style_axes(ax, TITLE_B, "(b)")
+    style_axes(ax, TITLE_B)
     # faded global hull for reference
     draw_hull(ax, P_GLOBAL, GLOBAL_HULL_FC, GLOBAL_HULL_EC, alpha=0.25, ls=":")
     for s, Q in enumerate(Qs):
         c = SEG3[s % len(SEG3)]
         draw_hull(ax, Q, c, c, alpha=0.20, zorder=2)
         ax.plot(Q[:, 0], Q[:, 1], "--o", color=c, mfc=c, mec=c,
-                ms=4.5, lw=1.1, zorder=5)
+                ms=3, lw=0.8, zorder=5)
         cen = Q.mean(axis=0)
-        ax.plot(*cen, "D", color=CENTROID, ms=7, mec="white", mew=1.0,
+        ax.plot(*cen, "D", color=CENTROID, ms=5, mec="white", mew=0.8,
                 zorder=6)
         # Offset the label along the curve->centroid direction so it never lands
         # on the curve, whichever side of it this sub-arc's centroid falls.
@@ -157,9 +165,9 @@ def build_figure(save=False):
         away = away / (np.linalg.norm(away) + 1e-12)
         ax.annotate(rf"$\mathbf{{c}}^{{({s+1})}}$", xy=cen,
                     xytext=cen + away * 0.62,
-                    fontsize=9.5, color=CENTROID, fontweight="bold", zorder=10,
+                    fontsize=FS, color=CENTROID, zorder=10,
                     ha="center", va="center")
-    ax.plot(curve[:, 0], curve[:, 1], color=CURVE, lw=2.2, zorder=4)
+    ax.plot(curve[:, 0], curve[:, 1], color=CURVE, lw=1.6, zorder=4)
     ax.set_xlim(*xlim); ax.set_ylim(*ylim)
 
     # -----------------------------------------------------------------------

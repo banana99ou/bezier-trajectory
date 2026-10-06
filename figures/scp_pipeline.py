@@ -2,9 +2,8 @@
 
 Algorithm 1 delegates exactly this decision to the figure, so the two never
 restate each other. Every arrow points right or down; the iteration loop itself
-lives in Algorithm 1, not here. Korean text uses the manuscript's body font
-(NanumBarunGothic, from the export header) and math uses Computer Modern, the
-closest mathtext match to the body's Latin Modern.
+lives in Algorithm 1, not here. Drawn at the 6.8-inch page width in the
+manuscript fonts (figures/paper_style.py).
 
 Run: python figures/scp_pipeline.py --save
 """
@@ -15,19 +14,16 @@ import matplotlib
 if "--save" in sys.argv:
     matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib import font_manager
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Polygon
 
-BODY_FONT = Path.home() / "Library/Fonts/NanumBarunGothic.ttf"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from figures.paper_style import apply as apply_paper_style, TEXT_PT, SMALL_PT  # noqa: E402
+
 INK = "#333333"
 
 
 def build_figure(save=False):
-    font_manager.fontManager.addfont(str(BODY_FONT))
-    plt.rcParams.update({
-        "font.family": font_manager.FontProperties(fname=str(BODY_FONT)).get_name(),
-        "mathtext.fontset": "cm",
-    })
+    apply_paper_style()
     W, H = 6.8, 2.25
     fig, ax = plt.subplots(figsize=(W, H))
     fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
@@ -41,20 +37,20 @@ def build_figure(save=False):
     def diamond(x, text):
         ax.add_patch(Polygon([(x - dw/2, spine), (x, spine + dh/2), (x + dw/2, spine), (x, spine - dh/2)],
                              closed=True, facecolor="white", edgecolor=INK, linewidth=1.0, zorder=2))
-        ax.text(x, spine, text, fontsize=9.5, ha="center", va="center", color=INK, zorder=3)
+        ax.text(x, spine, text, fontsize=TEXT_PT, ha="center", va="center", color=INK, zorder=3)
 
     def box(x, y, lines, w=bw):
         ax.add_patch(FancyBboxPatch((x - w/2, y - bh/2), w, bh,
                                     boxstyle="round,pad=0.012,rounding_size=0.05",
                                     facecolor="white", edgecolor=INK, linewidth=1.0, zorder=2))
         for line, dy in zip(lines, [0.1, -0.11] if len(lines) == 2 else [0]):
-            ax.text(x, y + dy, line, fontsize=9.5, ha="center", va="center", color=INK, zorder=3)
+            ax.text(x, y + dy, line, fontsize=TEXT_PT, ha="center", va="center", color=INK, zorder=3)
 
     def arrow(p, q, label=None, at=None):
         ax.add_patch(FancyArrowPatch(p, q, arrowstyle="-|>", mutation_scale=8,
                                      linewidth=1.0, color=INK, shrinkA=0, shrinkB=0, zorder=1))
         if label:
-            ax.text(*at, label, fontsize=8.5, ha="left", va="center", color=INK, zorder=3)
+            ax.text(*at, label, fontsize=SMALL_PT, ha="left", va="center", color=INK, zorder=3)
 
     gap = 0.32
     x1 = 0.3 + gap + dw/2
@@ -70,7 +66,7 @@ def build_figure(save=False):
     box(x2, leaf, [r"$\mathbf{x}^{(k+1)} \leftarrow \mathbf{x}^{(k)}$", r"$\Delta_{k+1} \leftarrow \Delta_k/2$"], w=1.3)
     box(x3, leaf, [r"$\mathbf{x}^{(k+1)} \leftarrow \hat{\mathbf{x}}$", r"$\Delta_{k+1} \leftarrow \Delta_k$"], w=1.3)
 
-    ax.text(0.16, spine, r"$\hat{\mathbf{x}}$", fontsize=10, ha="center", va="center", color=INK)
+    ax.text(0.16, spine, r"$\hat{\mathbf{x}}$", fontsize=TEXT_PT, ha="center", va="center", color=INK)
     arrow((0.3, spine), (x1 - dw/2, spine))
     for a, b in ((x1, x2), (x2, x3)):
         arrow((a + dw/2, spine), (b - dw/2, spine), "예", (a + dw/2 + 0.05, spine + 0.1))

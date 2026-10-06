@@ -44,6 +44,7 @@ from scipy.optimize import minimize
 # Real repo subdivision matrices: P^(s) = S^(s) P
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from orbital_docking.de_casteljau import segment_matrices_equal_params
+from figures.paper_style import apply as apply_paper_style, TEXT_PT
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +64,11 @@ C_FIX        = "#006BA4"   # corrected sub-arc
 C_FIX_GHOST  = "#A2C8EC"   # corrected curve either side of the sub-arc
 C_SAFE       = "#A2C8EC"   # safe side of the half-space
 
-FS_TITLE, FS_PANEL, FS_SYM, FS_SYM_SM = 11.5, 12.5, 12.5, 11.0
+# Drawn at FIG_W inches and placed at the 6.8-inch page width, so every size is
+# the printed size times K (figures/paper_style.py).
+FIG_W, FIG_H = 15.0, 5.4
+K = FIG_W / 6.8
+FS_TITLE, FS_SYM, FS_SYM_SM = TEXT_PT * K, 10.0 * K, TEXT_PT * K
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +219,7 @@ def draw_halfspace(ax, support_pt, n_hat, reach, faint=False):
             lw=1.2 if faint else 1.8, alpha=0.45 if faint else 1.0, zorder=4)
 
 
-def style_axes(ax, title, tag):
+def style_axes(ax, title):
     # Square axes box in every panel: the equal aspect is met by widening the
     # data window, not by shrinking the box, so (a) matches (b) and (c).
     ax.set_aspect("equal", adjustable="datalim")
@@ -225,8 +230,6 @@ def style_axes(ax, title, tag):
     for s in ax.spines.values():
         s.set_color("#cccccc")
     ax.set_title(title, fontsize=FS_TITLE, pad=8, color=C_INK)
-    ax.text(0.03, 0.96, tag, transform=ax.transAxes, fontsize=FS_PANEL,
-            fontweight="bold", va="top", color=C_INK)
 
 
 def label_ctrl_polygon(ax, pts, anchor, offset, color):
@@ -243,11 +246,8 @@ def label_ctrl_polygon(ax, pts, anchor, offset, color):
 # Figure
 # ---------------------------------------------------------------------------
 
-# Repository plotting defaults make all math upright. Match the manuscript's
-# LaTeX convention locally: italic scalar/index symbols, explicit bold vectors,
-# upright descriptive KOZ subscripts, and calligraphic sets.
-@plt.rc_context({"mathtext.fontset": "cm", "mathtext.default": "it"})
 def build_figure(save=False):
+    apply_paper_style(FIG_W)
     g = build_geometry()
     segs, segs_fix, viol = g["segs"], g["segs_fix"], g["viol"]
     n_hat, centroid, support_pt = g["n_hat"], g["centroid"], g["support_pt"]
@@ -258,7 +258,7 @@ def build_figure(save=False):
     curve_fix = bezier_eval(g["P_fix"], t)
     arc_ref, arc_fix = bezier_eval(segs[viol], t), bezier_eval(segs_fix[viol], t)
 
-    fig, axes = plt.subplots(1, 3, figsize=(15.0, 5.4), constrained_layout=True)
+    fig, axes = plt.subplots(1, 3, figsize=(FIG_W, FIG_H), constrained_layout=True)
 
     # Window shared by (b) and (c). It has to hold the whole sphere, not just the
     # sub-arc: c_KOZ is where the normal is measured from, so cropping it out is
@@ -275,7 +275,7 @@ def build_figure(save=False):
 
     # ===================================================================== (a)
     ax = axes[0]
-    style_axes(ax, "Curve with violating sub-arc", "(a)")
+    style_axes(ax, "(a) 장애물 침범 구간")
     draw_koz(ax, label_at=C_KOZ + np.array([-1.45, -1.75]))
 
     # r_e down a clear diagonal, started off-centre so nothing stacks on c_KOZ
@@ -302,11 +302,14 @@ def build_figure(save=False):
         ax.plot(*q[0], "o", color=C_INK, ms=3.6, zorder=5)
     ax.plot(*segs[-1][-1], "o", color=C_INK, ms=3.6, zorder=5)
 
-    ax.annotate("sub-arc $s$", xy=arc_ref[len(arc_ref) // 2],
-                xytext=(arc_ref[len(arc_ref) // 2][0] - 0.2, 4.55),
-                fontsize=FS_SYM_SM, color=C_VIOL, ha="center", va="center",
+    # mathtext has no Hangul glyphs, so the word and the symbol are separate texts.
+    lab = (arc_ref[len(arc_ref) // 2][0] - 0.2, 4.55)
+    ax.annotate("분할구간", xy=arc_ref[len(arc_ref) // 2], xytext=lab,
+                fontsize=FS_SYM_SM, color=C_VIOL, ha="right", va="center",
                 zorder=10, arrowprops=dict(arrowstyle="-", color=C_VIOL,
-                                           lw=0.7))
+                                           lw=0.7, relpos=(1.0, 0.5)))
+    ax.text(lab[0] + 0.08, lab[1], r"$s$", fontsize=FS_SYM_SM, color=C_VIOL,
+            ha="left", va="center", zorder=10)
 
     ax.plot(*P_GLOBAL[0], "s", color=C_INK, ms=6.5, zorder=6)
     ax.plot(*P_GLOBAL[-1], "s", color=C_INK, ms=6.5, zorder=6)
@@ -315,7 +318,7 @@ def build_figure(save=False):
 
     # ===================================================================== (b)
     ax = axes[1]
-    style_axes(ax, "Supporting half-space construction", "(b)")
+    style_axes(ax, "(b) 지지 반공간 구성")
     draw_koz(ax)
     draw_halfspace(ax, support_pt, n_hat, pad * 2.2)
     ghost(ax, curve_ref, C_GHOST)
@@ -366,7 +369,7 @@ def build_figure(save=False):
 
     # ===================================================================== (c)
     ax = axes[2]
-    style_axes(ax, "Corrected sub-arc", "(c)")
+    style_axes(ax, "(c) 회피 조건을 만족하는 구간")
     draw_koz(ax)
     draw_halfspace(ax, support_pt, n_hat, pad * 2.2, faint=True)
 

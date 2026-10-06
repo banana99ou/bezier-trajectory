@@ -35,6 +35,7 @@ from matplotlib.ticker import FuncFormatter, NullLocator
 
 from tools import build_monte_carlo as MC
 from tools.paper_tables_csv import T3_SIGNATURE, block
+from figures.paper_style import apply as apply_paper_style, SMALL_PT
 
 RUNS = ROOT / "doc" / "results" / "monte_carlo_subdivision" / "runs.csv"
 OUT = ROOT / "figures" / "monte_carlo_subdivision.png"
@@ -42,6 +43,10 @@ NSEGS = (4, 8, 16, 32, 64)
 TOP = 64
 
 C_INK, C_BOX, C_BASE, C_GRID = "#333333", "#006BA4", "#222222", "#DDDDDD"
+# Drawn at FIG_W inches and placed at the 6.8-inch page width (figures/paper_style.py).
+FIG_W, FIG_H = 12.0, 4.2
+HANGUL = "NanumBarunGothic"   # mathtext has no font fallback: strings mixing Hangul and $...$ name it
+BASE_LABEL = "시나리오 2 (기준)"
 
 
 def load():
@@ -86,16 +91,16 @@ def style(ax, ylabel, title):
     ax.set_xticks(range(len(NSEGS)))
     ax.set_xticklabels([str(s) for s in NSEGS])
     ax.set_xlim(-0.6, len(NSEGS) - 0.4)
-    ax.set_xlabel("Subdivision count $n_{\\mathrm{seg}}$", fontsize=11)
-    ax.set_ylabel(ylabel, fontsize=11)
-    ax.set_title(title, fontsize=12, color=C_INK, pad=10)
+    ax.set_xlabel("분할 수 $n_{\\mathrm{seg}}$", fontfamily=HANGUL)
+    ax.set_ylabel(ylabel, fontfamily=HANGUL if "$" in ylabel else None)
+    ax.set_title(title, color=C_INK, pad=10)
     ax.grid(True, axis="y", which="major", color=C_GRID, linewidth=0.7)
     ax.set_axisbelow(True)
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
     for side in ("bottom", "left"):
         ax.spines[side].set_color("#999999")
-    ax.tick_params(labelsize=10, colors=C_INK)
+    ax.tick_params(colors=C_INK)
 
 
 def boxes(ax, data):
@@ -114,44 +119,45 @@ def main():
     base = {r["n_seg"]: r for r in block(T3_SIGNATURE, "Figure 5 (c), baseline runtime")}
     base_cost = {s: 100 * (base[s]["objective"] / base[TOP]["objective"] - 1) for s in NSEGS}
 
-    fig, axes = plt.subplots(1, 3, figsize=(12.0, 3.8), constrained_layout=True)
+    k_pt = apply_paper_style(FIG_W)
+    fig, axes = plt.subplots(1, 3, figsize=(FIG_W, FIG_H), constrained_layout=True)
 
     ax = axes[0]
     boxes(ax, [ratios(by, ids, s) for s in NSEGS])
     ax.axhline(1.0, color=C_BASE, linewidth=1.2, linestyle=(0, (5, 3)), zorder=1)
-    ax.text(len(NSEGS) - 0.45, 1.0, "estimate", ha="right", va="bottom", fontsize=9, color=C_INK)
-    ax.text(0, 0.95, "endpoint\nminimum", ha="center", va="center", fontsize=9, color="#777777")
+    ax.text(len(NSEGS) - 0.45, 1.0, "추정값", ha="right", va="bottom", fontsize=SMALL_PT * k_pt, color=C_INK)
+    ax.text(0, 0.95, "끝점에서\n최소", ha="center", va="center", fontsize=SMALL_PT * k_pt, color="#777777")
     ax.set_ylim(0.88, 1.02)
-    style(ax, "Measured / estimated clearance", "(a) Clearance vs. estimate")
+    style(ax, "측정값 / 추정값", "(a) 추정값 대비 최소 이격거리")
 
     ax = axes[1]
     data = [cost_increase(by, ids, s) if s != TOP else [] for s in NSEGS]
     boxes(ax, data)
     xs = [k for k, s in enumerate(NSEGS) if s != TOP]
     ax.plot(xs, [base_cost[NSEGS[k]] for k in xs], linestyle="none", marker="D",
-            markersize=6, color=C_BASE, label="Baseline", zorder=4)
+            markersize=6, color=C_BASE, label=BASE_LABEL, zorder=4)
     ax.set_yscale("log")
     ax.set_yticks([0.3, 1, 3, 10, 30, 100, 300])
     ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
     ax.yaxis.set_minor_locator(NullLocator())
     ax.set_ylim(0.25, 700)
-    ax.text(len(NSEGS) - 1, 0.32, "reference", ha="center", va="bottom", fontsize=9, color="#777777")
-    ax.legend(loc="upper right", frameon=False, fontsize=10)
-    style(ax, f"Control cost $J$ above $n_{{\\mathrm{{seg}}}}={TOP}$ (%)", "(b) Control cost")
+    ax.text(len(NSEGS) - 1, 0.32, "비교 기준", ha="center", va="bottom", fontsize=SMALL_PT * k_pt, color="#777777")
+    ax.legend(loc="upper right", frameon=False)
+    style(ax, "$J$ 증가율 (%)", "(b) 제어 비용 증가율")
 
     ax = axes[2]
     rt = [base[s]["runtime_s"] for s in NSEGS]
     ax.plot(range(len(NSEGS)), rt, color=C_BASE, linewidth=1.6, marker="D", markersize=6,
-            label="Baseline", zorder=3)
+            label=BASE_LABEL, zorder=3)
     for k, y in enumerate(rt):
         # The rising segment after n_seg = 32 would cross a centred label.
         dx, ha = (-9, "right") if NSEGS[k] == 32 else (0, "center")
         ax.annotate(f"{y:.3f}", (k, y), textcoords="offset points", xytext=(dx, 8),
-                    ha=ha, va="bottom", fontsize=9, color=C_INK)
+                    ha=ha, va="bottom", fontsize=SMALL_PT * k_pt, color=C_INK)
     ax.set_ylim(0.07, 0.25)
     ax.set_yticks([0.08, 0.12, 0.16, 0.20, 0.24])
-    ax.legend(loc="upper left", frameon=False, fontsize=10)
-    style(ax, "Runtime (s)", "(c) Runtime")
+    ax.legend(loc="upper left", frameon=False)
+    style(ax, "계산 시간 (s)", "(c) 기준 시나리오의 계산 시간")
 
     OUT.parent.mkdir(exist_ok=True)
     fig.savefig(OUT, dpi=300, bbox_inches="tight", facecolor="white")

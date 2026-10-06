@@ -28,9 +28,11 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 
 from tools.verify import harness_common as H
 from tools.build_tables import T2_SCENARIOS, T2_DEGREE, T2_NSEG, PAPER_R0
+from figures.paper_style import apply as apply_paper_style, SMALL_PT
 from orbital_docking.visualization import (
     set_axes_equal_around,
     beautify_3d_axes,
@@ -39,14 +41,17 @@ from orbital_docking.visualization import (
 
 OUT = ROOT / "figures" / "representative_trajectories.png"
 
-# Figure text is English; the Korean scenario labels in T2_SCENARIOS feed the tables.
-EN_LABEL = {
-    "phase70": "central angle 70 deg",
-    "phase120": "central angle 120 deg (baseline)",
-    "phase135": "central angle 135 deg",
-    "phase170": "central angle 170 deg",
-    "planechange": "plane change",
+# Scenario names as tables 1 and 2 print them.
+LABEL = {
+    "phase70": "시나리오 1",
+    "phase120": "시나리오 2 (기준)",
+    "phase135": "시나리오 3",
+    "phase170": "시나리오 4",
+    "planechange": "시나리오 5",
 }
+# Drawn at FIG_W inches and placed at the 6.8-inch page width (figures/paper_style.py).
+FIG_W, FIG_H = 14.0, 7.2
+HANGUL = "NanumBarunGothic"   # mathtext has no font fallback: strings mixing Hangul and $...$ name it
 SAMPLES = 400
 
 # One hue per geometry, ordered as table 2 orders them -- the same assignment
@@ -54,11 +59,11 @@ SAMPLES = 400
 COLORS = ["#178344", "#2471A3", "#A9660A", "#C0392B", "#76448A"]
 # Keep scenarios identifiable in grayscale in both panels and the shared legend.
 LINESTYLES = {
-    EN_LABEL["phase70"]: "-",
-    EN_LABEL["phase120"]: (0, (6, 2.5)),
-    EN_LABEL["phase135"]: (0, (1, 2)),
-    EN_LABEL["phase170"]: (0, (6, 2, 1, 2)),
-    EN_LABEL["planechange"]: (0, (6, 2, 1, 2, 1, 2)),
+    LABEL["phase70"]: "-",
+    LABEL["phase120"]: (0, (6, 2.5)),
+    LABEL["phase135"]: (0, (1, 2)),
+    LABEL["phase170"]: (0, (6, 2, 1, 2)),
+    LABEL["planechange"]: (0, (6, 2, 1, 2, 1, 2)),
 }
 
 
@@ -90,13 +95,14 @@ def _sphere(ax, radius, color, alpha, lw=0.0, wire=False, n=48):
 
 def main(solved=None):
     """Render supplied, verified trajectories or solve fresh when omitted."""
+    k_pt = apply_paper_style(FIG_W)
     taus = np.linspace(0.0, 1.0, SAMPLES)
 
     # One solve per geometry, cache off, through the harness the table uses.
     if solved is None:
         solved = []
         for (name, _label_ko), color in zip(T2_SCENARIOS, COLORS):
-            label = EN_LABEL[name]
+            label = LABEL[name]
             sc = H.make_scenario(name, N=T2_DEGREE)
             P, info = H.run_rust(sc, n_seg=T2_NSEG,
                                  scp_trust_radius=PAPER_R0.get(name, sc["r0"]))
@@ -112,7 +118,7 @@ def main(solved=None):
     span = max(float(np.abs(pts @ basis.T).max()) for *_, pts, _, _, _, _ in
                [(a, b, c, d, e, f, g, h) for a, b, c, d, e, f, g, h in solved])
 
-    fig = plt.figure(figsize=(14, 6.4))
+    fig = plt.figure(figsize=(FIG_W, FIG_H))
 
     # (A) looking down the departure-orbit normal: the routes around the sphere.
     ax = fig.add_subplot(1, 2, 1, projection="3d")
@@ -129,7 +135,7 @@ def main(solved=None):
         q = pts @ basis.T
         ax.plot(q[:, 0], q[:, 1], q[:, 2], color=color, lw=2.4,
                 linestyle=LINESTYLES[label],
-                label=f"{label} · {margin:.2f} km", zorder=5)
+                label=label, zorder=5)
         ax.scatter(*q[0], color=color, s=42, marker="o",
                    edgecolors="black", linewidths=0.5, zorder=6)
         ax.scatter(*q[-1], color=color, s=54, marker="^",
@@ -142,9 +148,12 @@ def main(solved=None):
     beautify_3d_axes(ax, show_ticks=True, show_grid=True)
     # The nearly overhead view compresses the depth axis into an unreadable strip.
     ax.set_zticks([])
-    ax.set_xlabel("Departure direction (km)", fontsize=9, labelpad=14)
-    ax.set_ylabel("In-plane normal direction (km)", fontsize=9, labelpad=4)
-    ax.set_title("(A) Trajectories viewed from above the departure orbit plane", fontsize=11, pad=4)
+    ax.tick_params(axis="both", which="major", labelsize=SMALL_PT * k_pt, pad=2)
+    ax.set_xticks([-5000, 0, 5000])
+    ax.set_yticks([-5000, 0, 5000])
+    ax.set_xlabel("출발 방향 (km)", labelpad=16)
+    ax.set_ylabel("궤도면 내 법선 방향 (km)", labelpad=10)
+    ax.set_title("(A) 출발 궤도면 위에서 본 궤적", pad=4)
 
     # (B) distance to the obstacle surface along each trajectory.
     ax2 = fig.add_subplot(1, 2, 2)
@@ -159,27 +168,26 @@ def main(solved=None):
                     edgecolors="none" if binds else "black")
     ax2.set_yscale("log")
     ax2.axhline(0.0, color="#C0392B", lw=1.0, ls="--", zorder=0)
-    ax2.set_xlabel(r"Curve parameter $\tau$", fontsize=9)
-    ax2.set_ylabel("Clearance (km)", fontsize=9)
-    ax2.set_title("(B) Clearance from the obstacle surface", fontsize=11, pad=4)
+    ax2.set_xlabel(r"곡선 매개변수 $\tau$", fontfamily=HANGUL)
+    ax2.set_ylabel("이격거리 (km)")
+    ax2.set_title("(B) 장애물 표면과의 이격거리", pad=4)
     ax2.set_yticks([20, 50, 100, 200, 400])
     ax2.get_yaxis().set_major_formatter(
         matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:g}"))
     ax2.get_yaxis().set_minor_formatter(matplotlib.ticker.NullFormatter())
     ax2.grid(alpha=0.25)
-    ax2.tick_params(labelsize=8)
     for side in ("top", "right"):
         ax2.spines[side].set_visible(False)
 
     handles, labels_ = fig.axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels_, loc="lower center", ncol=3, fontsize=9,
-               title="Minimum clearance", title_fontsize=9,
-               frameon=False, handlelength=4.5, bbox_to_anchor=(0.5, 0.0))
-    fig.suptitle(
-        f"Five transfer scenarios (N = {T2_DEGREE}, $n_{{seg}}$ = {T2_NSEG}) · "
-        f"KOZ radius {r_koz:.0f} km · ○ departure · △ arrival · × closest approach",
-        fontsize=12, y=0.97)
-    fig.subplots_adjust(left=0.02, right=0.97, top=0.88, bottom=0.16, wspace=0.12)
+    # Marker meanings sit in the legend: the caption carries only the purpose.
+    marks = [Line2D([], [], ls="none", marker="o", mfc="white", mec="black", ms=7),
+             Line2D([], [], ls="none", marker="^", mfc="white", mec="black", ms=8),
+             Line2D([], [], ls="none", marker="x", color="black", ms=8, mew=2)]
+    fig.legend(handles + marks, labels_ + ["출발점", "도착점", "최근접점"],
+               loc="lower center", ncol=4, frameon=False, handlelength=3.2,
+               columnspacing=1.6, bbox_to_anchor=(0.5, 0.0))
+    fig.subplots_adjust(left=0.02, right=0.97, top=0.93, bottom=0.22, wspace=0.14)
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(OUT, dpi=300, bbox_inches="tight", pad_inches=0.05,
