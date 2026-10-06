@@ -105,13 +105,13 @@ $$
 
 가 된다. 각 행은 분할구간의 제어점 $\mathbf{q}^{(s)}_0, \ldots, \mathbf{q}^{(s)}_N$에 해당한다. 분할된 제어점은 $P$에서 계산되므로 독립적인 최적화 변수가 아니다. 차수 $N$을 높이면 궤적의 자유도가 늘지만, 분할 수 $n_{\mathrm{seg}}$를 늘리면 같은 차수에서 회피 제약의 보수성을 줄일 수 있다.
 
-본 논문에서는 제어점의 무게중심
+분할구간 제어점의 무게중심을 다음과 같이 정의한다.
 
 $$
 \mathbf{c}^{(s)} = \frac{1}{N+1}\sum_{m=0}^{N}\mathbf{q}^{(s)}_m
 $$
 
-를 사용한다. [그림 1](#fig-ctrl-subdivision)에서 보듯이, 분할 후 제어점의 볼록 껍질은 곡선에 더 가까워진다.
+[그림 1](#fig-ctrl-subdivision)에서 보듯이, 분할 후 제어점의 볼록 껍질은 곡선에 더 가까워진다.
 
 <a id="fig-ctrl-subdivision"></a>
 ![그림 1. De Casteljau 분할에 따른 제어점과 볼록 껍질의 변화](../figures/control_subdivision.png)
