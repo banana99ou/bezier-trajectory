@@ -1,0 +1,20 @@
+{
+  "with": {
+    "ext": "b944059ee741",
+    "patched": false
+  },
+  "without": {
+    "ext": "a464fb1315e9",
+    "patched": true
+  },
+  "patch": {
+    "file": "rust_optimizer/core/src/optimizer.rs",
+    "old": "constraints::build_koz_constraints_linearized(",
+    "new": "constraints::build_koz_constraints("
+  },
+  "source": {
+    "commit": "b6c184e2ea74e8579b20720686b4499df943a45a",
+    "dirty": false,
+    "script_sha256": "b8a67a17670d7ac449fa0f4938915463c4d420cc3065ab1caf951b5eb49ef448"
+  }
+}
