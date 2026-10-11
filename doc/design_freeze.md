@@ -946,7 +946,7 @@ literature survey read from PDFs, with its own "could not read" list. It answers
 the questions Proposition 1 raises: the convex hull property, whether the
 certificate survives De Casteljau subdivision, and whether the literature puts
 one half-space per (sub-arc, obstacle) on all control points (it does,
-unanimously, across six papers). Assumption 3 of Proposition 1 is that
+unanimously, across six papers). Assumption 2 of Proposition 1 is that
 convention.
 
 Inherit its caveats too: Zhang et al. (arXiv:2110.00065) venue unverified and
