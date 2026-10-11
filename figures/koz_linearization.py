@@ -324,17 +324,24 @@ def build_figure(save=False):
     ghost(ax, curve_ref, C_GHOST)
 
     # n^(s) is by definition the c_KOZ -> c^(s) direction, so the whole
-    # construction is collinear. r_e is therefore drawn as an offset dimension
-    # line with extension ticks, not stacked on top of the normal.
-    ax.add_patch(FancyArrowPatch(C_KOZ, support_pt, arrowstyle="<|-|>",
-                                 color=C_KOZ_EDGE, lw=1.1, mutation_scale=8,
-                                 shrinkA=0, shrinkB=0, zorder=3))
-    rl = C_KOZ + n_hat * 0.55 - tang * 0.45
+    # construction is collinear. A thin line from c_KOZ shows where the normal
+    # is measured from. r_e gets its own radius off that line, as in (a): drawn
+    # along it, the normal covers its upper part and the visible rest reads as
+    # the c^(s) -> c_KOZ segment.
+    ax.plot(*np.vstack([C_KOZ, centroid]).T, color=C_INK, lw=0.8,
+            ls=(0, (3, 2)), zorder=3)
+    th = np.deg2rad(50.0)
+    u = np.cos(th) * n_hat - np.sin(th) * tang
+    ax.add_patch(FancyArrowPatch(C_KOZ + u * 0.15, C_KOZ + u * R_KOZ,
+                                 arrowstyle="-|>", color=C_KOZ_EDGE, lw=1.2,
+                                 mutation_scale=10, shrinkA=0, shrinkB=0,
+                                 zorder=5))
+    rl = C_KOZ + u * (R_KOZ * 0.40) + np.array([u[1], -u[0]]) * 0.35
     ax.text(*rl, r"$R_{\mathrm{KOZ}}$", fontsize=FS_SYM_SM, color=C_KOZ_EDGE,
             ha="center", va="center", zorder=6)
     ax.plot(*C_KOZ, "o", color=C_KOZ_EDGE, ms=4.0, zorder=6)
-    ax.text(C_KOZ[0] + 0.18, C_KOZ[1] + 0.16, r"$\mathbf{c}_{\mathrm{KOZ}}$",
-            fontsize=FS_SYM_SM, color=C_KOZ_EDGE, ha="left", va="bottom",
+    ax.text(C_KOZ[0] + 0.22, C_KOZ[1] - 0.04, r"$\mathbf{c}_{\mathrm{KOZ}}$",
+            fontsize=FS_SYM_SM, color=C_KOZ_EDGE, ha="left", va="center",
             zorder=6)
 
     ghost(ax, arc_ref, C_VIOL, lw=2.8, zorder=4)
