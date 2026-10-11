@@ -12,13 +12,13 @@
 
 ## 1. 서론
 
-항공우주, 로봇공학, 자율 시스템의 궤적 최적화에서는 경로 전 구간에 걸친 장애물 회피가 요구된다. 그러나 direct transcription과 direct collocation [1, 2]은 주로 이산화된 노드에 제약을 부과하므로, 노드에서 제약을 만족하더라도 노드 사이에서는 제약을 위반할 수 있다 [6]. 궤적 전 구간에서 제약을 만족하는 성질을 연속시간 제약 만족 [7]이라 하며, 이를 보장할 수 있는 궤적 표현과 제약 정식화가 필요하다. Bézier 곡선의 제어점을 최적화 변수로 사용하는 궤적 생성 기법은 여러 연구에서 다루어졌다 [12, 13].
+항공우주, 로봇공학, 자율 시스템의 궤적 최적화에서는 경로 전 구간에 걸친 장애물 회피가 요구된다. 그러나 direct transcription과 direct collocation [1, 2]은 주로 이산화된 노드에 제약을 부과하므로, 노드에서 제약을 만족하더라도 노드 사이에서는 제약을 위반할 수 있다 [3]. 궤적 전 구간에서 제약을 만족하는 성질을 연속시간 제약 만족 [4]이라 하며, 이를 보장할 수 있는 궤적 표현과 제약 정식화가 필요하다. Bézier 곡선의 제어점을 최적화 변수로 사용하는 궤적 생성 기법은 여러 연구에서 다루어졌다 [5, 6].
 
-장애물 외부의 자유 공간은 볼록 집합이 아니므로, 장애물 회피 제약은 비볼록 제약이다. 궤적 최적화에서 비볼록 제약을 다루는 방법으로는 특정 문제에 적용할 수 있는 무손실 볼록화 [3]와 제약을 반복적으로 선형화하는 순차 볼록화(successive convexification, SCvx) [4, 5]가 있다. 장애물 회피를 볼록 최적화로 다루는 기법은 주로 두 가지 접근을 취한다. 첫째는 자유 공간을 여러 볼록 영역으로 덮고 통과할 영역을 선택하는 방법으로, 볼록 영역 생성 [10]과 볼록 집합 그래프 [11]가 이에 해당한다. 둘째는 장애물의 통과 방향을 정하고 지지 반공간으로 자유 공간을 제한하는 방법이다. 반공간을 고정하면 회피 제약은 선형 부등식이 된다. 그러나 반공간을 궤적에 맞추어 정하면 궤적이 바뀔 때마다 반공간도 다시 정해야 하므로, 반공간을 갱신하며 제약을 반복하여 선형화하는 SCvx를 적용할 수 있다.
+장애물 외부의 자유 공간은 볼록 집합이 아니므로, 장애물 회피 제약은 비볼록 제약이다. 궤적 최적화에서 비볼록 제약을 다루는 방법으로는 특정 문제에 적용할 수 있는 무손실 볼록화 [7]와 제약을 반복적으로 선형화하는 순차 볼록화(successive convexification, SCvx) [8, 9]가 있다. 장애물 회피를 볼록 최적화로 다루는 기법은 주로 두 가지 접근을 취한다. 첫째는 자유 공간을 여러 볼록 영역으로 덮고 통과할 영역을 선택하는 방법으로, 볼록 영역 생성 [10]과 볼록 집합 그래프 [11]가 이에 해당한다. 둘째는 장애물의 통과 방향을 정하고 지지 반공간으로 자유 공간을 제한하는 방법이다. 반공간을 고정하면 회피 제약은 선형 부등식이 된다. 그러나 반공간을 궤적에 맞추어 정하면 궤적이 바뀔 때마다 반공간도 다시 정해야 하므로, 반공간을 갱신하며 제약을 반복하여 선형화하는 SCvx를 적용할 수 있다.
 
-두 번째 방법에서는 볼록 껍질 성질을 이용하여 제어점에 대한 조건으로 연속시간 제약 만족을 보장한다 [12]. 이 보장은 한 분할구간의 모든 제어점이 같은 반공간 안에 있을 때 성립하며, 제어점마다 다른 반공간을 적용하면 볼록 껍질이 장애물과 겹칠 수 있다. 따라서 안전 회랑 기법 [14, 15, 16]은 분할구간마다 하나의 반공간을 정해 그 분할구간의 모든 제어점에 부과하며, 본 연구도 이 방식을 따른다. 다만 제어점의 볼록 껍질은 곡선보다 크므로, 이 조건을 만족하는 곡선은 장애물에서 필요 이상으로 떨어질 수 있다. 그 정도를 회피 제약의 보수성이라 한다.
+두 번째 방법에서는 볼록 껍질 성질을 이용하여 제어점에 대한 조건으로 연속시간 제약 만족을 보장한다 [5]. 이 보장은 한 분할구간의 모든 제어점이 같은 반공간 안에 있을 때 성립하며, 제어점마다 다른 반공간을 적용하면 볼록 껍질이 장애물과 겹칠 수 있다. 따라서 안전 회랑 기법 [12, 13, 14]은 분할구간마다 하나의 반공간을 정해 그 분할구간의 모든 제어점에 부과하며, 본 연구도 이 방식을 따른다. 다만 제어점의 볼록 껍질은 곡선보다 크므로, 이 조건을 만족하는 곡선은 장애물에서 필요 이상으로 떨어질 수 있다. 그 정도를 회피 제약의 보수성이라 한다.
 
-[17]에서는 미분·차수 상승 연산자와 Gram 행렬을 이용하여 제어점에 대한 이차형식 비용함수를 구성하고, 곡선 분할과 분리 평면 제약을 순차 볼록 프로그래밍에 적용하였다. 본 연구에서는 이 정식화를 바탕으로 구형 장애물 회피 제약의 보수성을 정량적으로 분석하고, 비선형 중력을 고려한 궤도전이 문제로 확장한다. 주요 내용은 다음과 같다. 첫째, 장애물 경계 부근의 최소 이격거리를 원호 근사로 추정한다. 또한 분할 수를 늘릴 때 보수성과 제어 비용이 줄어드는 정도를 실험으로 확인하고, 이를 분할 수에 비례하여 늘어나는 회피 제약의 수와 비교한다. 둘째, 선행연구 [17]의 선형 Clohessy–Wiltshire(CW) 상대운동 모델을 비선형 중력 모델로 확장한다. 이체 중력과 $J_2$ 섭동을 구간별로 선형화하여 기존의 Gram 행렬 정식화로 제어 가속도 비용을 볼록 이차형식으로 구성한다. 셋째, 제어점 변화에 따른 지지 반공간 법선의 변화까지 미분에 포함한다. 이를 신뢰영역 기반 SCvx [4, 5]의 회피 제약 선형화와 감소량 평가에 반영하고, 법선을 고정한 경우와 비교하여 그 효과를 확인한다.
+[15]에서는 미분·차수 상승 연산자와 Gram 행렬을 이용하여 제어점에 대한 이차형식 비용함수를 구성하고, 곡선 분할과 분리 평면 제약을 순차 볼록 프로그래밍에 적용하였다. 본 연구에서는 이 정식화를 바탕으로 구형 장애물 회피 제약의 보수성을 정량적으로 분석하고, 비선형 중력을 고려한 궤도전이 문제로 확장한다. 주요 내용은 다음과 같다. 첫째, 장애물 경계 부근의 최소 이격거리를 원호 근사로 추정한다. 또한 분할 수를 늘릴 때 보수성과 제어 비용이 줄어드는 정도를 실험으로 확인하고, 이를 분할 수에 비례하여 늘어나는 회피 제약의 수와 비교한다. 둘째, 선행연구 [15]의 선형 Clohessy–Wiltshire(CW) 상대운동 모델을 비선형 중력 모델로 확장한다. 이체 중력과 $J_2$ 섭동을 구간별로 선형화하여 기존의 Gram 행렬 정식화로 제어 가속도 비용을 볼록 이차형식으로 구성한다. 셋째, 제어점 변화에 따른 지지 반공간 법선의 변화까지 미분에 포함한다. 이를 신뢰영역 기반 SCvx [8, 9]의 회피 제약 선형화와 감소량 평가에 반영하고, 법선을 고정한 경우와 비교하여 그 효과를 확인한다.
 
 2절에서는 제어점 공간의 궤적 표현과 표기법을 정리하고, 3절에서는 제안 기법의 정식화와 알고리즘을 설명한다. 4절과 5절에서는 각각 실험 설정과 수치 결과를 제시하며, 6절에서 결론과 한계를 기술한다.
 
@@ -26,7 +26,7 @@
 
 ## 2. 제어점 공간에서의 궤적 표현
 
-선행연구 [17]의 제어점 공간 정식화에 따라 필요한 표기와 식을 정리한다. 미분·차수 상승 연산자와 Gram 행렬의 기본 성질은 문헌 [12, 17]을 따른다.
+선행연구 [15]의 제어점 공간 정식화에 따라 필요한 표기와 식을 정리한다. 미분·차수 상승 연산자와 Gram 행렬의 기본 성질은 문헌 [5, 15]을 따른다.
 
 ### 2.1 궤적 표현과 결정 변수
 
@@ -47,7 +47,7 @@ $$
 
 ### 2.2 미분 연산자와 경계조건
 
-미분 행렬 $D_N\in\mathbb{R}^{N\times(N+1)}$과 차수 상승 행렬 $E_{N-1}\in\mathbb{R}^{(N+1)\times N}$을 이용하여 차수를 보존하는 속도·가속도 연산자를 정의한다 [17].
+미분 행렬 $D_N\in\mathbb{R}^{N\times(N+1)}$과 차수 상승 행렬 $E_{N-1}\in\mathbb{R}^{(N+1)\times N}$을 이용하여 차수를 보존하는 속도·가속도 연산자를 정의한다 [15].
 
 $$
 L_{1,N} = E_{N-1}D_N, \qquad L_{2,N} = E_{N-1}D_N E_{N-1}D_N
@@ -65,7 +65,7 @@ $$
 
 ### 2.3 Gram 행렬과 이차형식
 
-본 연구의 목적함수는 곡선을 따라 정의된 벡터값 함수의 크기를 제곱하여 적분한 값이다. 이러한 적분은 Bernstein 기저다항식 사이의 내적을 모은 Gram 행렬 $G_N$을 이용하면 곡선의 제어점만으로 계산할 수 있다 [12, 17]. $G_N$의 성분과 적분 항등식은 다음과 같다.
+본 연구의 목적함수는 곡선을 따라 정의된 벡터값 함수의 크기를 제곱하여 적분한 값이다. 이러한 적분은 Bernstein 기저다항식 사이의 내적을 모은 Gram 행렬 $G_N$을 이용하면 곡선의 제어점만으로 계산할 수 있다 [5, 15]. $G_N$의 성분과 적분 항등식은 다음과 같다.
 
 $$
 [G_N]_{il} = \frac{\binom{N}{i}\binom{N}{l}}{\binom{2N}{i+l}(2N+1)}, \qquad i,l=0,\ldots,N
@@ -85,7 +85,7 @@ $F$가 결정 변수 $\mathbf{x}$의 1차 함수이면 위 적분은 $\mathbf{x}
 
 ### 3.1 분할과 지지 반공간을 이용한 구형 장애물 처리
 
-곡선 분할과 분리 평면을 이용한 회피 제약은 [17]에서의 표현을 따른다. 중심이 $\mathbf{c}_{\mathrm{KOZ}}$이고 반경이 $R_{\mathrm{KOZ}}$인 구형 장애물을 다음과 같이 정의한다.
+곡선 분할과 분리 평면을 이용한 회피 제약은 [15]에서의 표현을 따른다. 중심이 $\mathbf{c}_{\mathrm{KOZ}}$이고 반경이 $R_{\mathrm{KOZ}}$인 구형 장애물을 다음과 같이 정의한다.
 
 $$
 \mathcal{K} = \left\{\mathbf{r}\in\mathbb{R}^3 : \|\mathbf{r}-\mathbf{c}_{\mathrm{KOZ}}\|_2 \le R_{\mathrm{KOZ}} \right\}
@@ -134,7 +134,7 @@ $$
 (\mathbf{n}^{(s)})^{\mathsf{T}} \mathbf{q}^{(s)}_m \ge (\mathbf{n}^{(s)})^{\mathsf{T}} \mathbf{c}_{\mathrm{KOZ}} + R_{\mathrm{KOZ}}, \qquad m=0,\ldots,N
 $$
 
-볼록 껍질 성질 [12]에 따른 회피 충분조건은 다음 명제 1로 정리할 수 있다.
+볼록 껍질 성질 [5]에 따른 회피 충분조건은 다음 명제 1로 정리할 수 있다.
 
 > **명제 1.** 분할구간 $s$의 제어점을 $P^{(s)} = S^{(s)}P$, 구형 장애물을 $\mathcal{K} = \{\mathbf{r}\in\mathbb{R}^3 : \|\mathbf{r}-\mathbf{c}_{\mathrm{KOZ}}\|_2 \le R_{\mathrm{KOZ}}\}$라 하자. 모든 제어점 $\mathbf{q}^{(s)}_0, \ldots, \mathbf{q}^{(s)}_N$이 위에서 정의한 지지 반공간 $\mathcal{H}^{(s)}$에 속하면, 해당 분할구간의 Bézier 곡선 전체도 $\mathcal{H}^{(s)}$에 속하므로 $\operatorname{int}\mathcal{K}$와 만나지 않는다.
 
@@ -143,7 +143,7 @@ $$
 > 1. 장애물은 구형이다.
 > 2. 해당 분할구간의 모든 제어점에 동일한 지지 반공간 $\mathcal{H}^{(s)}$의 제약을 부과한다.
 
-> **증명.** 곡선은 제어점의 볼록 껍질 안에 있고 [12], $\mathcal{H}^{(s)}$는 볼록이며 장애물 내부와 만나지 않는다. 따라서 모든 제어점이 $\mathcal{H}^{(s)}$ 안에 있으면 곡선 전체도 장애물 내부와 만나지 않는다. ($\square$)
+> **증명.** 곡선은 제어점의 볼록 껍질 안에 있고 [5], $\mathcal{H}^{(s)}$는 볼록이며 장애물 내부와 만나지 않는다. 따라서 모든 제어점이 $\mathcal{H}^{(s)}$ 안에 있으면 곡선 전체도 장애물 내부와 만나지 않는다. ($\square$)
 
 [그림 2](#fig-subdivision)는 명제 1을 하나의 분할구간에 적용한 예이다. 그림 2(a)에서는 분할구간 $s$의 곡선이 장애물 내부를 지난다. (b)는 이 분할구간 제어점의 무게중심에서 법선을 정하고 구에 접하는 지지 반공간을 구성한 것이다. (c)는 모든 제어점이 지지 반공간 안에 있어 분할구간의 곡선 전체가 장애물 밖에 놓인 경우이다.
 
@@ -226,7 +226,7 @@ $J^{(k)}$는 $\mathbf{x}$에 대한 볼록 이차형식이므로 SCvx의 볼록 
 
 ### 3.3 볼록 부문제와 SCvx 알고리즘
 
-반복 $k$에서는 그 반복의 제어점 $\mathbf{x}^{(k)}$를 기준으로 회피 제약과 중력을 선형화하며, 이 점을 기준점이라 한다. 반공간은 매 반복의 기준점에서 다시 구성하므로, 부문제의 회피 제약은 기준점 주변의 국소 근사에 의존한다. 중력의 선형화도 기준점 주변에서만 유효하다. 따라서 신뢰영역 기반 SCvx [4, 5]로 볼록 부문제를 반복하여 풀며, 전체 절차는 Algorithm 1과 같다.
+반복 $k$에서는 그 반복의 제어점 $\mathbf{x}^{(k)}$를 기준으로 회피 제약과 중력을 선형화하며, 이 점을 기준점이라 한다. 반공간은 매 반복의 기준점에서 다시 구성하므로, 부문제의 회피 제약은 기준점 주변의 국소 근사에 의존한다. 중력의 선형화도 기준점 주변에서만 유효하다. 따라서 신뢰영역 기반 SCvx [8, 9]로 볼록 부문제를 반복하여 풀며, 전체 절차는 Algorithm 1과 같다.
 
 SCvx 반복 $k$의 부문제는 다음의 볼록 QP이다.
 
@@ -260,9 +260,9 @@ $$
 \gamma^{(s)}_m\!\left(\mathbf{x}^{(k)}\right) + \sum_{i=0}^{N}\left(\frac{\partial \gamma^{(s)}_m}{\partial \mathbf{p}_i}\right)^{\!\mathsf{T}}\!\left(\mathbf{p}_i - \mathbf{p}^{(k)}_i\right) + \nu^{(s)}_m \ \ge\ 0
 $$
 
-초기 궤적이 장애물 내부를 지나는 경우에는 선형화된 제약을 만족하는 해가 없을 수 있다. 따라서 $\boldsymbol{\nu}$의 성분 $\nu^{(s)}_m$로 선형화된 회피 제약을 완화하며, 이는 SCvx의 virtual control [4, 5]에 해당한다.
+초기 궤적이 장애물 내부를 지나는 경우에는 선형화된 제약을 만족하는 해가 없을 수 있다. 따라서 $\boldsymbol{\nu}$의 성분 $\nu^{(s)}_m$로 선형화된 회피 제약을 완화하며, 이는 SCvx의 virtual control [8, 9]에 해당한다.
 
-부문제에서 구한 해 $\hat{\mathbf{x}}$의 수용 여부는 목적함수와 제약 위반량을 결합한 merit function으로 판단한다 [4, 5].
+부문제에서 구한 해 $\hat{\mathbf{x}}$의 수용 여부는 목적함수와 제약 위반량을 결합한 merit function으로 판단한다 [8, 9].
 
 $$
 \phi(\mathbf{x}) = J(\mathbf{x}) + \mu\,h(\mathbf{x})
@@ -270,7 +270,7 @@ $$
 
 $J$는 비선형 중력을 사용한 3.2절의 목적함수이며, $h$는 해당 제어점 $\mathbf{x}$에서 다시 구성한 지지 반공간 제약의 위반량이다. 볼록 QP의 목적함수는 이 둘을 근사한 $\phi^{(k)} = J^{(k)} + \mu h^{(k)}$에 해당한다. $J^{(k)}$는 중력을 구간별로 선형화한 목적함수이고, $h^{(k)}$는 명제 1의 조건을 1차 전개한 근사의 위반량이다. 부문제에서는 이 위반량을 여유 변수의 합 $\mathbf{1}^{\mathsf{T}}\boldsymbol{\nu}$로 나타낸다.
 
-여유 변수로 제약 위반을 허용하되, 페널티 계수 $\mu$를 충분히 크게 두어 수렴한 해에서는 $\boldsymbol{\nu} = \mathbf{0}$이 되도록 한다 [8, 9]. 신뢰영역 제약 $\|\mathbf{x} - \mathbf{x}^{(k)}\|_\infty \le \Delta_k$는 제어점의 변화 범위를 제한한다. 신뢰영역 크기 $\Delta_k$는 선형화의 정확도에 따라 매 반복마다 조절한다.
+여유 변수로 제약 위반을 허용하되, 페널티 계수 $\mu$를 충분히 크게 두어 수렴한 해에서는 $\boldsymbol{\nu} = \mathbf{0}$이 되도록 한다 [16, 17]. 신뢰영역 제약 $\|\mathbf{x} - \mathbf{x}^{(k)}\|_\infty \le \Delta_k$는 제어점의 변화 범위를 제한한다. 신뢰영역 크기 $\Delta_k$는 선형화의 정확도에 따라 매 반복마다 조절한다.
 
 예측 감소량에는 2.3절의 적분 항등식으로 계산한 $J^{(k)}$를 사용한다. 실제 감소량을 평가할 때에는 비선형 중력과 선형화된 중력으로 계산한 잔차의 제곱노름 차이를 수치 적분하고, 이를 $J^{(k)}$에 더하여 $J$를 근사한다. 예측 감소량에 대한 실제 감소량의 비는 다음과 같다.
 
@@ -428,7 +428,7 @@ merit function의 상대 변화나 예측 감소량이 허용오차보다 작고
 
 ## 6. 결론
 
-본 연구에서는 분할구간마다 하나의 지지 반공간에 모든 제어점을 두어 궤적 전 구간의 장애물 회피를 보장하는 Bézier 궤적 생성 기법을 비선형 중력장의 궤도전이에 적용하였다. 이체 중력과 $J_2$ 섭동을 구간별로 선형화하여 [17]의 Gram 행렬 정식화를 비선형 중력장의 제어 가속도 비용으로 확장하였다. 지지 반공간의 법선은 제어점과 함께 움직이므로, 그 변화를 회피 제약의 선형화에 포함하여 SCvx가 실제 감소량을 더 정확히 예측하도록 하였다.
+본 연구에서는 분할구간마다 하나의 지지 반공간에 모든 제어점을 두어 궤적 전 구간의 장애물 회피를 보장하는 Bézier 궤적 생성 기법을 비선형 중력장의 궤도전이에 적용하였다. 이체 중력과 $J_2$ 섭동을 구간별로 선형화하여 [15]의 Gram 행렬 정식화를 비선형 중력장의 제어 가속도 비용으로 확장하였다. 지지 반공간의 법선은 제어점과 함께 움직이므로, 그 변화를 회피 제약의 선형화에 포함하여 SCvx가 실제 감소량을 더 정확히 예측하도록 하였다.
 
 수치 실험에서 장애물 경계 부근의 최소 이격거리는 원호 근사로 추정한 값에 가까웠다. 기준 시나리오 주변의 교란 사례 전반에서도 이 관계가 유지되어, 회피 제약의 보수성을 분할구간의 현 길이로 예측할 수 있었다. 분할 수가 적으면 제어 비용이 크게 늘었고 교란 범위를 넓히면 일부 사례가 수렴하지 못하였다. 분할 수를 늘리면 제어 비용은 빠르게 줄었으나, 분할구간마다 부과되는 회피 제약의 수는 분할 수에 비례하여 늘어난다. 법선 변화를 선형화에 포함하지 않으면 해가 반복해서 기각되어 대부분의 사례가 수렴하지 못하였다. 따라서 반복이 수렴하려면 법선 변화를 선형화에 포함해야 한다.
 
@@ -442,35 +442,35 @@ merit function의 상대 변화나 예측 감소량이 허용오차보다 작고
 
 [2] Hargraves, C. R., and Paris, S. W., "Direct Trajectory Optimization Using Nonlinear Programming and Collocation," *Journal of Guidance, Control, and Dynamics*, Vol. 10, No. 4, 1987, pp. 338–342. doi:10.2514/3.20223
 
-[3] Açıkmeşe, B., Carson, J. M., and Blackmore, L., "Lossless Convexification of Nonconvex Control Bound and Pointing Constraints of the Soft Landing Optimal Control Problem," *IEEE Transactions on Control Systems Technology*, Vol. 21, No. 6, 2013, pp. 2104–2113. doi:10.1109/TCST.2012.2237346
+[3] Dueri, D., Mao, Y., Mian, Z., Ding, J., and Açıkmeşe, B., "Trajectory Optimization with Inter-Sample Obstacle Avoidance via Successive Convexification," *2017 IEEE 56th Annual Conference on Decision and Control (CDC)*, Melbourne, Australia, 2017, pp. 1150–1156. doi:10.1109/CDC.2017.8263811
 
-[4] Mao, Y., Dueri, D., Szmuk, M., and Açıkmeşe, B., "Successive Convexification of Non-Convex Optimal Control Problems with State Constraints," *IFAC-PapersOnLine*, Vol. 50, No. 1, 2017, pp. 4063–4069. doi:10.1016/j.ifacol.2017.08.789
+[4] Elango, P., Luo, D., Kamath, A. G., Uzun, S., Kim, T., and Açıkmeşe, B., "Successive Convexification for Trajectory Optimization with Continuous-Time Constraint Satisfaction," arXiv:2404.16826, 2024. doi:10.48550/arXiv.2404.16826
 
-[5] Malyuta, D., Reynolds, T. P., Szmuk, M., Lew, T., Bonalli, R., Pavone, M., and Açıkmeşe, B., "Convex Optimization for Trajectory Generation: A Tutorial on Generating Dynamically Feasible Trajectories Reliably and Efficiently," *IEEE Control Systems Magazine*, Vol. 42, No. 5, 2022, pp. 40–113. doi:10.1109/MCS.2022.3187542
+[5] Kielas-Jensen, C., and Cichella, V., "Bernstein Polynomial-Based Transcription Method for Solving Optimal Trajectory Generation Problems," arXiv:2010.09992, 2020.
 
-[6] Dueri, D., Mao, Y., Mian, Z., Ding, J., and Açıkmeşe, B., "Trajectory Optimization with Inter-Sample Obstacle Avoidance via Successive Convexification," *2017 IEEE 56th Annual Conference on Decision and Control (CDC)*, Melbourne, Australia, 2017, pp. 1150–1156. doi:10.1109/CDC.2017.8263811
+[6] Lee, S., and Kim, Y., "Optimal Output Trajectory Shaping Using Bézier Curves," *Journal of Guidance, Control, and Dynamics*, Vol. 44, No. 5, 2021, pp. 1027–1035. doi:10.2514/1.G005887
 
-[7] Elango, P., Luo, D., Kamath, A. G., Uzun, S., Kim, T., and Açıkmeşe, B., "Successive Convexification for Trajectory Optimization with Continuous-Time Constraint Satisfaction," arXiv:2404.16826, 2024. doi:10.48550/arXiv.2404.16826
+[7] Açıkmeşe, B., Carson, J. M., and Blackmore, L., "Lossless Convexification of Nonconvex Control Bound and Pointing Constraints of the Soft Landing Optimal Control Problem," *IEEE Transactions on Control Systems Technology*, Vol. 21, No. 6, 2013, pp. 2104–2113. doi:10.1109/TCST.2012.2237346
 
-[8] Han, S. P., and Mangasarian, O. L., "Exact Penalty Functions in Nonlinear Programming," *Mathematical Programming*, Vol. 17, No. 1, 1979, pp. 251–269. doi:10.1007/BF01588250
+[8] Mao, Y., Dueri, D., Szmuk, M., and Açıkmeşe, B., "Successive Convexification of Non-Convex Optimal Control Problems with State Constraints," *IFAC-PapersOnLine*, Vol. 50, No. 1, 2017, pp. 4063–4069. doi:10.1016/j.ifacol.2017.08.789
 
-[9] Nocedal, J., and Wright, S. J., *Numerical Optimization*, 2nd ed., Springer, New York, 2006, Theorem 17.3. doi:10.1007/978-0-387-40065-5
+[9] Malyuta, D., Reynolds, T. P., Szmuk, M., Lew, T., Bonalli, R., Pavone, M., and Açıkmeşe, B., "Convex Optimization for Trajectory Generation: A Tutorial on Generating Dynamically Feasible Trajectories Reliably and Efficiently," *IEEE Control Systems Magazine*, Vol. 42, No. 5, 2022, pp. 40–113. doi:10.1109/MCS.2022.3187542
 
 [10] Deits, R., and Tedrake, R., "Computing Large Convex Regions of Obstacle-Free Space Through Semidefinite Programming," *Algorithmic Foundations of Robotics XI (WAFR)*, Springer, 2015, pp. 109–124.
 
 [11] Marcucci, T., Petersen, M., von Wrangel, D., and Tedrake, R., "Motion Planning around Obstacles with Convex Optimization," *Science Robotics*, Vol. 8, No. 84, 2023.
 
-[12] Kielas-Jensen, C., and Cichella, V., "Bernstein Polynomial-Based Transcription Method for Solving Optimal Trajectory Generation Problems," arXiv:2010.09992, 2020.
+[12] Preiss, J. A., Hönig, W., Ayanian, N., and Sukhatme, G. S., "Downwash-Aware Trajectory Planning for Large Quadrotor Teams," *2017 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)*, 2017, pp. 250–257.
 
-[13] Lee, S., and Kim, Y., "Optimal Output Trajectory Shaping Using Bézier Curves," *Journal of Guidance, Control, and Dynamics*, Vol. 44, No. 5, 2021, pp. 1027–1035. doi:10.2514/1.G005887
+[13] Tordesillas, J., and How, J. P., "MADER: Trajectory Planner in Multiagent and Dynamic Environments," *IEEE Transactions on Robotics*, Vol. 38, No. 1, 2022, pp. 463–476.
 
-[14] Preiss, J. A., Hönig, W., Ayanian, N., and Sukhatme, G. S., "Downwash-Aware Trajectory Planning for Large Quadrotor Teams," *2017 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)*, 2017, pp. 250–257.
+[14] Gao, F., Wang, L., Zhou, B., Han, L., Pan, J., and Shen, S., "Teach-Repeat-Replan: A Complete and Robust System for Aggressive Flight in Complex Environments," *IEEE Transactions on Robotics*, Vol. 36, No. 5, 2020, pp. 1526–1545.
 
-[15] Tordesillas, J., and How, J. P., "MADER: Trajectory Planner in Multiagent and Dynamic Environments," *IEEE Transactions on Robotics*, Vol. 38, No. 1, 2022, pp. 463–476.
+[15] 최지웅, 이수원, "베지어 곡선 기반 컨벡스 궤적 최적화 및 순차 볼록 프로그래밍 충돌 회피 정식화," *한국항공우주학회지*, 2026, 게재 승인 원고(2026년 5월 14일 승인).
 
-[16] Gao, F., Wang, L., Zhou, B., Han, L., Pan, J., and Shen, S., "Teach-Repeat-Replan: A Complete and Robust System for Aggressive Flight in Complex Environments," *IEEE Transactions on Robotics*, Vol. 36, No. 5, 2020, pp. 1526–1545.
+[16] Han, S. P., and Mangasarian, O. L., "Exact Penalty Functions in Nonlinear Programming," *Mathematical Programming*, Vol. 17, No. 1, 1979, pp. 251–269. doi:10.1007/BF01588250
 
-[17] 최지웅, 이수원, "베지어 곡선 기반 컨벡스 궤적 최적화 및 순차 볼록 프로그래밍 충돌 회피 정식화," *한국항공우주학회지*, 2026, 게재 승인 원고(2026년 5월 14일 승인).
+[17] Nocedal, J., and Wright, S. J., *Numerical Optimization*, 2nd ed., Springer, New York, 2006, Theorem 17.3. doi:10.1007/978-0-387-40065-5
 
 [18] NASA National Space Science Data Center, "SPACEWARN Bulletin No. 632," 1 July 2006, Progress-M 57 항목. SpaceRef 재수록본, <https://spaceref.com/status-report/nasa-spacewarn-bulletin-no-632-01-july-2006/>.
 
