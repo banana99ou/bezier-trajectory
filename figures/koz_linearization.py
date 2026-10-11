@@ -19,11 +19,14 @@ The *constraint* is the real one. The corrected control points are not pushed by
 hand; they solve
 
     min_{P'} ||P' - P||_F^2
-    s.t.     n^(s) . (S^(s) P')_m >= n^(s) . c_KOZ + r_e   for all s, m
+    s.t.     n^(s) . (S^(s) P')_m >= n^(s) . c_KOZ + r_e + FIX_MARGIN   for all s, m
 
 over the global control points, with S^(s) taken from the repo's own De
 Casteljau subdivision matrices and the normals frozen at the reference curve P.
-That is one SCvx iteration of the constraint in 3.1, so the corrected curve is
+FIX_MARGIN is for display only: a projection lands the active control points
+exactly on the plane, where panel (c) cannot show them inside it. The paper's
+constraint has no margin. Apart from that, this is one SCvx iteration of the
+constraint in 3.1, so the corrected curve is
 continuous by construction and the endpoints stay put.
 
 Usage:
@@ -76,6 +79,7 @@ FS_TITLE, FS_SYM, FS_SYM_SM = TEXT_PT * K, 10.0 * K, TEXT_PT * K
 # ---------------------------------------------------------------------------
 C_KOZ = np.array([0.0, 0.0])
 R_KOZ = 3.0
+FIX_MARGIN = 0.2   # display gap between the corrected control points and the plane
 
 # Degree-5 reference curve. Tuned so that a single interior sub-arc dips well
 # inside the KOZ: its centroid then sits clearly off the sphere surface, which
@@ -129,10 +133,10 @@ def supporting_halfspaces(P, S_list, center, radius):
     return out
 
 
-def solve_halfspace_projection(P, S_list, half_spaces):
+def solve_halfspace_projection(P, S_list, half_spaces, margin=0.0):
     """One SCvx iteration of the 3.1 constraint, as a projection.
 
-        min ||P' - P||_F^2   s.t.  n^(s) . (S^(s) P')_m >= n^(s) . c_KOZ + r_e
+        min ||P' - P||_F^2   s.t.  n^(s) . (S^(s) P')_m >= n^(s) . c_KOZ + r_e + margin
 
     Linear in P', so the corrected curve stays a single Bezier curve and the
     endpoints are held at the boundary conditions.
@@ -150,7 +154,7 @@ def solve_halfspace_projection(P, S_list, half_spaces):
         # row m of A is d/dP' of  n . (S P')_m , flattened row-major
         A = np.kron(S, n_hat.reshape(1, -1))
         cons.append(dict(type="ineq",
-                         fun=lambda z, A=A, off=off: A @ z - off,
+                         fun=lambda z, A=A, off=off: A @ z - off - margin,
                          jac=lambda z, A=A: A))
     for idx in (0, Np1 - 1):                      # boundary conditions
         E = np.zeros((dim, Np1 * dim))
@@ -181,12 +185,12 @@ def build_geometry():
     if depth[viol] <= 0:
         raise RuntimeError("No sub-arc violates the KOZ; retune P_GLOBAL.")
 
-    P_fix = solve_halfspace_projection(P_GLOBAL, S_list, half_spaces)
+    P_fix = solve_halfspace_projection(P_GLOBAL, S_list, half_spaces, FIX_MARGIN)
     segs_fix = [S @ P_fix for S in S_list]
 
     n_hat, off = half_spaces[viol]
     for m, q in enumerate(segs_fix[viol]):
-        assert n_hat @ q - off > -1e-7, f"corrected q_{m} outside H^(s)"
+        assert n_hat @ q - off > FIX_MARGIN - 1e-7, f"corrected q_{m} within FIX_MARGIN of H^(s)'s plane"
 
     return dict(S_list=S_list, segs=segs, segs_fix=segs_fix, viol=viol,
                 P_fix=P_fix, n_hat=n_hat, offset=off, depth=depth,
@@ -396,7 +400,8 @@ def build_figure(save=False):
                        color=C_FIX)
 
     ax.plot(*support_pt, "o", color=C_INK, ms=5.5, zorder=8)
-    hl = support_pt - tang * (pad * 0.60) + n_hat * 0.52
+    # upper-left corner of H^(s): the corrected control points sit where (b) puts it
+    hl = support_pt + tang * (pad * 0.14) + n_hat * (pad * 0.71)
     ax.text(*hl, r"$\mathcal{H}^{(s)}$", fontsize=FS_SYM, color=C_INK,
             ha="center", va="center", fontweight="bold", alpha=0.55, zorder=10)
 
