@@ -472,6 +472,6 @@ merit function의 상대 변화나 예측 감소량이 허용오차보다 작고
 
 [17] 최지웅, 이수원, "베지어 곡선 기반 컨벡스 궤적 최적화 및 순차 볼록 프로그래밍 충돌 회피 정식화," *한국항공우주학회지*, 2026, 게재 승인 원고(2026년 5월 14일 승인).
 
-[18] NASA National Space Science Data Center, "SPACEWARN Bulletin No. 632," 1 July 2006, Progress-M 57 항목. [SpaceRef 재수록본](https://spaceref.com/status-report/nasa-spacewarn-bulletin-no-632-01-july-2006/).
+[18] NASA National Space Science Data Center, "SPACEWARN Bulletin No. 632," 1 July 2006, Progress-M 57 항목. SpaceRef 재수록본, <https://spaceref.com/status-report/nasa-spacewarn-bulletin-no-632-01-july-2006/>.
 
-[19] (European Space Agency, "ISS: International Space Station," [온라인 자료](https://www.esa.int/Science_Exploration/Human_and_Robotic_Exploration/International_Space_Station/ISS_International_Space_Station), 접속일: 2026년 9월 22일.)[[this url has to render as url. also I feed just bare url is not appropriate for reference section in paper?]]
+[19] European Space Agency, "ISS: International Space Station," <https://www.esa.int/Science_Exploration/Human_and_Robotic_Exploration/International_Space_Station/ISS_International_Space_Station>, 접속일: 2026년 9월 22일.
