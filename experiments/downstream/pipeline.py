@@ -72,6 +72,21 @@ class BezierConfig:
     scp_trust_radius: float = 2000.0
     n_lin_seg: int = 100
 
+    # The anomalies at which this stage fixes its endpoints. The baseline pins
+    # the ascending node and the argument of perigee to zero, so nu = 0 is
+    # perigee -- radius a(1-e), which falls below the 150 km altitude floor for
+    # any eccentricity above 0.0369 at 400 km, i.e. on 113 of the 222 frozen
+    # cases. At nu = pi/2 the radius is instead the semi-latus rectum
+    # a(1-e^2), which clears the floor everywhere in the declared parameter box
+    # (worst case 6710 km against a 6528 km floor).
+    #
+    # These are one fixed pair of numbers applied to every case, chosen once and
+    # recorded here -- not a per-case search. A search over the anomalies would
+    # be a separate labelled treatment (design section 9.2), never folded into
+    # the proposed arm.
+    nu0: float = np.pi / 2.0
+    nuf: float = 3.0 * np.pi / 2.0
+
 
 @dataclass(frozen=True)
 class RunConfig:
@@ -153,6 +168,38 @@ def run_pass1(cfg, recovery: bool = False):
 # Stage 1b: the Bezier stage, and the bridge into the baseline's model
 # --------------------------------------------------------------------------
 
+def _reference_path(cfg, n_points: int, nu0: float, nuf: float):
+    """The baseline's own initial-guess construction, at chosen anomalies.
+
+    `linear_interpolation_guess` hard-codes nu0 = 0 and nuf = pi, so it cannot
+    be reused once this stage fixes its endpoints elsewhere. This reproduces its
+    algorithm exactly -- Keplerian propagation forward from the departure state,
+    backward from the arrival state, blended by 0.5(1 - cos(pi t / T)) -- so the
+    only thing that changes is where the two ends sit.
+
+    Returns `(t, r, r0, v0, rf, vf)`.
+    """
+    from orbit_transfer.astrodynamics.kepler import kepler_propagate
+
+    T = cfg.T_max
+    t = np.linspace(0.0, T, n_points)
+    r0, v0 = oe_to_rv((cfg.a0, cfg.e0, cfg.i0, 0.0, 0.0, nu0), MU_EARTH)
+    rf, vf = oe_to_rv((cfg.af, cfg.ef, cfg.if_, 0.0, 0.0, nuf), MU_EARTH)
+
+    depart = np.zeros((3, n_points))
+    arrive = np.zeros((3, n_points))
+    depart[:, 0] = r0
+    arrive[:, -1] = rf
+    for k in range(1, n_points):
+        depart[:, k] = kepler_propagate(r0, v0, t[k], MU_EARTH)[0]
+    for k in range(n_points - 2, -1, -1):
+        arrive[:, k] = kepler_propagate(rf, vf, t[k] - T, MU_EARTH)[0]
+
+    alpha = 0.5 * (1.0 - np.cos(np.pi * t / T)) if T > 0 else np.zeros(n_points)
+    r = (1.0 - alpha) * depart + alpha * arrive
+    return t, r, r0, v0, rf, vf
+
+
 def _bernstein_matrix(tau: np.ndarray, degree: int) -> np.ndarray:
     i = np.arange(degree + 1)
     return (comb(degree, i)[None, :]
@@ -178,6 +225,80 @@ def _fit_control_points(r_ref: np.ndarray, tau: np.ndarray, degree: int):
     return P
 
 
+def _curve_min_radius(P: np.ndarray, n: int = 400) -> float:
+    """Minimum distance from the origin over the whole curve, not just at the
+    control points -- the control polygon can clear a sphere the curve cuts."""
+    from orbital_docking.bezier import BezierCurve
+
+    curve = BezierCurve(P)
+    pts = np.array([curve.point(s) for s in np.linspace(0.0, 1.0, n)])
+    return float(np.min(np.linalg.norm(pts, axis=1)))
+
+
+def _seed_control_points(
+    r_ref: np.ndarray, tau: np.ndarray, degree: int, r_floor: float,
+    max_inflations: int = 8,
+):
+    """Build the Bezier seed, pushed clear of the keep-out sphere.
+
+    The baseline's own initial guess cosine-blends a forward propagation of the
+    departure orbit with a backward propagation of the arrival orbit. A blend of
+    two points lying on *different* orbits sits on the chord between them rather
+    than on any orbit, so when the two propagated points fall on opposite sides
+    of the Earth the blended path cuts straight through it. Measured on the
+    designed population: reference minima of 6188, 6359, 4401 and 3001 km
+    against a 6528 km floor -- the last two are inside the Earth.
+
+    The baseline tolerates this. Its interior-point solver accepts an infeasible
+    start and pushes the iterate out, because the altitude floor is just another
+    inequality row. The Bezier stage cannot, because it linearizes the keep-out
+    sphere into supporting half-spaces taken about the current iterate, and
+    those half-spaces point the wrong way when the iterate is inside the sphere:
+    the first QP is infeasible and the solve stops at iteration 1, whatever the
+    trust radius, iteration budget or curve degree.
+
+    So the seed, and only the seed, is projected radially outward onto the
+    sphere. This changes where the Bezier stage starts, never what it is asked
+    to solve: the objective, the constraints, the boundary conditions and the
+    transfer horizon are untouched, and the returned curve still has to earn its
+    own feasibility certificate.
+
+    The target is inflated until the *fitted curve* clears, not merely the
+    reference: a least-squares fit undershoots the path it is fitted to, so a
+    reference sitting exactly on the sphere yields a curve inside it. The loop
+    is deterministic and bounded, and what it did is recorded per case.
+    """
+    radii = np.linalg.norm(r_ref, axis=0)
+    ref_min = float(radii.min())
+
+    P = _fit_control_points(r_ref, tau, degree)
+    meta = {
+        "seed_ref_min_radius": ref_min,
+        "seed_floor_radius": float(r_floor),
+        "seed_projected": False,
+        "seed_inflations": 0,
+        "seed_points_moved": 0,
+        "seed_curve_min_radius": _curve_min_radius(P),
+    }
+    if meta["seed_curve_min_radius"] >= r_floor:
+        return P, meta
+
+    meta["seed_projected"] = True
+    margin = 0.005
+    for step in range(1, max_inflations + 1):
+        target = r_floor * (1.0 + margin)
+        scale = np.maximum(1.0, target / np.maximum(radii, 1e-12))
+        P = _fit_control_points(r_ref * scale, tau, degree)
+        meta["seed_inflations"] = step
+        meta["seed_points_moved"] = int((scale > 1.0).sum())
+        meta["seed_curve_min_radius"] = _curve_min_radius(P)
+        if meta["seed_curve_min_radius"] >= r_floor:
+            break
+        margin *= 2.0
+    meta["seed_margin"] = float(margin)
+    return P, meta
+
+
 def bezier_stage(case: Case, bez: BezierConfig, n_points: int = 61):
     """Solve the Bezier SCP problem and translate it into the baseline's terms.
 
@@ -194,14 +315,52 @@ def bezier_stage(case: Case, bez: BezierConfig, n_points: int = 61):
     # node and argument of perigee pinned to zero. Pass 2 frees both anomalies
     # again for every arm, so fixing them here is a stage-1 property, not an
     # advantage or a handicap (design 4.3).
-    r0, v0 = oe_to_rv((cfg.a0, cfg.e0, cfg.i0, 0.0, 0.0, 0.0), MU_EARTH)
-    rf, vf = oe_to_rv((cfg.af, cfg.ef, cfg.if_, 0.0, 0.0, np.pi), MU_EARTH)
-
-    t_ref, x_ref, _, _, _ = linear_interpolation_guess(cfg, n_points)
+    t_ref, r_ref, r0, v0, rf, vf = _reference_path(
+        cfg, n_points, bez.nu0, bez.nuf)
     tau = t_ref / T
-    P_init = _fit_control_points(x_ref[:3], tau, bez.degree)
+    r_floor = R_E + case.h_min
 
     info: dict = {"bezier_config": asdict(bez)}
+
+    # Two different things can put an endpoint below the altitude floor, and
+    # they must not be reported as the same finding.
+    #
+    # (a) The whole orbit is below the floor -- its apogee, a(1+e), does not
+    #     reach it. Then no point of that orbit is admissible, so no trajectory
+    #     can start or end on it and the CASE is infeasible. This is a property
+    #     of the frozen parameters and applies to the baseline identically: the
+    #     database carries arrival orbits as low as 6278 km, a hundred kilometres
+    #     UNDER the Earth's equatorial radius.
+    #
+    # (b) The orbit clears the floor somewhere, but not at the anomaly this
+    #     bridge fixes. That is a limitation of the endpoint convention, not of
+    #     the case and not of the Bezier method -- the baseline's own passes
+    #     carry both anomalies as free decision variables and slide the endpoint
+    #     along the orbit until it clears.
+    #
+    # At nu = pi/2 the radius is the semi-latus rectum a(1-e^2), which clears the
+    # floor everywhere in the declared parameter box, so (b) is expected to be
+    # rare; it is still detected rather than assumed away.
+    apogee0 = cfg.a0 * (1.0 + cfg.e0)
+    apogeef = cfg.af * (1.0 + cfg.ef)
+    if min(apogee0, apogeef) < r_floor:
+        info["stage1_reject"] = (
+            "the departure or arrival orbit lies entirely below the altitude "
+            f"floor (apogee {min(apogee0, apogeef):.0f} km < {r_floor:.0f} km); "
+            "the case is infeasible for either stage")
+        info["case_infeasible"] = True
+        return None, info
+
+    if min(float(np.linalg.norm(r0)), float(np.linalg.norm(rf))) < r_floor:
+        info["stage1_reject"] = (
+            f"the endpoint this bridge fixes (nu0={bez.nu0:.4f}, "
+            f"nuf={bez.nuf:.4f}) lies below the altitude floor, though the "
+            "orbit clears it elsewhere; the baseline leaves that anomaly free")
+        info["endpoint_below_floor"] = True
+        return None, info
+
+    P_init, seed_meta = _seed_control_points(r_ref, tau, bez.degree, r_floor)
+    info.update(seed_meta)
     t_start = time.perf_counter()
     try:
         P_opt, bez_info = optimize_orbital_docking(
@@ -262,7 +421,8 @@ def bezier_stage(case: Case, bez: BezierConfig, n_points: int = 61):
     info["gravity_model_gap_rel"] = float(
         np.max(np.linalg.norm(g_dcm - g_bez, axis=0)) / scale)
 
-    return {"t": t_ref, "x": x, "u": u, "T_f": T, "nu0": 0.0, "nuf": np.pi}, info
+    return ({"t": t_ref, "x": x, "u": u, "T_f": T,
+             "nu0": bez.nu0, "nuf": bez.nuf}, info)
 
 
 # --------------------------------------------------------------------------
