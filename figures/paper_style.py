@@ -1,8 +1,8 @@
 """Manuscript typography shared by every paper figure.
 
-The export places each figure 6.8 in wide (papers/exports/*/export.lua) beside
+The export places each figure 6.8 in wide (tools/export_paper.lua) beside
 10 pt body text set in Helvetica Neue, with NanumBarunGothic for Hangul and
-Latin Modern for math (tools/export_professor_paper.py, export header). A figure
+Latin Modern for math (tools/export_paper.py, tools/export_paper_header.tex). A figure
 of width W is scaled by 6.8/W on the page, so text drawn at pt * W/6.8 prints at
 pt -- the same face and size as the body, whatever size the figure is drawn at.
 

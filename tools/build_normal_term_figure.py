@@ -6,7 +6,7 @@ Data and selection match tools/build_normal_term_ablation.py:
   (b) iterations until termination, including runs that fail that criterion;
   (c) paired change in J, 100 * (J_without / J_with - 1), using cases whose
       final hull violation is <= 1e-6 km in BOTH arms, irrespective of stop.
-      n_seg=4 is omitted from the cost comparison, as in manuscript Table 5.
+      n_seg=4 is omitted from the cost comparison, as in manuscript Section 5.3.
 
 Panels (b) and (c) show medians and the 5th to 95th percentiles. A recorded
 solver stop is not an independent optimality or stationarity verification.
@@ -108,7 +108,7 @@ def style(ax, nsegs, title, ylabel):
     ax.set_xlim(-0.55, len(nsegs) - 0.45)
     ax.set_xlabel(r"분할 수 $n_{\mathrm{seg}}$", fontfamily=HANGUL)
     ax.set_ylabel(ylabel, fontfamily=HANGUL if "$" in ylabel else None)
-    ax.set_title(title, color=C_INK, pad=12)
+    ax.set_title(title, color=C_INK, pad=10)
     ax.grid(axis="y", which="major", color=C_GRID, linewidth=0.7)
     ax.set_axisbelow(True)
     for side in ("top", "right"):
@@ -127,7 +127,7 @@ def intervals(ax, xs, values, arm):
 
 
 def table_rows(rates, iterations, costs, nsegs):
-    """Reproduce the displayed Table 5 precision for direct review."""
+    """Summarize the plotted data at the original table precision for review."""
     def cell(values, fmt):
         lo, med, hi = np.percentile(values, [5, 50, 95])
         return f"{med:{fmt}} [{lo:{fmt}}, {hi:{fmt}}]"
@@ -145,7 +145,7 @@ def main():
     rates, iterations, costs = summarize(runs, ids, nsegs)
     k_pt = apply_paper_style(FIG_W)
     fig, axes = plt.subplots(1, 3, figsize=(FIG_W, FIG_H))
-    fig.subplots_adjust(left=0.062, right=0.99, top=0.77, bottom=0.29, wspace=0.39)
+    fig.subplots_adjust(left=0.062, right=0.99, top=0.79, bottom=0.15, wspace=0.39)
     xs = np.arange(len(nsegs))
 
     for arm in ARMS:
@@ -181,20 +181,18 @@ def main():
     handles = [Line2D([], [], linewidth=1.7, markersize=6,
                       markerfacecolor="white" if arm == "without" else C_WITH,
                       **ARM_STYLES[arm]) for arm in ARMS]
-    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.52, 0.97),
+    legend_center = (axes[0].get_position().x0 + axes[1].get_position().x1) / 2
+    header_y = 0.95
+    fig.legend(handles=handles, loc="center", bbox_to_anchor=(legend_center, header_y),
                ncol=2, frameon=False, handlelength=2.5, columnspacing=2.2)
-    note_size = SMALL_PT * k_pt
-    fig.text(0.5, 0.13,
-             f"(a), (b): 분할 수별 {len(ids)}개 사례.  (b), (c): 중앙값과 5–95번째 백분위수.",
-             ha="center", va="center", fontsize=note_size, color=C_INK)
-    fig.text(0.5, 0.058,
-             "(c): 두 해가 모두 명제 1의 조건을 만족한 사례에서, 법선 변화 포함 대비 법선 고정의 비용 증가율.",
-             ha="center", va="center", fontsize=note_size, color=C_INK)
+    cost_panel_center = (axes[2].get_position().x0 + axes[2].get_position().x1) / 2
+    fig.text(cost_panel_center, header_y, "기준: 법선 변화 포함",
+             ha="center", va="center", fontsize=SMALL_PT * k_pt, color=C_INK)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(args.out, dpi=300, facecolor="white")
     plt.close(fig)
     print(f"Figure from {len(ids)} paired instances -> {args.out}")
-    print("Table 5 rows:")
+    print("Figure 6 summary rows:")
     print("\n".join(table_rows(rates, iterations, costs, nsegs)))
     print("Paired feasible cost samples:", {s: len(costs[s]) for s in costs})
     print("With-normal stopping-criterion rates:", rates["with"])
